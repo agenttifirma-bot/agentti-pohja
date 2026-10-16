@@ -1,0 +1,27 @@
+[Unit]
+Description=@NIMI@: ajastettu agentti
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=agentti
+Group=agentti
+WorkingDirectory=/opt/agentit/@NIMI@
+EnvironmentFile=/etc/agentti/@NIMI@.env
+ExecStart=/usr/bin/python3 -B -m agentti --agentti @NIMI@ --tila /var/lib/agentti/@NIMI@ --llm --send
+TimeoutStartSec=300
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/agentti/@NIMI@
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=

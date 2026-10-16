@@ -1,0 +1,11 @@
+[Unit]
+Description=@NIMI@: ajastus
+
+[Timer]
+# systemd kayttaa palvelimen aikavyohyketta; tarkista `timedatectl` ennen kayttoonottoa.
+OnCalendar=*-*-* 07:30:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
