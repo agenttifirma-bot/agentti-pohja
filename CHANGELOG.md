@@ -2,6 +2,13 @@
 
 Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 
+## [Julkaisematon]
+
+### Lisätty
+
+- Sandbox-asiakas (`agentti/sandbox_kutsu.py`): lähettää repon tai luonnoshakemiston eristettyyn sandboxiin ssh:lla pakotetun komennon kautta. Vain `https://github.com/omistaja/repo`-osoitteet, ref-tarkistus, tar ilman symlinkkejä ja raskaita hakemistoja, kokoraja, aikaraja. Ei salaisuuksia: vain avaintiedoston polku.
+- Testit sandbox-asiakkaalle (`test/test_sandbox_kutsu.py`).
+
 ## [0.1.0] - 2026-10-16
 
 ### Lisätty
