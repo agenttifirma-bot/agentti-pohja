@@ -1,0 +1,232 @@
+"""Yojonon ajuri: ajaa jonotiedoston tehtavat perakkain kulukaton sisalla ja kertoo tuloksen.
+
+Vain standardikirjasto. Ei shellia (subprocess saa argumenttilistan), ei verkkoa paitsi valinnainen Telegram-yhteenveto.
+Kaynnistys: `python3 -B -m yojono ajo|kuiva|tila` (repon juuresta). Ajuri ei tee muuta kuin kutsuu tehtavatyypin skriptia (nyt vain `katselmointi` = katselmoi.sh); tehtava on read-only.
+
+Tiedostot (hakemisto YOJONO_PERUS, oletus /var/lib/yojono):
+  jono.json  {"paivakatto": 3.0, "tehtavat": [{"id": "...", "tyyppi": "katselmointi", "repo": "...", "budjetti": 2.0}]}
+  tila.json  ajuri kirjoittaa: tehtavien tila ja paivakohtaiset kulut (USD)
+  lukko      estaa kaksi ajoa yhta aikaa
+"""
+import argparse
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.request
+from dataclasses import dataclass
+from datetime import date
+from pathlib import Path
+
+OLETUS_PERUS = "/var/lib/yojono"
+OLETUS_KATSELMOI = "/opt/yojono/katselmoi.sh"
+OLETUS_PAIVAKATTO = 3.0
+MAX_YRITYKSIA = 2
+TEHTAVA_AIKARAJA_S = 1800
+ILTA_AIKARAJA_S = 3 * 3600
+TELEGRAM_MAX = 3900
+ID_RE = re.compile(r"^[a-z0-9_-]{1,60}$")
+REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
+TYYPIT = ("katselmointi",)
+
+
+class JonoVirhe(ValueError):
+    pass
+
+
+@dataclass
+class Tulos:
+    ok: bool
+    kulu: float
+    raportti: str
+    viesti: str
+
+
+def tarkista_jono(jono):
+    """Palauttaa (paivakatto, tehtavat) tai nostaa JonoVirhe. Kaikki kentat tarkistetaan: jonotiedosto on syote."""
+    if not isinstance(jono, dict):
+        raise JonoVirhe("jono.json ei ole objekti")
+    katto = jono.get("paivakatto", OLETUS_PAIVAKATTO)
+    if isinstance(katto, bool) or not isinstance(katto, (int, float)) or not 0 < katto <= 50:
+        raise JonoVirhe("paivakatto pitaa olla luku valilta 0-50 USD")
+    tehtavat = jono.get("tehtavat")
+    if not isinstance(tehtavat, list):
+        raise JonoVirhe("tehtavat pitaa olla lista")
+    nahty = set()
+    for t in tehtavat:
+        if not isinstance(t, dict):
+            raise JonoVirhe("tehtava ei ole objekti")
+        if not isinstance(t.get("id"), str) or not ID_RE.match(t["id"]):
+            raise JonoVirhe(f"virheellinen id: {t.get('id')!r}")
+        if t["id"] in nahty:
+            raise JonoVirhe(f"id esiintyy kahdesti: {t['id']}")
+        nahty.add(t["id"])
+        if t.get("tyyppi") not in TYYPIT:
+            raise JonoVirhe(f"tuntematon tyyppi ({t['id']}): {t.get('tyyppi')!r}")
+        if not isinstance(t.get("repo"), str) or not REPO_RE.match(t["repo"]) or t["repo"] in (".", ".."):
+            raise JonoVirhe(f"virheellinen repo ({t['id']}): {t.get('repo')!r}")
+        b = t.get("budjetti")
+        if isinstance(b, bool) or not isinstance(b, (int, float)) or not 0 < b <= katto:
+            raise JonoVirhe(f"budjetti ({t['id']}) pitaa olla 0 < budjetti <= paivakatto")
+    return float(katto), tehtavat
+
+
+def lue_json(polku, oletus):
+    try:
+        return json.loads(Path(polku).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return oletus
+
+
+def kirjoita_tila(polku, tila):
+    """Atominen kirjoitus: valiaikaistiedosto + replace, ettei katkennut ajo riko tilaa."""
+    polku = Path(polku)
+    valiaikainen = polku.with_suffix(".tmp")
+    valiaikainen.write_text(json.dumps(tila, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(valiaikainen, polku)
+
+
+def valitse_ajettavat(tehtavat, tila, pvm):
+    """Valmiit ohitetaan. Epaonnistunut yritetaan uudelleen vain myohempana paivana ja enintaan MAX_YRITYKSIA kertaa."""
+    ulos = []
+    for t in tehtavat:
+        s = tila.get("tehtavat", {}).get(t["id"])
+        if s is None:
+            ulos.append(t)
+        elif s.get("tila") == "valmis":
+            continue
+        elif s.get("yrityksia", 0) < MAX_YRITYKSIA and s.get("pvm") != pvm:
+            ulos.append(t)
+    return ulos
+
+
+def suorita_katselmointi(tehtava, pvm, perus, skripti, aikaraja=TEHTAVA_AIKARAJA_S):
+    """Kutsuu katselmoi.sh <repo> <budjetti>. Kulu luetaan raportin JSON:sta (myos epaonnistuneesta ajosta).
+    Jos ajo alkoi mutta kulua ei saada selville (aikakatkaisu, lukukelvoton JSON), laskutetaan koko budjetti: katto ei saa alittua arvauksella."""
+    repo, budjetti = tehtava["repo"], float(tehtava["budjetti"])
+    json_polku = Path(perus) / "raportit" / f"{pvm}-{repo}.json"
+    md_polku = json_polku.with_suffix(".md")
+    vanha_mtime = json_polku.stat().st_mtime if json_polku.exists() else None
+    try:
+        # Telegram-tunnukset eivat kuulu alaprosessille (katselmoija ei tarvitse niita)
+        ymparisto = {k: v for k, v in os.environ.items() if not k.startswith("YOJONO_TELEGRAM_")}
+        r = subprocess.run([str(skripti), repo, f"{budjetti:.2f}"], capture_output=True, text=True, timeout=aikaraja,
+                           check=False, env=ymparisto)
+        koodi, loppu = r.returncode, (r.stdout + r.stderr).strip()[-300:]
+    except subprocess.TimeoutExpired:
+        return Tulos(False, budjetti, "", f"aikakatkaisu {aikaraja} s jalkeen (kulu arvioitu budjetiksi)")
+    except OSError as virhe:
+        return Tulos(False, 0.0, "", f"ajuria ei voitu kaynnistaa: {virhe}")
+    paivittyi = json_polku.exists() and json_polku.stat().st_mtime != vanha_mtime
+    if not paivittyi:
+        kulu = 0.0  # claude ei ehtinyt alkaa (esim. kloonaus epaonnistui): katselmoi.sh luo JSON:n vasta claude-kutsussa
+    else:
+        kulu = None
+        try:
+            raaka = json.loads(json_polku.read_text(encoding="utf-8")).get("total_cost_usd")
+            if isinstance(raaka, (int, float)) and not isinstance(raaka, bool) and raaka >= 0:
+                kulu = float(raaka)
+        except (ValueError, OSError):
+            pass
+        if kulu is None:
+            kulu = budjetti  # ajo alkoi mutta kulua ei saada: katto ei saa alittua arvauksella
+    ok = koodi == 0 and md_polku.exists() and paivittyi
+    return Tulos(ok, kulu, str(md_polku) if ok else "", "ok" if ok else (loppu or f"poistumiskoodi {koodi}"))
+
+
+def laheta_telegram(teksti, env=None):
+    """Lahettaa yhteenvedon, jos YOJONO_TELEGRAM_TOKEN ja YOJONO_TELEGRAM_CHAT on asetettu. Virhe ei kaada ajoa."""
+    env = os.environ if env is None else env
+    token, chat = env.get("YOJONO_TELEGRAM_TOKEN"), env.get("YOJONO_TELEGRAM_CHAT")
+    if not token or not chat:
+        return False
+    data = json.dumps({"chat_id": chat, "text": teksti[:TELEGRAM_MAX]}).encode()
+    pyynto = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMessage", data=data, headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(pyynto, timeout=20) as vastaus:
+            return vastaus.status == 200
+    except Exception as virhe:  # verkkovirhe ei saa kaataa yoajoa; tokenia ei kirjata
+        print(f"Telegram-lahetys epaonnistui: {type(virhe).__name__}", file=sys.stderr)
+        return False
+
+
+def yhteenveto(rivit, kulu_tanaan, katto, pvm):
+    otsikko = f"Yojono {pvm}: kulu tanaan {kulu_tanaan:.2f} / {katto:.2f} USD"
+    return "\n".join([otsikko] + (rivit or ["Ei ajettavia tehtavia."]))
+
+
+def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.monotonic, pvm=None, kuiva=False,
+        telegram=laheta_telegram):
+    """Ajaa jonon. Palauttaa tekstiyhteenvedon. Paivakatto: ennen tehtavaa varataan sen koko budjetti."""
+    pvm = pvm or date.today().isoformat()
+    perus = Path(perus)
+    perus.mkdir(parents=True, exist_ok=True)
+    with open(perus / "lukko", "w") as lukko:
+        try:
+            fcntl.flock(lukko, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return "Toinen ajo on kaynnissa; ei tehty mitaan."
+        katto, tehtavat = tarkista_jono(lue_json(perus / "jono.json", {"tehtavat": []}))
+        tila_polku = perus / "tila.json"
+        tila = lue_json(tila_polku, {})
+        tila.setdefault("tehtavat", {})
+        tila.setdefault("kulut", {})
+        ajettavat = valitse_ajettavat(tehtavat, tila, pvm)
+        if kuiva:
+            rivit = [f"- {t['id']}: {t['repo']} (budjetti {t['budjetti']:.2f})" for t in ajettavat]
+            return yhteenveto(rivit or ["Ei ajettavia tehtavia."], tila["kulut"].get(pvm, 0.0), katto, pvm)
+        alku = nyt()
+        rivit = []
+        for t in ajettavat:
+            kulu_nyt = tila["kulut"].get(pvm, 0.0)
+            if nyt() - alku > ILTA_AIKARAJA_S:
+                rivit.append(f"- {t['id']}: ohitettu (yon aikaraja)")
+                continue
+            if katto - kulu_nyt < t["budjetti"]:
+                rivit.append(f"- {t['id']}: ohitettu (paivakatto: jaljella {katto - kulu_nyt:.2f} < {t['budjetti']:.2f})")
+                continue
+            tulos = suorita(t, pvm, perus, skripti)
+            tila["kulut"][pvm] = round(kulu_nyt + tulos.kulu, 4)
+            vanha = tila["tehtavat"].get(t["id"], {})
+            tila["tehtavat"][t["id"]] = {
+                "tila": "valmis" if tulos.ok else "epaonnistui",
+                "yrityksia": vanha.get("yrityksia", 0) + (0 if tulos.ok else 1),
+                "pvm": pvm, "kulu": round(tulos.kulu, 4), "raportti": tulos.raportti, "viesti": tulos.viesti,
+            }
+            kirjoita_tila(tila_polku, tila)  # heti: katkennut ajo ei hukkaa kulukirjanpitoa
+            rivit.append(f"- {t['id']}: {'VALMIS' if tulos.ok else 'EPAONNISTUI'} ({tulos.kulu:.2f} USD)"
+                         + (f" raportti {tulos.raportti}" if tulos.ok else f" syy: {tulos.viesti}"))
+        kirjoita_tila(tila_polku, tila)
+        teksti = yhteenveto(rivit, tila["kulut"].get(pvm, 0.0), katto, pvm)
+    laheta(teksti)
+    if ajettavat:
+        telegram(teksti)
+    return teksti
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description="Yojonon ajuri")
+    p.add_argument("komento", choices=["ajo", "kuiva", "tila"])
+    a = p.parse_args(argv)
+    perus = os.environ.get("YOJONO_PERUS", OLETUS_PERUS)
+    skripti = os.environ.get("YOJONO_KATSELMOI", OLETUS_KATSELMOI)
+    if a.komento == "tila":
+        print(json.dumps(lue_json(Path(perus) / "tila.json", {}), indent=2, ensure_ascii=False))
+        return 0
+    try:
+        tulos = aja(perus, skripti, kuiva=a.komento == "kuiva")
+        if a.komento == "kuiva":
+            print(tulos)
+    except JonoVirhe as virhe:
+        print(f"jono.json virheellinen: {virhe}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

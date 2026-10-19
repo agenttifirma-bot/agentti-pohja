@@ -1,0 +1,25 @@
+# Mallitiedosto: ei asenna mitaan. Asennus on README.md:n ohjeen mukaan Tonyn kasin tekema paatos.
+[Unit]
+Description=Yojono: kulukattoinen katselmointijono
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/yojono-ajuri
+Environment=YOJONO_PERUS=/var/lib/yojono
+Environment=YOJONO_KATSELMOI=/opt/yojono/katselmoi.sh
+# Valinnainen: YOJONO_TELEGRAM_TOKEN ja YOJONO_TELEGRAM_CHAT (tiedosto chmod 600, ei versionhallintaan)
+EnvironmentFile=-/etc/yojono/telegram.env
+ExecStart=/usr/bin/python3 -B -m yojono ajo
+# iltaraja 3 h + yksittaisen tehtavan aikaraja 30 min
+TimeoutStartSec=14400
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ReadWritePaths=/var/lib/yojono
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
