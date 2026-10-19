@@ -8,6 +8,7 @@ Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 
 - Sandbox-asiakas (`agentti/sandbox_kutsu.py`): lähettää repon tai luonnoshakemiston eristettyyn sandboxiin ssh:lla pakotetun komennon kautta. Vain `https://github.com/omistaja/repo`-osoitteet, ref-tarkistus, tar ilman symlinkkejä ja raskaita hakemistoja, kokoraja, aikaraja. Ei salaisuuksia: vain avaintiedoston polku.
 - Testit sandbox-asiakkaalle (`test/test_sandbox_kutsu.py`).
+- Yöjono (`yojono/`): jonotiedostosta ajettava, kulukattoinen tehtäväajuri (nyt vain koodikatselmointi). Varaa budjetin ennen tehtävää, lukee todellisen kulun, laskuttaa koko budjetin jos kulu on tuntematon, kirjaa tilan heti, lukko estää rinnakkaisajon, valinnainen Telegram-yhteenveto. Systemd-mallit ja käyttöönotto-ohje (`yojono/README.md`), 30 testiä.
 
 ## [0.1.0] - 2026-10-16
 

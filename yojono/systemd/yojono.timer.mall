@@ -1,0 +1,11 @@
+# Mallitiedosto. Aikavyohyke nimetaan itse, joten ajastus ei riipu palvelimen asetuksesta.
+# Vzdump 02:30 ja rclone 04:00 seka trendit 04:30: yojono alkaa 01:00 eika paase niiden paalle (iltaraja 3 h).
+[Unit]
+Description=Yojono kerran yossa
+
+[Timer]
+OnCalendar=*-*-* 01:00:00 Europe/Helsinki
+Persistent=false
+
+[Install]
+WantedBy=timers.target
