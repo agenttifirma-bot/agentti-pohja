@@ -6,6 +6,7 @@ Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 
 ### Lisätty
 
+- Ilmoitus Tonylle (`agentti/ilmoita.py`): `python3 -m agentti.ilmoita valmis|virhe|paatos OTSIKKO [TEKSTI]` lahettaa lyhyen kiinteamuotoisen Telegram-viestin tyon tuloksesta, jotta tuloksia ei tarvitse liittaa chattiin kasin. Vastaanottaja ja tunnus luetaan tunnustiedostosta (`/etc/yojono/telegram.env`), ei argumenteista; teksti puhdistetaan ja rajataan; enintaan 30 viestia tunnissa. 10 testia.
 - LLM-asiakas tunnistaa katkenneen vastauksen myös `native_finish_reason`-kentasta (LiteLLM/OpenRouter voi normalisoida `MAX_TOKENS`-lopetuksen muotoon `stop`). Sama virhekoodi `llm_vastaus_katkaistu`, ei uusia riippuvuuksia. Sama logiikka on kirjastossa `llm-stopcheck`.
 - Sandbox-asiakas (`agentti/sandbox_kutsu.py`): lähettää repon tai luonnoshakemiston eristettyyn sandboxiin ssh:lla pakotetun komennon kautta. Vain `https://github.com/omistaja/repo`-osoitteet, ref-tarkistus, tar ilman symlinkkejä ja raskaita hakemistoja, kokoraja, aikaraja. Ei salaisuuksia: vain avaintiedoston polku.
 - Automerge-koe 20.10.2026: tama rivi lisattiin PR:lla, jonka pitaisi yhdistya itsestaan.
