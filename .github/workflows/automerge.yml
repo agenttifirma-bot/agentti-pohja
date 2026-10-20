@@ -1,0 +1,24 @@
+name: Automerge
+
+# pull_request_target: tama tyonkulku ja tools/automerge.py ladataan AINA paahaarasta (luotettu).
+# PR:n omaa koodia ei ladata eika suoriteta; paatos tehdaan vain metatiedoista ja tiedostolistasta.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Arvioi ja kytke auto-merge tarvittaessa
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python3 tools/automerge.py
