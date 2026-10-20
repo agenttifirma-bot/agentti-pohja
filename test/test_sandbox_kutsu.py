@@ -108,5 +108,91 @@ class SandboxKutsuTesti(unittest.TestCase):
         self.assertTrue(t.endswith("a\nb"))
 
 
+def git(repo, *a):
+    subprocess.run(["git", "-C", repo, "-c", "user.email=t@t", "-c", "user.name=t"] + list(a),
+                   check=True, capture_output=True)
+
+
+class SandboxGitTesti(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = os.path.join(self.tmp.name, "repo")
+        os.makedirs(self.repo)
+        git(self.repo, "init", "-q", "-b", "main")
+        self.kirjoita("a.py", "x=1\n")
+        self.kirjoita("ali/b.py", "y=2\n")
+        os.symlink("/etc/passwd", os.path.join(self.repo, "linkki"))
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "eka")
+        git(self.repo, "checkout", "-q", "-b", "yo/haara")
+        self.kirjoita("c.py", "z=3\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "toka")
+        git(self.repo, "checkout", "-q", "main")
+        self.kirjoita(".env", "SALAINEN=1\n")          # seuraamaton: ei saa lahtea
+        self.kirjoita("seen.json", "{}")                # seuraamaton tilatiedosto
+
+    def kirjoita(self, polku, sisalto):
+        koko = os.path.join(self.repo, polku)
+        os.makedirs(os.path.dirname(koko), exist_ok=True)
+        with open(koko, "w") as f:
+            f.write(sisalto)
+
+    def nimet(self, data):
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as t:
+            return sorted(t.getnames())
+
+    def aja(self, ref):
+        lahetetty = {}
+
+        def feikki(komento_osa, syote=None, aikaraja=900):
+            lahetetty["komento"] = komento_osa
+            lahetetty["syote"] = syote
+            return {"ok": True, "vaihe": "valmis", "loki": []}
+        with mock.patch.object(sk, "_suorita", feikki):
+            tulos = sk.aja_git(self.repo, ref)
+        return tulos, lahetetty
+
+    def test_vain_haaran_seurattavat_tiedostot(self):
+        tulos, l = self.aja("yo/haara")
+        self.assertIs(tulos["ok"], True)
+        self.assertEqual(l["komento"], "luonnos")
+        self.assertEqual(self.nimet(l["syote"]), ["a.py", "ali/b.py", "c.py"])
+
+    def test_oletus_head_ja_ei_toisen_haaran_tiedostoja(self):
+        _, l = self.aja("HEAD")
+        self.assertEqual(self.nimet(l["syote"]), ["a.py", "ali/b.py"])
+
+    def test_seuraamattomat_ja_symlinkit_eivat_lahde(self):
+        _, l = self.aja("main")
+        nimet = self.nimet(l["syote"])
+        for kielletty in (".env", "seen.json", "linkki"):
+            self.assertNotIn(kielletty, nimet)
+
+    def test_virheellinen_ref(self):
+        for ref in ("a b", "x; ls", "$(id)", ""):
+            with self.subTest(ref=ref):
+                with self.assertRaises(sk.SandboxVirhe):
+                    sk.git_tiedostot(self.repo, ref, self.tmp.name)
+
+    def test_tuntematon_ref(self):
+        with self.assertRaises(sk.SandboxVirhe):
+            sk.git_tiedostot(self.repo, "ei-ole-olemassa", self.tmp.name)
+
+    def test_ei_git_repo(self):
+        with self.assertRaises(sk.SandboxVirhe):
+            sk.git_tiedostot(self.tmp.name, "HEAD", self.tmp.name)
+
+    def test_cli_git(self):
+        def feikki(komento_osa, syote=None, aikaraja=900):
+            return {"ok": False, "vaihe": "testit", "kesto_s": 3, "loki": ["1 failed"]}
+        with mock.patch.object(sk, "_suorita", feikki):
+            with mock.patch("builtins.print") as pr:
+                koodi = sk.main(["git", self.repo, "yo/haara"])
+        self.assertEqual(koodi, 1)
+        self.assertIn("EI LAPI", pr.call_args[0][0])
+
+
 if __name__ == "__main__":
     unittest.main()
