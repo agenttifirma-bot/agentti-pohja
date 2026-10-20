@@ -6,6 +6,9 @@ sallii vain 'repo <url> [ref]' ja 'luonnos' (tar.gz stdinista).
   from agentti.sandbox_kutsu import aja_repo, aja_luonnos
   tulos = aja_luonnos("/polku/luonnos")      # dict: ok, vaihe, loki, ...
   tulos = aja_repo("https://github.com/o/r", ref="v1.0")
+  tulos = aja_git("/polku/git-repo", ref="yo/haara")   # vain haaran seurattavat tiedostot
+
+CLI: python -m agentti.sandbox_kutsu git <git-repo> [ref]
 
 Asetukset ymparistomuuttujilla:
   SANDBOX_HOST (oletus 192.168.1.114), SANDBOX_KEY (oletus /root/.ssh/sandbox_key),
@@ -19,6 +22,7 @@ import re
 import subprocess
 import sys
 import tarfile
+import tempfile
 
 LUONNOS_RAJA = 900 * 1024
 POIS = {"node_modules", ".git", ".venv", "__pycache__"}
@@ -91,6 +95,48 @@ def aja_luonnos(hakemisto, aikaraja=900):
     return _suorita("luonnos", syote=luonnos_tar(hakemisto), aikaraja=aikaraja)
 
 
+def git_tiedostot(repo, ref, kohde):
+    """Purkaa 'git archive'-tulosteen (vain seurattavat tiedostot) kohdehakemistoon.
+
+    Ei seuraamattomia tiedostoja (.env, tilatiedostot), ei symlinkkeja, ei absoluuttisia
+    eika '..'-polkuja. Palauttaa purettujen tiedostojen maaran."""
+    if not REF_RE.match(ref):
+        raise SandboxVirhe("virheellinen ref")
+    if not os.path.isdir(os.path.join(repo, ".git")):
+        raise SandboxVirhe("ei git-repo: " + str(repo))
+    try:
+        r = subprocess.run(["git", "-C", repo, "archive", "--format=tar", ref, "--"],
+                           capture_output=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise SandboxVirhe("git archive epaonnistui: %s" % e)
+    if r.returncode != 0:
+        raise SandboxVirhe("git archive epaonnistui: " + r.stderr.decode("utf-8", "replace").strip()[-200:])
+    pohja = os.path.realpath(kohde)
+    maara = 0
+    with tarfile.open(fileobj=io.BytesIO(r.stdout), mode="r:") as tar:
+        for jasen in tar:
+            if not jasen.isfile():
+                continue
+            nimi = os.path.normpath(jasen.name)
+            if os.path.isabs(nimi) or nimi == ".." or nimi.startswith(".." + os.sep):
+                continue
+            maali = os.path.join(pohja, nimi)
+            os.makedirs(os.path.dirname(maali), exist_ok=True)
+            with open(maali, "wb") as f:
+                f.write(tar.extractfile(jasen).read())
+            maara += 1
+    if maara == 0:
+        raise SandboxVirhe("git archive ei tuottanut tiedostoja")
+    return maara
+
+
+def aja_git(repo, ref="HEAD", aikaraja=900):
+    """Testaa git-repon haaran (vain seurattavat tiedostot) sandboxissa."""
+    with tempfile.TemporaryDirectory() as tmp:
+        git_tiedostot(repo, ref, tmp)
+        return aja_luonnos(tmp, aikaraja=aikaraja)
+
+
 def tiivista(tulos, rivit=15):
     """Lyhyt teksti Telegram-yhteenvetoon: tila + lokin loppu."""
     tila = "LAPI" if tulos.get("ok") else "EI LAPI"
@@ -107,8 +153,10 @@ def main(argv=None):
         tulos = aja_luonnos(a[1])
     elif len(a) in (2, 3) and a[0] == "repo":
         tulos = aja_repo(a[1], a[2] if len(a) == 3 else "")
+    elif len(a) in (2, 3) and a[0] == "git":
+        tulos = aja_git(a[1], a[2] if len(a) == 3 else "HEAD")
     else:
-        print("kaytto: python -m agentti.sandbox_kutsu luonnos <hakemisto> | repo <https://github.com/o/r> [ref]")
+        print("kaytto: python -m agentti.sandbox_kutsu luonnos <hakemisto> | repo <https://github.com/o/r> [ref] | git <git-repo> [ref]")
         return 2
     print(tiivista(tulos))
     return 0 if tulos.get("ok") else 1
