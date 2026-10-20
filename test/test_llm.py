@@ -58,6 +58,9 @@ class LLMTesti(unittest.TestCase):
         self.assertKoodi("llm_vastaus_tyhja", llm_vastaus("   "))
         self.assertKoodi("llm_vastaus_tyhja", llm_vastaus(None))
         self.assertKoodi("llm_vastaus_katkaistu", llm_vastaus("puoli", finish="length"))
+        natiivi = llm_vastaus("puoli")
+        natiivi["choices"][0]["native_finish_reason"] = "MAX_TOKENS"
+        self.assertKoodi("llm_vastaus_katkaistu", natiivi)
         self.assertKoodi("llm_vastaus_rakenne", {"choices": []})
         self.assertKoodi("llm_vastaus_rakenne", {})
         self.assertKoodi("llm_http_500", llm.LLMVirhe("llm_http_500"))
