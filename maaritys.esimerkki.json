@@ -1,0 +1,16 @@
+{
+  "nimi": "ideointi",
+  "kuvaus": "Lukee tapahtumalokin, ehdottaa kokeiluja ja kokeilee ne sandboxissa.",
+  "ohje_tiedosto": "ohjeet/ideointi.md",
+  "malli": "deepseek/deepseek-chat",
+  "budjetti_usd_paivassa": 0.03,
+  "max_tokens": 1500,
+  "vyohyke": 1,
+  "oikeustaso": "sandbox",
+  "tyokalut": ["lue_tiedosto", "kirjaa_loki"],
+  "lahteet": ["paikallinen:tapahtumaloki"],
+  "tulosmuoto": "ehdotus_v1",
+  "mittari": "Ehdotuksista vahintaan 30 % valitaan jatkoon ja puolet kokeista tuottaa toimivan tuloksen.",
+  "ajastus": "01:00",
+  "halytys": "telegram"
+}
