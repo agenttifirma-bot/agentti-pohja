@@ -26,7 +26,7 @@ Ympäristö: `YOJONO_PERUS` (oletus `/var/lib/yojono`), `YOJONO_KATSELMOI` (olet
 
 ## Jonotiedosto
 
-Katso `jono.esimerkki.json`. `paivakatto` on USD:tä (0-50), tehtävän `budjetti` ei saa ylittää sitä. `repo` on GitHub-repon nimi (vain kirjaimet, numerot, `_`, `.`, `-`). Tehtävätyyppi on toistaiseksi vain `katselmointi`.
+Katso `jono.esimerkki.json`. `paivakatto` on USD:tä (0-50), tehtävän `budjetti` ei saa ylittää sitä. Valinnainen `kuukausikatto` (USD, vähintään päiväkatto, enintään 2000) pysäyttää ajon, kun kuukauden kulut + tehtävän budjetti ylittäisivät sen; kulut lasketaan tila.json:n päiväkirjanpidosta. `repo` on GitHub-repon nimi (vain kirjaimet, numerot, `_`, `.`, `-`). Tehtävätyyppi on toistaiseksi vain `katselmointi`.
 
 Huom: ajurin päiväkatto laskee kalenteripäivän. LiteLLM-avaimen oma budjetti nollautuu omassa tahdissaan ja on kova yläraja (se pysäyttää kutsut, vaikka ajuri erehtyisi). Pidä ajurin `paivakatto` enintään avaimen budjetin suuruisena.
 
