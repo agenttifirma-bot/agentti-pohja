@@ -84,5 +84,45 @@ class LokiTest(unittest.TestCase):
             tl.avaa(polku).close()  # uudelleenavaus ei riko skeemaa
 
 
+
+class KomentoriviTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.polku = os.path.join(self.tmp.name, "loki.db")
+
+    def aja(self, *argv):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with mock_env(self.polku), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            koodi = tl.main(list(argv))
+        return koodi, out.getvalue()
+
+    def test_kirjaa_ja_yhteenveto(self):
+        self.assertEqual(self.aja("kirjaa", "terminal", "claude", "deploy", "ok", "0.02")[0], 0)
+        koodi, ulos = self.aja("yhteenveto")
+        self.assertEqual(koodi, 0)
+        self.assertIn('"deploy/ok": 1', ulos)
+
+    def test_virheelliset_kutsut(self):
+        self.assertEqual(self.aja()[0], 2)
+        self.assertEqual(self.aja("kirjaa", "a")[0], 2)
+        self.assertEqual(self.aja("kirjaa", "l", "a", "t", "r", "ei-luku")[0], 2)
+        self.assertEqual(self.aja("outo")[0], 2)
+
+    def test_ilman_polkua(self):
+        import contextlib
+        import io
+        from unittest import mock
+        with mock.patch.dict(os.environ, {}, clear=True), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(tl.main(["yhteenveto"]), 2)
+
+
+def mock_env(polku):
+    from unittest import mock
+    return mock.patch.dict(os.environ, {"TAPAHTUMALOKI": polku})
+
+
 if __name__ == "__main__":
     unittest.main()

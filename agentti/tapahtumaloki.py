@@ -130,3 +130,38 @@ def yhteenveto(yht, paivaa=7, nyt=None):
     paatetyt = tilat.get("hyvaksytty", 0) + tilat.get("hylatty", 0)
     osuus = round(100.0 * tilat.get("hyvaksytty", 0) / paatetyt, 1) if paatetyt else None
     return {"tapahtumat": tyypit, "kulu_usd": round(kulu, 6), "ehdotukset": tilat, "hyvaksymis_pros": osuus}
+
+
+def main(argv=None):
+    """Komentorivi: kirjaa | yhteenveto. Tietokannan polku: ymparistomuuttuja TAPAHTUMALOKI.
+
+        python3 -m agentti.tapahtumaloki kirjaa LAHDE AGENTTI TYYPPI TULOS [KULU_USD]
+        python3 -m agentti.tapahtumaloki yhteenveto [PAIVAA]
+    """
+    import sys
+    argv = sys.argv[1:] if argv is None else argv
+    polku = os.environ.get("TAPAHTUMALOKI")
+    if not polku or not argv:
+        print("kaytto: TAPAHTUMALOKI=polku python3 -m agentti.tapahtumaloki kirjaa|yhteenveto ...", file=sys.stderr)
+        return 2
+    yht = avaa(polku)
+    try:
+        if argv[0] == "kirjaa" and len(argv) in (5, 6):
+            kulu = float(argv[5]) if len(argv) == 6 else None
+            print("kirjattu: %d" % kirjaa(yht, argv[1], argv[2], argv[3], argv[4], kulu_usd=kulu))
+            return 0
+        if argv[0] == "yhteenveto" and len(argv) in (1, 2):
+            print(json.dumps(yhteenveto(yht, int(argv[1]) if len(argv) == 2 else 7), sort_keys=True))
+            return 0
+    except ValueError as e:
+        print("tapahtumaloki: %s" % e, file=sys.stderr)
+        return 2
+    finally:
+        yht.close()
+    print("tapahtumaloki: tuntematon komento", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

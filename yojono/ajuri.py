@@ -160,6 +160,26 @@ def yhteenveto(rivit, kulu_tanaan, katto, pvm):
     return "\n".join([otsikko] + (rivit or ["Ei ajettavia tehtavia."]))
 
 
+def kirjaa_lokiin(t, tulos, pvm, polku=None):
+    """Valinnainen tapahtumaloki (YOJONO_LOKI = tietokannan polku). Virhe ei koskaan kaada ajoa."""
+    polku = polku or os.environ.get("YOJONO_LOKI")
+    if not polku:
+        return False
+    try:
+        from agentti import tapahtumaloki
+        yht = tapahtumaloki.avaa(polku)
+        try:
+            tapahtumaloki.kirjaa(yht, "yojono", "yojono", "katselmointi", "ok" if tulos.ok else "virhe",
+                                 kulu_usd=round(tulos.kulu, 4),
+                                 tiedot={"tehtava": t["id"], "repo": t["repo"], "pvm": pvm})
+        finally:
+            yht.close()
+        return True
+    except Exception as virhe:  # loki on lisa; ajo jatkuu aina
+        print(f"Lokikirjaus epaonnistui: {type(virhe).__name__}", file=sys.stderr)
+        return False
+
+
 def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.monotonic, pvm=None, kuiva=False,
         telegram=laheta_telegram):
     """Ajaa jonon. Palauttaa tekstiyhteenvedon. Paivakatto: ennen tehtavaa varataan sen koko budjetti."""
@@ -199,6 +219,7 @@ def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.mon
                 "pvm": pvm, "kulu": round(tulos.kulu, 4), "raportti": tulos.raportti, "viesti": tulos.viesti,
             }
             kirjoita_tila(tila_polku, tila)  # heti: katkennut ajo ei hukkaa kulukirjanpitoa
+            kirjaa_lokiin(t, tulos, pvm)
             rivit.append(f"- {t['id']}: {'VALMIS' if tulos.ok else 'EPAONNISTUI'} ({tulos.kulu:.2f} USD)"
                          + (f" raportti {tulos.raportti}" if tulos.ok else f" syy: {tulos.viesti}"))
         kirjoita_tila(tila_polku, tila)

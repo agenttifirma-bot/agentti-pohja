@@ -321,3 +321,29 @@ class TestMain(Pohja):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LokiKirjaus(Pohja):
+    def test_kirjaa_tapahtuman_kun_polku_annettu(self):
+        from agentti import tapahtumaloki
+        polku = str(self.perus / "loki.db")
+        self.kirjoita_jono(jono([t("a")]))
+        with mock.patch.dict(os.environ, {"YOJONO_LOKI": polku}):
+            self.aja(lambda *_: ajuri.Tulos(True, 0.5, "x.md", "ok"))
+        yht = tapahtumaloki.avaa(polku)
+        try:
+            rivit = yht.execute("SELECT lahde, tyyppi, tulos, kulu_usd FROM tapahtuma").fetchall()
+        finally:
+            yht.close()
+        self.assertEqual(rivit, [("yojono", "katselmointi", "ok", 0.5)])
+
+    def test_ilman_polkua_ei_kirjata_ja_virhe_ei_kaada(self):
+        self.kirjoita_jono(jono([t("a")]))
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("YOJONO_LOKI", None)
+            teksti, _ = self.aja(lambda *_: ajuri.Tulos(True, 0.5, "x.md", "ok"))
+        self.assertIn("VALMIS", teksti)
+        self.kirjoita_jono(jono([t("a"), t("b")]))
+        with mock.patch.dict(os.environ, {"YOJONO_LOKI": "/ei/ole/loki.db"}):
+            teksti, _ = self.aja(lambda *_: ajuri.Tulos(False, 0.1, "", "virhe"))
+        self.assertIn("b: EPAONNISTUI", teksti)  # loki ei toimi, ajo silti valmistuu
