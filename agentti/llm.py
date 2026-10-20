@@ -14,6 +14,7 @@ import urllib.request
 from . import rajat
 
 ROOLIT = ("system", "user", "assistant")
+KATKAISUSYYT = frozenset({"length", "max_tokens", "max_output_tokens", "model_length"})
 
 
 class LLMVirhe(Exception):
@@ -99,8 +100,11 @@ def kysy(viestit, malli, env, kulu, hae=None, max_tokens=None):
         teksti = valinta["message"]["content"]
     except (KeyError, IndexError, TypeError):
         raise LLMVirhe("llm_vastaus_rakenne")
-    if valinta.get("finish_reason") == "length":
-        raise LLMVirhe("llm_vastaus_katkaistu")
+    # LiteLLM/OpenRouter voi normalisoida katkenneen vastauksen muotoon "stop"; natiivi syy paljastaa sen.
+    for kentta in ("finish_reason", "native_finish_reason"):
+        arvo = valinta.get(kentta)
+        if isinstance(arvo, str) and arvo.strip().lower().replace("-", "_") in KATKAISUSYYT:
+            raise LLMVirhe("llm_vastaus_katkaistu")
     if not isinstance(teksti, str) or not teksti.strip():
         raise LLMVirhe("llm_vastaus_tyhja")
     return teksti, kaytto

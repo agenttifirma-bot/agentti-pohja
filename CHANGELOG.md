@@ -6,6 +6,7 @@ Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 
 ### Lisätty
 
+- LLM-asiakas tunnistaa katkenneen vastauksen myös `native_finish_reason`-kentasta (LiteLLM/OpenRouter voi normalisoida `MAX_TOKENS`-lopetuksen muotoon `stop`). Sama virhekoodi `llm_vastaus_katkaistu`, ei uusia riippuvuuksia. Sama logiikka on kirjastossa `llm-stopcheck`.
 - Sandbox-asiakas (`agentti/sandbox_kutsu.py`): lähettää repon tai luonnoshakemiston eristettyyn sandboxiin ssh:lla pakotetun komennon kautta. Vain `https://github.com/omistaja/repo`-osoitteet, ref-tarkistus, tar ilman symlinkkejä ja raskaita hakemistoja, kokoraja, aikaraja. Ei salaisuuksia: vain avaintiedoston polku.
 - Automerge-koe 20.10.2026: tama rivi lisattiin PR:lla, jonka pitaisi yhdistya itsestaan.
 - Automaattinen yhdistaminen pienille muutoksille (`.github/workflows/automerge.yml`, `tools/automerge.py`): kytkee GitHubin auto-mergen (squash) vain kun PR sisaltaa pelkkia dokumentteja (`*.md`) tai testeja (`test/*.py`), enintaan 20 tiedostoa ja 200 rivia, eika kosketa suojattuja polkuja (`.github/`, `tools/`, `isanta/`, `systemd/`, config, rajat, avaintiedostot). Yhdistyy vasta kun pakolliset tarkistukset ovat vihreat. Paatos tehdaan luotetusta paahaaran koodista (`pull_request_target`), PR:n koodia ei suoriteta. Kelpaamattomaksi muuttuneelta PR:lta auto-merge poistetaan. 12 testia.
