@@ -347,3 +347,38 @@ class LokiKirjaus(Pohja):
         with mock.patch.dict(os.environ, {"YOJONO_LOKI": "/ei/ole/loki.db"}):
             teksti, _ = self.aja(lambda *_: ajuri.Tulos(False, 0.1, "", "virhe"))
         self.assertIn("b: EPAONNISTUI", teksti)  # loki ei toimi, ajo silti valmistuu
+
+
+class Kuukausikatto(Pohja):
+    def kirjoita(self, katto, kuukausi, tehtavat):
+        self.kirjoita_jono({"paivakatto": katto, "kuukausikatto": kuukausi, "tehtavat": tehtavat})
+
+    def test_lukeminen(self):
+        self.assertIsNone(ajuri.lue_kuukausikatto({}, 3.0))
+        self.assertEqual(ajuri.lue_kuukausikatto({"kuukausikatto": 40}, 3.0), 40.0)
+        for huono in (True, "40", 2.0, 2001, -1):
+            with self.assertRaises(ajuri.JonoVirhe):
+                ajuri.lue_kuukausikatto({"kuukausikatto": huono}, 3.0)
+
+    def test_kuukauden_kulu_vain_samalta_kuulta(self):
+        tila = {"kulut": {"2026-10-01": 1.0, "2026-10-19": 2.0, "2026-09-30": 9.0}}
+        self.assertEqual(ajuri.kuukauden_kulu(tila, "2026-10-19"), 3.0)
+
+    def test_ylittava_tehtava_ohitetaan_ja_pienempi_mahtuu(self):
+        self.kirjoita(3.0, 3.0, [t("iso", budjetti=2.0), t("pieni", budjetti=0.5)])
+        (self.perus / "tila.json").write_text(json.dumps({"kulut": {"2026-10-01": 1.5}, "tehtavat": {}}))
+        ajettu = []
+
+        def suorita(tehtava, *_):
+            ajettu.append(tehtava["id"])
+            return ajuri.Tulos(True, 0.1, "x.md", "ok")
+
+        teksti, _ = self.aja(suorita)
+        self.assertEqual(ajettu, ["pieni"])
+        self.assertIn("iso: ohitettu (kuukausikatto", teksti)
+
+    def test_ilman_kuukausikattoa_kaytos_ennallaan(self):
+        self.kirjoita_jono(jono([t("a", budjetti=1.0)]))
+        (self.perus / "tila.json").write_text(json.dumps({"kulut": {"2026-10-01": 100.0}, "tehtavat": {}}))
+        teksti, _ = self.aja(lambda *_: ajuri.Tulos(True, 0.1, "x.md", "ok"))
+        self.assertIn("a: VALMIS", teksti)

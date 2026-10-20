@@ -89,6 +89,22 @@ def kirjoita_tila(polku, tila):
     os.replace(valiaikainen, polku)
 
 
+def lue_kuukausikatto(jono, paivakatto):
+    """Valinnainen `kuukausikatto` (USD): None jos puuttuu. Pitaa olla >= paivakatto ja <= 2000."""
+    arvo = jono.get("kuukausikatto") if isinstance(jono, dict) else None
+    if arvo is None:
+        return None
+    if isinstance(arvo, bool) or not isinstance(arvo, (int, float)) or not paivakatto <= arvo <= 2000:
+        raise JonoVirhe("kuukausikatto pitaa olla luku valilta paivakatto-2000 USD")
+    return float(arvo)
+
+
+def kuukauden_kulu(tila, pvm):
+    """Kuukauden (pvm:n vuosi-kuukausi) kulut yhteensa tilatiedoston paivakirjanpidosta."""
+    kk = pvm[:7]
+    return sum(v for k, v in tila.get("kulut", {}).items() if k.startswith(kk) and isinstance(v, (int, float)))
+
+
 def valitse_ajettavat(tehtavat, tila, pvm):
     """Valmiit ohitetaan. Epaonnistunut yritetaan uudelleen vain myohempana paivana ja enintaan MAX_YRITYKSIA kertaa."""
     ulos = []
@@ -191,7 +207,9 @@ def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.mon
             fcntl.flock(lukko, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return "Toinen ajo on kaynnissa; ei tehty mitaan."
-        katto, tehtavat = tarkista_jono(lue_json(perus / "jono.json", {"tehtavat": []}))
+        jono_data = lue_json(perus / "jono.json", {"tehtavat": []})
+        katto, tehtavat = tarkista_jono(jono_data)
+        kuukausikatto = lue_kuukausikatto(jono_data, katto)
         tila_polku = perus / "tila.json"
         tila = lue_json(tila_polku, {})
         tila.setdefault("tehtavat", {})
@@ -206,6 +224,10 @@ def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.mon
             kulu_nyt = tila["kulut"].get(pvm, 0.0)
             if nyt() - alku > ILTA_AIKARAJA_S:
                 rivit.append(f"- {t['id']}: ohitettu (yon aikaraja)")
+                continue
+            if kuukausikatto is not None and kuukausikatto - kuukauden_kulu(tila, pvm) < t["budjetti"]:
+                rivit.append(f"- {t['id']}: ohitettu (kuukausikatto: jaljella "
+                             f"{max(kuukausikatto - kuukauden_kulu(tila, pvm), 0):.2f} < {t['budjetti']:.2f})")
                 continue
             if katto - kulu_nyt < t["budjetti"]:
                 rivit.append(f"- {t['id']}: ohitettu (paivakatto: jaljella {katto - kulu_nyt:.2f} < {t['budjetti']:.2f})")
