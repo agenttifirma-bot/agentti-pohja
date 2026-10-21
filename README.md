@@ -67,3 +67,4 @@ Katso [DEPLOY.md](DEPLOY.md): käyttäjä, hakemistot, salaisuudet, ajastin ja k
 ## Lisenssi
 
 MIT
+<!-- yojono pr_kutsu -testi -->
