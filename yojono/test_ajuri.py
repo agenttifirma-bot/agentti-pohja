@@ -82,6 +82,49 @@ class TestValinta(unittest.TestCase):
 
 
 class TestAjo(Pohja):
+    def test_toistuva_tehtava_ajetaan_taas_kun_paivia_kulunut(self):
+        tehtavat = [{"id": "a", "tyyppi": "ideointi", "repo": "r", "budjetti": 1.0, "toisto_pv": 7}]
+        tila = {"tehtavat": {"a": {"tila": "valmis", "yrityksia": 0, "pvm": "2026-10-12"}}}
+        self.assertEqual(ajuri.valitse_ajettavat(tehtavat, tila, "2026-10-18"), [])
+        self.assertEqual([t["id"] for t in ajuri.valitse_ajettavat(tehtavat, tila, "2026-10-19")], ["a"])
+
+    def test_valmis_ilman_toistoa_ei_ajeta_koskaan_uudelleen(self):
+        tehtavat = [{"id": "a", "tyyppi": "katselmointi", "repo": "r", "budjetti": 1.0}]
+        tila = {"tehtavat": {"a": {"tila": "valmis", "pvm": "2020-01-01"}}}
+        self.assertEqual(ajuri.valitse_ajettavat(tehtavat, tila, "2026-10-21"), [])
+
+    def test_toisto_ilman_kelvollista_paivaysta_ei_toista(self):
+        tehtavat = [{"id": "a", "tyyppi": "ideointi", "repo": "r", "budjetti": 1.0, "toisto_pv": 1}]
+        for pvm in (None, "roskaa"):
+            tila = {"tehtavat": {"a": {"tila": "valmis", "pvm": pvm}}}
+            self.assertEqual(ajuri.valitse_ajettavat(tehtavat, tila, "2026-10-21"), [])
+
+    def test_toisto_pv_validointi(self):
+        for huono in (0, -1, 366, 1.5, True, "7"):
+            jono = {"tehtavat": [{"id": "a", "tyyppi": "ideointi", "repo": "r", "budjetti": 1.0, "toisto_pv": huono}]}
+            with self.assertRaises(ajuri.JonoVirhe):
+                ajuri.tarkista_jono(jono)
+        ajuri.tarkista_jono({"tehtavat": [{"id": "a", "tyyppi": "ideointi", "repo": "r", "budjetti": 1.0, "toisto_pv": 7}]})
+
+    def test_skripti_valitaan_tyypin_mukaan(self):
+        sk = {"katselmointi": "/k.sh", "ideointi": "/i.sh"}
+        self.assertEqual(ajuri.skripti_tyypille(sk, "ideointi"), "/i.sh")
+        self.assertEqual(ajuri.skripti_tyypille("/vanha.sh", "katselmointi"), "/vanha.sh")
+        self.assertEqual(ajuri.skripti_tyypille("/vanha.sh", "ideointi"), "")
+
+    def test_ajaa_ideointitehtavan_oikealla_skriptilla(self):
+        (self.perus / "jono.json").write_text(json.dumps({"paivakatto": 3.0, "tehtavat": [
+            {"id": "i", "tyyppi": "ideointi", "repo": "agenttifirma", "budjetti": 1.0, "toisto_pv": 7}]}), encoding="utf-8")
+        kutsut = []
+
+        def suorita(t, pvm, perus, skripti):
+            kutsut.append(skripti)
+            return ajuri.Tulos(True, 0.2, "x.md", "ok")
+        viestit = []
+        ajuri.aja(self.perus, {"ideointi": "/i.sh"}, laheta=viestit.append, suorita=suorita, pvm=PVM,
+                  telegram=lambda *_: None)
+        self.assertEqual(kutsut, ["/i.sh"])
+
     def test_ajaa_tehtavat_ja_kirjaa_kulut(self):
         self.kirjoita_jono(jono([t("a", budjetti=1.5), t("b", budjetti=1.0)]))
         kutsut = []
@@ -219,6 +262,14 @@ class TestKatselmointiSkripti(Pohja):
         self.assertAlmostEqual(tulos.kulu, 0.58)
         self.assertEqual((self.perus / "argumentit").read_text().strip(), "mcp-homelab 2.00")
         self.assertTrue(tulos.raportti.endswith(f"{PVM}-mcp-homelab.md"))
+
+    def test_ideointi_raportti_on_nimetty_tyypin_mukaan(self):
+        s = self.skripti(f'echo \'{{"total_cost_usd": 0.3}}\' > "{self.perus}/raportit/{PVM}-ideointi-$1.json"\n'
+                         f'echo raportti > "{self.perus}/raportit/{PVM}-ideointi-$1.md"\n')
+        tehtava = dict(t("i", repo="agenttifirma", budjetti=1.0), tyyppi="ideointi")
+        tulos = ajuri.suorita_katselmointi(tehtava, PVM, self.perus, s)
+        self.assertTrue(tulos.ok)
+        self.assertTrue(tulos.raportti.endswith(f"{PVM}-ideointi-agenttifirma.md"))
 
     def test_budjetin_ylitys_json_ssa_mutta_ei_raporttia_on_epaonnistuminen_ja_kulu_tiedossa(self):
         s = self.skripti(f'echo \'{{"total_cost_usd": 1.15, "subtype": "error_max_budget_usd"}}\' > "{self.perus}/raportit/{PVM}-$1.json"\nexit 1\n')

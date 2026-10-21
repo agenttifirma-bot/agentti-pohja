@@ -1,9 +1,31 @@
 {
-  "paivakatto": 2.0,
-  "kuukausikatto": 40.0,
+  "paivakatto": 3.0,
+  "kuukausikatto": 80.0,
   "tehtavat": [
-    {"id": "katselmointi-mcp-model-router", "tyyppi": "katselmointi", "repo": "mcp-model-router", "budjetti": 2.0},
-    {"id": "katselmointi-agentti-pohja", "tyyppi": "katselmointi", "repo": "agentti-pohja", "budjetti": 1.5},
-    {"id": "katselmointi-ai-pr-reviewer-action", "tyyppi": "katselmointi", "repo": "ai-pr-reviewer-action", "budjetti": 1.5}
+    {
+      "id": "katselmointi-mcp-model-router",
+      "tyyppi": "katselmointi",
+      "repo": "mcp-model-router",
+      "budjetti": 2.0
+    },
+    {
+      "id": "katselmointi-agentti-pohja",
+      "tyyppi": "katselmointi",
+      "repo": "agentti-pohja",
+      "budjetti": 1.5
+    },
+    {
+      "id": "katselmointi-ai-pr-reviewer-action",
+      "tyyppi": "katselmointi",
+      "repo": "ai-pr-reviewer-action",
+      "budjetti": 1.5
+    },
+    {
+      "id": "ideointi-agenttifirma",
+      "tyyppi": "ideointi",
+      "repo": "agenttifirma",
+      "budjetti": 1.0,
+      "toisto_pv": 3
+    }
   ]
 }
