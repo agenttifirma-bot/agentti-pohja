@@ -5,6 +5,7 @@ Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 ## [Julkaisematon]
 
 ### Lisätty
+- Viikkoraportti (`agentti/viikkoraportti.py`): lukee tapahtumalokin (vain luku) ja tulostaa tekstin: kulut agenteittain, virheet virhekoodeittain, ehdotusten hyvaksymis-%, levy/muisti/kuorma sekä saantopohjaiset optimointivihjeet (ei mallikutsua, ei verkkoa, ei toteuta mitaan). Ajo: `TAPAHTUMALOKI=db python3 -m agentti.viikkoraportti [PAIVAA]`. Lahetys: `python3 -m agentti.ilmoita valmis "Viikkoraportti" "$(...)"`. Ei kayttoonottoa ennen Tonyn hyvaksyntaa. 8 testia.
 
 - Yojono: valinnainen `kuukausikatto` jono.json:ssa (USD). Tehtava ohitetaan, jos kuukauden kulut + sen budjetti ylittaisivat katon; ilman kenttaa kaytos on ennallaan. Tonyn paatos 20.10.: tyojonon paivakatto 2 USD, kuukausikatto 40 USD. 4 testia.
 - Agenttimaaritys (`agentti/maaritys.py`, `maaritys.esimerkki.json`): yksi JSON-tiedosto kuvaa agentin (ohjetiedosto, malli, budjetti, tokenit, datavyohyke, oikeustaso, tyokalut, lahteet, tulosmuoto, mittari, ajastus, halytys). Tarkistus nostaa kaikki virheet kerralla; kovakoodatut rajat (`rajat.py`) ovat katto, vyohyke 2 ei saa lukea ulkopuolista sisaltoa eika kayttaa verkkohakua, vain sallitut tyokalut. Vain tarkistus: ei suorita mitaan, eika `luo.py` kayta sita viela. 9 testia.
