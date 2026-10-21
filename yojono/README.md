@@ -26,7 +26,9 @@ Ympäristö: `YOJONO_PERUS` (oletus `/var/lib/yojono`), `YOJONO_KATSELMOI` (olet
 
 ## Jonotiedosto
 
-Katso `jono.esimerkki.json`. `paivakatto` on USD:tä (0-50), tehtävän `budjetti` ei saa ylittää sitä. Valinnainen `kuukausikatto` (USD, vähintään päiväkatto, enintään 2000) pysäyttää ajon, kun kuukauden kulut + tehtävän budjetti ylittäisivät sen; kulut lasketaan tila.json:n päiväkirjanpidosta. `repo` on GitHub-repon nimi (vain kirjaimet, numerot, `_`, `.`, `-`). Tehtävätyyppi on toistaiseksi vain `katselmointi`.
+Katso `jono.esimerkki.json`. `paivakatto` on USD:tä (0-50), tehtävän `budjetti` ei saa ylittää sitä. Valinnainen `kuukausikatto` (USD, vähintään päiväkatto, enintään 2000) pysäyttää ajon, kun kuukauden kulut + tehtävän budjetti ylittäisivät sen; kulut lasketaan tila.json:n päiväkirjanpidosta. `repo` on GitHub-repon nimi (vain kirjaimet, numerot, `_`, `.`, `-`). Tehtävätyypit: `katselmointi` (`katselmoi.sh`, ympäristö `YOJONO_KATSELMOI`) ja `ideointi` (`ideoi.sh`, `YOJONO_IDEOI`). Jokainen skripti kutsutaan `<skripti> <repo> <budjetti>` ja tuottaa `raportit/`-hakemistoon JSON:n (`total_cost_usd`) ja Markdown-raportin: `katselmointi` nimellä `<pvm>-<repo>`, muut nimellä `<pvm>-<tyyppi>-<repo>`. Ideointitehtävässä `repo` on aihealueen nimi (esim. `agenttifirma`).
+
+Valinnainen `toisto_pv` (kokonaisluku 1-365) tekee tehtävästä toistuvan: valmis tehtävä ajetaan uudelleen, kun edellisestä valmiista ajosta on vähintään niin monta päivää. Ilman sitä valmis tehtävä ei aja koskaan uudelleen.
 
 Huom: ajurin päiväkatto laskee kalenteripäivän. LiteLLM-avaimen oma budjetti nollautuu omassa tahdissaan ja on kova yläraja (se pysäyttää kutsut, vaikka ajuri erehtyisi). Pidä ajurin `paivakatto` enintään avaimen budjetin suuruisena.
 

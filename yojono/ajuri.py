@@ -23,6 +23,13 @@ from pathlib import Path
 
 OLETUS_PERUS = "/var/lib/yojono"
 OLETUS_KATSELMOI = "/opt/yojono/katselmoi.sh"
+# Tehtavatyyppi -> (ymparistomuuttuja, oletuspolku) skriptille. Skripti kutsutaan `<skripti> <repo> <budjetti>` ja se tuottaa
+# raportit hakemistoon <perus>/raportit/: katselmointi `<pvm>-<repo>.json|md`, muut `<pvm>-<tyyppi>-<repo>.json|md`.
+SKRIPTIT = {
+    "katselmointi": ("YOJONO_KATSELMOI", OLETUS_KATSELMOI),
+    "ideointi": ("YOJONO_IDEOI", "/opt/yojono/ideoi.sh"),
+}
+TOISTO_MAX_PV = 365
 OLETUS_PAIVAKATTO = 3.0
 MAX_YRITYKSIA = 2
 TEHTAVA_AIKARAJA_S = 1800
@@ -30,7 +37,7 @@ ILTA_AIKARAJA_S = 3 * 3600
 TELEGRAM_MAX = 3900
 ID_RE = re.compile(r"^[a-z0-9_-]{1,60}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
-TYYPIT = ("katselmointi",)
+TYYPIT = tuple(SKRIPTIT)
 
 
 class JonoVirhe(ValueError):
@@ -68,6 +75,9 @@ def tarkista_jono(jono):
             raise JonoVirhe(f"tuntematon tyyppi ({t['id']}): {t.get('tyyppi')!r}")
         if not isinstance(t.get("repo"), str) or not REPO_RE.match(t["repo"]) or t["repo"] in (".", ".."):
             raise JonoVirhe(f"virheellinen repo ({t['id']}): {t.get('repo')!r}")
+        toisto = t.get("toisto_pv")
+        if toisto is not None and (isinstance(toisto, bool) or not isinstance(toisto, int) or not 1 <= toisto <= TOISTO_MAX_PV):
+            raise JonoVirhe(f"toisto_pv ({t['id']}) pitaa olla kokonaisluku 1-{TOISTO_MAX_PV}")
         b = t.get("budjetti")
         if isinstance(b, bool) or not isinstance(b, (int, float)) or not 0 < b <= katto:
             raise JonoVirhe(f"budjetti ({t['id']}) pitaa olla 0 < budjetti <= paivakatto")
@@ -105,14 +115,25 @@ def kuukauden_kulu(tila, pvm):
     return sum(v for k, v in tila.get("kulut", {}).items() if k.startswith(kk) and isinstance(v, (int, float)))
 
 
+def _paivia_valissa(alku, loppu):
+    """Kalenteripaivien maara (loppu - alku); virheellinen paivays -> 0 (ei toistoa arvauksella)."""
+    try:
+        return (date.fromisoformat(loppu) - date.fromisoformat(alku)).days
+    except (TypeError, ValueError):
+        return 0
+
+
 def valitse_ajettavat(tehtavat, tila, pvm):
-    """Valmiit ohitetaan. Epaonnistunut yritetaan uudelleen vain myohempana paivana ja enintaan MAX_YRITYKSIA kertaa."""
+    """Valmiit ohitetaan, paitsi toistuva tehtava (`toisto_pv`), joka ajetaan taas kun edellisesta valmiista ajosta on
+    vahintaan toisto_pv paivaa. Epaonnistunut yritetaan uudelleen vain myohempana paivana ja enintaan MAX_YRITYKSIA kertaa."""
     ulos = []
     for t in tehtavat:
         s = tila.get("tehtavat", {}).get(t["id"])
         if s is None:
             ulos.append(t)
         elif s.get("tila") == "valmis":
+            if t.get("toisto_pv") and _paivia_valissa(s.get("pvm"), pvm) >= t["toisto_pv"]:
+                ulos.append(t)
             continue
         elif s.get("yrityksia", 0) < MAX_YRITYKSIA and s.get("pvm") != pvm:
             ulos.append(t)
@@ -120,10 +141,12 @@ def valitse_ajettavat(tehtavat, tila, pvm):
 
 
 def suorita_katselmointi(tehtava, pvm, perus, skripti, aikaraja=TEHTAVA_AIKARAJA_S):
-    """Kutsuu katselmoi.sh <repo> <budjetti>. Kulu luetaan raportin JSON:sta (myos epaonnistuneesta ajosta).
+    """Kutsuu tyypin skriptia <repo> <budjetti> (katselmointi: katselmoi.sh; ideointi: ideoi.sh). Kulu luetaan raportin JSON:sta (myos epaonnistuneesta ajosta).
     Jos ajo alkoi mutta kulua ei saada selville (aikakatkaisu, lukukelvoton JSON), laskutetaan koko budjetti: katto ei saa alittua arvauksella."""
     repo, budjetti = tehtava["repo"], float(tehtava["budjetti"])
-    json_polku = Path(perus) / "raportit" / f"{pvm}-{repo}.json"
+    tyyppi = tehtava.get("tyyppi", "katselmointi")
+    nimi = f"{pvm}-{repo}" if tyyppi == "katselmointi" else f"{pvm}-{tyyppi}-{repo}"
+    json_polku = Path(perus) / "raportit" / f"{nimi}.json"
     md_polku = json_polku.with_suffix(".md")
     vanha_mtime = json_polku.stat().st_mtime if json_polku.exists() else None
     try:
@@ -185,7 +208,7 @@ def kirjaa_lokiin(t, tulos, pvm, polku=None):
         from agentti import tapahtumaloki
         yht = tapahtumaloki.avaa(polku)
         try:
-            tapahtumaloki.kirjaa(yht, "yojono", "yojono", "katselmointi", "ok" if tulos.ok else "virhe",
+            tapahtumaloki.kirjaa(yht, "yojono", "yojono", t.get("tyyppi", "katselmointi"), "ok" if tulos.ok else "virhe",
                                  kulu_usd=round(tulos.kulu, 4),
                                  tiedot={"tehtava": t["id"], "repo": t["repo"], "pvm": pvm})
         finally:
@@ -194,6 +217,13 @@ def kirjaa_lokiin(t, tulos, pvm, polku=None):
     except Exception as virhe:  # loki on lisa; ajo jatkuu aina
         print(f"Lokikirjaus epaonnistui: {type(virhe).__name__}", file=sys.stderr)
         return False
+
+
+def skripti_tyypille(skripti, tyyppi):
+    """`skripti` on joko polku (vanha: vain katselmointi) tai sanakirja tyyppi -> polku."""
+    if isinstance(skripti, dict):
+        return skripti.get(tyyppi, "")
+    return skripti if tyyppi == "katselmointi" else ""
 
 
 def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.monotonic, pvm=None, kuiva=False,
@@ -216,7 +246,8 @@ def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.mon
         tila.setdefault("kulut", {})
         ajettavat = valitse_ajettavat(tehtavat, tila, pvm)
         if kuiva:
-            rivit = [f"- {t['id']}: {t['repo']} (budjetti {t['budjetti']:.2f})" for t in ajettavat]
+            rivit = [f"- {t['id']}{'' if t['tyyppi'] == 'katselmointi' else ' [' + t['tyyppi'] + ']'}: {t['repo']} "
+                     f"(budjetti {t['budjetti']:.2f})" for t in ajettavat]
             return yhteenveto(rivit or ["Ei ajettavia tehtavia."], tila["kulut"].get(pvm, 0.0), katto, pvm)
         alku = nyt()
         rivit = []
@@ -232,7 +263,7 @@ def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.mon
             if katto - kulu_nyt < t["budjetti"]:
                 rivit.append(f"- {t['id']}: ohitettu (paivakatto: jaljella {katto - kulu_nyt:.2f} < {t['budjetti']:.2f})")
                 continue
-            tulos = suorita(t, pvm, perus, skripti)
+            tulos = suorita(t, pvm, perus, skripti_tyypille(skripti, t["tyyppi"]))
             tila["kulut"][pvm] = round(kulu_nyt + tulos.kulu, 4)
             vanha = tila["tehtavat"].get(t["id"], {})
             tila["tehtavat"][t["id"]] = {
@@ -257,7 +288,7 @@ def main(argv=None):
     p.add_argument("komento", choices=["ajo", "kuiva", "tila"])
     a = p.parse_args(argv)
     perus = os.environ.get("YOJONO_PERUS", OLETUS_PERUS)
-    skripti = os.environ.get("YOJONO_KATSELMOI", OLETUS_KATSELMOI)
+    skripti = {tyyppi: os.environ.get(muuttuja, oletus) for tyyppi, (muuttuja, oletus) in SKRIPTIT.items()}
     if a.komento == "tila":
         print(json.dumps(lue_json(Path(perus) / "tila.json", {}), indent=2, ensure_ascii=False))
         return 0

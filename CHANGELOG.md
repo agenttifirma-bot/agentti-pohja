@@ -5,6 +5,7 @@ Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 ## [Julkaisematon]
 
 ### Lisätty
+- Yojono: useita tehtavatyyppeja (`katselmointi`, uusi `ideointi`; skripti per tyyppi, `YOJONO_IDEOI`) ja toistuvat tehtavat (`toisto_pv`, 1-365 pv). Aiemmin vain katselmointi ja valmis tehtava ei koskaan ajettu uudelleen, joten jono tyhjeni. Ideointiraportit nimetaan `<pvm>-ideointi-<alue>`. Vanhat jonotiedostot toimivat ennallaan. +8 testia.
 - Viikkoraportti: kulujaosuusvihje (yksi agentti >50 %) annetaan vain, kun vahintaan kaksi agenttia on kuluttanut; yhden kuluttajan 100 % osuus oli turha vihje. +1 testi.
 - Viikkoraportti (`agentti/viikkoraportti.py`): lukee tapahtumalokin (vain luku) ja tulostaa tekstin: kulut agenteittain, virheet virhekoodeittain, ehdotusten hyvaksymis-%, levy/muisti/kuorma sekä saantopohjaiset optimointivihjeet (ei mallikutsua, ei verkkoa, ei toteuta mitaan). Ajo: `TAPAHTUMALOKI=db python3 -m agentti.viikkoraportti [PAIVAA]`. Lahetys: `python3 -m agentti.ilmoita valmis "Viikkoraportti" "$(...)"`. Ei kayttoonottoa ennen Tonyn hyvaksyntaa. 8 testia.
 
