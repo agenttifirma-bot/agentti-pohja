@@ -54,6 +54,20 @@ Tämä luo `agentti/agentit/uutiset.py` (kopio esimerkistä) ja `systemd/agentti
 
 Kirjoita jokaiselle uudelle agentille testit ennen käyttöönottoa. Mallina `test/test_ajo.py`.
 
+## Itsenäinen työ: yöjono ja PR-kutsu
+
+Pohjan päälle on rakennettu osat, joilla agentit tekevät tarkistettavaa työtä ilman että kukaan on paikalla. Jokainen osa on rajattu kovakoodatuin säännöin, ja ihminen katselmoi tulokset:
+
+| Osa | Tiedosto | Mitä se tekee |
+| --- | --- | --- |
+| Yöjono | `yojono/` ([ohje](yojono/README.md)) | Ajaa jonotiedoston tehtävät peräkkäin päivä- ja kuukausikaton sisällä. Tyypit: `katselmointi` ja `ideointi` (vain raportti), `kehitys` (muutos haaraan ja PR, ks. [KEHITYS.md](yojono/KEHITYS.md)). |
+| PR-kutsu | `agentti/pr_kutsu.py` | Pushaa `yo/<nimi>`-haaran botin forkkiin ja avaa PR:n. Sallittu repo-lista, ei force-pushia, suojatut polut (`.github/`, `tools/`, salaisuuden nimiset) estetty, enintään 40 tiedostoa ja 5 PR:ää päivässä. Tunnus annetaan gitille vain tilapäisen apuskriptin kautta. |
+| Tapahtumaloki | `agentti/tapahtumaloki.py`, `loki_keraaja.py` | Vain lisäävä SQLite-loki tapahtumille ja palautteelle; salaisuuden näköiset merkkijonot poistetaan ennen tallennusta. |
+| Viikkoraportti | `agentti/viikkoraportti.py` | Lukee lokin ja tulostaa kulut agenteittain, virheet ja sääntöpohjaiset vihjeet (ei mallikutsua). |
+| Automerge | `tools/automerge.py` | Yhdistää automaattisesti vain pienet dokumentti- ja testimuutokset sekä botin `yo/readme-*`-PR:t, joissa on pelkkiä `.md`-tiedostoja. Koodi, työnkulut ja suojatut polut jäävät aina ihmiselle. |
+
+Periaate on sama kuin pohjassa: koodi on laki. Raja ei ole kehotteessa vaan tarkistuksessa, ja jokainen automaattinen muutos on katselmoitavissa PR:nä.
+
 ## Käyttöönotto palvelimella
 
 Katso [DEPLOY.md](DEPLOY.md): käyttäjä, hakemistot, salaisuudet, ajastin ja käyttöönottojärjestys (kuiva-ajo → `--llm` → `--send` → ajastin).

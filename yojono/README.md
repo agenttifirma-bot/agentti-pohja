@@ -1,6 +1,6 @@
 # Yöjono
 
-Aikataulutettu ajuri, joka ajaa jonotiedoston tehtävät peräkkäin kulukaton sisällä ja kertoo tuloksen. Tarkoitus: kone tekee hyödyllistä, tarkistettavaa työtä (nyt koodikatselmointeja), vaikka kukaan ei ole paikalla. Ajuri ei merge, ei pushaa eikä ota mitään käyttöön: tuotos on aina raportti, jonka ihminen katselmoi.
+Aikataulutettu ajuri, joka ajaa jonotiedoston tehtävät peräkkäin kulukaton sisällä ja kertoo tuloksen. Tarkoitus: kone tekee hyödyllistä, tarkistettavaa työtä (nyt koodikatselmointeja), vaikka kukaan ei ole paikalla. Ajuri itse ei merge, ei pushaa eikä ota mitään käyttöön. Tyypit `katselmointi` ja `ideointi` tuottavat vain raportin; tyyppi `kehitys` tekee muutoksen kertakäyttökloonissa ja avaa PR:n `agentti/pr_kutsu.py`:llä (ks. `KEHITYS.md`). Ihminen katselmoi tuotoksen; automaattisesti yhdistyvät vain tools/automerge.py:n sallimat dokumentti- ja testimuutokset sekä botin `yo/readme-*`-PR:t, joissa on vain `.md`-tiedostoja.
 
 Vain standardikirjasto, Python 3.10+. Testit: `python -m unittest discover -s . -t . -p 'test_*.py'` (repon juuresta).
 
