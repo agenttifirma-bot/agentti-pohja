@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from agentti.pr_kutsu import REPOT as PR_REPOT
+
 OLETUS_PERUS = "/var/lib/yojono"
 OLETUS_KATSELMOI = "/opt/yojono/katselmoi.sh"
 # Tehtavatyyppi -> (ymparistomuuttuja, oletuspolku) skriptille. Skripti kutsutaan `<skripti> <repo> <budjetti>` ja se tuottaa
@@ -28,7 +30,10 @@ OLETUS_KATSELMOI = "/opt/yojono/katselmoi.sh"
 SKRIPTIT = {
     "katselmointi": ("YOJONO_KATSELMOI", OLETUS_KATSELMOI),
     "ideointi": ("YOJONO_IDEOI", "/opt/yojono/ideoi.sh"),
+    # kehitys: muuttaa koodia haarassa `yo/...` ja avaa PR:n (agentti/pr_kutsu.py); kutsu `<skripti> <repo> <budjetti> <aihe>`
+    "kehitys": ("YOJONO_KEHITYS", "/opt/yojono/kehitys.sh"),
 }
+KEHITYS_AIHEET = ("readme", "testit", "riippuvuudet")
 TOISTO_MAX_PV = 365
 OLETUS_PAIVAKATTO = 3.0
 MAX_YRITYKSIA = 2
@@ -75,6 +80,13 @@ def tarkista_jono(jono):
             raise JonoVirhe(f"tuntematon tyyppi ({t['id']}): {t.get('tyyppi')!r}")
         if not isinstance(t.get("repo"), str) or not REPO_RE.match(t["repo"]) or t["repo"] in (".", ".."):
             raise JonoVirhe(f"virheellinen repo ({t['id']}): {t.get('repo')!r}")
+        if t["tyyppi"] == "kehitys":
+            if t.get("aihe") not in KEHITYS_AIHEET:
+                raise JonoVirhe(f"kehitys-tehtavan aihe ({t['id']}) pitaa olla jokin: {', '.join(KEHITYS_AIHEET)}")
+            if t["repo"] not in PR_REPOT:
+                raise JonoVirhe(f"kehitys-tehtavan repo ({t['id']}) ei ole PR-sallittujen listalla")
+        elif "aihe" in t:
+            raise JonoVirhe(f"aihe kuuluu vain kehitys-tehtavalle ({t['id']})")
         toisto = t.get("toisto_pv")
         if toisto is not None and (isinstance(toisto, bool) or not isinstance(toisto, int) or not 1 <= toisto <= TOISTO_MAX_PV):
             raise JonoVirhe(f"toisto_pv ({t['id']}) pitaa olla kokonaisluku 1-{TOISTO_MAX_PV}")
@@ -145,14 +157,15 @@ def suorita_katselmointi(tehtava, pvm, perus, skripti, aikaraja=TEHTAVA_AIKARAJA
     Jos ajo alkoi mutta kulua ei saada selville (aikakatkaisu, lukukelvoton JSON), laskutetaan koko budjetti: katto ei saa alittua arvauksella."""
     repo, budjetti = tehtava["repo"], float(tehtava["budjetti"])
     tyyppi = tehtava.get("tyyppi", "katselmointi")
-    nimi = f"{pvm}-{repo}" if tyyppi == "katselmointi" else f"{pvm}-{tyyppi}-{repo}"
+    aihe = tehtava.get("aihe") if tyyppi == "kehitys" else None
+    nimi = f"{pvm}-{repo}" if tyyppi == "katselmointi" else (f"{pvm}-{tyyppi}-{aihe}-{repo}" if aihe else f"{pvm}-{tyyppi}-{repo}")
     json_polku = Path(perus) / "raportit" / f"{nimi}.json"
     md_polku = json_polku.with_suffix(".md")
     vanha_mtime = json_polku.stat().st_mtime if json_polku.exists() else None
     try:
         # Telegram-tunnukset eivat kuulu alaprosessille (katselmoija ei tarvitse niita)
         ymparisto = {k: v for k, v in os.environ.items() if not k.startswith("YOJONO_TELEGRAM_")}
-        r = subprocess.run([str(skripti), repo, f"{budjetti:.2f}"], capture_output=True, text=True, timeout=aikaraja,
+        r = subprocess.run([str(skripti), repo, f"{budjetti:.2f}"] + ([aihe] if aihe else []), capture_output=True, text=True, timeout=aikaraja,
                            check=False, env=ymparisto)
         koodi, loppu = r.returncode, (r.stdout + r.stderr).strip()[-300:]
     except subprocess.TimeoutExpired:
@@ -246,7 +259,7 @@ def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.mon
         tila.setdefault("kulut", {})
         ajettavat = valitse_ajettavat(tehtavat, tila, pvm)
         if kuiva:
-            rivit = [f"- {t['id']}{'' if t['tyyppi'] == 'katselmointi' else ' [' + t['tyyppi'] + ']'}: {t['repo']} "
+            rivit = [f"- {t['id']}{'' if t['tyyppi'] == 'katselmointi' else ' [' + t['tyyppi'] + ('/' + t['aihe'] if t.get('aihe') else '') + ']'}: {t['repo']} "
                      f"(budjetti {t['budjetti']:.2f})" for t in ajettavat]
             return yhteenveto(rivit or ["Ei ajettavia tehtavia."], tila["kulut"].get(pvm, 0.0), katto, pvm)
         alku = nyt()

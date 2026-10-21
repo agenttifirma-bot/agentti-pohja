@@ -333,6 +333,47 @@ class TestKatselmointiSkripti(Pohja):
         self.assertEqual(tulos.kulu, 0.0)
 
 
+class TestKehitys(Pohja):
+    def kt(self, **kw):
+        return dict({"id": "k", "tyyppi": "kehitys", "repo": "agentti-pohja", "aihe": "readme", "budjetti": 1.0}, **kw)
+
+    def test_kelvollinen(self):
+        ajuri.tarkista_jono({"tehtavat": [self.kt()]})
+
+    def test_virheet(self):
+        for huono in (self.kt(aihe="muu"), self.kt(aihe=None), self.kt(repo="kauppatiimi"), self.kt(repo="agenttifirma")):
+            with self.assertRaises(ajuri.JonoVirhe):
+                ajuri.tarkista_jono({"tehtavat": [huono]})
+        with self.assertRaises(ajuri.JonoVirhe):
+            ajuri.tarkista_jono({"tehtavat": [{"id": "a", "tyyppi": "katselmointi", "repo": "r", "budjetti": 1.0, "aihe": "readme"}]})
+
+    def test_kuiva_nayttaa_aiheen(self):
+        self.kirjoita_jono({"tehtavat": [self.kt()]})
+        teksti, _ = self.aja(None, kuiva=True)
+        self.assertIn("[kehitys/readme]", teksti)
+
+    def test_skripti_saa_aiheen_ja_raportti_nimetaan_aiheella(self):
+        skripti = self.perus / "kehitys.sh"
+        skripti.write_text("#!/bin/sh\n"
+                           f'echo "$1 $2 $3" > {self.perus}/argumentit\n'
+                           f'mkdir -p {self.perus}/raportit\n'
+                           f'echo \'{{"total_cost_usd": 0.4}}\' > "{self.perus}/raportit/{PVM}-kehitys-$3-$1.json"\n'
+                           f'echo pr > "{self.perus}/raportit/{PVM}-kehitys-$3-$1.md"\n')
+        skripti.chmod(skripti.stat().st_mode | stat.S_IXUSR)
+        tulos = ajuri.suorita_katselmointi(self.kt(), PVM, self.perus, skripti)
+        self.assertTrue(tulos.ok)
+        self.assertEqual((self.perus / "argumentit").read_text().strip(), "agentti-pohja 1.00 readme")
+        self.assertTrue(tulos.raportti.endswith(f"{PVM}-kehitys-readme-agentti-pohja.md"))
+
+    def test_katselmointi_ei_saa_ylimaaraista_argumenttia(self):
+        skripti = self.perus / "k.sh"
+        skripti.write_text("#!/bin/sh\n" f'echo "$#" > {self.perus}/n\n')
+        skripti.chmod(skripti.stat().st_mode | stat.S_IXUSR)
+        (self.perus / "raportit").mkdir(exist_ok=True)
+        ajuri.suorita_katselmointi({"id": "a", "tyyppi": "katselmointi", "repo": "r", "budjetti": 1.0}, PVM, self.perus, skripti)
+        self.assertEqual((self.perus / "n").read_text().strip(), "2")
+
+
 class TestTelegram(unittest.TestCase):
     def test_ei_laheta_ilman_asetuksia(self):
         with mock.patch("urllib.request.urlopen") as u:
