@@ -57,7 +57,7 @@ class Pohja(unittest.TestCase):
         kirjoita(self.ajuri / "agentti" / "pr_kutsu.py", runko)
 
     def aja(self, *args, kuiva=None, **extra):
-        env = dict(os.environ, KEHITYS_PERUS=str(self.perus), YOJONO_AJURI=str(self.ajuri), KEHITYS_ENV=str(self.env_tiedosto),
+        env = dict(os.environ, KEHITYS_PERUS=str(self.perus), KEHITYS_TYO=str(self.perus / "tyo"), YOJONO_AJURI=str(self.ajuri), KEHITYS_ENV=str(self.env_tiedosto),
                    KEHITYS_URL_ETUOSA=str(self.lahde), KEHITYS_CLAUDE=str(self.agentti), KEHITYS_PYTHON=sys.executable, **extra)
         env.pop("KEHITYS_KUIVA", None)
         if kuiva:
@@ -107,8 +107,19 @@ class Ajo(Pohja):
         args = (self.agentti.parent / "claude.args").read_text()
         self.assertIn("--max-budget-usd 1.25", args)
         self.assertIn("Bash(python3 -B -m unittest:*)", args)
+        self.assertIn("--permission-mode acceptEdits", args)
         self.assertIn("Edit(//etc/**)", args)
         self.assertIn("Write(//opt/**)", args)
+        self.assertIn("Write(//var/lib/yojono/*.json)", args)
+        # ei yleista Edit/Write-lupaa sallittujen listassa (muuten kirjoitus sallittaisiin kaikkialle)
+        sallitut = args.split("--allowedTools ")[1].split(" --disallowedTools")[0].split(",")
+        self.assertNotIn("Edit", sallitut)
+        self.assertNotIn("Write", sallitut)
+
+    def test_oletus_tyohakemisto_ei_ole_var_lib_yojonon_alla(self):
+        rivi = [l for l in SKRIPTI.read_text().splitlines() if l.startswith("TYO=")][0]
+        self.assertIn("/var/tmp/yojono-tyo", rivi)
+        self.assertNotIn("/var/lib/yojono", rivi)
 
     def test_ei_muutoksia_ei_prta(self):
         self.agentti_skripti(":")
