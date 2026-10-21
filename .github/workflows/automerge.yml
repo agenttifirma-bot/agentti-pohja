@@ -12,7 +12,11 @@ permissions:
 
 jobs:
   automerge:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Saman repon haarat TAI botin oma fork; tools/automerge.py rajaa botin tapauksen erikseen (yo/readme-*, vain .md)
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      (github.event.pull_request.user.login == 'agenttifirma-bot' &&
+       github.event.pull_request.head.repo.owner.login == 'agenttifirma-bot')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
