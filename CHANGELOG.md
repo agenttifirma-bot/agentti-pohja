@@ -5,6 +5,7 @@ Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 ## [Julkaisematon]
 
 ### Lisätty
+- kehitys.sh: tyohakemisto siirretty pois /var/lib/yojono:n alta (`KEHITYS_TYO`, oletus /var/tmp/yojono-tyo): palvelinkoe 21.10. osoitti, etta Read-esto kattoi kloonin ja agentti ei voinut muokata sita. Agentin kirjoitus: `--permission-mode acceptEdits` ilman yleista Edit/Write-lupaa (vain tyohakemiston sisalla) + erilliset estot arkaluontoisille poluille. +1 testi.
 - `yojono/kehitys.sh` tallennettu repoon (aiemmin vain palvelimella) testikoukuilla (`KEHITYS_ENV`, `KEHITYS_URL_ETUOSA`, `KEHITYS_CLAUDE`, `KEHITYS_PYTHON`) ja 12 testia oikealla alaprosessilla (paikalliset repot, tekoagentti, tekopr_kutsu): aiherajaus, poistot, punaiset testit, pr_kutsun virhe, siivous, kuivakoe; 5 mutanttia kaatuu. Uutta: testiajolle 600 s aikaraja; agentin Edit/Write estetty poluista /etc, /root, /var, /opt, /home, /usr (Read oli jo).
 - Yojono: tehtavatyyppi `kehitys` (pakollinen `aihe`: readme/testit/riippuvuudet; repo vain PR-sallittujen listalta; skripti `kehitys.sh <repo> <budjetti> <aihe>`, sopimus `yojono/KEHITYS.md`). Raportti nimella `<pvm>-kehitys-<aihe>-<repo>`. Ajuri ei tee muutoksia itse. +5 testia.
 - Yojono: useita tehtavatyyppeja (`katselmointi`, uusi `ideointi`; skripti per tyyppi, `YOJONO_IDEOI`) ja toistuvat tehtavat (`toisto_pv`, 1-365 pv). Aiemmin vain katselmointi ja valmis tehtava ei koskaan ajettu uudelleen, joten jono tyhjeni. Ideointiraportit nimetaan `<pvm>-ideointi-<alue>`. Vanhat jonotiedostot toimivat ennallaan. +8 testia.
