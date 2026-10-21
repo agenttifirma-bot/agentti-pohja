@@ -75,7 +75,8 @@ def vihjeet(tiedot, res):
     """Saantopohjaiset optimointivihjeet. Tyhja lista = ei huomautettavaa."""
     v = []
     kulu = tiedot["kulu_usd"]
-    if kulu > 0 and tiedot["kulu_agentti"]:
+    kuluttajia = [a for a, k in tiedot["kulu_agentti"].items() if k > 0]
+    if kulu > 0 and len(kuluttajia) >= 2:  # yhden kuluttajan 100 % osuus ei kerro mitaan
         agentti, summa = max(tiedot["kulu_agentti"].items(), key=lambda p: p[1])
         osuus = 100.0 * summa / kulu
         if osuus > KULUOSUUS_RAJA:

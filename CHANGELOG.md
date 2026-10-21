@@ -5,6 +5,7 @@ Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 ## [Julkaisematon]
 
 ### Lisätty
+- Viikkoraportti: kulujaosuusvihje (yksi agentti >50 %) annetaan vain, kun vahintaan kaksi agenttia on kuluttanut; yhden kuluttajan 100 % osuus oli turha vihje. +1 testi.
 - Viikkoraportti (`agentti/viikkoraportti.py`): lukee tapahtumalokin (vain luku) ja tulostaa tekstin: kulut agenteittain, virheet virhekoodeittain, ehdotusten hyvaksymis-%, levy/muisti/kuorma sekä saantopohjaiset optimointivihjeet (ei mallikutsua, ei verkkoa, ei toteuta mitaan). Ajo: `TAPAHTUMALOKI=db python3 -m agentti.viikkoraportti [PAIVAA]`. Lahetys: `python3 -m agentti.ilmoita valmis "Viikkoraportti" "$(...)"`. Ei kayttoonottoa ennen Tonyn hyvaksyntaa. 8 testia.
 
 - Yojono: valinnainen `kuukausikatto` jono.json:ssa (USD). Tehtava ohitetaan, jos kuukauden kulut + sen budjetti ylittaisivat katon; ilman kenttaa kaytos on ennallaan. Tonyn paatos 20.10.: tyojonon paivakatto 2 USD, kuukausikatto 40 USD. 4 testia.

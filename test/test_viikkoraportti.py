@@ -49,6 +49,11 @@ class ViikkoraporttiTest(unittest.TestCase):
         self.assertIn("Levy", v)
         self.assertIn("muistia", v)
 
+    def test_kulu_vihje_vaatii_kaksi_kuluttajaa(self):
+        self.kirjaa("yojono", kulu=3.0)
+        self.kirjaa("katsaus", kulu=0.0)
+        self.assertEqual(vr.vihjeet(vr.keraa(self.y, 7, nyt=NYT), {}), [])
+
     def test_hyvaksymis_vihje_vaatii_tarpeeksi_paatoksia(self):
         for i in range(4):
             tl.kirjaa_palaute(self.y, tl.ehdota(self.y, "o%d" % i, "p"), "hylkaa")
