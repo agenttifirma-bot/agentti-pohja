@@ -14,6 +14,72 @@ def tied(nimi, status="modified", changes=5, **lisa):
     return d
 
 
+BOTTI_PR = {"draft": False, "head_repo": "agenttifirma-bot/r", "base_repo": "o/r", "labels": [], "author": "agenttifirma-bot",
+            "head_ref": "yo/readme-2026-10-22", "base_ref": "main"}
+
+
+class BotinForkkiTesti(unittest.TestCase):
+    def test_botin_readme_pr_kelpaa(self):
+        for nimi in ("README.md", "docs/ohje.md", "CHANGELOG.md"):
+            ok, syyt = am.arvioi(BOTTI_PR, [tied(nimi)])
+            self.assertTrue(ok, syyt)
+
+    def test_vain_md_forkista(self):
+        for nimi in ("test/test_x.py", "agentti/ajo.py", "requirements.txt", "README.txt"):
+            self.assertFalse(am.arvioi(BOTTI_PR, [tied(nimi)])[0], nimi)
+        self.assertFalse(am.arvioi(BOTTI_PR, [tied("README.md"), tied("test/test_x.py")])[0])
+
+    def test_suojatut_polut_estavat_silti(self):
+        for nimi in (".github/workflows/x.md", "tools/automerge.md", "docs/secrets.md", "docs/api_key.md", "isanta/a.md"):
+            self.assertFalse(am.arvioi(BOTTI_PR, [tied(nimi)])[0], nimi)
+
+    def test_muu_tekija_forkista_ei_kelpaa(self):
+        for kentat in ({"author": "joku-muu"}, {"author": None}, {"author": "agenttifirma-bot-2"}):
+            self.assertFalse(am.arvioi(dict(BOTTI_PR, **kentat), [tied("README.md")])[0], kentat)
+
+    def test_vaara_forkki_ei_kelpaa(self):
+        for head in ("joku-muu/r", "agenttifirma-bot/muu-repo", "agenttifirma-bot/", None, ""):
+            self.assertFalse(am.arvioi(dict(BOTTI_PR, head_repo=head), [tied("README.md")])[0], head)
+
+    def test_vaara_haara_tai_base_ei_kelpaa(self):
+        for kentat in ({"head_ref": "main"}, {"head_ref": "yo/testit-2026-10-22"}, {"head_ref": "yo/readme-"}, {"head_ref": "yo/readme-A"},
+                       {"head_ref": "feature/readme-x"}, {"head_ref": None}, {"base_ref": "kehitys"}, {"base_ref": None}):
+            self.assertFalse(am.arvioi(dict(BOTTI_PR, **kentat), [tied("README.md")])[0], kentat)
+
+    def test_muut_ehdot_pitavat_forkissakin(self):
+        self.assertFalse(am.arvioi(dict(BOTTI_PR, draft=True), [tied("README.md")])[0])
+        self.assertFalse(am.arvioi(dict(BOTTI_PR, labels=["ei-automerge"]), [tied("README.md")])[0])
+        self.assertFalse(am.arvioi(BOTTI_PR, [])[0])
+        self.assertFalse(am.arvioi(BOTTI_PR, [tied("README.md", status="removed")])[0])
+        self.assertFalse(am.arvioi(BOTTI_PR, [tied("README.md", changes=am.MAX_RIVEJA + 1)])[0])
+        self.assertFalse(am.arvioi(BOTTI_PR, [tied("a%d.md" % i) for i in range(am.MAX_TIEDOSTOA + 1)])[0])
+
+    def test_saman_repon_pr_ei_tarvitse_tekijaa(self):
+        self.assertTrue(am.arvioi(PR, [tied("README.md")])[0])
+
+    def test_hae_pr_palauttaa_tekijan_ja_haarat(self):
+        data = {"draft": False, "user": {"login": "agenttifirma-bot"}, "labels": [],
+                "head": {"ref": "yo/readme-x", "repo": {"full_name": "agenttifirma-bot/r"}},
+                "base": {"ref": "main", "repo": {"full_name": "o/r"}}}
+        r = subprocess.CompletedProcess([], 0, stdout=json.dumps(data), stderr="")
+        with mock.patch.object(am, "_gh", return_value=r):
+            pr = am.hae_pr("o/r", "1")
+        self.assertEqual((pr["author"], pr["head_ref"], pr["base_ref"]), ("agenttifirma-bot", "yo/readme-x", "main"))
+        self.assertTrue(am.arvioi(pr, [tied("README.md")])[0])
+
+
+class WorkflowTesti(unittest.TestCase):
+    def test_workflow_ei_lataa_pr_koodia_ja_rajaa_botin(self):
+        import pathlib
+        teksti = (pathlib.Path(__file__).resolve().parent.parent / ".github" / "workflows" / "automerge.yml").read_text()
+        self.assertIn("pull_request_target", teksti)
+        self.assertIn("github.event.pull_request.user.login == 'agenttifirma-bot'", teksti)
+        self.assertIn("head.repo.owner.login == 'agenttifirma-bot'", teksti)
+        # PR:n omaa koodia ei saa checkoutata (ei ref/repository head-arvoihin)
+        self.assertNotIn("pull_request.head.sha", teksti)
+        self.assertNotIn("head.ref", teksti.replace("head.repo.owner.login", ""))
+
+
 class ArvioiTesti(unittest.TestCase):
     def test_dokumentit_ja_testit_kelpaavat(self):
         for nimi in ("README.md", "CHANGELOG.md", "docs/ohje.md", "test/test_x.py", "test/ali/test_y.py"):
