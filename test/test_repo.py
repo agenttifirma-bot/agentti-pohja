@@ -3,6 +3,8 @@ import contextlib
 import io
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -72,13 +74,14 @@ class LuoTesti(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        for osa in ("agentti", "systemd"):
+        for osa in ("agentti", "systemd", "test"):
             shutil.copytree(os.path.join(JUURI, osa), os.path.join(self.tmp.name, osa),
                             ignore=shutil.ignore_patterns("__pycache__"))
 
     def test_luo_agentti(self):
         luodut = luo.luo("uutiset", self.tmp.name)
-        self.assertEqual(len(luodut), 3)
+        self.assertEqual(len(luodut), 4)
+        self.assertIn(os.path.join("test", "test_uutiset.py"), luodut)
         with open(os.path.join(self.tmp.name, "agentti", "agentit", "uutiset.py")) as f:
             self.assertIn('NIMI = "uutiset"', f.read())
         with open(os.path.join(self.tmp.name, "systemd", "agentti-uutiset.service")) as f:
@@ -87,6 +90,23 @@ class LuoTesti(unittest.TestCase):
         self.assertNotIn("@NIMI@", teksti)
         with open(os.path.join(self.tmp.name, "systemd", "agentti-uutiset.timer")) as f:
             self.assertNotIn("@NIMI@", f.read())
+
+    def test_luotu_testi_menee_lapi_ja_kaatuu_rikkinaiselle_agentille(self):
+        luo.luo("uutiset", self.tmp.name)
+        ymp = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+        r = subprocess.run([sys.executable, "-B", "-m", "unittest", "test.test_uutiset"], cwd=self.tmp.name,
+                           capture_output=True, text=True, env=ymp)
+        self.assertEqual(r.returncode, 0, r.stderr[-800:])
+        self.assertIn("Ran 4 tests", r.stderr)
+        # rikki: agentti ei kayta verkkoa kuivana -> testin pitaa huomata (kerays kaatuu)
+        polku = os.path.join(self.tmp.name, "agentti", "agentit", "uutiset.py")
+        with open(polku, encoding="utf-8") as f:
+            teksti = f.read()
+        with open(polku, "w", encoding="utf-8") as f:
+            f.write(teksti.replace("def kerays():", "def kerays():\n    raise RuntimeError('rikki')\n\n\ndef _vanha():"))
+        r = subprocess.run([sys.executable, "-B", "-m", "unittest", "test.test_uutiset"], cwd=self.tmp.name,
+                           capture_output=True, text=True, env=ymp)
+        self.assertNotEqual(r.returncode, 0)
 
     def test_ei_ylikirjoita(self):
         luo.luo("uutiset", self.tmp.name)

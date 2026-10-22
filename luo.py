@@ -1,6 +1,7 @@
 """Luo uuden agentin pohjasta: python luo.py NIMI
 
-Tekee agentti/agentit/NIMI.py (kopio esimerkista) ja systemd/agentti-NIMI.service + .timer.
+Tekee agentti/agentit/NIMI.py (kopio esimerkista), test/test_NIMI.py (perustestit mallista) ja
+systemd/agentti-NIMI.service + .timer.
 Ei ylikirjoita mitaan olemassa olevaa."""
 import os
 import re
@@ -16,6 +17,8 @@ def luo(nimi, juuri=JUURI):
     kohteet = {
         os.path.join(juuri, "agentti", "agentit", nimi + ".py"):
             os.path.join(juuri, "agentti", "agentit", "esimerkki.py"),
+        os.path.join(juuri, "test", "test_%s.py" % nimi):
+            os.path.join(juuri, "test", "agentti.test.mall"),
         os.path.join(juuri, "systemd", "agentti-%s.service" % nimi):
             os.path.join(juuri, "systemd", "agentti.service.mall"),
         os.path.join(juuri, "systemd", "agentti-%s.timer" % nimi):
@@ -29,6 +32,8 @@ def luo(nimi, juuri=JUURI):
             teksti = f.read()
         if lahde.endswith("esimerkki.py"):
             teksti = teksti.replace('NIMI = "esimerkki"', 'NIMI = "%s"' % nimi)
+        elif lahde.endswith("agentti.test.mall"):
+            teksti = teksti.replace("@NIMI@", nimi)
         else:
             teksti = teksti.replace("@NIMI@", nimi)
         with open(kohde, "w", encoding="utf-8") as f:
