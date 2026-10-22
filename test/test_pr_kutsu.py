@@ -254,6 +254,28 @@ class KokoketjuTest(unittest.TestCase):
         self.assertEqual(osoite, "https://github.com/a/b/pull/1")
         self.assertTrue(any("push" in c for c in komennot))
 
+    def test_fork_paivitetaan_ennen_pushia_ja_virhe_ei_kaada(self):
+        tapahtumat = []
+
+        def suorita(cmd, **kw):
+            if "push" in cmd:
+                tapahtumat.append("push")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return subprocess.run(cmd, **kw)
+
+        def avaa(pyynto, timeout):
+            if pyynto.full_url.endswith("/merge-upstream"):
+                tapahtumat.append("sync")
+                self.assertEqual(json.loads(pyynto.data.decode()), {"branch": "main"})
+                self.assertIn("/repos/botti-x/agentti-pohja/", pyynto.full_url)
+                raise urllib.error.URLError("ei verkkoa")
+            tapahtumat.append("pr")
+            return Vastaus({"html_url": "https://github.com/a/b/pull/1"})
+        self.env["YOJONO_BOT_KAYTTAJA"] = "botti-x"
+        with tee_repo({"docs/a.md": "x"}) as hak:
+            pk.luo_pr("agentti-pohja", hak, "yo/koe", "o", "k", env=self.env, suorita=suorita, avaa=avaa)
+        self.assertEqual(tapahtumat, ["sync", "push", "pr"])
+
     def test_suojattu_polku_ei_paase_pushiin_eika_kuluta_paivarajaa(self):
         komennot = []
 
