@@ -34,6 +34,7 @@ SKRIPTIT = {
     "kehitys": ("YOJONO_KEHITYS", "/opt/yojono/kehitys.sh"),
 }
 KEHITYS_AIHEET = ("readme", "testit", "riippuvuudet")
+TEEMA_MAX = 300  # ideointi-tehtavan valinnainen `teema` (vapaa teksti kehotteeseen)
 TOISTO_MAX_PV = 365
 OLETUS_PAIVAKATTO = 3.0
 MAX_YRITYKSIA = 2
@@ -87,6 +88,12 @@ def tarkista_jono(jono):
                 raise JonoVirhe(f"kehitys-tehtavan repo ({t['id']}) ei ole PR-sallittujen listalla")
         elif "aihe" in t:
             raise JonoVirhe(f"aihe kuuluu vain kehitys-tehtavalle ({t['id']})")
+        if "teema" in t:
+            if t["tyyppi"] != "ideointi":
+                raise JonoVirhe(f"teema kuuluu vain ideointi-tehtavalle ({t['id']})")
+            teema = t["teema"]
+            if not isinstance(teema, str) or not teema.strip() or len(teema) > TEEMA_MAX or any(c in teema for c in "\r\n\x00"):
+                raise JonoVirhe(f"teema ({t['id']}) pitaa olla yksirivinen teksti, 1-{TEEMA_MAX} merkkia")
         toisto = t.get("toisto_pv")
         if toisto is not None and (isinstance(toisto, bool) or not isinstance(toisto, int) or not 1 <= toisto <= TOISTO_MAX_PV):
             raise JonoVirhe(f"toisto_pv ({t['id']}) pitaa olla kokonaisluku 1-{TOISTO_MAX_PV}")
@@ -158,13 +165,20 @@ def suorita_katselmointi(tehtava, pvm, perus, skripti, aikaraja=TEHTAVA_AIKARAJA
     repo, budjetti = tehtava["repo"], float(tehtava["budjetti"])
     tyyppi = tehtava.get("tyyppi", "katselmointi")
     aihe = tehtava.get("aihe") if tyyppi == "kehitys" else None
-    nimi = f"{pvm}-{repo}" if tyyppi == "katselmointi" else (f"{pvm}-{tyyppi}-{aihe}-{repo}" if aihe else f"{pvm}-{tyyppi}-{repo}")
+    teema = tehtava.get("teema") if tyyppi == "ideointi" else None
+    if teema:  # teemallinen ideointi saa oman raportin (tehtavan id nimessa), jotta samaan repoon voi tehda useita ideointeja samana paivana
+        nimi = f"{pvm}-{tyyppi}-{tehtava['id']}-{repo}"
+    else:
+        nimi = f"{pvm}-{repo}" if tyyppi == "katselmointi" else (f"{pvm}-{tyyppi}-{aihe}-{repo}" if aihe else f"{pvm}-{tyyppi}-{repo}")
     json_polku = Path(perus) / "raportit" / f"{nimi}.json"
     md_polku = json_polku.with_suffix(".md")
     vanha_mtime = json_polku.stat().st_mtime if json_polku.exists() else None
     try:
         # Telegram-tunnukset eivat kuulu alaprosessille (katselmoija ei tarvitse niita)
         ymparisto = {k: v for k, v in os.environ.items() if not k.startswith("YOJONO_TELEGRAM_")}
+        if teema:  # skripti lukee teeman ymparistosta ja kirjoittaa raportin nimella $YOJONO_RAPORTTI.json|md
+            ymparisto["YOJONO_TEEMA"] = teema
+            ymparisto["YOJONO_RAPORTTI"] = nimi
         r = subprocess.run([str(skripti), repo, f"{budjetti:.2f}"] + ([aihe] if aihe else []), capture_output=True, text=True, timeout=aikaraja,
                            check=False, env=ymparisto)
         koodi, loppu = r.returncode, (r.stdout + r.stderr).strip()[-300:]
