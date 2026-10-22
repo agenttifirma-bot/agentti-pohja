@@ -173,6 +173,22 @@ class PushTest(unittest.TestCase):
 
 
 class PrTest(unittest.TestCase):
+    def test_workflow_oikeusvirhe_selitetaan(self):
+        def suorita(cmd, **kw):
+            return SimpleNamespace(returncode=1, stdout="", stderr="refusing to allow a Personal Access Token to create or update workflow `.github/workflows/a.yml` without `workflow` scope")
+        with self.assertRaises(pk.PrVirhe) as ctx:
+            pk.pushaa("/h", "agentti-pohja", "yo/koe", "botti", "/t", suorita=suorita, sync="HTTP 403")
+        teksti = str(ctx.exception)
+        self.assertIn("Sync fork", teksti)
+        self.assertIn("HTTP 403", teksti)
+        self.assertNotIn("onko fork olemassa", teksti)
+
+    def test_synkkavirhe_palautetaan_koodina(self):
+        def avaa(pyynto, timeout):
+            raise urllib.error.HTTPError(pyynto.full_url, 422, "x", {}, None)
+        self.assertEqual(pk.paivita_fork("agentti-pohja", "botti", TUNNUS, avaa=avaa), "HTTP 422")
+        self.assertIs(pk.paivita_fork("agentti-pohja", "botti", TUNNUS, avaa=lambda p, timeout: Vastaus({})), True)
+
     def test_pyynto(self):
         saatu = {}
 
