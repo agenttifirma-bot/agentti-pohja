@@ -4,6 +4,9 @@ Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 
 ## [Julkaisematon]
 
+### Korjattu
+- pr_kutsu: botin fork paivitetaan ylavirran mainiin (GitHub merge-upstream) ennen pushia. Ensimmainen oikea yojono-ajo 22.10. kaatui, koska forkin main oli jaljessa ja uusi haara olisi vienyt forkkiin ylavirran `.github/workflows/automerge.yml`-muutokset; bot-tunnuksella ei ole (eika pida olla) `workflow`-oikeutta, joten GitHub hylkasi pushin. Paivitysvirhe ei kaada ketjua. +1 testi, mutantti (kutsu pois) kaatuu.
+
 ### Lisätty
 - README: osio "Itsenäinen työ: yöjono ja PR-kutsu" (yojono, pr_kutsu, tapahtumaloki, viikkoraportti, automerge); yojono/README.md:n vanhentunut kuvaus ("ei pushaa") korjattu kehitys-tyypin osalta.
 - Automerge: botin README-PR:t (Tonyn paatos 21.10.2026). Botin omasta forkista tuleva PR yhdistyy automaattisesti (CI vihrea) vain, jos tekija on `agenttifirma-bot`, head-repo on botin fork samasta reposta, base on main, haara `yo/readme-*` ja kaikki tiedostot ovat `.md` (testit/koodi eivat kelpaa forkista); suojatut polut, koko- ja poistorajat ja `ei-automerge` pitavat edelleen. Tyonkulku ei lataa PR:n koodia. +10 testia, 5 mutanttia kaatuu.

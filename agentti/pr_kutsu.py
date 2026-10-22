@@ -146,6 +146,25 @@ def pushaa(hakemisto, repo, haara, botti, tunnuspolku, suorita=subprocess.run):
         raise PrVirhe("push epaonnistui (onko fork olemassa ja token voimassa?): " + loppu)
 
 
+def paivita_fork(repo, botti, tunnus, avaa=urllib.request.urlopen):
+    """Paivittaa botin forkin main-haaran alkuperaisen perusteella (GitHubin merge-upstream, vain fast-forward).
+
+    Ilman tata uusi haara vie forkkiin myos ylavirran tyonkulkutiedostomuutokset, ja GitHub hylkaa pushin,
+    koska tunnuksella ei ole `workflow`-oikeutta (eika sen kuulu olla). Virheet eivat kaada ketjua: jos paivitys
+    ei onnistu, itse push nostaa selkean virheen.
+    """
+    pyynto = urllib.request.Request(
+        f"https://api.github.com/repos/{botti}/{repo}/merge-upstream", data=json.dumps({"branch": "main"}).encode(),
+        method="POST", headers={"Authorization": "Bearer " + tunnus, "Accept": "application/vnd.github+json",
+                                "Content-Type": "application/json", "User-Agent": "yojono-pr-kutsu"})
+    try:
+        with avaa(pyynto, timeout=30) as vastaus:
+            vastaus.read()
+        return True
+    except (urllib.error.URLError, ValueError, OSError):
+        return False
+
+
 def avaa_pr(repo, haara, botti, otsikko, kuvaus, tunnus, avaa=urllib.request.urlopen):
     """Avaa PR forkista alkuperaiseen repoon. Palauttaa PR:n osoitteen."""
     runko = {
@@ -180,6 +199,7 @@ def luo_pr(repo, hakemisto, haara, otsikko, kuvaus, env=None, suorita=subprocess
     tunnus = lue_tunnus(tunnuspolku)
     if not varaa_paikka(env.get("YOJONO_PR_TILA", OLETUS_TILA)):
         raise PrVirhe("paivaraja %d PR-yritysta taynna" % RAJA_PAIVASSA)
+    paivita_fork(repo, botti, tunnus, avaa=avaa)
     pushaa(hakemisto, repo, haara, botti, tunnuspolku, suorita=suorita)
     return avaa_pr(repo, haara, botti, otsikko, kuvaus, tunnus, avaa=avaa)
 
