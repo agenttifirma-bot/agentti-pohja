@@ -374,6 +374,56 @@ class TestKehitys(Pohja):
         self.assertEqual((self.perus / "n").read_text().strip(), "2")
 
 
+class TestTeema(Pohja):
+    def it(self, **kw):
+        return dict({"id": "i", "tyyppi": "ideointi", "repo": "mcp-model-router", "budjetti": 1.0}, **kw)
+
+    def test_kelvollinen_teema(self):
+        ajuri.tarkista_jono({"tehtavat": [self.it(teema="roadmap")]})
+        ajuri.tarkista_jono({"tehtavat": [self.it(teema="x" * ajuri.TEEMA_MAX)]})
+
+    def test_virheelliset_teemat(self):
+        huonot = [self.it(teema=""), self.it(teema="  "), self.it(teema=5), self.it(teema=None),
+                  self.it(teema="x" * (ajuri.TEEMA_MAX + 1)), self.it(teema="a\nb"), self.it(teema="a\rb"),
+                  dict(t("k"), teema="x"), dict(t("k"), tyyppi="kehitys", repo="agentti-pohja", aihe="readme", teema="x")]
+        for huono in huonot:
+            with self.subTest(huono=huono):
+                with self.assertRaises(ajuri.JonoVirhe):
+                    ajuri.tarkista_jono({"tehtavat": [huono]})
+
+    def skripti(self):
+        polku = self.perus / "ideoi.sh"
+        polku.write_text("#!/bin/sh\n"
+                         f'echo "$#|$YOJONO_TEEMA|$YOJONO_RAPORTTI" > {self.perus}/tiedot\n'
+                         f'mkdir -p {self.perus}/raportit\n'
+                         f'N="${{YOJONO_RAPORTTI:-{PVM}-ideointi-$1}}"\n'
+                         f'echo \'{{"total_cost_usd": 0.2}}\' > "{self.perus}/raportit/$N.json"\n'
+                         f'echo r > "{self.perus}/raportit/$N.md"\n')
+        polku.chmod(polku.stat().st_mode | stat.S_IXUSR)
+        return polku
+
+    def test_teema_valitetaan_ymparistona_ja_raportti_saa_oman_nimen(self):
+        tulos = ajuri.suorita_katselmointi(self.it(id="i-dogfood", teema="roadmap: 3 PR-ehdotusta"), PVM, self.perus, self.skripti())
+        self.assertTrue(tulos.ok)
+        self.assertEqual((self.perus / "tiedot").read_text().strip(),
+                         f"2|roadmap: 3 PR-ehdotusta|{PVM}-ideointi-i-dogfood-mcp-model-router")
+        self.assertTrue(tulos.raportti.endswith(f"{PVM}-ideointi-i-dogfood-mcp-model-router.md"))
+
+    def test_kaksi_teemaa_samaan_repoon_eivat_ylikirjoita_toisiaan(self):
+        s = self.skripti()
+        a = ajuri.suorita_katselmointi(self.it(id="a", teema="x"), PVM, self.perus, s)
+        b = ajuri.suorita_katselmointi(self.it(id="b", teema="y"), PVM, self.perus, s)
+        self.assertNotEqual(a.raportti, b.raportti)
+
+    def test_ilman_teemaa_nimi_ja_ymparisto_ennallaan(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("YOJONO_TEEMA", None)
+            os.environ.pop("YOJONO_RAPORTTI", None)
+            tulos = ajuri.suorita_katselmointi(self.it(), PVM, self.perus, self.skripti())
+        self.assertEqual((self.perus / "tiedot").read_text().strip(), "2||")
+        self.assertTrue(tulos.raportti.endswith(f"{PVM}-ideointi-mcp-model-router.md"))
+
+
 class TestTelegram(unittest.TestCase):
     def test_ei_laheta_ilman_asetuksia(self):
         with mock.patch("urllib.request.urlopen") as u:

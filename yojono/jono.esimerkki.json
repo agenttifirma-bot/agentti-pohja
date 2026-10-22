@@ -26,6 +26,13 @@
       "repo": "agenttifirma",
       "budjetti": 1.0,
       "toisto_pv": 3
+    },
+    {
+      "id": "ideointi-roadmap-mcp-model-router",
+      "tyyppi": "ideointi",
+      "repo": "mcp-model-router",
+      "budjetti": 1.0,
+      "teema": "mita pitaa tehda jotta projekti herää henkiin (roadmap, 3-5 pientä PR-ehdotusta)"
     }
   ]
 }
