@@ -32,3 +32,26 @@ jobs:
         run: |
           python luo.py testiagentti
           python -m agentti --agentti testiagentti --tila "$RUNNER_TEMP/tila"
+
+  # README lupaa "Linux tai macOS": tama pitaa lupauksen todennettuna. Oma tyo (ei matriisissa), jotta
+  # vaaditut tarkistukset `test (3.10)` ... `test (3.13)` pysyvat ennallaan. Ei ole vaadittu tarkistus.
+  test-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Aseta Python 3.13
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Testit
+        run: python -m unittest discover -s . -t . -p 'test_*.py' -v
+
+      - name: Kuiva-ajo (ei verkkoa)
+        run: python -m agentti --tila "$RUNNER_TEMP/tila"
+
+      - name: Uuden agentin luonti toimii (luo.py)
+        run: |
+          python luo.py testiagentti
+          python -m agentti --agentti testiagentti --tila "$RUNNER_TEMP/tila"
