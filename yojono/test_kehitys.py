@@ -82,6 +82,7 @@ class Argumentit(Pohja):
         self.assertFalse((self.perus / "tyo").exists())
 
 
+@unittest.skipUnless(sys.platform.startswith("linux"), "kehitys.sh on palvelinskripti: vaatii GNU timeoutin (Linux); macOS-CI paljasti, ettei sita ole")
 class Ajo(Pohja):
     def test_readme_muutos_avaa_pr_ja_siivoaa(self):
         self.agentti_skripti('echo "uusi rivi" >> README.md')
