@@ -5,6 +5,7 @@ Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 ## [Julkaisematon]
 
 ### Korjattu
+- pr_kutsu: kun push kaatuu workflow-oikeuteen (fork jaljessa ylavirran tyonkulkumuutoksista), virheilmoitus kertoo syyn ja korjauksen (synkkaa fork kasin botin tilillä: Sync fork) ja sisaltaa merge-upstream-kutsun tuloksen. Havainto 22.10.: GitHubin merge-upstream vaatii workflow-oikeuden samoin kuin push, joten ylavirran workflow-muutosten jalkeen fork pitaa synkata kasin. +2 testia.
 - pr_kutsu: botin fork paivitetaan ylavirran mainiin (GitHub merge-upstream) ennen pushia. Ensimmainen oikea yojono-ajo 22.10. kaatui, koska forkin main oli jaljessa ja uusi haara olisi vienyt forkkiin ylavirran `.github/workflows/automerge.yml`-muutokset; bot-tunnuksella ei ole (eika pida olla) `workflow`-oikeutta, joten GitHub hylkasi pushin. Paivitysvirhe ei kaada ketjua. +1 testi, mutantti (kutsu pois) kaatuu.
 
 ### Lisätty

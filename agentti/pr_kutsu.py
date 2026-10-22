@@ -128,7 +128,7 @@ def varaa_paikka(tilapolku, pvm=None):
     return True
 
 
-def pushaa(hakemisto, repo, haara, botti, tunnuspolku, suorita=subprocess.run):
+def pushaa(hakemisto, repo, haara, botti, tunnuspolku, suorita=subprocess.run, sync=True):
     """Pushaa haaran botin forkkiin (ei force). Tunnus kulkee vain tilapaisen askpass-skriptin kautta."""
     with tempfile.TemporaryDirectory() as tmp:
         skripti = os.path.join(tmp, "askpass.sh")
@@ -143,6 +143,10 @@ def pushaa(hakemisto, repo, haara, botti, tunnuspolku, suorita=subprocess.run):
                      "push", kohde, refspec], capture_output=True, text=True, timeout=180, check=False, env=ymp)
     if r.returncode != 0:
         loppu = ((r.stderr or "") + (r.stdout or "")).strip()[-300:]
+        if "workflow" in loppu and "scope" in loppu:
+            raise PrVirhe("fork on jaljessa ylavirrasta (ylavirran tyonkulkutiedostot muuttuneet; tokenilla ei ole eika pida olla "
+                          "workflow-oikeutta). Synkkaa fork kasin botin tililla: github.com/%s/%s -> Sync fork -> Update branch. "
+                          "API-synkronointi: %s. Push: %s" % (botti, repo, "ok" if sync is True else sync, loppu))
         raise PrVirhe("push epaonnistui (onko fork olemassa ja token voimassa?): " + loppu)
 
 
@@ -161,8 +165,10 @@ def paivita_fork(repo, botti, tunnus, avaa=urllib.request.urlopen):
         with avaa(pyynto, timeout=30) as vastaus:
             vastaus.read()
         return True
-    except (urllib.error.URLError, ValueError, OSError):
-        return False
+    except urllib.error.HTTPError as e:
+        return "HTTP %s" % e.code
+    except (urllib.error.URLError, ValueError, OSError) as e:
+        return type(e).__name__
 
 
 def avaa_pr(repo, haara, botti, otsikko, kuvaus, tunnus, avaa=urllib.request.urlopen):
@@ -199,8 +205,8 @@ def luo_pr(repo, hakemisto, haara, otsikko, kuvaus, env=None, suorita=subprocess
     tunnus = lue_tunnus(tunnuspolku)
     if not varaa_paikka(env.get("YOJONO_PR_TILA", OLETUS_TILA)):
         raise PrVirhe("paivaraja %d PR-yritysta taynna" % RAJA_PAIVASSA)
-    paivita_fork(repo, botti, tunnus, avaa=avaa)
-    pushaa(hakemisto, repo, haara, botti, tunnuspolku, suorita=suorita)
+    sync = paivita_fork(repo, botti, tunnus, avaa=avaa)
+    pushaa(hakemisto, repo, haara, botti, tunnuspolku, suorita=suorita, sync=sync)
     return avaa_pr(repo, haara, botti, otsikko, kuvaus, tunnus, avaa=avaa)
 
 
