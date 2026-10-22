@@ -1,0 +1,54 @@
+"""Perustestit agentille @NIMI@ (luo.py teki tama mallista test/agentti.test.mall).
+
+Nama tarkistavat sopimuksen, joka pitaa olla voimassa aina: kuiva-ajo ei kayta verkkoa, viestit rakennetaan
+turvallisesti ja mallivirhe ei kaada hiljaa. Lisaa omat testit alle, kun muutat kerays(), viestit(), SKEEMA tai render()
+(esim. onnistunut mallivastaus SKEEMAn mukaan: katso test/test_ajo.py)."""
+import os
+import tempfile
+import unittest
+
+from agentti import ajo
+from agentti import data as d
+from agentti.agentit import @NIMI@
+from test.apu import ENV, kello, llm_vastaus
+
+
+class PerusTesti(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.tila = os.path.join(self.tmp.name, "tila")
+        self.verkko = []
+
+    def aja(self, **kw):
+        def llm(url, avain, payload):
+            self.verkko.append(payload)
+            return kw.pop("vastaus", llm_vastaus("ei jsonia"))
+        return ajo.suorita(@NIMI@, ENV, self.tila, kello=kello(), hae_llm=llm,
+                           hae_tg=lambda t, c, s: True, hae_sydan=lambda u: True, **kw)
+
+    def test_moduulin_sopimus(self):
+        self.assertEqual(@NIMI@.NIMI, "@NIMI@")
+        self.assertTrue(@NIMI@.MALLI)
+        self.assertIsInstance(@NIMI@.SKEEMA, dict)
+        for nimi in ("kerays", "viestit", "render", "render_kuiva"):
+            self.assertTrue(callable(getattr(@NIMI@, nimi)), nimi)
+
+    def test_viestit_system_ja_data_lohko(self):
+        viestit = @NIMI@.viestit(@NIMI@.kerays())
+        self.assertEqual([v["role"] for v in viestit], ["system", "user"])
+        self.assertIn(d.SYSTEM_SAANNOT, viestit[0]["content"])
+
+    def test_kuiva_ajo_ei_kayta_verkkoa(self):
+        t = self.aja(llm=False, laheta=False)
+        self.assertEqual((t["koodi"], t["virhe"]), (0, None))
+        self.assertEqual(self.verkko, [])
+
+    def test_mallivirhe_ei_ole_hiljainen(self):
+        t = self.aja(llm=True, laheta=False)
+        self.assertEqual(t["koodi"], 1)
+        self.assertTrue(t["virhe"])
+
+
+if __name__ == "__main__":
+    unittest.main()

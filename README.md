@@ -49,7 +49,7 @@ Paluukoodit: `0` ok, `1` ajo epäonnistui (virhekoodi stderriin), `2` käyttövi
 python luo.py uutiset
 ```
 
-Tämä luo `agentti/agentit/uutiset.py` (kopio esimerkistä) ja `systemd/agentti-uutiset.service` + `.timer`, ja tulostaa kustakin rivin `luotu: <polku>`. Komento ei ylikirjoita mitään: jos jokin kohdetiedosto on jo olemassa, se päättyy virheeseen ja koodiin 2. Nimen on oltava 2-31 merkkiä (pienet kirjaimet, numerot ja `_`, alkaa kirjaimella), eikä `esimerkki` kelpaa. Uuden agentin voi ajaa heti: `python -m agentti --agentti uutiset`.
+Tämä luo `agentti/agentit/uutiset.py` (kopio esimerkistä), `test/test_uutiset.py` (perustestit mallista `test/agentti.test.mall`) ja `systemd/agentti-uutiset.service` + `.timer`, ja tulostaa kustakin rivin `luotu: <polku>`. Komento ei ylikirjoita mitään: jos jokin kohdetiedosto on jo olemassa, se päättyy virheeseen ja koodiin 2. Nimen on oltava 2-31 merkkiä (pienet kirjaimet, numerot ja `_`, alkaa kirjaimella), eikä `esimerkki` kelpaa. Uuden agentin voi ajaa heti: `python -m agentti --agentti uutiset`.
 
 Muokkaa agentin moduulista nämä:
 
@@ -59,7 +59,7 @@ Muokkaa agentin moduulista nämä:
 - `SKEEMA` kuvaa, mitä `sisalto`-kentässä saa olla
 - `render(sisalto)` ja `render_kuiva(data)` tekevät Telegram-tekstin
 
-Kirjoita jokaiselle uudelle agentille testit ennen käyttöönottoa. Mallina `test/test_ajo.py`.
+Kirjoita jokaiselle uudelle agentille testit ennen käyttöönottoa. `luo.py` tekee valmiiksi neljä perustestiä (moduulin sopimus, viestit, kuiva-ajo ilman verkkoa, mallivirhe ei ole hiljainen); lisää omat testisi sen alle. Mallina onnistuneelle mallivastaukselle `test/test_ajo.py`.
 
 ## Itsenäinen työ: yöjono ja PR-kutsu
 
