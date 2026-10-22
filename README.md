@@ -95,7 +95,7 @@ Kovakoodatut rajat (`agentti/rajat.py`, ei muutettavissa ympäristöstä tai kom
 
 Päivä lasketaan Europe/Helsinki-ajan mukaan (`agentti/config.py`).
 
-- Vain Linux/macOS (flock).
+- Vain Linux/macOS (flock). Palvelimella ajettava `yojono/kehitys.sh` on Linux-skripti (käyttää GNU `timeout`-komentoa); sen testit ohitetaan macOS:ssä.
 - Ei työkaluja malleille tarkoituksella. Jos agentti tarvitsee työkaluja, tee se omana, erikseen katselmoituna lisänä.
 - Hinnasto (`HINNAT_USD_PER_MILJOONA`) on oletuksena tyhjä: tuntemattomalle mallille kirjanpitoon jää pessimistinen varaus (`KUTSU_ARVIO_USD`). Lisää mallin hinta vasta, kun olet tarkistanut sen palveluntarjoajalta.
 
