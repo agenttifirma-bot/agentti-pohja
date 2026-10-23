@@ -115,7 +115,9 @@ class VastaaTesti(unittest.TestCase):
         self.assertEqual((teksti, virhe), ("Hei!", None))
         url, avain, payload = llm.kutsut[0]
         self.assertEqual(url, "http://llm.test/v1/chat/completions")
-        self.assertEqual(payload["messages"][0], {"role": "system", "content": "Olet tutkija."})
+        self.assertEqual(payload["messages"][0]["role"], "system")
+        self.assertIn("Olet tutkija.", payload["messages"][0]["content"])
+        self.assertIn("Pysyvat saannot", payload["messages"][0]["content"])
         self.assertNotIn("HAKKERI", json.dumps(payload))
         self.assertNotIn("tools", payload)
         self.assertEqual(payload["max_tokens"], 500)
@@ -206,8 +208,9 @@ class HttpTesti(unittest.TestCase):
         self.assertEqual(koodi, 200)
         rivit = [r[6:] for r in runko.split("\n\n") if r.startswith("data: ")]
         self.assertEqual(rivit[-1], "[DONE]")
-        self.assertEqual(json.loads(rivit[0])["choices"][0]["delta"]["content"], "Moi maailma")
-        self.assertEqual(json.loads(rivit[1])["choices"][0]["finish_reason"], "stop")
+        self.assertEqual(json.loads(rivit[0])["choices"][0]["delta"]["role"], "assistant")
+        self.assertEqual(json.loads(rivit[1])["choices"][0]["delta"]["content"], "Moi maailma")
+        self.assertEqual(json.loads(rivit[2])["choices"][0]["finish_reason"], "stop")
 
     def test_virheet(self):
         self.assertEqual(self.pyynto("/v1/chat/completions", {"model": "ei", "messages": [{"role": "user", "content": "x"}]})[0], 404)

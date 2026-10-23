@@ -83,7 +83,8 @@ OpenAI API -> osoite `http://<ip>:8810/v1` ja avain `PORTTI_AVAIN`. Agentit ilme
 
 - Env-tiedostossa `LLM_BASE_URL`, `LLM_API_KEY` ja `PORTTI_AVAIN` (vahintaan 24 merkkia).
 - Ohje luetaan aina palvelimen ohjetiedostosta: chatin system-viestit ja tyokalut ohitetaan.
-- Oma paivabudjetti per agentti (`portti.esimerkki.json`), laki-ylaraja 3 USD. Versio 1 on ilman tyokaluja.
+- Oma paivabudjetti per agentti (`portti.esimerkki.json`), laki-ylaraja 3 USD.
+- Tyokalut maarityksen `tyokalut`-listalta: `hae_netista` (vaatii `PORTTI_SEARXNG_URL` env-tiedostoon), `hae_sivu`, `ehdota_muutos`. Agentti ehdottaa, omistaja hyvaksyy: `python3 -m agentti.portti ehdotukset|nayta|hyvaksy|hylkaa [ID] --config ... --tila ...` (aja rootina).
 - Kuuntelee oletuksena vain 127.0.0.1; anna LAN-osoite tietoisesti `--host`-valitsimella. Malli: `systemd/portti.service.mall`.
 
 ## Käyttöönotto palvelimella
