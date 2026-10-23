@@ -21,7 +21,8 @@ POLKU = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./-]{0,99}$")
 MALLI = re.compile(r"^[A-Za-z0-9_./:-]{1,80}$")
 LAHDE = re.compile(r"^(paikallinen|ulkoinen):[a-z0-9_.-]{1,60}$")
 AJASTUS = re.compile(r"^(daily|weekly|hourly|(Mon|Tue|Wed|Thu|Fri|Sat|Sun)( \*)? \d{2}:\d{2}|\d{2}:\d{2}|\*-\*-\* \d{2}:\d{2}:\d{2})$")
-TYOKALUT_SALLITUT = frozenset({"lue_tiedosto", "hae_github", "hae_npm", "laheta_telegram", "kirjaa_loki"})
+WEB_TYOKALUT = frozenset({"hae_github", "hae_npm", "hae_netista", "hae_sivu"})  # lukevat ulkopuolista sisaltoa
+TYOKALUT_SALLITUT = frozenset({"lue_tiedosto", "hae_github", "hae_npm", "laheta_telegram", "kirjaa_loki", "hae_netista", "hae_sivu", "ehdota_muutos"})
 OIKEUSTASOT = ("sandbox", "rajattu")
 KENTAT = {"nimi", "kuvaus", "ohje_tiedosto", "malli", "budjetti_usd_paivassa", "max_tokens", "vyohyke",
           "oikeustaso", "tyokalut", "lahteet", "tulosmuoto", "mittari", "ajastus", "halytys"}
@@ -88,7 +89,7 @@ def tarkista(m):
         ulkoinen = any(x.startswith("ulkoinen:") for x in lahteet)
         if m["vyohyke"] == 2 and ulkoinen:
             v.append("vyohyke 2 ei saa lukea ulkopuolista sisaltoa (ulkoinen:-lahde)")
-        if m["vyohyke"] == 2 and any(x in ("hae_github", "hae_npm") for x in tyokalut):
+        if m["vyohyke"] == 2 and any(x in WEB_TYOKALUT for x in tyokalut):
             v.append("vyohyke 2 ei saa kayttaa verkkohakutyokaluja")
     if v:
         raise MaaritysVirhe(v)
