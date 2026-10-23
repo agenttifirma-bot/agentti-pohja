@@ -109,6 +109,16 @@ def nayta(tila, tunnus, nykyinen_ohje):
         d["perustelu"], ", ".join(d["lahteet"]) or "-", ero or "(ei eroa)")
 
 
+def _palauta_oikeudet(polku, ennen):
+    """kirjoita_atomisesti luo tiedoston oikeuksilla 600 (mkstemp): palautetaan entiset, jotta portti-kayttaja
+    voi edelleen lukea ohjeen. Muuten portti kayttaisi hiljaa vanhaa ohjetta."""
+    os.chmod(polku, ennen.st_mode & 0o7777)
+    try:
+        os.chown(polku, ennen.st_uid, ennen.st_gid)
+    except (PermissionError, AttributeError, OSError):
+        pass  # ei rootina: omistaja jaa ennalleen jo luonnostaan
+
+
 def _merkitse(polku, d, tila):
     d["tila"] = tila
     d["kasitelty"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -138,5 +148,7 @@ def hyvaksy(tila, tunnus, ohjepolku):
         versiot = ohjepolku + ".versiot"
         os.makedirs(versiot, exist_ok=True)
         kirjoita_atomisesti(os.path.join(versiot, time.strftime("%Y%m%d-%H%M%S") + "-ennen-" + tunnus + ".md"), vanha)
+        tila_ennen = os.stat(ohjepolku)
         kirjoita_atomisesti(ohjepolku, d["ohje"])
+        _palauta_oikeudet(ohjepolku, tila_ennen)
         _merkitse(polku, d, "hyvaksytty")
