@@ -161,6 +161,37 @@ class Ajo(Pohja):
         self.assertIn("vihrea", self.raportti("testit"))
         self.assertIn(REPO, self.kutsut())
 
+    TESTI = 'printf "import unittest\\nclass B(unittest.TestCase):\\n    def test_b(self):\\n        self.assertEqual(1, 1)\\n" > test/test_b.py'
+
+    def test_ominaisuus_vaatii_teeman(self):
+        self.assertEqual(self.aja(REPO, "1.00", "ominaisuus").returncode, 2)
+        self.assertEqual(self.aja(REPO, "1.00", "ominaisuus", YOJONO_TEEMA="x" * 301).returncode, 2)
+        self.assertEqual(self.aja(REPO, "1.00", "ominaisuus", YOJONO_TEEMA="x", YOJONO_TUNNUS="Ei/Hyva").returncode, 2)
+
+    def test_ominaisuus_koodi_ja_testi_avaa_pr_omalla_haaralla_ja_raportilla(self):
+        self.agentti_skripti('echo "def g():\\n    return 2" >> moduuli.py\n' + self.TESTI)
+        self.pr_kutsu()
+        r = self.aja(REPO, "1.00", "ominaisuus", YOJONO_TEEMA="lisaa g", YOJONO_TUNNUS="o-1", YOJONO_RAPORTTI="2026-10-23-kehitys-o-1-" + REPO)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        kutsu = self.kutsut().split()
+        self.assertEqual(kutsu[0], "pr")
+        self.assertRegex(kutsu[3], r"^yo/ominaisuus-\d{4}-\d{2}-\d{2}-o-1$")
+        self.assertTrue((self.perus / "raportit" / ("2026-10-23-kehitys-o-1-" + REPO + ".md")).exists())
+
+    def test_ominaisuus_ilman_testimuutosta_ei_prta(self):
+        self.agentti_skripti('echo "x = 1" >> moduuli.py')
+        self.pr_kutsu()
+        self.assertEqual(self.aja(REPO, "1.00", "ominaisuus", YOJONO_TEEMA="x").returncode, 0)
+        self.assertIn("ei yhtaan testimuutosta", self.raportti("ominaisuus"))
+        self.assertEqual(self.kutsut(), "")
+
+    def test_ominaisuus_github_hakemisto_estetaan(self):
+        self.agentti_skripti('mkdir -p .github/workflows && echo x > .github/workflows/a.yml\n' + self.TESTI)
+        self.pr_kutsu()
+        self.aja(REPO, "1.00", "ominaisuus", YOJONO_TEEMA="x")
+        self.assertIn(".github/workflows/a.yml", self.raportti("ominaisuus"))
+        self.assertEqual(self.kutsut(), "")
+
     def test_pr_kutsun_virhe_antaa_koodin_1_ja_syyn(self):
         self.agentti_skripti('echo "uusi" >> README.md')
         self.pr_kutsu(onnistuu=False)
