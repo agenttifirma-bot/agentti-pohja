@@ -143,6 +143,14 @@ class EhdotusTesti(unittest.TestCase):
         self.p.vastaa("tutkija", VIESTI)
         self.assertIn("Olet parempi tutkija.", self.p.hae_llm.kutsut[0]["messages"][0]["content"])
 
+    def test_hyvaksy_sailyttaa_ohjetiedoston_oikeudet(self):
+        os.chmod(self.ohje, 0o644)
+        tid = self.ehdota()
+        portti.main(["hyvaksy", tid, "--config", self.cfg, "--tila", self.d])
+        self.assertEqual(os.stat(self.ohje).st_mode & 0o777, 0o644)
+        # versiotiedosto ei saa muuttaa alkuperaisen oikeuksia, ja ohje on edelleen luettavissa
+        self.assertEqual(lue(self.ohje), "Olet parempi tutkija.")
+
     def test_kahta_kertaa_ei_voi_hyvaksya(self):
         tid = self.ehdota()
         self.assertEqual(portti.main(["hyvaksy", tid, "--config", self.cfg, "--tila", self.d]), 0)
