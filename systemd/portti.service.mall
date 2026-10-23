@@ -1,0 +1,31 @@
+[Unit]
+Description=Portti: agentit nakyviin Open WebUI:hin
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agentti
+Group=agentti
+WorkingDirectory=/opt/agentit/portti
+EnvironmentFile=/etc/agentti/portti.env
+ExecStart=/usr/bin/python3 -B -m agentti.portti --config /opt/agentit/portti/portti.json --tila /var/lib/agentti/portti --env /etc/agentti/portti.env --host @LAN_IP@ --port 8810
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/agentti/portti
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

@@ -75,6 +75,17 @@ Pohjan päälle on rakennettu osat, joilla agentit tekevät tarkistettavaa työt
 
 Periaate on sama kuin pohjassa: koodi on laki. Raja ei ole kehotteessa vaan tarkistuksessa, ja jokainen automaattinen muutos on katselmoitavissa PR:nä.
 
+## Keskustelu agenttien kanssa: portti Open WebUI:hin
+
+`python -m agentti.portti --config portti.json --tila <hakemisto> --env <env> --host <ip> --port 8810`
+julkaisee `maaritys.json`-agentit OpenAI-yhteensopivana rajapintana. Open WebUI:ssa: Admin -> Settings -> Connections ->
+OpenAI API -> osoite `http://<ip>:8810/v1` ja avain `PORTTI_AVAIN`. Agentit ilmestyvat mallilistaan.
+
+- Env-tiedostossa `LLM_BASE_URL`, `LLM_API_KEY` ja `PORTTI_AVAIN` (vahintaan 24 merkkia).
+- Ohje luetaan aina palvelimen ohjetiedostosta: chatin system-viestit ja tyokalut ohitetaan.
+- Oma paivabudjetti per agentti (`portti.esimerkki.json`), laki-ylaraja 3 USD. Versio 1 on ilman tyokaluja.
+- Kuuntelee oletuksena vain 127.0.0.1; anna LAN-osoite tietoisesti `--host`-valitsimella. Malli: `systemd/portti.service.mall`.
+
 ## Käyttöönotto palvelimella
 
 Katso [DEPLOY.md](DEPLOY.md): käyttäjä, hakemistot, salaisuudet, ajastin ja käyttöönottojärjestys (kuiva-ajo → `--llm` → `--send` → ajastin).
