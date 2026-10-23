@@ -33,7 +33,7 @@ SKRIPTIT = {
     # kehitys: muuttaa koodia haarassa `yo/...` ja avaa PR:n (agentti/pr_kutsu.py); kutsu `<skripti> <repo> <budjetti> <aihe>`
     "kehitys": ("YOJONO_KEHITYS", "/opt/yojono/kehitys.sh"),
 }
-KEHITYS_AIHEET = ("readme", "testit", "riippuvuudet")
+KEHITYS_AIHEET = ("readme", "testit", "riippuvuudet", "ominaisuus")  # ominaisuus vaatii `teema`n (mita toteutetaan)
 TEEMA_MAX = 300  # ideointi-tehtavan valinnainen `teema` (vapaa teksti kehotteeseen)
 TOISTO_MAX_PV = 365
 OLETUS_PAIVAKATTO = 3.0
@@ -86,11 +86,13 @@ def tarkista_jono(jono):
                 raise JonoVirhe(f"kehitys-tehtavan aihe ({t['id']}) pitaa olla jokin: {', '.join(KEHITYS_AIHEET)}")
             if t["repo"] not in PR_REPOT:
                 raise JonoVirhe(f"kehitys-tehtavan repo ({t['id']}) ei ole PR-sallittujen listalla")
+            if (t["aihe"] == "ominaisuus") != ("teema" in t):
+                raise JonoVirhe(f"teema vaaditaan aiheelle ominaisuus ja kuuluu vain sille ({t['id']})")
         elif "aihe" in t:
             raise JonoVirhe(f"aihe kuuluu vain kehitys-tehtavalle ({t['id']})")
         if "teema" in t:
-            if t["tyyppi"] != "ideointi":
-                raise JonoVirhe(f"teema kuuluu vain ideointi-tehtavalle ({t['id']})")
+            if t["tyyppi"] != "ideointi" and not (t["tyyppi"] == "kehitys" and t.get("aihe") == "ominaisuus"):
+                raise JonoVirhe(f"teema kuuluu vain ideointi-tehtavalle ja kehitys/ominaisuus-tehtavalle ({t['id']})")
             teema = t["teema"]
             if not isinstance(teema, str) or not teema.strip() or len(teema) > TEEMA_MAX or any(c in teema for c in "\r\n\x00"):
                 raise JonoVirhe(f"teema ({t['id']}) pitaa olla yksirivinen teksti, 1-{TEEMA_MAX} merkkia")
@@ -165,7 +167,7 @@ def suorita_katselmointi(tehtava, pvm, perus, skripti, aikaraja=TEHTAVA_AIKARAJA
     repo, budjetti = tehtava["repo"], float(tehtava["budjetti"])
     tyyppi = tehtava.get("tyyppi", "katselmointi")
     aihe = tehtava.get("aihe") if tyyppi == "kehitys" else None
-    teema = tehtava.get("teema") if tyyppi == "ideointi" else None
+    teema = tehtava.get("teema") if tyyppi in ("ideointi", "kehitys") else None
     if teema:  # teemallinen ideointi saa oman raportin (tehtavan id nimessa), jotta samaan repoon voi tehda useita ideointeja samana paivana
         nimi = f"{pvm}-{tyyppi}-{tehtava['id']}-{repo}"
     else:
@@ -179,6 +181,7 @@ def suorita_katselmointi(tehtava, pvm, perus, skripti, aikaraja=TEHTAVA_AIKARAJA
         if teema:  # skripti lukee teeman ymparistosta ja kirjoittaa raportin nimella $YOJONO_RAPORTTI.json|md
             ymparisto["YOJONO_TEEMA"] = teema
             ymparisto["YOJONO_RAPORTTI"] = nimi
+            ymparisto["YOJONO_TUNNUS"] = tehtava["id"]
         r = subprocess.run([str(skripti), repo, f"{budjetti:.2f}"] + ([aihe] if aihe else []), capture_output=True, text=True, timeout=aikaraja,
                            check=False, env=ymparisto)
         koodi, loppu = r.returncode, (r.stdout + r.stderr).strip()[-300:]

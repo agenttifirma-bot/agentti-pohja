@@ -374,6 +374,36 @@ class TestKehitys(Pohja):
         self.assertEqual((self.perus / "n").read_text().strip(), "2")
 
 
+class TestOminaisuus(Pohja):
+    def ot(self, **kw):
+        return dict({"id": "o-1", "tyyppi": "kehitys", "repo": "llm-stopcheck", "aihe": "ominaisuus", "budjetti": 1.0, "teema": "CLI: --version"}, **kw)
+
+    def test_kelvollinen(self):
+        ajuri.tarkista_jono({"tehtavat": [self.ot()]})
+
+    def test_teema_vaaditaan_ja_kuuluu_vain_ominaisuudelle(self):
+        huonot = [{k: v for k, v in self.ot().items() if k != "teema"}, self.ot(teema=""), self.ot(teema="a\nb"),
+                  self.ot(aihe="readme"), self.ot(repo="kauppatiimi")]
+        for huono in huonot:
+            with self.subTest(huono=huono):
+                with self.assertRaises(ajuri.JonoVirhe):
+                    ajuri.tarkista_jono({"tehtavat": [huono]})
+
+    def test_skripti_saa_teeman_tunnuksen_ja_oman_raporttinimen(self):
+        skripti = self.perus / "kehitys.sh"
+        skripti.write_text("#!/bin/sh\n"
+                           f'echo "$#|$3|$YOJONO_TEEMA|$YOJONO_TUNNUS|$YOJONO_RAPORTTI" > {self.perus}/tiedot\n'
+                           f'mkdir -p {self.perus}/raportit\n'
+                           f'echo \'{{"total_cost_usd": 0.4}}\' > "{self.perus}/raportit/$YOJONO_RAPORTTI.json"\n'
+                           f'echo pr > "{self.perus}/raportit/$YOJONO_RAPORTTI.md"\n')
+        skripti.chmod(skripti.stat().st_mode | stat.S_IXUSR)
+        tulos = ajuri.suorita_katselmointi(self.ot(), PVM, self.perus, skripti)
+        self.assertTrue(tulos.ok)
+        self.assertEqual((self.perus / "tiedot").read_text().strip(),
+                         f"3|ominaisuus|CLI: --version|o-1|{PVM}-kehitys-o-1-llm-stopcheck")
+        self.assertTrue(tulos.raportti.endswith(f"{PVM}-kehitys-o-1-llm-stopcheck.md"))
+
+
 class TestTeema(Pohja):
     def it(self, **kw):
         return dict({"id": "i", "tyyppi": "ideointi", "repo": "mcp-model-router", "budjetti": 1.0}, **kw)
