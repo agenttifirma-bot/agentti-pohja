@@ -11,8 +11,8 @@ Sallittu vain kun KAIKKI ehdot tayttyvat:
   - jokainen tiedosto on dokumentti (*.md, docs/*.md) tai testi (test/*.py)
   - mikaan tiedosto ei ole suojatulla polulla (.github/, tools/, isanta/, systemd/, config, rajat,
     avain-/tunnistetiedostot)
-Botin poikkeus (README-tehtava, Tonyn paatos 21.10.2026): PR voi olla botin omasta forkista vain, jos tekija on BOTTI, head-repo on
-BOTTI/<sama repo>, base on main, haaran nimi on yo/readme-<...> ja KAIKKI tiedostot ovat dokumentteja (*.md; testit eivat kelpaa forkista).
+Botin poikkeus (README 21.10.2026; testit ja ominaisuus 24.10.2026: Tony poisti mergauksen itseltaan): PR voi olla botin omasta forkista vain, jos tekija on BOTTI, head-repo on
+BOTTI/<sama repo>, base on main, haaran nimi on yo/(readme|testit|ominaisuus)-<...>. readme: vain *.md. testit/ominaisuus: koodipaatteet (py/js/ts/md), enintaan 400 riviä, ei suojattuja polkuja (yojono/, portti, riippuvuus- ja asetustiedostot).
 Silloin kytketaan GitHubin auto-merge (squash): yhdistyy vasta kun pakolliset tarkistukset ovat lapi.
 Jos PR ei (enaa) kelpaa, auto-merge poistetaan (esim. kun kayttaja pushaa uuden commitin).
 """
@@ -26,7 +26,10 @@ MAX_TIEDOSTOA = 20
 MAX_RIVEJA = 200
 OPT_OUT = "ei-automerge"
 BOTTI = "agenttifirma-bot"
-BOTIN_HAARA = re.compile(r"^yo/readme-[a-z0-9][a-z0-9._-]{0,59}$")
+BOTIN_HAARA = re.compile(r"^yo/(readme|testit|ominaisuus)-[a-z0-9][a-z0-9._-]{0,59}$")
+MAX_RIVEJA_KOODI = 400
+# Botin koodimuutoksille (testit, ominaisuus): vain nama paatteet; riippuvuus- ja asetustiedostot jaavat ihmiselle.
+KOODIPAATTEET = (".py", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".md")
 
 SALLITUT = [
     re.compile(r"^[A-Za-z0-9_.-]+\.md$"),
@@ -40,6 +43,9 @@ SUOJATUT = [
     re.compile(r"(^|/)systemd/"),
     re.compile(r"^agentti/(config|rajat)\.py$"),
     re.compile(r"(^|/)\.env"),
+    re.compile(r"^yojono/"),
+    re.compile(r"^agentti/(portti|ehdotukset|maaritys)"),
+    re.compile(r"(^|/)(package(-lock)?\.json|requirements[^/]*\.txt|pyproject\.toml|setup\.(py|cfg)|poetry\.lock|yarn\.lock|pnpm-lock\.yaml|Dockerfile)$"),
     re.compile(r"secret|token|credential|password|key", re.IGNORECASE),
     re.compile(r"(^|/)\.\.(/|$)"),
 ]
@@ -70,8 +76,20 @@ def botin_forkki_syyt(pr):
     if pr.get("base_ref") != "main":
         syyt.append("base ei ole main")
     if not BOTIN_HAARA.match(pr.get("head_ref") or ""):
-        syyt.append("botin haaran nimi ei ole yo/readme-*")
+        syyt.append("botin haaran nimi ei ole yo/(readme|testit|ominaisuus)-*")
     return syyt
+
+
+def botin_koodi_ok(polku):
+    """Botin forkista (testit/ominaisuus) sallittu tiedosto: ei suojattu, turvallinen nimi, sallittu paate."""
+    if not re.match(r"^[A-Za-z0-9_./-]+$", polku or ""):
+        return False, "ei sallittu polku: " + str(polku)
+    for s_ in SUOJATUT:
+        if s_.search(polku):
+            return False, "suojattu polku: " + polku
+    if not polku.endswith(KOODIPAATTEET):
+        return False, "ei sallittu paate: " + polku
+    return True, ""
 
 
 def arvioi(pr, tiedostot):
@@ -84,9 +102,16 @@ def arvioi(pr, tiedostot):
         fs = botin_forkki_syyt(pr)
         syyt.extend(fs)
         if not fs:
+            readme = (pr.get("head_ref") or "").startswith("yo/readme-")
             for t in tiedostot:
-                if not str(t.get("filename", "")).endswith(".md"):
-                    syyt.append("botin forkista vain .md-tiedostot: " + str(t.get("filename")))
+                if readme and not str(t.get("filename", "")).endswith(".md"):
+                    syyt.append("readme-haarasta vain .md-tiedostot: " + str(t.get("filename")))
+                elif not readme:
+                    for nimi in (t.get("filename"), t.get("previous_filename")):
+                        if nimi is not None:
+                            ok, syy = botin_koodi_ok(nimi)
+                            if not ok:
+                                syyt.append(syy)
     if OPT_OUT in (pr.get("labels") or []):
         syyt.append("tunniste " + OPT_OUT)
     if not tiedostot:
@@ -94,7 +119,8 @@ def arvioi(pr, tiedostot):
     if len(tiedostot) > MAX_TIEDOSTOA:
         syyt.append("liian monta tiedostoa (%d)" % len(tiedostot))
     rivit = sum(int(t.get("changes", 0)) for t in tiedostot)
-    if rivit > MAX_RIVEJA:
+    raja = MAX_RIVEJA_KOODI if (forkki and not (pr.get("head_ref") or "").startswith("yo/readme-")) else MAX_RIVEJA
+    if rivit > raja:
         syyt.append("liian suuri muutos (%d rivia)" % rivit)
     for t in tiedostot:
         if t.get("status") not in ("added", "modified"):
@@ -102,8 +128,11 @@ def arvioi(pr, tiedostot):
         for nimi in (t.get("filename"), t.get("previous_filename")):
             if nimi is None:
                 continue
-            ok, syy = polku_ok(nimi)
-            if not ok:
+            if forkki and not (pr.get("head_ref") or "").startswith("yo/readme-"):
+                ok, syy = botin_koodi_ok(nimi)
+            else:
+                ok, syy = polku_ok(nimi)
+            if not ok and syy not in syyt:
                 syyt.append(syy)
     return (not syyt), syyt
 

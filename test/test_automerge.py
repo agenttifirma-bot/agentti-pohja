@@ -42,7 +42,7 @@ class BotinForkkiTesti(unittest.TestCase):
             self.assertFalse(am.arvioi(dict(BOTTI_PR, head_repo=head), [tied("README.md")])[0], head)
 
     def test_vaara_haara_tai_base_ei_kelpaa(self):
-        for kentat in ({"head_ref": "main"}, {"head_ref": "yo/testit-2026-10-22"}, {"head_ref": "yo/readme-"}, {"head_ref": "yo/readme-A"},
+        for kentat in ({"head_ref": "main"}, {"head_ref": "yo/riippuvuudet-2026-10-22"}, {"head_ref": "yo/muu-x"}, {"head_ref": "yo/readme-"}, {"head_ref": "yo/readme-A"},
                        {"head_ref": "feature/readme-x"}, {"head_ref": None}, {"base_ref": "kehitys"}, {"base_ref": None}):
             self.assertFalse(am.arvioi(dict(BOTTI_PR, **kentat), [tied("README.md")])[0], kentat)
 
@@ -66,6 +66,37 @@ class BotinForkkiTesti(unittest.TestCase):
             pr = am.hae_pr("o/r", "1")
         self.assertEqual((pr["author"], pr["head_ref"], pr["base_ref"]), ("agenttifirma-bot", "yo/readme-x", "main"))
         self.assertTrue(am.arvioi(pr, [tied("README.md")])[0])
+
+
+class BotinKoodiTesti(unittest.TestCase):
+    def pr(self, haara="yo/ominaisuus-2026-10-24-a"):
+        return dict(BOTTI_PR, head_ref=haara)
+
+    def test_ominaisuus_ja_testit_koodi_kelpaa(self):
+        for haara in ("yo/ominaisuus-2026-10-24-a", "yo/testit-2026-10-24"):
+            for nimi in ("src/llm_stopcheck/cli.py", "tests/test_cli.py", "src/index.ts", "lib/a.mjs", "README.md"):
+                ok, syyt = am.arvioi(self.pr(haara), [tied(nimi)])
+                self.assertTrue(ok, (haara, nimi, syyt))
+
+    def test_suojatut_ja_asetustiedostot_eivat_kelpaa(self):
+        for nimi in (".github/workflows/ci.yml", "yojono/kehitys.sh", "yojono/ajuri.py", "agentti/portti.py", "agentti/ehdotukset.py",
+                     "agentti/maaritys.py", "package.json", "package-lock.json", "requirements.txt", "pyproject.toml", "Dockerfile",
+                     "tools/automerge.py", "src/api_key.py", "config.json", "run.sh", "a b.py", "../x.py"):
+            ok, _ = am.arvioi(self.pr(), [tied(nimi)])
+            self.assertFalse(ok, nimi)
+
+    def test_readme_haarasta_edelleen_vain_md(self):
+        self.assertFalse(am.arvioi(self.pr("yo/readme-x"), [tied("src/a.py")])[0])
+
+    def test_koodin_rajat(self):
+        self.assertTrue(am.arvioi(self.pr(), [tied("a.py", changes=am.MAX_RIVEJA_KOODI)])[0])
+        self.assertFalse(am.arvioi(self.pr(), [tied("a.py", changes=am.MAX_RIVEJA_KOODI + 1)])[0])
+        self.assertFalse(am.arvioi(self.pr(), [tied("a.py", status="removed")])[0])
+        self.assertFalse(am.arvioi(self.pr(), [tied("b.py", status="renamed", previous_filename="yojono/x.py")])[0])
+
+    def test_muu_tekija_koodiforkista_ei_kelpaa(self):
+        self.assertFalse(am.arvioi(dict(self.pr(), author="joku-muu"), [tied("a.py")])[0])
+        self.assertFalse(am.arvioi(dict(self.pr(), head_repo="joku-muu/r"), [tied("a.py")])[0])
 
 
 class WorkflowTesti(unittest.TestCase):
