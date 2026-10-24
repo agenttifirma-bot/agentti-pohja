@@ -192,6 +192,36 @@ class Ajo(Pohja):
         self.assertIn(".github/workflows/a.yml", self.raportti("ominaisuus"))
         self.assertEqual(self.kutsut(), "")
 
+    def js_repo(self, npm_test_koodi):
+        """Lisaa lahderepoon package.json:n ja tekee PATH-hakemiston, jossa on tekonpm (kirjaa argumentit)."""
+        r = self.lahde / REPO
+        kirjoita(r / "package.json", '{"name": "koe", "scripts": {"test": "x"}}\n')
+        git(r, "add", "-A")
+        git(r, "commit", "-q", "-m", "js")
+        bin_ = self.perus.parent / "bin"
+        kirjoita(bin_ / "npm", '#!/bin/sh\necho "$@" >> "' + str(self.perus.parent / "npm.kutsut") + '"\n'
+                 'if [ "$1" = "test" ]; then exit ' + str(npm_test_koodi) + '; fi\nexit 0\n', True)
+        return dict(PATH=str(bin_) + os.pathsep + os.environ["PATH"])
+
+    def test_js_repo_asentaa_riippuvuudet_ja_ajaa_npm_test(self):
+        env = self.js_repo(0)
+        self.agentti_skripti('echo "uusi rivi" >> README.md')
+        self.pr_kutsu()
+        r = self.aja(REPO, "1.00", "readme", **env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        kutsut = (self.perus.parent / "npm.kutsut").read_text().splitlines()
+        self.assertTrue(kutsut[0].startswith("install --ignore-scripts"), kutsut)
+        self.assertEqual(kutsut[-1], "test")
+        self.assertIn(REPO, self.kutsut())
+
+    def test_js_repo_punainen_npm_test_estaa_prn(self):
+        env = self.js_repo(1)
+        self.agentti_skripti('echo "uusi rivi" >> README.md')
+        self.pr_kutsu()
+        self.aja(REPO, "1.00", "readme", **env)
+        self.assertIn("punainen", self.raportti())
+        self.assertEqual(self.kutsut(), "")
+
     def test_pr_kutsun_virhe_antaa_koodin_1_ja_syyn(self):
         self.agentti_skripti('echo "uusi" >> README.md')
         self.pr_kutsu(onnistuu=False)
