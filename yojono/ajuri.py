@@ -214,6 +214,25 @@ def suorita_katselmointi(tehtava, pvm, perus, skripti, aikaraja=TEHTAVA_AIKARAJA
     return Tulos(ok, kulu, str(md_polku) if ok else "", "ok" if ok else (loppu or f"poistumiskoodi {koodi}"))
 
 
+def raportin_lisatiedot(tyyppi, md_polku):
+    """Yhteenvedon lisarivi raportista (vain luku, virhe ei kaada): kehitys -> PR-linkki tai syy miksi PR:aa ei avattu;
+    tarkkailu -> enintaan 3 PARAS-merkittya ehdotusrivia."""
+    try:
+        rivit = Path(md_polku).read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError):
+        return ""
+    if tyyppi == "kehitys":
+        pr = next((r[len("- PR:"):].strip() for r in rivit if r.startswith("- PR:")), "")
+        syy = next((r[len("- Syy:"):].strip() for r in rivit if r.startswith("- Syy:")), "")
+        if pr.startswith("http"):
+            return f" PR {pr}"
+        return " EI PR:AA" + (f" ({syy[:120]})" if syy else "")
+    if tyyppi == "tarkkailu":
+        parhaat = [re.sub(r"^\d+[.)]\s*", "", r.strip().lstrip("-*# "))[:160] for r in rivit if "PARAS" in r][:3]
+        return "\n    " + "\n    ".join(parhaat) if parhaat else ""
+    return ""
+
+
 def laheta_telegram(teksti, env=None):
     """Lahettaa yhteenvedon, jos YOJONO_TELEGRAM_TOKEN ja YOJONO_TELEGRAM_CHAT on asetettu. Virhe ei kaada ajoa."""
     env = os.environ if env is None else env
@@ -312,7 +331,8 @@ def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.mon
             kirjoita_tila(tila_polku, tila)  # heti: katkennut ajo ei hukkaa kulukirjanpitoa
             kirjaa_lokiin(t, tulos, pvm)
             rivit.append(f"- {t['id']}: {'VALMIS' if tulos.ok else 'EPAONNISTUI'} ({tulos.kulu:.2f} USD)"
-                         + (f" raportti {tulos.raportti}" if tulos.ok else f" syy: {tulos.viesti}"))
+                         + (f" raportti {tulos.raportti}" if tulos.ok else f" syy: {tulos.viesti}")
+                         + (raportin_lisatiedot(t["tyyppi"], tulos.raportti) if tulos.ok else ""))
         kirjoita_tila(tila_polku, tila)
         teksti = yhteenveto(rivit, tila["kulut"].get(pvm, 0.0), katto, pvm)
     laheta(teksti)
