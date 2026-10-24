@@ -404,6 +404,39 @@ class TestOminaisuus(Pohja):
         self.assertTrue(tulos.raportti.endswith(f"{PVM}-kehitys-o-1-llm-stopcheck.md"))
 
 
+class TestTarkkailu(Pohja):
+    def tt(self, **kw):
+        return dict({"id": "tark-infra", "tyyppi": "tarkkailu", "repo": "agentti-pohja", "budjetti": 1.0, "teema": "infra proxmox ja litellm"}, **kw)
+
+    def test_kelvolliset_roolit(self):
+        for rooli in ajuri.TARKKAILU_ROOLIT:
+            ajuri.tarkista_jono({"tehtavat": [self.tt(teema=rooli)]})
+
+    def test_virheelliset(self):
+        huonot = [{k: v for k, v in self.tt().items() if k != "teema"}, self.tt(teema="tuntematon"), self.tt(teema=""),
+                  self.tt(teema="infra\nx"), self.tt(aihe="readme"), self.tt(repo="../x")]
+        for huono in huonot:
+            with self.subTest(huono=huono):
+                with self.assertRaises(ajuri.JonoVirhe):
+                    ajuri.tarkista_jono({"tehtavat": [huono]})
+
+    def test_skripti_saa_teeman_ja_raporttinimen_eika_aihetta(self):
+        skripti = self.perus / "tarkkailu.sh"
+        skripti.write_text("#!/bin/sh\n"
+                           f'echo "$#|$YOJONO_TEEMA|$YOJONO_TUNNUS|$YOJONO_RAPORTTI" > {self.perus}/tiedot\n'
+                           f'mkdir -p {self.perus}/raportit\n'
+                           f'echo \'{{"total_cost_usd": 0.3}}\' > "{self.perus}/raportit/$YOJONO_RAPORTTI.json"\n'
+                           f'echo raportti > "{self.perus}/raportit/$YOJONO_RAPORTTI.md"\n')
+        skripti.chmod(skripti.stat().st_mode | stat.S_IXUSR)
+        tulos = ajuri.suorita_katselmointi(self.tt(), PVM, self.perus, skripti)
+        self.assertTrue(tulos.ok, tulos.viesti)
+        self.assertEqual((self.perus / "tiedot").read_text().strip(),
+                         f"2|infra proxmox ja litellm|tark-infra|{PVM}-tarkkailu-tark-infra-agentti-pohja")
+
+    def test_tyyppi_on_skripteissa(self):
+        self.assertIn("tarkkailu", ajuri.SKRIPTIT)
+
+
 class TestTeema(Pohja):
     def it(self, **kw):
         return dict({"id": "i", "tyyppi": "ideointi", "repo": "mcp-model-router", "budjetti": 1.0}, **kw)

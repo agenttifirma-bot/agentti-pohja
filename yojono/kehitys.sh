@@ -149,7 +149,7 @@ if [ -z "$SYY" ]; then
   git -c user.name=yojono -c user.email=yojono@localhost -c core.hooksPath=/dev/null commit -q -m "yojono: $AIHE ($PVM)"
   {
     echo "Yojonon automaattinen kehitystehtava: $AIHE ($PVM)."
-    echo "Testit: vihrea. Tony katselmoi ja yhdistaa itse."
+    echo "Testit: vihrea. Automerge yhdistaa itse, kun CI on vihrea ja muutos on sallituilla poluilla; muuten se jaa ihmisen katselmoitavaksi."
     git diff --stat HEAD~1 | tail -n 15
   } > "$TMP/kuvaus.txt"
   if [ -n "$KUIVA" ]; then
