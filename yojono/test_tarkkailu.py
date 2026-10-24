@@ -72,6 +72,14 @@ class TarkkailuTesti(Pohja):
             self.assertIn(sana, kutsut)
             self.assertIn("erityisesti levyn kasvu", kutsut)
 
+    def test_malli_on_oletuksena_haiku_ja_vaihdettavissa(self):
+        kayttoloki = self.t / "kutsut"
+        self.agentti_skripti(f'echo "$@" > {kayttoloki}\necho \'{{"total_cost_usd": 0, "result": "ok"}}\'')
+        self.assertEqual(self.aja().returncode, 0)
+        self.assertIn("--model haiku", kayttoloki.read_text())
+        self.assertEqual(self.aja(TARKKAILU_MALLI="deepseek-pro").returncode, 0)
+        self.assertIn("--model deepseek-pro", kayttoloki.read_text())
+
     def test_virheelliset_syotteet(self):
         self.agentti_skripti("echo '{}'")
         for kw in ({"teema": "tuntematon"}, {"teema": ""}, {"teema": "x" * 301}, {"repo": "../x"}, {"repo": ""},
