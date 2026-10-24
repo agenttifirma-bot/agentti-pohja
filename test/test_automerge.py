@@ -85,6 +85,12 @@ class BotinKoodiTesti(unittest.TestCase):
             ok, _ = am.arvioi(self.pr(), [tied(nimi)])
             self.assertFalse(ok, nimi)
 
+    def test_master_base_kelpaa_ja_action_suojattu(self):
+        self.assertTrue(am.arvioi(dict(self.pr(), base_ref="master"), [tied("src/a.ts")])[0])
+        self.assertFalse(am.arvioi(dict(self.pr(), base_ref="kehitys"), [tied("src/a.ts")])[0])
+        for nimi in ("action.yml", "action.yaml", "dist/index.js"):
+            self.assertFalse(am.arvioi(self.pr(), [tied(nimi)])[0], nimi)
+
     def test_readme_haarasta_edelleen_vain_md(self):
         self.assertFalse(am.arvioi(self.pr("yo/readme-x"), [tied("src/a.py")])[0])
 

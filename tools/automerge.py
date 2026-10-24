@@ -44,6 +44,8 @@ SUOJATUT = [
     re.compile(r"^agentti/(config|rajat)\.py$"),
     re.compile(r"(^|/)\.env"),
     re.compile(r"^yojono/"),
+    re.compile(r"^action\.ya?ml$"),
+    re.compile(r"^dist/"),
     re.compile(r"^agentti/(portti|ehdotukset|maaritys)"),
     re.compile(r"(^|/)(package(-lock)?\.json|requirements[^/]*\.txt|pyproject\.toml|setup\.(py|cfg)|poetry\.lock|yarn\.lock|pnpm-lock\.yaml|Dockerfile)$"),
     re.compile(r"secret|token|credential|password|key", re.IGNORECASE),
@@ -73,8 +75,8 @@ def botin_forkki_syyt(pr):
         syyt.append("PR ei ole saman repon haarasta")
     elif not nimi or (pr.get("head_repo") or "").lower() != f"{BOTTI}/{nimi}".lower():
         syyt.append("forkki ei ole botin oma fork samasta reposta")
-    if pr.get("base_ref") != "main":
-        syyt.append("base ei ole main")
+    if pr.get("base_ref") not in ("main", "master"):
+        syyt.append("base ei ole main eika master")
     if not BOTIN_HAARA.match(pr.get("head_ref") or ""):
         syyt.append("botin haaran nimi ei ole yo/(readme|testit|ominaisuus)-*")
     return syyt
