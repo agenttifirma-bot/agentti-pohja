@@ -12,7 +12,7 @@ Sallittu vain kun KAIKKI ehdot tayttyvat:
   - mikaan tiedosto ei ole suojatulla polulla (.github/, tools/, isanta/, systemd/, config, rajat,
     avain-/tunnistetiedostot)
 Botin poikkeus (README 21.10.2026; testit ja ominaisuus 24.10.2026: Tony poisti mergauksen itseltaan): PR voi olla botin omasta forkista vain, jos tekija on BOTTI, head-repo on
-BOTTI/<sama repo>, base on main, haaran nimi on yo/(readme|testit|ominaisuus)-<...>. readme: vain *.md. testit/ominaisuus: koodipaatteet (py/js/ts/md), enintaan 400 riviä, ei suojattuja polkuja (yojono/, portti, riippuvuus- ja asetustiedostot).
+BOTTI/<sama repo>, base on main, haaran nimi on yo/(readme|testit|ominaisuus)-<...>. readme: vain *.md. testit/ominaisuus: koodipaatteet (py/js/ts/md), enintaan 400 rivia, ei suojattuja polkuja (yojono/, portti, riippuvuus- ja asetustiedostot).
 Silloin kytketaan GitHubin auto-merge (squash): yhdistyy vasta kun pakolliset tarkistukset ovat lapi.
 Jos PR ei (enaa) kelpaa, auto-merge poistetaan (esim. kun kayttaja pushaa uuden commitin).
 """
