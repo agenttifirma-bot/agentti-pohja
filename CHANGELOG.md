@@ -5,6 +5,7 @@ Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 ## [Julkaisematon]
 
 ### Korjattu
+- pr_kutsu: PR-paivaraja 5 -> 30 (Tonyn paatos 24.10.: botin testit/ominaisuus-PR:t yhdistyvat itse, raja suojaa enaa vain karkaavilta ajoilta).
 - pr_kutsu: repokohtainen oletushaara (`ai-pr-reviewer-action` = master) PR:n pohjana, forkin synkkauksessa ja paikallisessa diff-tarkistuksessa. Havainto 24.10.: kovakoodattu `main` kaatoi kaikki ai-pr-reviewer-actionin PR:t. +4 testia, mutantti kaatuu.
 - yojono: kehitys-tehtava ohitetaan ennen mallikutsua, jos PR-paivaraja on taynna (ei kulu yritysta eika rahaa; aiemmin kolme tehtavaa, noin 1,76 USD, meni hukkaan kun klooni poistettiin). Epaonnistuneen ajon viestiksi tulee raportin `Syy`-rivi ja claude-tyokalun yleinen `unrecognized_model`-kohina suodatetaan pois. +2 testia, mutantti kaatuu.
 - kehitys.sh: JS-repojen testit ajetaan komennolla `npm ci`/`npm install --ignore-scripts` + `npm test` (aiemmin pelkka `node --test`). Havainto 24.10.: yon kolme JS-tehtavaa (ai-pr-reviewer-action, mcp-model-router x2) paattyi punaisiin testeihin, koska CT115:ssa ei ollut Nodea (`failed to run command node`); vitest-repot tarvitsevat joka tapauksessa riippuvuudet. +2 testia. Palvelimelle pitaa asentaa Node (>=22) ja npm.

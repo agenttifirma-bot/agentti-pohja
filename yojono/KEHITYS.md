@@ -14,6 +14,6 @@ CT115:n avainta ja asetuksia; tässä on sen sopimus. Pohjana `katselmoi.sh`.
    - `riippuvuudet`: vain päivitykset, joissa testit pysyvät vihreinä; ei uusia riippuvuuksia.
 4. Skripti (ei agentti) ajaa testit uudelleen (Python: `unittest`; JS: `npm ci`/`npm install --ignore-scripts` ja `npm test`, joten palvelimella pitää olla Node ja npm) ja commitoi (`yojono <yojono@localhost>`). Testit punaisella tai ei muutoksia: ei PR:ää, raportti kertoo syyn.
 5. Skripti kutsuu `python3 -m agentti.pr_kutsu pr <repo> <klooni> <haara> <otsikko> <kuvaustiedosto>`. pr_kutsu estää suojatut polut,
-   force-pushin ja yli 40 tiedoston muutokset sekä rajaa 5 PR:ää päivässä. Tony yhdistää PR:n itse.
+   force-pushin ja yli 40 tiedoston muutokset sekä rajaa 30 PR:ää päivässä. Testit- ja ominaisuus-PR:t yhdistyvät itse (automerge), muut jäävät ihmiselle.
 6. Raportti `raportit/<pvm>-kehitys-<aihe>-<repo>.md` (PR-linkki, mitä muutettiin, testitulos) ja `.json` (`total_cost_usd`).
 7. Kertakäyttöhakemisto poistetaan lopuksi.
