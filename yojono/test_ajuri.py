@@ -407,8 +407,8 @@ class TestOminaisuus(Pohja):
 class TestSyyJaPrRaja(Pohja):
     def test_syy_raportista_ja_kohina_pois(self):
         md = self.perus / "r.md"
-        md.write_text("# K\n- PR: ei avattu\n- Syy: paivaraja 5 PR-yritysta taynna\n")
-        self.assertEqual(ajuri.syy_viestiksi(md, "[claude-code:unrecognized_model]"), "paivaraja 5 PR-yritysta taynna")
+        md.write_text("# K\n- PR: ei avattu\n- Syy: paivaraja PR-yritysta taynna\n")
+        self.assertEqual(ajuri.syy_viestiksi(md, "[claude-code:unrecognized_model]"), "paivaraja PR-yritysta taynna")
         self.assertEqual(ajuri.syy_viestiksi(None, "[claude-code:unrecognized_model]"), "")
         self.assertEqual(ajuri.syy_viestiksi(None, "oikea virhe [claude-code:unrecognized_model]"), "oikea virhe")
         self.assertEqual(ajuri.syy_viestiksi(self.perus / "ei-ole.md", "x"), "x")
@@ -418,8 +418,9 @@ class TestSyyJaPrRaja(Pohja):
         import os as _o
         from datetime import date as _d
         from unittest import mock as _m
+        from agentti import pr_kutsu as pk0
         tila = self.perus / "pr-tila.json"
-        tila.write_text(_j.dumps({"pvm": _d.today().isoformat(), "n": 5}))
+        tila.write_text(_j.dumps({"pvm": _d.today().isoformat(), "n": pk0.RAJA_PAIVASSA}))
         self.kirjoita_jono(jono([dict(t("kehitys-1", budjetti=0.5), tyyppi="kehitys", aihe="testit", repo="agentti-pohja"),
                                  t("katselmointi-1", budjetti=0.5)]))
         kutsut = []
@@ -435,7 +436,7 @@ class TestSyyJaPrRaja(Pohja):
         self.assertNotIn("kehitys-1", _j.loads((self.perus / "tila.json").read_text()).get("tehtavat", {}))
         from agentti import pr_kutsu as pk
         self.assertEqual(pk.paikkoja_jaljella(str(tila)), 0)
-        tila.write_text(_j.dumps({"pvm": "2000-01-01", "n": 5}))
+        tila.write_text(_j.dumps({"pvm": "2000-01-01", "n": 999}))
         self.assertEqual(pk.paikkoja_jaljella(str(tila)), pk.RAJA_PAIVASSA)
         self.assertEqual(pk.paikkoja_jaljella(str(self.perus / "ei-ole.json")), pk.RAJA_PAIVASSA)
 
