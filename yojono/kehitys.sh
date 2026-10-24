@@ -56,7 +56,14 @@ git checkout -q -b "$HAARA"
 
 testaa() {
   if [ -f package.json ]; then
-    timeout 600 node --test
+    # JS-repot: riippuvuudet asennetaan ilman elinkaaria (--ignore-scripts), sitten repon oma testikomento (esim. vitest).
+    # Havainto 24.10.: pelkka `node --test` ei riita (vitest-repot) eika node ollut asennettuna CT115:ssa.
+    if [ -f package-lock.json ]; then
+      timeout 600 npm ci --ignore-scripts --no-audit --no-fund || return 1
+    else
+      timeout 600 npm install --ignore-scripts --no-audit --no-fund || return 1
+    fi
+    timeout 600 npm test
   else
     timeout 600 python3 -B -m unittest discover -s . -t . -p 'test_*.py'
   fi
