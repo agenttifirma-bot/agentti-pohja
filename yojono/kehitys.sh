@@ -86,7 +86,7 @@ PROMPT="$TEHTAVA Rajat: tyoskentele vain taman hakemiston sisalla. Sinulla ei ol
 
 if [ -z "$KUIVA" ]; then
   # Ei yleista Edit/Write-lupaa: acceptEdits sallii muokkauksen vain tyohakemiston (klooni) sisalla; arkaluontoiset polut estetty erikseen.
-  "$CLAUDE" -p "$PROMPT" --model sonnet --max-budget-usd "$BUDJETTI" --permission-mode acceptEdits \
+  "$CLAUDE" -p "$PROMPT" --model "${KEHITYS_MALLI:-sonnet}" --max-budget-usd "$BUDJETTI" --permission-mode acceptEdits \
     --allowedTools "Read,Grep,Glob,Bash(python3 -B -m unittest:*),Bash(node --test:*)" \
     --disallowedTools "Read(//etc/**)" "Read(//root/**)" "Read(//var/lib/yojono/**)" "Read(//opt/yojono-ajuri/**)" \
       "Edit(//etc/**)" "Edit(//root/**)" "Edit(//opt/**)" "Edit(//home/**)" "Edit(//usr/**)" \

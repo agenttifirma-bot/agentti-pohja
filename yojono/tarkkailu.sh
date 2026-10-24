@@ -4,7 +4,7 @@
 # Kaytto: tarkkailu.sh <repo> <budjetti_usd>   (ymparisto: YOJONO_TEEMA = rooli + valinnainen tarkennus, YOJONO_RAPORTTI, YOJONO_TUNNUS)
 # Roolit: infra, automaatio, laatu, kasvu. Raportti: <perus>/raportit/<YOJONO_RAPORTTI>.md|json
 # Testikoukut: TARKKAILU_KUIVA=1 (ei claude-kutsua), TARKKAILU_PERUS, YOJONO_AJURI, TARKKAILU_CLAUDE, TARKKAILU_PYTHON, TARKKAILU_ENV,
-# TARKKAILU_KUVAKOMENTO (korvaa keraajan), TARKKAILU_TYO.
+# TARKKAILU_KUVAKOMENTO (korvaa keraajan), TARKKAILU_TYO. TARKKAILU_MALLI valitsee mallin (oletus haiku: mallivertailu 18.10., doc 24).
 set -eu
 
 REPO="${1:-}"
@@ -58,7 +58,7 @@ PROMPT="Olet tarkkailija-agentti (rooli: $ROOLI) Tonyn agenttifirmassa. $FOKUS${
 
 # 2. Agentti: vain Read/Grep/Glob tilannekuvan hakemistossa
 if [ -z "$KUIVA" ]; then
-  ( cd "$TMP/kuva" && "$CLAUDE" -p "$PROMPT" --model sonnet --max-budget-usd "$BUDJETTI" --permission-mode default \
+  ( cd "$TMP/kuva" && "$CLAUDE" -p "$PROMPT" --model "${TARKKAILU_MALLI:-haiku}" --max-budget-usd "$BUDJETTI" --permission-mode default \
     --allowedTools "Read,Grep,Glob" \
     --disallowedTools "Bash" "Edit" "Write" "WebFetch" "WebSearch" "Read(//etc/**)" "Read(//root/**)" "Read(//var/lib/yojono/**)" "Read(//opt/**)" \
     --output-format json ) > "$UL.json" || true
