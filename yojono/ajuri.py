@@ -32,7 +32,11 @@ SKRIPTIT = {
     "ideointi": ("YOJONO_IDEOI", "/opt/yojono/ideoi.sh"),
     # kehitys: muuttaa koodia haarassa `yo/...` ja avaa PR:n (agentti/pr_kutsu.py); kutsu `<skripti> <repo> <budjetti> <aihe>`
     "kehitys": ("YOJONO_KEHITYS", "/opt/yojono/kehitys.sh"),
+    # tarkkailu: vain luku. Agentti lukee tilannekuvan (GitHub, yojono, kulut, palvelin) ja kirjoittaa jarjestetyn ehdotusraportin;
+    # `teema` = rooli (+ valinnainen tarkennus). Kutsu `<skripti> <repo> <budjetti>`.
+    "tarkkailu": ("YOJONO_TARKKAILU", "/opt/yojono/tarkkailu.sh"),
 }
+TARKKAILU_ROOLIT = ("infra", "automaatio", "laatu", "kasvu")
 KEHITYS_AIHEET = ("readme", "testit", "riippuvuudet", "ominaisuus")  # ominaisuus vaatii `teema`n (mita toteutetaan)
 TEEMA_MAX = 300  # ideointi-tehtavan valinnainen `teema` (vapaa teksti kehotteeseen)
 TOISTO_MAX_PV = 365
@@ -90,9 +94,13 @@ def tarkista_jono(jono):
                 raise JonoVirhe(f"teema vaaditaan aiheelle ominaisuus ja kuuluu vain sille ({t['id']})")
         elif "aihe" in t:
             raise JonoVirhe(f"aihe kuuluu vain kehitys-tehtavalle ({t['id']})")
+        if t["tyyppi"] == "tarkkailu":
+            rooli = str(t.get("teema", "")).split(" ", 1)[0]
+            if rooli not in TARKKAILU_ROOLIT:
+                raise JonoVirhe(f"tarkkailu-tehtavan teema ({t['id']}) alkaa roolilla: {', '.join(TARKKAILU_ROOLIT)}")
         if "teema" in t:
-            if t["tyyppi"] != "ideointi" and not (t["tyyppi"] == "kehitys" and t.get("aihe") == "ominaisuus"):
-                raise JonoVirhe(f"teema kuuluu vain ideointi-tehtavalle ja kehitys/ominaisuus-tehtavalle ({t['id']})")
+            if t["tyyppi"] not in ("ideointi", "tarkkailu") and not (t["tyyppi"] == "kehitys" and t.get("aihe") == "ominaisuus"):
+                raise JonoVirhe(f"teema kuuluu vain ideointi-, tarkkailu- ja kehitys/ominaisuus-tehtavalle ({t['id']})")
             teema = t["teema"]
             if not isinstance(teema, str) or not teema.strip() or len(teema) > TEEMA_MAX or any(c in teema for c in "\r\n\x00"):
                 raise JonoVirhe(f"teema ({t['id']}) pitaa olla yksirivinen teksti, 1-{TEEMA_MAX} merkkia")
@@ -167,7 +175,7 @@ def suorita_katselmointi(tehtava, pvm, perus, skripti, aikaraja=TEHTAVA_AIKARAJA
     repo, budjetti = tehtava["repo"], float(tehtava["budjetti"])
     tyyppi = tehtava.get("tyyppi", "katselmointi")
     aihe = tehtava.get("aihe") if tyyppi == "kehitys" else None
-    teema = tehtava.get("teema") if tyyppi in ("ideointi", "kehitys") else None
+    teema = tehtava.get("teema") if tyyppi in ("ideointi", "kehitys", "tarkkailu") else None
     if teema:  # teemallinen ideointi saa oman raportin (tehtavan id nimessa), jotta samaan repoon voi tehda useita ideointeja samana paivana
         nimi = f"{pvm}-{tyyppi}-{tehtava['id']}-{repo}"
     else:

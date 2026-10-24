@@ -32,7 +32,39 @@
       "tyyppi": "ideointi",
       "repo": "mcp-model-router",
       "budjetti": 1.0,
-      "teema": "mita pitaa tehda jotta projekti herää henkiin (roadmap, 3-5 pientä PR-ehdotusta)"
+      "teema": "mita pitaa tehda jotta projekti her\u00e4\u00e4 henkiin (roadmap, 3-5 pient\u00e4 PR-ehdotusta)"
+    },
+    {
+      "id": "tarkkailu-infra",
+      "tyyppi": "tarkkailu",
+      "repo": "agenttifirma",
+      "budjetti": 0.8,
+      "teema": "infra",
+      "toisto_pv": 2
+    },
+    {
+      "id": "tarkkailu-automaatio",
+      "tyyppi": "tarkkailu",
+      "repo": "agenttifirma",
+      "budjetti": 0.8,
+      "teema": "automaatio",
+      "toisto_pv": 2
+    },
+    {
+      "id": "tarkkailu-laatu",
+      "tyyppi": "tarkkailu",
+      "repo": "agenttifirma",
+      "budjetti": 0.8,
+      "teema": "laatu",
+      "toisto_pv": 2
+    },
+    {
+      "id": "tarkkailu-kasvu",
+      "tyyppi": "tarkkailu",
+      "repo": "agenttifirma",
+      "budjetti": 0.8,
+      "teema": "kasvu",
+      "toisto_pv": 2
     }
   ]
 }
