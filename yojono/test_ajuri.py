@@ -404,6 +404,24 @@ class TestOminaisuus(Pohja):
         self.assertTrue(tulos.raportti.endswith(f"{PVM}-kehitys-o-1-llm-stopcheck.md"))
 
 
+class TestPeilaus(Pohja):
+    def test_ei_asetettu_ei_tee_mitaan(self):
+        self.assertFalse(ajuri.peilaa(None))
+        self.assertFalse(ajuri.peilaa(""))
+
+    def test_skripti_ajetaan_ja_virhe_ei_kaada(self):
+        ok = self.perus / "ok.sh"
+        ok.write_text("#!/bin/sh\necho x > " + str(self.perus / "ajettu") + "\n")
+        ok.chmod(ok.stat().st_mode | stat.S_IXUSR)
+        self.assertTrue(ajuri.peilaa(str(ok)))
+        self.assertTrue((self.perus / "ajettu").exists())
+        huono = self.perus / "huono.sh"
+        huono.write_text("#!/bin/sh\nexit 3\n")
+        huono.chmod(huono.stat().st_mode | stat.S_IXUSR)
+        self.assertFalse(ajuri.peilaa(str(huono)))
+        self.assertFalse(ajuri.peilaa(str(self.perus / "ei-ole.sh")))
+
+
 class TestLisatiedot(Pohja):
     def md(self, teksti):
         p = self.perus / "r.md"

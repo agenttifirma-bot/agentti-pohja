@@ -341,6 +341,20 @@ def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.mon
     return teksti
 
 
+def peilaa(skripti):
+    """Valinnainen raporttipeilaus ajon jalkeen (YOJONO_PEILAA = peilaa.sh:n polku). Virhe ei koskaan kaada ajoa."""
+    if not skripti:
+        return False
+    try:
+        r = subprocess.run([str(skripti)], capture_output=True, text=True, timeout=300, check=False)
+        if r.returncode != 0:
+            print(f"Peilaus epaonnistui (koodi {r.returncode}): {(r.stderr or r.stdout).strip()[-200:]}", file=sys.stderr)
+        return r.returncode == 0
+    except (OSError, subprocess.TimeoutExpired) as virhe:
+        print(f"Peilaus epaonnistui: {type(virhe).__name__}", file=sys.stderr)
+        return False
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Yojonon ajuri")
     p.add_argument("komento", choices=["ajo", "kuiva", "tila"])
@@ -354,6 +368,8 @@ def main(argv=None):
         tulos = aja(perus, skripti, kuiva=a.komento == "kuiva")
         if a.komento == "kuiva":
             print(tulos)
+        elif a.komento == "ajo":
+            peilaa(os.environ.get("YOJONO_PEILAA"))
     except JonoVirhe as virhe:
         print(f"jono.json virheellinen: {virhe}", file=sys.stderr)
         return 2
