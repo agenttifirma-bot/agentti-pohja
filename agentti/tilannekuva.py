@@ -88,10 +88,12 @@ def yojono_osio(perus):
     raportit = sorted((perus / "raportit").glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)[:12] if (perus / "raportit").is_dir() else []
     for r in raportit:
         try:
-            alku = [l for l in r.read_text(encoding="utf-8").splitlines() if l.startswith(("- PR", "- Syy", "- Testit", "# "))][:5]
+            teksti = r.read_text(encoding="utf-8")
+            alku = [l for l in teksti.splitlines() if l.startswith(("- PR", "- Syy", "- Testit", "# "))][:5]
+            koko = len(teksti)
         except OSError:
-            alku = []
-        rivit.append("- %s: %s" % (r.name, " | ".join(a.strip() for a in alku)))
+            alku, koko = [], 0
+        rivit.append("- %s (%d merkkia): %s" % (r.name, koko, " | ".join(a.strip() for a in alku)))
     return "\n".join(rivit)
 
 
@@ -101,6 +103,16 @@ def kulut_osio(perus, portti_tila):
     kulut = tila.get("kulut") or {}
     for pvm in sorted(kulut)[-14:]:
         rivit.append("- yojono %s: %s" % (pvm, kulut[pvm]))
+    kk = {}
+    for pvm, arvo in kulut.items():
+        if isinstance(arvo, (int, float)):
+            kk[pvm[:7]] = kk.get(pvm[:7], 0.0) + arvo
+    jono = _json(Path(perus) / "jono.json", {})
+    for kuu in sorted(kk)[-2:]:
+        paivia = len([p for p in kulut if p.startswith(kuu)])
+        ennuste = " (keskim. %.2f/pv, 30 pv ennuste %.1f)" % (kk[kuu] / paivia, kk[kuu] / paivia * 30) if paivia else ""
+        rivit.append("kuukausi %s yhteensa: %.2f, kirjattuja paivia %d%s" % (kuu, kk[kuu], paivia, ennuste))
+    rivit.append("paivakatto: %s, kuukausikatto: %s" % (jono.get("paivakatto"), jono.get("kuukausikatto")))
     if portti_tila:
         data = _json(Path(portti_tila) / "portti-kulu.json", {})
         rivit.append("\n## Portti (paivakirjanpito)")

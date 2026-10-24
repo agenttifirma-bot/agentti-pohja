@@ -60,6 +60,19 @@ class OsioTesti(unittest.TestCase):
     def test_kulut_osio(self):
         self.assertIn("yojono 2026-10-23: 1.5", tk.kulut_osio(self.t, None))
 
+    def test_kulut_osio_kuukausiyhteenveto_ja_ennuste(self):
+        (self.t / "tila.json").write_text(json.dumps({"kulut": {"2026-10-23": 3.0, "2026-10-24": 5.0, "2026-09-30": 1.0}}))
+        teksti = tk.kulut_osio(self.t, None)
+        self.assertIn("kuukausi 2026-10 yhteensa: 8.00, kirjattuja paivia 2 (keskim. 4.00/pv, 30 pv ennuste 120.0)", teksti)
+        self.assertIn("kuukausi 2026-09 yhteensa: 1.00", teksti)
+        self.assertIn("paivakatto: 8, kuukausikatto: None", teksti)
+
+    def test_raportin_koko_nakyy(self):
+        (self.t / "raportit" / "tyhja.md").write_text("# T\n")
+        teksti = tk.yojono_osio(self.t)
+        self.assertIn("tyhja.md (4 merkkia)", teksti)
+        self.assertIn("x.md (", teksti)
+
     def test_puuttuva_tila_ei_kaada(self):
         tyhja = Path(tempfile.mkdtemp())
         self.assertIn("# Yojono", tk.yojono_osio(tyhja))
