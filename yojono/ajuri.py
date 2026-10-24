@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from agentti import pr_kutsu
 from agentti.pr_kutsu import REPOT as PR_REPOT
 
 OLETUS_PERUS = "/var/lib/yojono"
@@ -169,6 +170,18 @@ def valitse_ajettavat(tehtavat, tila, pvm):
     return ulos
 
 
+def syy_viestiksi(md_polku, loppu):
+    """Epaonnistuneen ajon viestiksi raportin `- Syy:`-rivi (jos on) ja ilman claude-tyokalun yleista `unrecognized_model`-kohinaa."""
+    syy = ""
+    if md_polku:
+        try:
+            syy = next((r[len("- Syy:"):].strip() for r in Path(md_polku).read_text(encoding="utf-8").splitlines() if r.startswith("- Syy:")), "")
+        except (OSError, ValueError):
+            syy = ""
+    teksti = syy or re.sub(r"\[claude-code:unrecognized_model\]", "", loppu or "").strip()
+    return teksti[:300]
+
+
 def suorita_katselmointi(tehtava, pvm, perus, skripti, aikaraja=TEHTAVA_AIKARAJA_S):
     """Kutsuu tyypin skriptia <repo> <budjetti> (katselmointi: katselmoi.sh; ideointi: ideoi.sh). Kulu luetaan raportin JSON:sta (myos epaonnistuneesta ajosta).
     Jos ajo alkoi mutta kulua ei saada selville (aikakatkaisu, lukukelvoton JSON), laskutetaan koko budjetti: katto ei saa alittua arvauksella."""
@@ -211,6 +224,8 @@ def suorita_katselmointi(tehtava, pvm, perus, skripti, aikaraja=TEHTAVA_AIKARAJA
         if kulu is None:
             kulu = budjetti  # ajo alkoi mutta kulua ei saada: katto ei saa alittua arvauksella
     ok = koodi == 0 and md_polku.exists() and paivittyi
+    if not ok:
+        loppu = syy_viestiksi(md_polku if paivittyi else None, loppu)
     return Tulos(ok, kulu, str(md_polku) if ok else "", "ok" if ok else (loppu or f"poistumiskoodi {koodi}"))
 
 
@@ -319,6 +334,10 @@ def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.mon
                 continue
             if katto - kulu_nyt < t["budjetti"]:
                 rivit.append(f"- {t['id']}: ohitettu (paivakatto: jaljella {katto - kulu_nyt:.2f} < {t['budjetti']:.2f})")
+                continue
+            if t["tyyppi"] == "kehitys" and pr_kutsu.paikkoja_jaljella() <= 0:
+                # Ei kalliin mallikutsun jalkeen hukkaan menevaa tyota: PR-paivaraja on taynna, yritys ei kulu
+                rivit.append(f"- {t['id']}: ohitettu (PR-paivaraja taynna, ajetaan seuraavana paivana)")
                 continue
             tulos = suorita(t, pvm, perus, skripti_tyypille(skripti, t["tyyppi"]))
             tila["kulut"][pvm] = round(kulu_nyt + tulos.kulu, 4)

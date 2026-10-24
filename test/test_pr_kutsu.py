@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import unittest
 import urllib.error
+from pathlib import Path
 from types import SimpleNamespace
 
 from agentti import pr_kutsu as pk
@@ -318,6 +319,65 @@ class MainTest(unittest.TestCase):
         self.assertEqual(pk.main(["tarkista", "kauppatiimi", "/x", "yo/a"]), 1)
         with tee_repo({"docs/a.md": "x"}) as hak:
             self.assertEqual(pk.main(["tarkista", "agentti-pohja", hak, "yo/koe"]), 0)
+
+
+class OletushaaraTesti(unittest.TestCase):
+    def test_pohja_haara(self):
+        self.assertEqual(pk.pohja_haara("ai-pr-reviewer-action"), "master")
+        for repo in ("agentti-pohja", "mcp-model-router", "llm-stopcheck", "ideapankki"):
+            self.assertEqual(pk.pohja_haara(repo), "main")
+
+    def test_pr_avataan_master_pohjaan(self):
+        saatu = {}
+
+        class Vastaus:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b'{"html_url": "https://github.com/x/y/pull/1"}'
+
+        def avaa(pyynto, timeout=None):
+            saatu["body"] = json.loads(pyynto.data.decode())
+            return Vastaus()
+        pk.avaa_pr("ai-pr-reviewer-action", "yo/a", "bot", "otsikko", "kuvaus", "tunnus", avaa=avaa)
+        self.assertEqual(saatu["body"]["base"], "master")
+
+    def test_fork_paivitetaan_oikeaan_haaraan(self):
+        saatu = {}
+
+        class Vastaus:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b"{}"
+
+        def avaa(pyynto, timeout=None):
+            saatu["body"] = json.loads(pyynto.data.decode())
+            return Vastaus()
+        pk.paivita_fork("ai-pr-reviewer-action", "bot", "tunnus", avaa=avaa)
+        self.assertEqual(saatu["body"], {"branch": "master"})
+        pk.paivita_fork("llm-stopcheck", "bot", "tunnus", avaa=avaa)
+        self.assertEqual(saatu["body"], {"branch": "main"})
+
+    def test_tarkista_kayttaa_masteria(self):
+        hak = tempfile.mkdtemp()
+        git(hak, "init", "-q", "-b", "master")
+        (Path(hak) / "a.md").write_text("a\n")
+        git(hak, "add", "-A")
+        git(hak, "commit", "-q", "-m", "a")
+        git(hak, "checkout", "-q", "-b", "yo/koe")
+        (Path(hak) / "b.md").write_text("b\n")
+        git(hak, "add", "-A")
+        git(hak, "commit", "-q", "-m", "b")
+        self.assertEqual(pk.tarkista("ai-pr-reviewer-action", hak, "yo/koe"), ["b.md"])
 
 
 if __name__ == "__main__":

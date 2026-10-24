@@ -86,10 +86,20 @@ def _git(hakemisto, *args, suorita=subprocess.run):
     return r.returncode, (r.stdout or "").strip(), (r.stderr or "").strip()
 
 
-def tarkista(repo, hakemisto, haara, pohja="main", suorita=subprocess.run):
+# Repot, joiden oletushaara ei ole main (kovakoodattu: ei API-hakua, ei arvausta). Havainto 24.10.: ai-pr-reviewer-action kayttaa
+# haaraa master, ja kovakoodattu main kaatoi sen kaikki PR:t.
+OLETUSHAARAT = {"ai-pr-reviewer-action": "master"}
+
+
+def pohja_haara(repo):
+    return OLETUSHAARAT.get(repo, "main")
+
+
+def tarkista(repo, hakemisto, haara, pohja=None, suorita=subprocess.run):
     """Paikalliset tarkistukset ilman verkkoa. Palauttaa muutetut tiedostot tai nostaa PrVirhen."""
     if repo not in REPOT:
         raise PrVirhe("repo ei ole sallittujen listalla: " + repo)
+    pohja = pohja or pohja_haara(repo)
     if not isinstance(haara, str) or not HAARA_RE.match(haara):
         raise PrVirhe("haaran pitaa olla muotoa yo/<nimi> (pienet kirjaimet, numerot, . _ -)")
     if not os.path.isdir(os.path.join(hakemisto, ".git")):
@@ -108,6 +118,18 @@ def tarkista(repo, hakemisto, haara, pohja="main", suorita=subprocess.run):
     if huonot:
         raise PrVirhe("suojattuja polkuja muutettu, tee kasin: " + ", ".join(huonot[:5]))
     return tiedostot
+
+
+def paikkoja_jaljella(tilapolku=None, pvm=None):
+    """Montako PR-yritysta on viela jaljella tanaan (vain luku). Ajuri tarkistaa taman ennen kalliin mallikutsun alkua."""
+    pvm = pvm or date.today().isoformat()
+    try:
+        with open(tilapolku or os.environ.get("YOJONO_PR_TILA", OLETUS_TILA), encoding="utf-8") as f:
+            tila = json.load(f)
+    except (OSError, ValueError):
+        return RAJA_PAIVASSA
+    n = tila.get("n", 0) if tila.get("pvm") == pvm and isinstance(tila.get("n"), int) else 0
+    return max(RAJA_PAIVASSA - n, 0)
 
 
 def varaa_paikka(tilapolku, pvm=None):
@@ -158,7 +180,7 @@ def paivita_fork(repo, botti, tunnus, avaa=urllib.request.urlopen):
     ei onnistu, itse push nostaa selkean virheen.
     """
     pyynto = urllib.request.Request(
-        f"https://api.github.com/repos/{botti}/{repo}/merge-upstream", data=json.dumps({"branch": "main"}).encode(),
+        f"https://api.github.com/repos/{botti}/{repo}/merge-upstream", data=json.dumps({"branch": pohja_haara(repo)}).encode(),
         method="POST", headers={"Authorization": "Bearer " + tunnus, "Accept": "application/vnd.github+json",
                                 "Content-Type": "application/json", "User-Agent": "yojono-pr-kutsu"})
     try:
@@ -176,7 +198,7 @@ def avaa_pr(repo, haara, botti, otsikko, kuvaus, tunnus, avaa=urllib.request.url
     runko = {
         "title": "[yojono] " + "".join(c for c in str(otsikko) if c >= " " and c != "\x7f").strip()[:OTSIKKO_MAX],
         "head": f"{botti}:{haara}",
-        "base": "main",
+        "base": pohja_haara(repo),
         "body": str(kuvaus)[:KUVAUS_MAX] + ALAKUULO,
         "maintainer_can_modify": False,
     }
