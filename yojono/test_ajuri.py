@@ -404,6 +404,34 @@ class TestOminaisuus(Pohja):
         self.assertTrue(tulos.raportti.endswith(f"{PVM}-kehitys-o-1-llm-stopcheck.md"))
 
 
+class TestLisatiedot(Pohja):
+    def md(self, teksti):
+        p = self.perus / "r.md"
+        p.write_text(teksti)
+        return p
+
+    def test_kehitys_pr_linkki(self):
+        self.assertEqual(ajuri.raportin_lisatiedot("kehitys", self.md("# K\n- PR: https://github.com/x/y/pull/3\n- Testit: vihrea\n")),
+                         " PR https://github.com/x/y/pull/3")
+
+    def test_kehitys_ei_prta_nayttaa_syyn(self):
+        t = ajuri.raportin_lisatiedot("kehitys", self.md("- PR: ei avattu\n- Syy: testit punaisella\n"))
+        self.assertEqual(t, " EI PR:AA (testit punaisella)")
+        self.assertEqual(ajuri.raportin_lisatiedot("kehitys", self.md("- PR: ei avattu\n")), " EI PR:AA")
+
+    def test_tarkkailu_kolme_parasta(self):
+        teksti = "## Ehdotukset\n" + "".join(f"{i}. PARAS ehdotus {i}\n" for i in range(1, 6)) + "6. muu\n"
+        t = ajuri.raportin_lisatiedot("tarkkailu", self.md(teksti))
+        self.assertEqual(t.count("PARAS"), 3)
+        self.assertIn("ehdotus 1", t)
+        self.assertNotIn("ehdotus 4", t)
+
+    def test_muut_tyypit_ja_virheet_eivat_kaada(self):
+        self.assertEqual(ajuri.raportin_lisatiedot("ideointi", self.md("- PR: x\n")), "")
+        self.assertEqual(ajuri.raportin_lisatiedot("kehitys", self.perus / "ei-ole.md"), "")
+        self.assertEqual(ajuri.raportin_lisatiedot("tarkkailu", self.md("ei mitaan")), "")
+
+
 class TestTarkkailu(Pohja):
     def tt(self, **kw):
         return dict({"id": "tark-infra", "tyyppi": "tarkkailu", "repo": "agentti-pohja", "budjetti": 1.0, "teema": "infra proxmox ja litellm"}, **kw)
