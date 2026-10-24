@@ -5,6 +5,7 @@ Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 ## [Julkaisematon]
 
 ### Korjattu
+- tilannekuva: raportin koko merkkeina nakyviin (tarkkailija paatteli 24.10. virheellisesti ideointiraporttien olevan tyhjia, koska nakyi vain otsikot) ja kulut-osioon kuukausisumma, keskimaarainen paivakulu, 30 paivan ennuste seka kate (paiva-/kuukausikatto). +2 testia.
 - pr_kutsu: PR-paivaraja 5 -> 100 (Tonyn paatos 24.10.: botin testit/ominaisuus-PR:t yhdistyvat itse, raja suojaa enaa vain karkaavilta ajoilta).
 - pr_kutsu: repokohtainen oletushaara (`ai-pr-reviewer-action` = master) PR:n pohjana, forkin synkkauksessa ja paikallisessa diff-tarkistuksessa. Havainto 24.10.: kovakoodattu `main` kaatoi kaikki ai-pr-reviewer-actionin PR:t. +4 testia, mutantti kaatuu.
 - yojono: kehitys-tehtava ohitetaan ennen mallikutsua, jos PR-paivaraja on taynna (ei kulu yritysta eika rahaa; aiemmin kolme tehtavaa, noin 1,76 USD, meni hukkaan kun klooni poistettiin). Epaonnistuneen ajon viestiksi tulee raportin `Syy`-rivi ja claude-tyokalun yleinen `unrecognized_model`-kohina suodatetaan pois. +2 testia, mutantti kaatuu.
