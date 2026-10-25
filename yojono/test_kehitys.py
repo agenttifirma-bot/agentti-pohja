@@ -147,7 +147,7 @@ class Ajo(Pohja):
     def test_punaiset_testit_estavat_prn(self):
         self.agentti_skripti('printf "import unittest\\nclass B(unittest.TestCase):\\n    def test_b(self):\\n        self.fail()\\n" > test/test_b.py')
         self.pr_kutsu()
-        self.assertEqual(self.aja(REPO, "1.00", "testit").returncode, 0)
+        self.assertEqual(self.aja(REPO, "1.00", "testit").returncode, 1)
         rap = self.raportti("testit")
         self.assertIn("punainen", rap)
         self.assertIn("testit punaisella", rap)

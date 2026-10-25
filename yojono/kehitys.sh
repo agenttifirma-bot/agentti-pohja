@@ -187,5 +187,7 @@ echo "raportti: $UL.md"
 if [ -n "$PR" ]; then echo "pr: $PR"; fi
 case "$SYY" in
   "pr_kutsu epaonnistui"*|"kuiva-ajo: pr_kutsu tarkista epaonnistui"*) exit 1 ;;
+  # Havainto 25.10. (tarkkailija): punaiset testit eivat saa nayttaa onnistumisena ("valmis, ok"); ajuri kirjaa ne epaonnistuneeksi.
+  "testit punaisella"*) exit 1 ;;
 esac
 exit 0
