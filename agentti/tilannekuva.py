@@ -12,12 +12,16 @@ import subprocess
 import sys
 import time
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .pr_kutsu import REPOT
 
 OMISTAJA = "tonyweckstrom1987"
 RAJA_RIVEJA = 400
+MERGATUT_PAIVIA = 7
+MERGATUT_MAX_RIVEJA = 40
+MERGATUT_OTSIKKO_MAX = 80
 SALAISUUDET = [
     re.compile(r"sk-[A-Za-z0-9_-]{16,}"),
     re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),
@@ -67,6 +71,38 @@ def github_osio(hae=None):
         except Exception as e:  # yksi repo ei saa kaataa kokonaisuutta
             rivit.append("(haku epaonnistui: %s)" % type(e).__name__)
     return "\n".join(rivit)
+
+
+def mergatut_osio(hae=None, nyt=None):
+    """Mergatut PR:t viimeisilta MERGATUT_PAIVIA paivalta (repo, numero, otsikko, merge-paiva). Vain luku; tarkkailija
+    ei saa ehdottaa asiaa, joka nakyy jo tassa. Rivit rajattu MERGATUT_MAX_RIVEJA, otsikot MERGATUT_OTSIKKO_MAX merkkiin;
+    yhden repon hakuvirhe ei estaa muita."""
+    def oletushaku(url):
+        pyynto = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "agenttifirma-tilannekuva"})
+        with urllib.request.urlopen(pyynto, timeout=20) as v:
+            return json.loads(v.read().decode("utf-8"))
+    hae = hae or oletushaku
+    raja = (nyt or datetime.now(timezone.utc)) - timedelta(days=MERGATUT_PAIVIA)
+    rajaus = raja.strftime("%Y-%m-%dT%H:%M:%SZ")
+    kohdat, virheet = [], []
+    for repo in REPOT:
+        try:
+            prt = hae("https://api.github.com/repos/%s/%s/pulls?state=closed&sort=updated&direction=desc&per_page=30" % (OMISTAJA, repo))
+            for p in prt:
+                m = str(p.get("merged_at") or "")
+                if m and m >= rajaus:
+                    kohdat.append((m, repo, p.get("number"), " ".join(str(p.get("title")).split())[:MERGATUT_OTSIKKO_MAX]))
+        except Exception as e:  # yksi repo ei saa kaataa kokonaisuutta
+            virheet.append("(haku epaonnistui: %s: %s)" % (repo, type(e).__name__))
+    kohdat.sort(reverse=True)
+    rivit = ["# Mergatut PR:t, viimeiset %d paivaa" % MERGATUT_PAIVIA]
+    for m, repo, nro, otsikko in kohdat[:MERGATUT_MAX_RIVEJA]:
+        rivit.append("- %s #%s %s (mergattu %s)" % (repo, nro, otsikko, m[:10]))
+    if len(kohdat) > MERGATUT_MAX_RIVEJA:
+        rivit.append("(+%d vanhempaa jatetty pois)" % (len(kohdat) - MERGATUT_MAX_RIVEJA))
+    if not kohdat:
+        rivit.append("(ei mergattuja PR:ia)")
+    return "\n".join(rivit + virheet)
 
 
 def yojono_osio(perus):
@@ -170,7 +206,7 @@ def keraa_kaikki(kohde, perus="/var/lib/yojono", portti_tila="/var/lib/agentti/p
     kohde = Path(kohde)
     kohde.mkdir(parents=True, exist_ok=True)
     osat = {
-        "github.md": lambda: github_osio(hae),
+        "github.md": lambda: github_osio(hae) + "\n\n" + mergatut_osio(hae),
         "yojono.md": lambda: yojono_osio(perus),
         "kulut.md": lambda: kulut_osio(perus, portti_tila),
         "palvelin.md": palvelin_osio,

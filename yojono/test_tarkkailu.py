@@ -62,6 +62,13 @@ class TarkkailuTesti(Pohja):
         self.assertIn("DATAA", kutsut)
         self.assertEqual(json.loads((self.perus / "raportit" / "2026-10-24-tarkkailu-t-agentti-pohja.json").read_text())["total_cost_usd"], 0.21)
 
+    def test_kehote_kieltaa_mergattujen_ehdottamisen(self):
+        kayttoloki = self.t / "kutsut"
+        self.agentti_skripti(f'echo "$@" > {kayttoloki}\necho \'{{"total_cost_usd": 0, "result": "ok"}}\'')
+        r = self.aja()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Ala ehdota asiaa, joka nakyy jo mergatuissa PR:issa.", kayttoloki.read_text())
+
     def test_roolit_ja_tarkennus_kehotteessa(self):
         kayttoloki = self.t / "kutsut"
         self.agentti_skripti(f'echo "$@" > {kayttoloki}\necho \'{{"total_cost_usd": 0, "result": "ok"}}\'')
