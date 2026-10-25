@@ -3,6 +3,7 @@
 Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 
 ## Unreleased
+- isanta: kohdekontti command=-argumentista (`snapshot-kutsu.py 118`; ei argumenttia = CT115, olemassa oleva rivi toimii ennallaan). CT118: vain `listaa` ja `snapshot ennen-<nimi>` omaan konttiin (ei `tila`a), enintaan 10 snapshotia ja 3 ottoa/vrk, kieltaytyy (loki `levy`), jos kontin thin pool data tai metadata > 80 % (fail closed). Loki: CT118:n rivit `ct=118`, tilat ok/raja/levy/virhe; komennon teksti puhdistetaan (rivinvaihto ei voi luoda eika vaarentaa lokirivia) ja paivaraja lasketaan kentittain (komennon teksti ei voi nayttaa onnistuneelta otolta). CT115:n kayttaytyminen ennallaan (test_snapshot.py koskematon + regressiotestit). Asennusohje `isanta/CT118-asennus.md`. +42 testia.
 - luo.py: `--maaritys POLKU.json` tarkistaa agenttimaarityksen (maaritys.py) ennen kirjoitusta ja luo lisaksi maaritykset/NIMI.json, ohjerungon ja evalit/NIMI.json (mittari mukana). Virheellinen maaritys ei luo mitaan. +3 testia.
 - yojono: kehitys-tehtavan fork-esitarkistus ennen mallikutsua (compare behind_by; yrittaa merge-upstream-synkan; jos ei onnistu, tehtava ohitetaan ilman kulua ja yritysta, selitys "Sync fork kasin"). Epavarmuus ei estä ajoa. +7 testia.
 - yojono: tehtavakohtainen `malli` (kehitys, tarkkailu): LiteLLM-alias valitaan jonosta (KEHITYS_MALLI/TARKKAILU_MALLI), mallivertailua varten. +2 testia.
