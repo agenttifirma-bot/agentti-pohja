@@ -1,6 +1,7 @@
 """Repon rakenteen tarkistukset: ASCII, systemd-kovennus, luo.py, komentorivi."""
 import contextlib
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -112,6 +113,36 @@ class LuoTesti(unittest.TestCase):
         luo.luo("uutiset", self.tmp.name)
         with self.assertRaises(FileExistsError):
             luo.luo("uutiset", self.tmp.name)
+
+    def _maaritys(self, **muutos):
+        with open(os.path.join(JUURI, "maaritys.esimerkki.json"), encoding="utf-8") as f:
+            m = json.load(f)
+        m["nimi"] = "uutiset"
+        m["ohje_tiedosto"] = "ohjeet/uutiset.md"
+        m.update(muutos)
+        polku = os.path.join(self.tmp.name, "m.json")
+        with open(polku, "w", encoding="utf-8") as f:
+            json.dump(m, f)
+        return polku
+
+    def test_luo_maarityksella(self):
+        luodut = luo.luo("uutiset", self.tmp.name, maaritys_polku=self._maaritys())
+        self.assertEqual(len(luodut), 7)
+        for rel in ("maaritykset/uutiset.json", "ohjeet/uutiset.md", "evalit/uutiset.json"):
+            self.assertTrue(os.path.exists(os.path.join(self.tmp.name, rel)), rel)
+        with open(os.path.join(self.tmp.name, "evalit", "uutiset.json"), encoding="utf-8") as f:
+            self.assertIn("30 %", json.load(f)["mittari"])
+
+    def test_virheellinen_maaritys_ei_luo_mitaan(self):
+        polku = self._maaritys(budjetti_usd_paivassa=9999)
+        with self.assertRaises(Exception):
+            luo.luo("uutiset", self.tmp.name, maaritys_polku=polku)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "agentti", "agentit", "uutiset.py")))
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "maaritykset")))
+
+    def test_maarityksen_nimi_ei_vastaa(self):
+        with self.assertRaises(ValueError):
+            luo.luo("uutiset", self.tmp.name, maaritys_polku=self._maaritys(nimi="muu"))
 
     def test_virheelliset_nimet(self):
         for nimi in ("", "A", "../x", "esimerkki", "x y", "1abc", "a" * 40, "a;rm"):

@@ -3,6 +3,7 @@
 Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 
 ## Unreleased
+- luo.py: `--maaritys POLKU.json` tarkistaa agenttimaarityksen (maaritys.py) ennen kirjoitusta ja luo lisaksi maaritykset/NIMI.json, ohjerungon ja evalit/NIMI.json (mittari mukana). Virheellinen maaritys ei luo mitaan. +3 testia.
 - yojono: kehitys-tehtavan fork-esitarkistus ennen mallikutsua (compare behind_by; yrittaa merge-upstream-synkan; jos ei onnistu, tehtava ohitetaan ilman kulua ja yritysta, selitys "Sync fork kasin"). Epavarmuus ei estä ajoa. +7 testia.
 - yojono: tehtavakohtainen `malli` (kehitys, tarkkailu): LiteLLM-alias valitaan jonosta (KEHITYS_MALLI/TARKKAILU_MALLI), mallivertailua varten. +2 testia.
 - salaisuus.sh: LC_ALL=C (merkkialue ei riipu localesta; korjaa test-macos-kaatumisen oletettu syy).
