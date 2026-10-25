@@ -303,18 +303,37 @@ def yhteenveto(rivit, kulu_tanaan, katto, pvm, halytysrivi=""):
     return "\n".join(([halytysrivi] if halytysrivi else []) + [otsikko] + (rivit or ["Ei ajettavia tehtavia."]))
 
 
-def kirjaa_lokiin(t, tulos, pvm, polku=None):
-    """Valinnainen tapahtumaloki (YOJONO_LOKI = tietokannan polku). Virhe ei koskaan kaada ajoa."""
+PR_RIVI = re.compile(r"^- PR: \S*/pull/(\d+)\s*$", re.M)
+
+
+def pr_numero(raportti):
+    """PR-numero kehitys-raportin `- PR: <url>/pull/N` -riviltaan; None jos raporttia tai PR:aa ei ole. Vain luku, ei kaada."""
+    if not raportti:
+        return None
+    try:
+        with open(raportti, encoding="utf-8") as f:
+            m = PR_RIVI.search(f.read(20000))
+    except OSError:
+        return None
+    return int(m.group(1)) if m else None
+
+
+def kirjaa_lokiin(t, tulos, pvm, polku=None, yrityksia=None):
+    """Valinnainen tapahtumaloki (YOJONO_LOKI = tietokannan polku). Kirjaa tehtavan id:n, repon, mallin (jos tehtavalla oma),
+    tuloksen, kulun, yritykset ja PR-numeron. Ei viestitekstia eika muuta vapaata tekstia. Virhe ei koskaan kaada ajoa."""
     polku = polku or os.environ.get("YOJONO_LOKI")
     if not polku:
         return False
     try:
         from agentti import tapahtumaloki
+        tiedot = {"tehtava": t["id"], "repo": t["repo"], "pvm": pvm, "malli": t.get("malli") or "oletus", "yrityksia": yrityksia}
+        pr = pr_numero(tulos.raportti) if t.get("tyyppi") == "kehitys" else None
+        if pr is not None:
+            tiedot["pr"] = pr
         yht = tapahtumaloki.avaa(polku)
         try:
             tapahtumaloki.kirjaa(yht, "yojono", "yojono", t.get("tyyppi", "katselmointi"), "ok" if tulos.ok else "virhe",
-                                 kulu_usd=round(tulos.kulu, 4),
-                                 tiedot={"tehtava": t["id"], "repo": t["repo"], "pvm": pvm})
+                                 kulu_usd=round(tulos.kulu, 4), tiedot=tiedot)
         finally:
             yht.close()
         return True
@@ -387,7 +406,7 @@ def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.mon
                 "pvm": pvm, "kulu": round(tulos.kulu, 4), "raportti": tulos.raportti, "viesti": tulos.viesti,
             }
             kirjoita_tila(tila_polku, tila)  # heti: katkennut ajo ei hukkaa kulukirjanpitoa
-            kirjaa_lokiin(t, tulos, pvm)
+            kirjaa_lokiin(t, tulos, pvm, yrityksia=tila["tehtavat"][t["id"]]["yrityksia"])
             rivit.append(f"- {t['id']}: {'VALMIS' if tulos.ok else 'EPAONNISTUI'} ({tulos.kulu:.2f} USD)"
                          + (f" raportti {tulos.raportti}" if tulos.ok else f" syy: {tulos.viesti}")
                          + (raportin_lisatiedot(t["tyyppi"], tulos.raportti) if tulos.ok else ""))

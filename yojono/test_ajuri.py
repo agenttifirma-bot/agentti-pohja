@@ -625,6 +625,56 @@ class LokiKirjaus(Pohja):
             yht.close()
         self.assertEqual(rivit, [("yojono", "katselmointi", "ok", 0.5)])
 
+    def _tiedot(self, polku):
+        from agentti import tapahtumaloki
+        yht = tapahtumaloki.avaa(polku)
+        try:
+            return [json.loads(r[0]) for r in yht.execute("SELECT tiedot_json FROM tapahtuma ORDER BY id")]
+        finally:
+            yht.close()
+
+    def test_kirjaa_mallin_yritykset_ja_pr_numeron(self):
+        polku = str(self.perus / "loki.db")
+        raportti = self.perus / "r.md"
+        raportti.write_text("# Kehitys\n\n- Haara: yo/x\n- PR: https://github.com/o/r/pull/42\n- Testit: vihrea\n")
+        k = dict(t("a", repo="agentti-pohja"), tyyppi="kehitys", aihe="readme", malli="deepseek-pro")
+        self.kirjoita_jono(jono([k]))
+        with mock.patch.dict(os.environ, {"YOJONO_LOKI": polku}):
+            self.aja(lambda *_: ajuri.Tulos(True, 0.5, str(raportti), "ok"))
+        (tiedot,) = self._tiedot(polku)
+        self.assertEqual((tiedot["tehtava"], tiedot["malli"], tiedot["yrityksia"], tiedot["pr"]), ("a", "deepseek-pro", 0, 42))
+
+    def test_epaonnistunut_kirjaa_yrityksen_eika_pr_numeroa(self):
+        polku = str(self.perus / "loki.db")
+        self.kirjoita_jono(jono([t("a")]))
+        with mock.patch.dict(os.environ, {"YOJONO_LOKI": polku}):
+            self.aja(lambda *_: ajuri.Tulos(False, 0.1, "", "virhe"))
+        (tiedot,) = self._tiedot(polku)
+        self.assertEqual((tiedot["malli"], tiedot["yrityksia"]), ("oletus", 1))
+        self.assertNotIn("pr", tiedot)
+
+    def test_pr_numero_puuttuvasta_tai_pr_ei_avattu_raportista_on_none(self):
+        self.assertIsNone(ajuri.pr_numero(""))
+        self.assertIsNone(ajuri.pr_numero(str(self.perus / "ei-ole.md")))
+        r = self.perus / "r.md"
+        r.write_text("- PR: ei avattu\n")
+        self.assertIsNone(ajuri.pr_numero(str(r)))
+
+    def test_salaisuuden_nakoinen_siivotaan_lokista(self):
+        polku = str(self.perus / "loki.db")
+        vaarallinen = "sk-" + "abcdefghijklmnopqrstu"
+        self.kirjoita_jono(jono([dict(t("a", repo="agentti-pohja"), tyyppi="kehitys", aihe="readme", malli=vaarallinen)]))
+        with mock.patch.dict(os.environ, {"YOJONO_LOKI": polku}):
+            self.aja(lambda *_: ajuri.Tulos(True, 0.5, "x.md", "ok"))
+        from agentti import tapahtumaloki
+        yht = tapahtumaloki.avaa(polku)
+        try:
+            raaka = yht.execute("SELECT tiedot_json FROM tapahtuma").fetchone()[0]
+        finally:
+            yht.close()
+        self.assertNotIn(vaarallinen, raaka)
+        self.assertIn("[poistettu]", raaka)
+
     def test_ilman_polkua_ei_kirjata_ja_virhe_ei_kaada(self):
         self.kirjoita_jono(jono([t("a")]))
         with mock.patch.dict(os.environ, {}, clear=False):
