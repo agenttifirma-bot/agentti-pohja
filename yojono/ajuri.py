@@ -307,7 +307,7 @@ PR_RIVI = re.compile(r"^- PR: \S*/pull/(\d+)\s*$", re.M)
 
 
 def pr_numero(raportti):
-    """PR-numero kehitys-raportin `- PR: <url>/pull/N` -riviltä; None jos raporttia tai PR:aa ei ole. Vain luku, ei kaada."""
+    """PR-numero kehitys-raportin `- PR: <url>/pull/N` -riviltaan; None jos raporttia tai PR:aa ei ole. Vain luku, ei kaada."""
     if not raportti:
         return None
     try:
