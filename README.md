@@ -51,6 +51,8 @@ python luo.py uutiset
 
 Tämä luo `agentti/agentit/uutiset.py` (kopio esimerkistä), `test/test_uutiset.py` (perustestit mallista `test/agentti.test.mall`) ja `systemd/agentti-uutiset.service` + `.timer`, ja tulostaa kustakin rivin `luotu: <polku>`. Komento ei ylikirjoita mitään: jos jokin kohdetiedosto on jo olemassa, se päättyy virheeseen ja koodiin 2. Nimen on oltava 2-31 merkkiä (pienet kirjaimet, numerot ja `_`, alkaa kirjaimella), eikä `esimerkki` kelpaa. Uuden agentin voi ajaa heti: `python -m agentti --agentti uutiset`.
 
+Jos agentilla on määritys (`maaritys.esimerkki.json`), anna se mukaan: `python luo.py uutiset --maaritys oma.json`. Määritys tarkistetaan ensin (kulu- ja tokenkatto, vyöhyke, oikeustaso), ja vasta sen jälkeen luodaan lisäksi `maaritykset/uutiset.json`, ohjetiedoston runko ja `evalit/uutiset.json` (eval-runko, jossa etukäteen sovittu mittari on mukana). Virheellinen määritys ei luo mitään.
+
 Muokkaa agentin moduulista nämä:
 
 - `MALLI` on käytettävän mallin nimi
