@@ -24,6 +24,18 @@ LEVY_RAJA = 85.0           # % kaytetty
 MUISTI_RAJA = 15.0         # % vapaana
 
 
+def _koodit(yht, alku, tulos):
+    """Tapahtumien `virhekoodi` (tiedot_json) tuloksittain; puuttuva koodi (vanhat rivit) = 'tuntematon'."""
+    koodit = {}
+    for (teksti,) in yht.execute("SELECT tiedot_json FROM tapahtuma WHERE aika>=? AND tulos=?", (alku, tulos)):
+        try:
+            koodi = json.loads(teksti or "{}").get("virhekoodi") or "tuntematon"
+        except (ValueError, AttributeError):
+            koodi = "tuntematon"
+        koodit[koodi] = koodit.get(koodi, 0) + 1
+    return koodit
+
+
 def keraa(yht, paivaa=7, nyt=None):
     """Palauttaa raportin raakaluvut tapahtumalokista. Ei muuta tietokantaa."""
     nyt = time.time() if nyt is None else nyt
@@ -32,16 +44,12 @@ def keraa(yht, paivaa=7, nyt=None):
         "SELECT agentti, COALESCE(SUM(kulu_usd),0) FROM tapahtuma WHERE aika>=? GROUP BY agentti", (alku,))}
     yhteensa, virheet_n = yht.execute(
         "SELECT COUNT(*), COALESCE(SUM(tulos='virhe'),0) FROM tapahtuma WHERE aika>=?", (alku,)).fetchone()
-    koodit = {}
-    for (teksti,) in yht.execute("SELECT tiedot_json FROM tapahtuma WHERE aika>=? AND tulos='virhe'", (alku,)):
-        try:
-            koodi = json.loads(teksti or "{}").get("virhekoodi") or "tuntematon"
-        except (ValueError, AttributeError):
-            koodi = "tuntematon"
-        koodit[koodi] = koodit.get(koodi, 0) + 1
+    koodit = _koodit(yht, alku, "virhe")
+    ohituskoodit = _koodit(yht, alku, "ohitettu")      # ei ajettu eika kulua (nyt: forkin synkkaus), mutta syy halutaan nakyviin
     perus = tapahtumaloki.yhteenveto(yht, paivaa, nyt=nyt)
     tilat = perus["ehdotukset"]
     return {"paivaa": paivaa, "tapahtumia": yhteensa, "virheita": int(virheet_n), "virhekoodit": koodit,
+            "ohitettuja": sum(ohituskoodit.values()), "ohituskoodit": ohituskoodit,
             "kulu_usd": perus["kulu_usd"], "kulu_agentti": kulu_agentti,
             "hyvaksymis_pros": perus["hyvaksymis_pros"], "paatettyja": tilat.get("hyvaksytty", 0) + tilat.get("hylatty", 0)}
 
@@ -86,6 +94,9 @@ def vihjeet(tiedot, res):
         if osuus > VIRHEOSUUS_RAJA and tiedot["virhekoodit"]:
             koodi = max(tiedot["virhekoodit"].items(), key=lambda p: p[1])[0]
             v.append("Virheita %.0f %% tapahtumista, yleisin koodi %s: selvita syy." % (osuus, koodi))
+    forkit = sum(n for k, n in tiedot.get("ohituskoodit", {}).items() if k.startswith("fork_")) + sum(n for k, n in tiedot["virhekoodit"].items() if k.startswith("fork_"))
+    if forkit:
+        v.append("Forkin synkkaus esti %d tehtavaa: katso koodit (fork_ei_ff = fork erkaantunut, fork_workflow_oikeus = botin tunnukselta puuttuu workflow-oikeus); synkkaa kasin." % forkit)
     pros = tiedot["hyvaksymis_pros"]
     if pros is not None and tiedot["paatettyja"] >= MIN_PAATOKSIA and pros < HYVAKSYMIS_RAJA:
         v.append("Vain %.0f %% ehdotuksista hyvaksytty: tarkenna ehdotusten kriteereita." % pros)
@@ -108,6 +119,8 @@ def muodosta(tiedot, res):
                 "%s %.2f" % (a, k) for a, k in sorted(tiedot["kulu_agentti"].items(), key=lambda p: -p[1])[:5]))
         if tiedot["virhekoodit"]:
             r.append("Virhekoodit: " + ", ".join("%s x%d" % (k, n) for k, n in sorted(tiedot["virhekoodit"].items(), key=lambda p: -p[1])[:5]))
+        if tiedot.get("ohituskoodit"):
+            r.append("Ohitettu %d (ei kulua): " % tiedot["ohitettuja"] + ", ".join("%s x%d" % (k, n) for k, n in sorted(tiedot["ohituskoodit"].items(), key=lambda p: -p[1])[:5]))
     pros = tiedot["hyvaksymis_pros"]
     r.append("Ehdotusten hyvaksymis-%%: %s (paatettyja %d)." % ("-" if pros is None else "%.0f" % pros, tiedot["paatettyja"]))
     osat = []

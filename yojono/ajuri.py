@@ -61,6 +61,7 @@ class Tulos:
     kulu: float
     raportti: str
     viesti: str
+    koodi: str = ""     # epaonnistuneen ajon vakaa virhekoodi (ks. VIRHEKOODIT); tyhja kun ok
 
 
 def tarkista_jono(jono):
@@ -191,6 +192,50 @@ def syy_viestiksi(md_polku, loppu):
     return teksti[:300]
 
 
+# Vakaat virhekoodit (tila.json, Telegram-yhteenveto, tapahtumaloki `virhekoodi`, viikkoraportti). Vanhat lokirivit ilman koodia nakyvat koodina "tuntematon".
+VIRHEKOODIT = {
+    "aikakatkaisu": "tehtava ylitti aikarajan",
+    "malli_virhe": "claude/malli palautti virheen tai ei tunnistanut mallia",
+    "budjetti_loppui": "claude-kutsun budjetti loppui ennen raporttia",
+    "raporttia_ei_syntynyt": "skripti ei tuottanut raporttia (md puuttuu tai ei paivittynyt)",
+    "raportti_tyhja": "raportti syntyi, mutta on tyhja tai liian lyhyt",
+    "skripti_ei_kaynnisty": "tehtavaskriptia ei voitu kaynnistaa",
+    "pr_kutsu_epaonnistui": "PR:n avaus epaonnistui (muu kuin fork_*)",
+    "testit_punaiset": "kehitys: testit punaisella agentin muutosten jalkeen",
+    "fork_jaljessa": "fork jai jaljelle ylavirrasta synkkauksen jalkeen",
+    "fork_ei_ff": "fork-main eroaa ylavirrasta (ei fast-forward): ei tehty mitaan",
+    "fork_push_epaonnistui": "forkin synkkauksen push epaonnistui",
+    "fork_workflow_oikeus": "forkin synkkaus vaatisi workflow-oikeuden, jota botin tunnuksella ei ole",
+    "fork_tarkistus_epaonnistui": "forkin tilaa ei saatu luettua",
+    "tuntematon": "syy ei selvia",
+}
+FORK_KOODI_RE = re.compile(r"\b(fork_[a-z_]+)\b")
+SUBTYPE_RE = re.compile(r"^[a-z_]{1,40}$")
+
+
+def luokittele_virhe(loppu, paivittyi, md_on, meta):
+    """Epaonnistuneen ajon vakaa virhekoodi. Jarjestys: claude-tulos (budjetti, malli) -> tekstista (fork_*, pr_kutsu, testit, tuntematon malli) ->
+    raportin puuttuminen -> tuntematon. `meta` = claude-JSON:n subtype/is_error/terminal_reason (tyhja, jos JSON ei paivittynyt)."""
+    subtype = meta.get("subtype")
+    if subtype == "error_max_budget_usd" or meta.get("terminal_reason") == "budget_exhausted":
+        return "budjetti_loppui"
+    if meta.get("is_error") is True or (subtype is not None and subtype != "success"):
+        return "malli_virhe"
+    loppu = loppu or ""
+    m = FORK_KOODI_RE.search(loppu)
+    if m and m.group(1) in VIRHEKOODIT:
+        return m.group(1)
+    if "pr_kutsu epaonnistui" in loppu:
+        return "pr_kutsu_epaonnistui"
+    if "testit punaisella" in loppu:
+        return "testit_punaiset"
+    if "unrecognized_model" in loppu:
+        return "malli_virhe"
+    if not paivittyi or not md_on:
+        return "raporttia_ei_syntynyt"
+    return "tuntematon"
+
+
 def suorita_katselmointi(tehtava, pvm, perus, skripti, aikaraja=TEHTAVA_AIKARAJA_S):
     """Kutsuu tyypin skriptia <repo> <budjetti> (katselmointi: katselmoi.sh; ideointi: ideoi.sh). Kulu luetaan raportin JSON:sta (myos epaonnistuneesta ajosta).
     Jos ajo alkoi mutta kulua ei saada selville (aikakatkaisu, lukukelvoton JSON), laskutetaan koko budjetti: katto ei saa alittua arvauksella."""
@@ -218,30 +263,47 @@ def suorita_katselmointi(tehtava, pvm, perus, skripti, aikaraja=TEHTAVA_AIKARAJA
                            check=False, env=ymparisto)
         koodi, loppu = r.returncode, (r.stdout + r.stderr).strip()[-300:]
     except subprocess.TimeoutExpired:
-        return Tulos(False, budjetti, "", f"aikakatkaisu {aikaraja} s jalkeen (kulu arvioitu budjetiksi)")
+        return Tulos(False, budjetti, "", f"aikakatkaisu: ei valmis {aikaraja} s jalkeen (kulu arvioitu budjetiksi)", "aikakatkaisu")
     except OSError as virhe:
-        return Tulos(False, 0.0, "", f"ajuria ei voitu kaynnistaa: {virhe}")
+        return Tulos(False, 0.0, "", f"skripti_ei_kaynnisty: ajuria ei voitu kaynnistaa: {virhe}", "skripti_ei_kaynnisty")
     paivittyi = json_polku.exists() and json_polku.stat().st_mtime != vanha_mtime
+    meta = {}
     if not paivittyi:
         kulu = 0.0  # claude ei ehtinyt alkaa (esim. kloonaus epaonnistui): katselmoi.sh luo JSON:n vasta claude-kutsussa
     else:
         kulu = None
         try:
-            raaka = json.loads(json_polku.read_text(encoding="utf-8")).get("total_cost_usd")
+            data = json.loads(json_polku.read_text(encoding="utf-8"))
+            raaka = data.get("total_cost_usd")
             if isinstance(raaka, (int, float)) and not isinstance(raaka, bool) and raaka >= 0:
                 kulu = float(raaka)
-        except (ValueError, OSError):
+            meta = {k: data.get(k) for k in ("subtype", "is_error", "terminal_reason")}
+        except (ValueError, OSError, AttributeError):
             pass
         if kulu is None:
             kulu = budjetti  # ajo alkoi mutta kulua ei saada: katto ei saa alittua arvauksella
     ok = koodi == 0 and md_polku.exists() and paivittyi
     tyhja = ok and tyyppi != "kehitys" and md_polku.stat().st_size < RAPORTTI_MIN_KOKO
+    if ok and not tyhja:
+        return Tulos(True, kulu, str(md_polku), "ok")
     if tyhja:  # tyhja raportti ei ole tulos: ei merkita valmiiksi, yritys kuluu (kulu on jo syntynyt)
-        ok = False
-        loppu = f"raportti tyhja tai liian lyhyt (<{RAPORTTI_MIN_KOKO} tavua)"
-    elif not ok:
-        loppu = syy_viestiksi(md_polku if paivittyi else None, loppu)
-    return Tulos(ok, kulu, str(md_polku) if ok else "", "ok" if ok else (loppu or f"poistumiskoodi {koodi}"))
+        syy, virhekoodi = f"raportti tyhja tai liian lyhyt (<{RAPORTTI_MIN_KOKO} tavua)", "raportti_tyhja"
+        juuri = luokittele_virhe("", True, True, meta)      # claude-tulos kertoo todellisen syyn (budjetti, malli) tyhjan raportin takana
+        if juuri in ("budjetti_loppui", "malli_virhe"):
+            virhekoodi = juuri
+    else:
+        syy = syy_viestiksi(md_polku if paivittyi else None, loppu)
+        virhekoodi = luokittele_virhe(f"{syy} {loppu}", paivittyi, md_polku.exists(), meta)
+        if not syy:
+            syy = f"poistumiskoodi {koodi}"
+            if virhekoodi == "raporttia_ei_syntynyt":
+                syy = f"skripti ei tuottanut raporttia (poistumiskoodi {koodi})"
+    if virhekoodi == "budjetti_loppui":
+        syy = f"tehtavan budjetti {budjetti:.2f} USD loppui ennen raporttia (kulu {kulu:.2f} USD)"
+    elif virhekoodi == "malli_virhe" and (meta.get("is_error") is True or meta.get("subtype") not in (None, "success")):
+        subtype = meta.get("subtype")
+        syy = "claude palautti virheen (subtype: %s)" % (subtype if isinstance(subtype, str) and SUBTYPE_RE.match(subtype) else "?")
+    return Tulos(False, kulu, "", syy if virhekoodi in syy else f"{virhekoodi}: {syy}", virhekoodi)
 
 
 def raportin_lisatiedot(tyyppi, md_polku):
@@ -282,20 +344,28 @@ def laheta_telegram(teksti, env=None):
 
 
 HALYTYS_EPAONNISTUNUTTA = 3
+HALYTYS_OHITETTUA = 3
 
 
-def halytys(tila, ajetut_idt):
-    """Rivi yhteenvedon alkuun, jos taman ajon tehtavista epaonnistui vahintaan HALYTYS_EPAONNISTUNUTTA tai jokin
-    on kayttanut kaikki yrityksensa (ei enaa yritetaan). Tyhja merkkijono jos kaikki hyvin."""
+def halytys(tila, ajetut_idt, ohitukset=None):
+    """Rivi yhteenvedon alkuun, jos taman ajon tehtavista epaonnistui vahintaan HALYTYS_EPAONNISTUNUTTA, jokin on kayttanut kaikki
+    yrityksensa (ei enaa yritetaan) tai vahintaan HALYTYS_OHITETTUA tehtavaa ohitettiin (`ohitukset` = [(id, koodi)], nyt forkin synkkaus).
+    Tyhja merkkijono jos kaikki hyvin."""
     tehtavat = tila.get("tehtavat", {})
     kaatuneet = [i for i in ajetut_idt if tehtavat.get(i, {}).get("tila") == "epaonnistui"]
     loppuun = [i for i in kaatuneet if tehtavat[i].get("yrityksia", 0) >= MAX_YRITYKSIA]
+    osat = []
     if len(kaatuneet) >= HALYTYS_EPAONNISTUNUTTA or loppuun:
-        osat = [f"{len(kaatuneet)} epaonnistui"]
+        osat.append(f"{len(kaatuneet)} epaonnistui")
         if loppuun:
             osat.append("yritykset loppu: " + ", ".join(loppuun))
-        return "HALYTYS: " + "; ".join(osat)
-    return ""
+    ohitukset = ohitukset or []
+    if len(ohitukset) >= HALYTYS_OHITETTUA:
+        koodit = {}
+        for _, koodi in ohitukset:
+            koodit[koodi] = koodit.get(koodi, 0) + 1
+        osat.append(f"{len(ohitukset)} ohitettu (" + ", ".join(f"{k} x{n}" for k, n in sorted(koodit.items())) + ")")
+    return "HALYTYS: " + "; ".join(osat) if osat else ""
 
 
 def yhteenveto(rivit, kulu_tanaan, katto, pvm, halytysrivi=""):
@@ -318,28 +388,45 @@ def pr_numero(raportti):
     return int(m.group(1)) if m else None
 
 
-def kirjaa_lokiin(t, tulos, pvm, polku=None, yrityksia=None):
-    """Valinnainen tapahtumaloki (YOJONO_LOKI = tietokannan polku). Kirjaa tehtavan id:n, repon, mallin (jos tehtavalla oma),
-    tuloksen, kulun, yritykset ja PR-numeron. Ei viestitekstia eika muuta vapaata tekstia. Virhe ei koskaan kaada ajoa."""
+def _kirjaa_tapahtuma(t, tulos_sana, kulu, tiedot, polku=None):
+    """Yhteinen kirjaus tapahtumalokiin (YOJONO_LOKI). Virhe ei koskaan kaada ajoa."""
     polku = polku or os.environ.get("YOJONO_LOKI")
     if not polku:
         return False
     try:
         from agentti import tapahtumaloki
-        tiedot = {"tehtava": t["id"], "repo": t["repo"], "pvm": pvm, "malli": t.get("malli") or "oletus", "yrityksia": yrityksia}
-        pr = pr_numero(tulos.raportti) if t.get("tyyppi") == "kehitys" else None
-        if pr is not None:
-            tiedot["pr"] = pr
         yht = tapahtumaloki.avaa(polku)
         try:
-            tapahtumaloki.kirjaa(yht, "yojono", "yojono", t.get("tyyppi", "katselmointi"), "ok" if tulos.ok else "virhe",
-                                 kulu_usd=round(tulos.kulu, 4), tiedot=tiedot)
+            tapahtumaloki.kirjaa(yht, "yojono", "yojono", t.get("tyyppi", "katselmointi"), tulos_sana, kulu_usd=round(kulu, 4), tiedot=tiedot)
         finally:
             yht.close()
         return True
     except Exception as virhe:  # loki on lisa; ajo jatkuu aina
         print(f"Lokikirjaus epaonnistui: {type(virhe).__name__}", file=sys.stderr)
         return False
+
+
+def kirjaa_lokiin(t, tulos, pvm, polku=None, yrityksia=None):
+    """Valinnainen tapahtumaloki (YOJONO_LOKI = tietokannan polku). Kirjaa tehtavan id:n, repon, mallin (jos tehtavalla oma),
+    tuloksen, kulun, yritykset, PR-numeron ja epaonnistuneelle ajolle `virhekoodi`n (ks. VIRHEKOODIT; viikkoraportti ryhmittelee sen mukaan).
+    Ei viestitekstia eika muuta vapaata tekstia. Virhe ei koskaan kaada ajoa."""
+    tiedot = {"tehtava": t["id"], "repo": t["repo"], "pvm": pvm, "malli": t.get("malli") or "oletus", "yrityksia": yrityksia}
+    if not tulos.ok:
+        tiedot["virhekoodi"] = tulos.koodi if tulos.koodi in VIRHEKOODIT else "tuntematon"
+    try:
+        pr = pr_numero(tulos.raportti) if t.get("tyyppi") == "kehitys" else None
+    except Exception:
+        pr = None
+    if pr is not None:
+        tiedot["pr"] = pr
+    return _kirjaa_tapahtuma(t, "ok" if tulos.ok else "virhe", tulos.kulu, tiedot, polku)
+
+
+def kirjaa_ohitus(t, koodi, pvm, polku=None):
+    """Ohitettu tehtava (ei ajettu, ei kulua, ei yritysta; nyt vain forkin synkkaus): tapahtuma tuloksella `ohitettu` ja `virhekoodi`, jotta
+    viikkoraportti nayttaa ohitukset syineen eika vain epaonnistumisia."""
+    tiedot = {"tehtava": t["id"], "repo": t["repo"], "pvm": pvm, "malli": t.get("malli") or "oletus", "virhekoodi": koodi if koodi in VIRHEKOODIT else "tuntematon"}
+    return _kirjaa_tapahtuma(t, "ohitettu", 0.0, tiedot, polku)
 
 
 def skripti_tyypille(skripti, tyyppi):
@@ -375,6 +462,8 @@ def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.mon
         alku = nyt()
         rivit = []
         ajetut = []
+        ohitukset = []       # [(tehtava-id, virhekoodi)]: forkin takia ohitetut (ei kulua, ei yritysta)
+        fork_tulokset = {}   # repo -> (ok, koodi, selitys): synkkaus tehdaan kerran per repo ja ajo
         for t in ajettavat:
             kulu_nyt = tila["kulut"].get(pvm, 0.0)
             if nyt() - alku > ILTA_AIKARAJA_S:
@@ -392,9 +481,13 @@ def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.mon
                 rivit.append(f"- {t['id']}: ohitettu (PR-paivaraja taynna, ajetaan seuraavana paivana)")
                 continue
             if t["tyyppi"] == "kehitys" and fork_tarkista is not None:
-                fork_ok, selitys = fork_tarkista(t["repo"])
+                if t["repo"] not in fork_tulokset:
+                    fork_tulokset[t["repo"]] = fork_tarkista(t["repo"])
+                fork_ok, fork_koodi, selitys = fork_tulokset[t["repo"]]
                 if not fork_ok:  # ei kulua eika yritysta: mallikutsu menisi hukkaan, kun PR ei voi avautua
-                    rivit.append(f"- {t['id']}: ohitettu ({selitys})")
+                    rivit.append(f"- {t['id']}: ohitettu ({fork_koodi}: {selitys})")
+                    ohitukset.append((t["id"], fork_koodi))
+                    kirjaa_ohitus(t, fork_koodi, pvm)
                     continue
             tulos = suorita(t, pvm, perus, skripti_tyypille(skripti, t["tyyppi"]))
             ajetut.append(t["id"])
@@ -404,6 +497,7 @@ def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.mon
                 "tila": "valmis" if tulos.ok else "epaonnistui",
                 "yrityksia": vanha.get("yrityksia", 0) + (0 if tulos.ok else 1),
                 "pvm": pvm, "kulu": round(tulos.kulu, 4), "raportti": tulos.raportti, "viesti": tulos.viesti,
+                **({} if tulos.ok else {"koodi": tulos.koodi or "tuntematon"}),
             }
             kirjoita_tila(tila_polku, tila)  # heti: katkennut ajo ei hukkaa kulukirjanpitoa
             kirjaa_lokiin(t, tulos, pvm, yrityksia=tila["tehtavat"][t["id"]]["yrityksia"])
@@ -411,7 +505,7 @@ def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.mon
                          + (f" raportti {tulos.raportti}" if tulos.ok else f" syy: {tulos.viesti}")
                          + (raportin_lisatiedot(t["tyyppi"], tulos.raportti) if tulos.ok else ""))
         kirjoita_tila(tila_polku, tila)
-        teksti = yhteenveto(rivit, tila["kulut"].get(pvm, 0.0), katto, pvm, halytys(tila, ajetut))
+        teksti = yhteenveto(rivit, tila["kulut"].get(pvm, 0.0), katto, pvm, halytys(tila, ajetut, ohitukset))
     laheta(teksti)
     if ajettavat:
         telegram(teksti)

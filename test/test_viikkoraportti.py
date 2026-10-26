@@ -78,6 +78,45 @@ class ViikkoraporttiTest(unittest.TestCase):
         os.environ.pop("TAPAHTUMALOKI", None)
         self.assertEqual(vr.main([]), 2)
 
+    def test_ohitukset_koodeineen_raporttiin_eivatka_ole_virheita(self):
+        for _ in range(3):
+            self.kirjaa("yojono", tulos="ohitettu", tiedot={"virhekoodi": "fork_ei_ff"})
+        self.kirjaa("yojono", tulos="ohitettu", tiedot={"virhekoodi": "fork_push_epaonnistui"})
+        t = vr.keraa(self.y, 7, nyt=NYT)
+        self.assertEqual((t["ohitettuja"], t["virheita"]), (4, 0))
+        self.assertEqual(t["ohituskoodit"], {"fork_ei_ff": 3, "fork_push_epaonnistui": 1})
+        teksti = vr.muodosta(t, {})
+        self.assertIn("Ohitettu 4 (ei kulua): fork_ei_ff x3, fork_push_epaonnistui x1", teksti)
+        v = " ".join(vr.vihjeet(t, {}))
+        self.assertIn("Forkin synkkaus esti 4 tehtavaa", v)
+        self.assertIn("fork_workflow_oikeus", v)
+
+    def test_ohitus_ilman_koodia_on_tuntematon(self):
+        self.kirjaa("yojono", tulos="ohitettu")
+        self.assertEqual(vr.keraa(self.y, 7, nyt=NYT)["ohituskoodit"], {"tuntematon": 1})
+
+    def test_ei_ohituksia_ei_ohitusrivia_eika_fork_vihjetta(self):
+        self.kirjaa("yojono", kulu=0.5)
+        t = vr.keraa(self.y, 7, nyt=NYT)
+        self.assertEqual((t["ohitettuja"], t["ohituskoodit"]), (0, {}))
+        self.assertNotIn("Ohitettu", vr.muodosta(t, {}))
+        self.assertEqual(vr.vihjeet(t, {}), [])
+
+    def test_fork_virhekoodi_virheissa_laukaisee_vihjeen(self):
+        self.kirjaa("yojono", kulu=0.5)
+        self.kirjaa("yojono", tulos="virhe", tiedot={"virhekoodi": "fork_push_epaonnistui"})
+        v = " ".join(vr.vihjeet(vr.keraa(self.y, 7, nyt=NYT), {}))
+        self.assertIn("Forkin synkkaus esti 1 tehtavaa", v)
+
+    def test_ajurin_koodit_nakyvat_raportissa_eika_tuntematonta(self):
+        for koodi in ("aikakatkaisu", "malli_virhe", "raporttia_ei_syntynyt", "budjetti_loppui", "fork_jaljessa"):
+            self.kirjaa("yojono", tulos="virhe", tiedot={"virhekoodi": koodi})
+        t = vr.keraa(self.y, 7, nyt=NYT)
+        self.assertNotIn("tuntematon", t["virhekoodit"])
+        teksti = vr.muodosta(t, {})
+        self.assertIn("aikakatkaisu x1", teksti)
+        self.assertNotIn("tuntematon", teksti)
+
 
 if __name__ == "__main__":
     unittest.main()

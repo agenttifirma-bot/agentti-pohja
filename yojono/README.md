@@ -32,6 +32,40 @@ Valinnainen `toisto_pv` (kokonaisluku 1-365) tekee tehtävästä toistuvan: valm
 
 Huom: ajurin päiväkatto laskee kalenteripäivän. LiteLLM-avaimen oma budjetti nollautuu omassa tahdissaan ja on kova yläraja (se pysäyttää kutsut, vaikka ajuri erehtyisi). Pidä ajurin `paivakatto` enintään avaimen budjetin suuruisena.
 
+## Virhekoodit
+
+Epäonnistunut tai ohitettu tehtävä saa vakaan koodin. Koodi näkyy `tila.json`:ssa (`koodi`), Telegram-yhteenvedossa (`syy: <koodi>: ...`), tapahtumalokissa (`virhekoodi`) ja viikkoraportissa. Vanhat lokirivit ilman koodia näkyvät koodina `tuntematon`.
+
+| Koodi | Merkitys |
+|---|---|
+| `aikakatkaisu` | tehtävä ylitti aikarajan (kulu laskutetaan koko budjettina) |
+| `malli_virhe` | claude/malli palautti virheen (`is_error`, muu `subtype` kuin `success`) tai ei tunnistanut mallia |
+| `budjetti_loppui` | claude-kutsun budjetti (`--max-budget-usd`) loppui ennen raporttia (`error_max_budget_usd`); kulu voi ylittää budjetin, ja se kirjataan todellisena |
+| `raporttia_ei_syntynyt` | skripti ei tuottanut raporttia (md puuttuu tai ei päivittynyt) |
+| `raportti_tyhja` | raportti syntyi, mutta on tyhjä tai liian lyhyt (alle 200 tavua) |
+| `skripti_ei_kaynnisty` | tehtäväskriptiä ei voitu käynnistää |
+| `pr_kutsu_epaonnistui` | PR:n avaus epäonnistui muusta syystä kuin forkin synkkauksesta |
+| `testit_punaiset` | kehitys: testit punaisella agentin muutosten jälkeen |
+| `fork_jaljessa` | fork jäi jälkeen ylävirrasta synkkauksen jälkeen |
+| `fork_ei_ff` | fork-main eroaa ylävirrasta (ei fast-forward): mitään ei tehty |
+| `fork_push_epaonnistui` | forkin synkkauksen push epäonnistui |
+| `fork_workflow_oikeus` | synkkaus vaatisi `workflow`-oikeuden, jota botin tunnuksella ei ole (ylävirran commitit muuttavat `.github/workflows/`-tiedostoja) |
+| `fork_tarkistus_epaonnistui` | forkin tilaa ei saatu luettua (verkko, tunnus, haara) |
+| `tuntematon` | syytä ei voi päätellä |
+
+Luokittelun järjestys: claude-tuloksen JSON (`budjetti_loppui`, `malli_virhe`) ensin, sitten skriptin viestistä (`fork_*`, `pr_kutsu_epaonnistui`, `testit_punaiset`, tuntematon malli) ja viimeisenä raportin puuttuminen.
+
+## Forkin synkkaus ennen kehitys-tehtävää
+
+`kehitys`-tehtävä avaa PR:n botin forkista, ja jos fork on jäljessä ylävirrasta, uusi haara vie forkkiin myös ylävirran commitit. Siksi ajuri synkkaa forkin pohjahaaran (`main`, `ai-pr-reviewer-action`: `master`) ennen mallikutsua (`agentti/pr_kutsu.py`, `synkkaa_fork`):
+
+1. `git ls-remote` (julkinen luku) ylävirrasta ja forkista: samat = valmis.
+2. Muuten `git fetch` molemmat väliaikaiseen bare-repoon ja `git merge-base --is-ancestor`: jos fork on ylävirran esivanhempi, push ylävirran tila forkin pohjahaaraan botin tunnuksella. Refspec on ilman `+`, ei force-pushia, ei muita haaroja. Sama tunnus kuin PR:ssä, ei uusia oikeuksia.
+3. Jos fork-main on erkaantunut ylävirrasta, ei tehdä mitään: tehtävä ohitetaan ilman kulua ja yritystä, ja syy kirjataan (`fork_ei_ff`). Jos push epäonnistuu, sama (`fork_push_epaonnistui`, workflow-oikeuden puutteessa `fork_workflow_oikeus`).
+4. Synkkaus tehdään kerran per repo ja ajo. Ohitukset kirjataan tapahtumalokiin tuloksella `ohitettu`, ja vähintään kolme ohitusta samassa ajossa nostaa `HALYTYS`-rivin yhteenvetoon.
+
+Botin tunnus on klassinen `ghp_`-tunnus, jolla on vain `public_repo`-oikeus. GitHub hylkää pushin, jos se muuttaa `.github/workflows/`-tiedostoja ilman `workflow`-oikeutta, joten tällaisen ylävirran commitin synkkaus ei onnistu itsestään (`fork_workflow_oikeus`): synkkaa fork silloin käsin tai anna tunnukselle `workflow`-oikeus omalla päätöksellä.
+
 ## Käyttöönotto (ihminen tekee, ei automaattista)
 
 Esimerkki CT115:ssä. Ota snapshot ensin (`pct snapshot 115 ennen-yojono-ajuri`, isännällä).

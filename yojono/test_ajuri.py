@@ -787,20 +787,300 @@ class TestTehtavaMalli(Pohja):
 
 
 class TestForkEsitarkistus(Pohja):
-    def kehitys(self):
-        return {"id": "k", "tyyppi": "kehitys", "aihe": "testit", "repo": "llm-stopcheck", "budjetti": 1.0}
+    """Forkin synkkaus ennen kehitys-tehtavaa: fork_tarkista palauttaa (ok, koodi, selitys); ohitus ei kuluta rahaa eika yritysta."""
+
+    def kehitys(self, id_="k", repo="llm-stopcheck"):
+        return {"id": id_, "tyyppi": "kehitys", "aihe": "testit", "repo": repo, "budjetti": 1.0}
+
+    def _tiedot(self, polku):
+        from agentti import tapahtumaloki
+        yht = tapahtumaloki.avaa(polku)
+        try:
+            return yht.execute("SELECT tyyppi, tulos, kulu_usd, tiedot_json FROM tapahtuma ORDER BY id").fetchall()
+        finally:
+            yht.close()
 
     def test_fork_jaljessa_ohittaa_ilman_kulua_ja_yritysta(self):
         self.kirjoita_jono(jono([self.kehitys()], katto=9.0))
         kutsut = []
         teksti, _ = self.aja(lambda *a: kutsut.append(1) or ajuri.Tulos(True, 0.5, "x.md", "ok"),
-                             fork_tarkista=lambda repo: (False, "fork jaljessa: Sync fork kasin"))
+                             fork_tarkista=lambda repo: (False, "fork_ei_ff", "fork-main on erkaantunut ylavirrasta"))
         self.assertEqual(kutsut, [])
-        self.assertIn("ohitettu (fork jaljessa: Sync fork kasin)", teksti)
+        self.assertIn("ohitettu (fork_ei_ff: fork-main on erkaantunut ylavirrasta)", teksti)
         self.assertNotIn("k", self.tila().get("tehtavat", {}))
+        self.assertEqual(self.tila()["kulut"].get(PVM, 0.0), 0.0)
 
     def test_fork_ok_ajaa_normaalisti(self):
         self.kirjoita_jono(jono([self.kehitys()], katto=9.0))
         with mock.patch("yojono.ajuri.pr_kutsu.paikkoja_jaljella", return_value=10):
-            teksti, _ = self.aja(lambda *a: ajuri.Tulos(True, 0.5, "", "ok"), fork_tarkista=lambda repo: (True, ""))
+            teksti, _ = self.aja(lambda *a: ajuri.Tulos(True, 0.5, "", "ok"), fork_tarkista=lambda repo: (True, "", "kelattu"))
         self.assertIn("k: VALMIS", teksti)
+
+    def test_ohitus_kirjataan_tapahtumalokiin_virhekoodilla_ilman_kulua(self):
+        polku = str(self.perus / "loki.db")
+        self.kirjoita_jono(jono([self.kehitys()], katto=9.0))
+        with mock.patch.dict(os.environ, {"YOJONO_LOKI": polku}):
+            self.aja(lambda *a: self.fail("ei saa ajaa"), fork_tarkista=lambda repo: (False, "fork_push_epaonnistui", "push hylatty"))
+        ((tyyppi, tulos, kulu, tiedot),) = self._tiedot(polku)
+        tiedot = json.loads(tiedot)
+        self.assertEqual((tyyppi, tulos, kulu), ("kehitys", "ohitettu", 0.0))
+        self.assertEqual((tiedot["virhekoodi"], tiedot["tehtava"], tiedot["repo"]), ("fork_push_epaonnistui", "k", "llm-stopcheck"))
+        self.assertNotIn("push hylatty", json.dumps(tiedot))          # vapaata tekstia ei kirjata, vain koodi
+
+    def test_tuntematon_fork_koodi_kirjataan_tuntemattomana(self):
+        polku = str(self.perus / "loki.db")
+        self.kirjoita_jono(jono([self.kehitys()], katto=9.0))
+        with mock.patch.dict(os.environ, {"YOJONO_LOKI": polku}):
+            self.aja(lambda *a: self.fail("ei saa ajaa"), fork_tarkista=lambda repo: (False, "keksitty_koodi", "x"))
+        self.assertEqual(json.loads(self._tiedot(polku)[0][3])["virhekoodi"], "tuntematon")
+
+    def test_fork_tarkistetaan_kerran_per_repo_ja_ajo(self):
+        self.kirjoita_jono(jono([self.kehitys("k1"), self.kehitys("k2"), self.kehitys("k3", repo="mcp-model-router")], katto=9.0))
+        kutsut = []
+
+        def tarkista(repo):
+            kutsut.append(repo)
+            return (False, "fork_ei_ff", "x") if repo == "llm-stopcheck" else (True, "", "ajan_tasalla")
+        with mock.patch("yojono.ajuri.pr_kutsu.paikkoja_jaljella", return_value=10):
+            teksti, _ = self.aja(lambda *a: ajuri.Tulos(True, 0.5, "", "ok"), fork_tarkista=tarkista)
+        self.assertEqual(kutsut, ["llm-stopcheck", "mcp-model-router"])
+        self.assertIn("k1: ohitettu (fork_ei_ff", teksti)
+        self.assertIn("k2: ohitettu (fork_ei_ff", teksti)
+        self.assertIn("k3: VALMIS", teksti)
+
+    def test_muut_tyypit_eivat_laukaise_fork_tarkistusta(self):
+        self.kirjoita_jono(jono([t("a")], katto=9.0))
+        kutsut = []
+        self.aja(lambda *a: ajuri.Tulos(True, 0.1, "", "ok"), fork_tarkista=lambda repo: kutsut.append(repo) or (True, "", ""))
+        self.assertEqual(kutsut, [])
+
+    def test_halytys_kun_kolme_tehtavaa_ohitetaan_forkin_takia(self):
+        self.kirjoita_jono(jono([self.kehitys("k1"), self.kehitys("k2"), self.kehitys("k3")], katto=9.0))
+        teksti, viestit = self.aja(lambda *a: self.fail("ei saa ajaa"), fork_tarkista=lambda repo: (False, "fork_ei_ff", "x"))
+        self.assertEqual(teksti.splitlines()[0], "HALYTYS: 3 ohitettu (fork_ei_ff x3)")
+
+    def test_ei_halytysta_kahdesta_ohituksesta(self):
+        self.kirjoita_jono(jono([self.kehitys("k1"), self.kehitys("k2")], katto=9.0))
+        teksti, _ = self.aja(lambda *a: self.fail("ei saa ajaa"), fork_tarkista=lambda repo: (False, "fork_ei_ff", "x"))
+        self.assertNotIn("HALYTYS", teksti)
+
+    def test_halytys_funktio_yhdistaa_epaonnistumiset_ja_ohitukset(self):
+        tila = {"tehtavat": {"a": {"tila": "epaonnistui", "yrityksia": 2}}}
+        self.assertEqual(ajuri.halytys(tila, ["a"], [("x", "fork_ei_ff"), ("y", "fork_push_epaonnistui"), ("z", "fork_ei_ff")]),
+                         "HALYTYS: 1 epaonnistui; yritykset loppu: a; 3 ohitettu (fork_ei_ff x2, fork_push_epaonnistui x1)")
+        self.assertEqual(ajuri.halytys({"tehtavat": {}}, [], []), "")
+
+    def test_ohitettu_tehtava_ajetaan_seuraavana_paivana_kun_fork_kunnossa(self):
+        self.kirjoita_jono(jono([self.kehitys()], katto=9.0))
+        self.aja(lambda *a: self.fail("ei saa ajaa"), fork_tarkista=lambda repo: (False, "fork_ei_ff", "x"))
+        with mock.patch("yojono.ajuri.pr_kutsu.paikkoja_jaljella", return_value=10):
+            teksti, _ = self.aja(lambda *a: ajuri.Tulos(True, 0.5, "", "ok"), fork_tarkista=lambda repo: (True, "", "kelattu"))
+        self.assertIn("k: VALMIS", teksti)
+
+
+class TestVirhekoodit(Pohja):
+    """Epaonnistuneen ajon vakaa virhekoodi (tila.json, yhteenveto, tapahtumaloki). Oikea alaprosessi kuten TestKatselmointiSkripti."""
+
+    def skripti(self, runko):
+        polku = self.perus / "katselmoi.sh"
+        polku.write_text("#!/bin/sh\n" + runko)
+        polku.chmod(polku.stat().st_mode | stat.S_IXUSR)
+        (self.perus / "raportit").mkdir(exist_ok=True)
+        return polku
+
+    def kirjoita(self, json_teksti, md_runko, poistuu, nimi="{PVM}-$1"):
+        """Skripti, joka kirjoittaa raportin JSON:n (jos annettu) ja md:n (jos annettu) ja poistuu annetulla koodilla."""
+        rivit = []
+        if json_teksti is not None:
+            rivit.append("printf '%s\\n' '" + json_teksti + "' > \"" + str(self.perus) + "/raportit/" + nimi.replace("{PVM}", PVM) + ".json\"\n")
+        if md_runko is not None:
+            rivit.append(md_runko.replace("{POLKU}", str(self.perus) + "/raportit/" + nimi.replace("{PVM}", PVM) + ".md"))
+        return self.skripti("".join(rivit) + "exit %d\n" % poistuu)
+
+    def aja_skripti(self, s, tehtava=None, **kw):
+        return ajuri.suorita_katselmointi(tehtava or t("a", repo="r", budjetti=0.8), PVM, self.perus, s, **kw)
+
+    BUDJETTI_JSON = json.dumps({"total_cost_usd": 0.95, "is_error": True, "subtype": "error_max_budget_usd", "terminal_reason": "budget_exhausted",
+                                "errors": ["Reached maximum budget ($0.8)"]})
+    LYHYT_MD = 'echo "ei agentin tulosta (subtype: error_max_budget_usd)" > "{POLKU}"\n'
+    PITKA_MD = 'yes raportti | head -n 60 > "{POLKU}"\n'
+
+    def test_tarkkailun_26_10_tapaus_budjetti_loppui(self):
+        # tarkkailu.sh kirjoittaa md:n ("ei agentin tulosta") ja poistuu koodilla 1: ei saa jaada "tuntematon"-koodille
+        tulos = self.aja_skripti(self.kirjoita(self.BUDJETTI_JSON, self.LYHYT_MD, 1))
+        self.assertFalse(tulos.ok)
+        self.assertEqual(tulos.koodi, "budjetti_loppui")
+        self.assertAlmostEqual(tulos.kulu, 0.95)
+        self.assertTrue(tulos.viesti.startswith("budjetti_loppui: "), tulos.viesti)
+        self.assertIn("0.80 USD", tulos.viesti)
+        self.assertIn("0.95 USD", tulos.viesti)
+
+    def test_budjetti_loppui_myos_kun_skripti_poistuu_nollalla_ja_raportti_on_lyhyt(self):
+        tulos = self.aja_skripti(self.kirjoita(self.BUDJETTI_JSON, self.LYHYT_MD, 0))
+        self.assertEqual((tulos.ok, tulos.koodi), (False, "budjetti_loppui"))      # ei "raportti_tyhja"
+
+    def test_budjetti_loppui_vaikka_raportti_olisi_pitka(self):
+        tulos = self.aja_skripti(self.kirjoita(self.BUDJETTI_JSON, self.PITKA_MD, 1))
+        self.assertEqual(tulos.koodi, "budjetti_loppui")
+
+    def test_malli_virhe_claude_json_ista(self):
+        j = json.dumps({"total_cost_usd": 0.1, "is_error": True, "subtype": "error_during_execution"})
+        tulos = self.aja_skripti(self.kirjoita(j, self.LYHYT_MD, 1))
+        self.assertEqual(tulos.koodi, "malli_virhe")
+        self.assertIn("error_during_execution", tulos.viesti)
+        self.assertTrue(tulos.viesti.startswith("malli_virhe: "))
+
+    def test_malli_virhe_vaikka_skripti_poistuu_nollalla_ja_raportti_tyhja(self):
+        j = json.dumps({"total_cost_usd": 0.1, "is_error": True, "subtype": "error_during_execution"})
+        self.assertEqual(self.aja_skripti(self.kirjoita(j, self.LYHYT_MD, 0)).koodi, "malli_virhe")
+
+    def test_subtype_siivotaan_viestissa(self):
+        j = json.dumps({"total_cost_usd": 0.1, "is_error": True, "subtype": "x y; rm -rf /"})
+        tulos = self.aja_skripti(self.kirjoita(j, self.LYHYT_MD, 1))
+        self.assertEqual(tulos.koodi, "malli_virhe")
+        self.assertIn("(subtype: ?)", tulos.viesti)
+        self.assertNotIn("rm -rf", tulos.viesti)
+
+    def test_tuntematon_malli_tekstista(self):
+        s = self.skripti('echo "[claude-code:unrecognized_model] {}"\nexit 1\n')
+        tulos = self.aja_skripti(s)
+        self.assertEqual((tulos.ok, tulos.koodi), (False, "malli_virhe"))
+
+    def test_onnistunut_json_ei_ole_malli_virhe(self):
+        j = json.dumps({"total_cost_usd": 0.3, "is_error": False, "subtype": "success"})
+        tulos = self.aja_skripti(self.kirjoita(j, self.PITKA_MD, 0))
+        self.assertTrue(tulos.ok)
+        self.assertEqual(tulos.koodi, "")
+
+    def test_raporttia_ei_syntynyt_kun_mitaan_ei_kirjoiteta(self):
+        tulos = self.aja_skripti(self.kirjoita(None, None, 0))
+        self.assertEqual((tulos.ok, tulos.koodi), (False, "raporttia_ei_syntynyt"))
+        self.assertTrue(tulos.viesti.startswith("raporttia_ei_syntynyt: "), tulos.viesti)
+        self.assertEqual(tulos.kulu, 0.0)
+
+    def test_raporttia_ei_syntynyt_kun_vain_json(self):
+        j = json.dumps({"total_cost_usd": 0.2, "subtype": "success"})
+        tulos = self.aja_skripti(self.kirjoita(j, None, 0))
+        self.assertEqual((tulos.ok, tulos.koodi), (False, "raporttia_ei_syntynyt"))
+        self.assertAlmostEqual(tulos.kulu, 0.2)
+
+    def test_raporttia_ei_syntynyt_kun_skripti_kaatuu_ennen_claudea(self):
+        s = self.skripti('echo "fatal: clone epaonnistui"\nexit 128\n')
+        tulos = self.aja_skripti(s)
+        self.assertEqual((tulos.ok, tulos.koodi), (False, "raporttia_ei_syntynyt"))
+        self.assertIn("clone epaonnistui", tulos.viesti)
+
+    def test_raportti_tyhja(self):
+        j = json.dumps({"total_cost_usd": 0.3, "is_error": False, "subtype": "success"})
+        tulos = self.aja_skripti(self.kirjoita(j, 'echo x > "{POLKU}"\n', 0))
+        self.assertEqual((tulos.ok, tulos.koodi), (False, "raportti_tyhja"))
+
+    def test_aikakatkaisu(self):
+        tulos = self.aja_skripti(self.skripti("sleep 5\n"), aikaraja=0.2)
+        self.assertEqual((tulos.ok, tulos.koodi), (False, "aikakatkaisu"))
+        self.assertTrue(tulos.viesti.startswith("aikakatkaisu: "))
+        self.assertAlmostEqual(tulos.kulu, 0.8)
+
+    def test_skripti_ei_kaynnisty(self):
+        tulos = self.aja_skripti(self.perus / "ei-ole.sh")
+        self.assertEqual((tulos.ok, tulos.koodi), (False, "skripti_ei_kaynnisty"))
+
+    def test_tuntematon_vain_kun_syyta_ei_voi_paatella(self):
+        j = json.dumps({"total_cost_usd": 0.3, "is_error": False, "subtype": "success"})
+        tulos = self.aja_skripti(self.kirjoita(j, self.PITKA_MD, 1))
+        self.assertEqual((tulos.ok, tulos.koodi), (False, "tuntematon"))
+
+    def kehitys_skripti(self, syy, poistuu=1):
+        return self.kirjoita(json.dumps({"total_cost_usd": 0.4, "subtype": "success"}),
+                             'printf "# Kehitys\\n\\n- PR: ei avattu\\n- Syy: %s\\n" > "{POLKU}"\n' % syy.replace('"', ""), poistuu,
+                             nimi="{PVM}-kehitys-testit-$1")
+
+    KEHITYS = {"id": "k", "tyyppi": "kehitys", "aihe": "testit", "repo": "llm-stopcheck", "budjetti": 1.0}
+
+    def test_kehitys_fork_koodi_luetaan_pr_kutsun_viestista(self):
+        for koodi in ("fork_ei_ff", "fork_push_epaonnistui", "fork_workflow_oikeus", "fork_jaljessa", "fork_tarkistus_epaonnistui"):
+            with self.subTest(koodi=koodi):
+                s = self.kehitys_skripti("pr_kutsu epaonnistui: pr_kutsu: %s: jotain meni vikaan" % koodi)
+                tulos = ajuri.suorita_katselmointi(self.KEHITYS, PVM, self.perus, s)
+                self.assertEqual((tulos.ok, tulos.koodi), (False, koodi))
+                self.assertEqual(tulos.viesti.count(koodi), 1, tulos.viesti)
+
+    def test_kehitys_muu_pr_kutsu_virhe(self):
+        s = self.kehitys_skripti("pr_kutsu epaonnistui: pr_kutsu: GitHub hylkasi PR:n (HTTP 422)")
+        self.assertEqual(ajuri.suorita_katselmointi(self.KEHITYS, PVM, self.perus, s).koodi, "pr_kutsu_epaonnistui")
+
+    def test_kehitys_testit_punaisella(self):
+        s = self.kehitys_skripti("testit punaisella agentin muutosten jalkeen: PR:aa ei avattu")
+        self.assertEqual(ajuri.suorita_katselmointi(self.KEHITYS, PVM, self.perus, s).koodi, "testit_punaiset")
+
+    def test_luokittele_virhe_ensisijaisuus(self):
+        meta_budj = {"subtype": "error_max_budget_usd"}
+        self.assertEqual(ajuri.luokittele_virhe("fork_ei_ff unrecognized_model", True, True, meta_budj), "budjetti_loppui")
+        self.assertEqual(ajuri.luokittele_virhe("fork_ei_ff", True, True, {"is_error": True}), "malli_virhe")
+        self.assertEqual(ajuri.luokittele_virhe("fork_ei_ff pr_kutsu epaonnistui", True, True, {}), "fork_ei_ff")
+        self.assertEqual(ajuri.luokittele_virhe("fork_keksitty", False, False, {}), "raporttia_ei_syntynyt")      # tuntematon fork_-koodi ei kelpaa
+        self.assertEqual(ajuri.luokittele_virhe("", False, True, {}), "raporttia_ei_syntynyt")
+        self.assertEqual(ajuri.luokittele_virhe("", True, False, {}), "raporttia_ei_syntynyt")
+        self.assertEqual(ajuri.luokittele_virhe("", True, True, {"subtype": "success", "is_error": False}), "tuntematon")
+
+    def test_vaaditut_koodit_ovat_olemassa(self):
+        for koodi in ("fork_jaljessa", "fork_ei_ff", "fork_push_epaonnistui", "raporttia_ei_syntynyt", "aikakatkaisu", "malli_virhe"):
+            self.assertIn(koodi, ajuri.VIRHEKOODIT)
+
+    def test_pr_kutsun_fork_koodit_ovat_ajurin_koodilistalla(self):
+        import re
+        from agentti import pr_kutsu
+        lahde = Path(pr_kutsu.__file__).read_text(encoding="utf-8")
+        for koodi in set(re.findall(r'"(fork_[a-z_]+)"', lahde)):
+            self.assertIn(koodi, ajuri.VIRHEKOODIT, koodi)
+
+
+class TestVirhekoodiKirjaus(Pohja):
+    def _tiedot(self, polku):
+        from agentti import tapahtumaloki
+        yht = tapahtumaloki.avaa(polku)
+        try:
+            return [json.loads(r[0]) for r in yht.execute("SELECT tiedot_json FROM tapahtuma ORDER BY id")]
+        finally:
+            yht.close()
+
+    def test_epaonnistunut_ajo_kirjaa_virhekoodin_lokiin_ja_tilaan(self):
+        polku = str(self.perus / "loki.db")
+        self.kirjoita_jono(jono([t("a")]))
+        with mock.patch.dict(os.environ, {"YOJONO_LOKI": polku}):
+            teksti, _ = self.aja(lambda *_: ajuri.Tulos(False, 0.9, "", "budjetti_loppui: tehtavan budjetti loppui", "budjetti_loppui"))
+        (tiedot,) = self._tiedot(polku)
+        self.assertEqual(tiedot["virhekoodi"], "budjetti_loppui")
+        self.assertEqual(self.tila()["tehtavat"]["a"]["koodi"], "budjetti_loppui")
+        self.assertIn("syy: budjetti_loppui:", teksti)
+
+    def test_onnistunut_ajo_ei_kirjaa_virhekoodia(self):
+        polku = str(self.perus / "loki.db")
+        self.kirjoita_jono(jono([t("a")]))
+        with mock.patch.dict(os.environ, {"YOJONO_LOKI": polku}):
+            self.aja(lambda *_: ajuri.Tulos(True, 0.5, "x.md", "ok"))
+        (tiedot,) = self._tiedot(polku)
+        self.assertNotIn("virhekoodi", tiedot)
+        self.assertNotIn("koodi", self.tila()["tehtavat"]["a"])
+
+    def test_kooditon_tai_tuntematon_koodi_on_tuntematon(self):
+        polku = str(self.perus / "loki.db")
+        self.kirjoita_jono(jono([t("a"), t("b")], katto=9.0))
+        with mock.patch.dict(os.environ, {"YOJONO_LOKI": polku}):
+            self.aja(lambda tehtava, *_: ajuri.Tulos(False, 0.1, "", "x") if tehtava["id"] == "a" else ajuri.Tulos(False, 0.1, "", "x", "keksitty"))
+        self.assertEqual([x["virhekoodi"] for x in self._tiedot(polku)], ["tuntematon", "tuntematon"])
+
+    def test_viikkoraportti_ryhmittelee_ajurin_kirjaamat_koodit(self):
+        from agentti import tapahtumaloki, viikkoraportti
+        polku = str(self.perus / "loki.db")
+        self.kirjoita_jono(jono([t("a"), t("b"), t("c")], katto=9.0))
+        koodit = {"a": "aikakatkaisu", "b": "malli_virhe", "c": "aikakatkaisu"}
+        with mock.patch.dict(os.environ, {"YOJONO_LOKI": polku}):
+            self.aja(lambda tehtava, *_: ajuri.Tulos(False, 0.1, "", "x", koodit[tehtava["id"]]))
+        yht = tapahtumaloki.avaa(polku)
+        try:
+            tiedot = viikkoraportti.keraa(yht, 7)
+        finally:
+            yht.close()
+        self.assertEqual(tiedot["virhekoodit"], {"aikakatkaisu": 2, "malli_virhe": 1})
+        self.assertNotIn("tuntematon", tiedot["virhekoodit"])
