@@ -8,6 +8,7 @@ import unittest
 import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 from agentti import pr_kutsu as pk
 
@@ -380,67 +381,286 @@ class OletushaaraTesti(unittest.TestCase):
         self.assertEqual(pk.tarkista("ai-pr-reviewer-action", hak, "yo/koe"), ["b.md"])
 
 
-if __name__ == "__main__":
-    unittest.main()
+def _g(*args, cwd=None, check=True):
+    """Oikea git (testit kayttavat paikallisia bare-repoja, ei verkkoa)."""
+    r = subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@e", *args], cwd=cwd, capture_output=True, text=True)
+    if check and r.returncode != 0:
+        raise AssertionError("git %s: %s" % (" ".join(args), r.stderr))
+    return r.stdout.strip()
 
 
-class ForkEsitarkistusTesti(unittest.TestCase):
-    ENV = {"YOJONO_BOT_KAYTTAJA": "agenttifirma-bot", "YOJONO_BOT_TUNNUS": "/ei/ole"}
+class ForkPohja(unittest.TestCase):
+    """Ylavirta ja fork ovat paikallisia bare-repoja; URL-kuvaus osoittaa niihin. Fork on aluksi ylavirran kopio."""
+    REPO = "llm-stopcheck"
+    HAARA = "main"
+    BOTTI = "agenttifirma-bot"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.k = self.tmp.name
+        self.ylavirta = os.path.join(self.k, "ylavirta.git")
+        self.fork = os.path.join(self.k, "fork.git")
+        self.tyo = os.path.join(self.k, "tyo")
+        _g("init", "-q", "--bare", "-b", self.HAARA, self.ylavirta)
+        _g("clone", "-q", self.ylavirta, self.tyo)
+        _g("checkout", "-q", "-B", self.HAARA, cwd=self.tyo)
+        self.commit(self.tyo, "a")
+        _g("push", "-q", "origin", "HEAD:refs/heads/" + self.HAARA, cwd=self.tyo)
+        _g("clone", "-q", "--bare", self.ylavirta, self.fork)
+        self.tunnus = os.path.join(self.k, "token")
+        with open(self.tunnus, "w") as f:
+            f.write("ghp_" + "SALAINENTUNNUS" * 3)
+        self.env = {"YOJONO_BOT_KAYTTAJA": self.BOTTI, "YOJONO_BOT_TUNNUS": self.tunnus}
+        self.kutsut = []
+        self.ymparistot = []
+
+    def url(self, omistaja, repo):
+        self.assertEqual(repo, self.REPO)
+        return {pk.OMISTAJA: self.ylavirta, self.BOTTI: self.fork}[omistaja]
+
+    def suorita(self, cmd, **kw):
+        self.kutsut.append(list(cmd))
+        self.ymparistot.append((list(cmd), dict(kw.get("env") or {})))
+        return subprocess.run(cmd, **kw)
+
+    def valmis(self, suorita=None, env=None):
+        return pk.fork_valmis(self.REPO, self.env if env is None else env, suorita=suorita or self.suorita, url=self.url)
 
     @staticmethod
-    def vastaus(data):
-        class V:
-            def __enter__(self_):
-                return self_
+    def commit(hak, nimi):
+        with open(os.path.join(hak, nimi + ".txt"), "w") as f:
+            f.write(nimi)
+        _g("add", "-A", cwd=hak)
+        _g("commit", "-q", "-m", nimi, cwd=hak)
 
-            def __exit__(self_, *a):
-                return False
+    def nosta_ylavirtaa(self, n=2):
+        for i in range(n):
+            self.commit(self.tyo, "u%d" % i)
+        _g("push", "-q", "origin", "HEAD:refs/heads/" + self.HAARA, cwd=self.tyo)
 
-            def read(self_):
-                return json.dumps(data).encode()
-        return V()
+    def kasvata_forkia(self, nimi="f"):
+        """Fork saa oman commitin (erkaantuu tai menee edelle)."""
+        tyo2 = os.path.join(self.k, "tyo2")
+        if not os.path.isdir(tyo2):
+            _g("clone", "-q", self.fork, tyo2)
+        self.commit(tyo2, nimi)
+        _g("push", "-q", "origin", "HEAD:refs/heads/" + self.HAARA, cwd=tyo2)
 
-    def test_ajan_tasalla_on_ok_ilman_tunnusta(self):
-        ok, _ = pk.fork_valmis("llm-stopcheck", self.ENV, avaa=lambda p, timeout=0: self.vastaus({"behind_by": 0}))
-        self.assertTrue(ok)
+    def sha(self, polku, ref=None):
+        return _g("--git-dir", polku, "rev-parse", ref or "refs/heads/" + self.HAARA)
 
-    def test_ei_selvia_tietoa_ei_estaa_ajoa(self):
-        def rikki(p, timeout=0):
-            raise urllib.error.URLError("ei verkkoa")
-        self.assertTrue(pk.fork_valmis("llm-stopcheck", self.ENV, avaa=rikki)[0])
+    def refit(self, polku):
+        return _g("--git-dir", polku, "for-each-ref", "--format=%(refname)").splitlines()
 
-    def test_jaljessa_ilman_tunnusta_ei_estaa_ajoa(self):
-        # tunnustiedostoa ei voi lukea -> PrVirhe -> epavarma -> sallitaan (push nostaa selkean virheen)
-        ok, _ = pk.fork_valmis("llm-stopcheck", self.ENV, avaa=lambda p, timeout=0: self.vastaus({"behind_by": 3}))
-        self.assertTrue(ok)
+    def hylkaa_pushit(self, viesti):
+        koukku = os.path.join(self.fork, "hooks", "pre-receive")
+        with open(koukku, "w") as f:
+            f.write("#!/bin/sh\necho '%s' >&2\nexit 1\n" % viesti)
+        os.chmod(koukku, 0o755)
 
-    def test_jaljessa_ja_synkka_ei_onnistu_estaa(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tunnus = os.path.join(tmp, "token")
-            with open(tunnus, "w") as f:
-                f.write("ghp_" + "a" * 30)
-            env = dict(self.ENV, YOJONO_BOT_TUNNUS=tunnus)
+    def pushit(self):
+        return [k for k in self.kutsut if "push" in k]
 
-            def avaa(p, timeout=0):
-                if p.full_url.endswith("/merge-upstream"):
-                    raise urllib.error.HTTPError(p.full_url, 422, "x", {}, None)
-                return self.vastaus({"behind_by": 3})
-            ok, selitys = pk.fork_valmis("llm-stopcheck", env, avaa=avaa)
-        self.assertFalse(ok)
-        self.assertIn("Sync fork", selitys)
-        self.assertIn("3 commitia", selitys)
 
-    def test_jaljessa_mutta_synkka_onnistuu(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tunnus = os.path.join(tmp, "token")
-            with open(tunnus, "w") as f:
-                f.write("ghp_" + "a" * 30)
-            env = dict(self.ENV, YOJONO_BOT_TUNNUS=tunnus)
-            kutsut = []
+class ForkSynkkausTesti(ForkPohja):
+    def test_ajan_tasalla_ei_pushaa_eika_hae(self):
+        ennen = self.sha(self.fork)
+        self.assertEqual(self.valmis(), (True, "", "ajan_tasalla"))
+        self.assertEqual(self.sha(self.fork), ennen)
+        self.assertFalse([k for k in self.kutsut if "push" in k or "fetch" in k])
+        self.assertTrue(all("ls-remote" in k for k in self.kutsut))
 
-            def avaa(p, timeout=0):
-                kutsut.append(p.full_url)
-                if p.full_url.endswith("/merge-upstream"):
-                    return self.vastaus({})
-                return self.vastaus({"behind_by": 0 if any(u.endswith("/merge-upstream") for u in kutsut) else 3})
-            self.assertTrue(pk.fork_valmis("llm-stopcheck", env, avaa=avaa)[0])
+    def test_fast_forward_kelaa_forkin_ylavirran_tasalle(self):
+        self.nosta_ylavirtaa(3)
+        self.assertNotEqual(self.sha(self.fork), self.sha(self.ylavirta))
+        self.assertEqual(self.valmis(), (True, "", "kelattu"))
+        self.assertEqual(self.sha(self.fork), self.sha(self.ylavirta))
+        self.assertEqual(len(self.pushit()), 1)
+
+    def test_push_on_aina_ilman_forcea_ja_vain_pohjahaaraan(self):
+        self.nosta_ylavirtaa(1)
+        self.valmis()
+        (push,) = self.pushit()
+        self.assertEqual(push[-1], "refs/synkka/ylavirta:refs/heads/" + self.HAARA)
+        self.assertEqual(push[-2], self.fork)
+        for k in self.kutsut:
+            for kielletty in ("--force", "-f", "--force-with-lease", "--mirror", "--all", "--tags", "--delete", "--prune"):
+                self.assertNotIn(kielletty, k)
+            self.assertFalse([a for a in k if a.startswith(("+", ":"))], k)
+
+    def test_muut_haarat_eivat_muutu_eika_uusia_synny(self):
+        _g("--git-dir", self.fork, "branch", "yo/muu", "refs/heads/" + self.HAARA)
+        muu = self.sha(self.fork, "refs/heads/yo/muu")
+        ennen = sorted(self.refit(self.fork))
+        self.nosta_ylavirtaa(2)
+        self.assertEqual(self.valmis(), (True, "", "kelattu"))
+        self.assertEqual(sorted(self.refit(self.fork)), ennen)
+        self.assertEqual(self.sha(self.fork, "refs/heads/yo/muu"), muu)
+        self.assertEqual(self.sha(self.ylavirta), self.sha(self.fork))
+
+    def test_ylavirta_ei_muutu(self):
+        self.nosta_ylavirtaa(2)
+        ennen = (self.sha(self.ylavirta), sorted(self.refit(self.ylavirta)))
+        self.valmis()
+        self.assertEqual((self.sha(self.ylavirta), sorted(self.refit(self.ylavirta))), ennen)
+
+    def test_ei_fast_forward_ei_tee_mitaan_ja_antaa_koodin(self):
+        self.kasvata_forkia("forkin-oma")
+        self.nosta_ylavirtaa(2)
+        fork_ennen = self.sha(self.fork)
+        ok, koodi, selitys = self.valmis()
+        self.assertEqual((ok, koodi), (False, "fork_ei_ff"))
+        self.assertIn("erkaantunut", selitys)
+        self.assertEqual(self.sha(self.fork), fork_ennen)
+        self.assertEqual(self.pushit(), [])
+
+    def test_fork_vain_edella_ei_vaadi_toimia(self):
+        self.kasvata_forkia("forkin-oma")
+        fork_ennen = self.sha(self.fork)
+        self.assertEqual(self.valmis(), (True, "", "edella"))
+        self.assertEqual(self.sha(self.fork), fork_ennen)
+        self.assertEqual(self.pushit(), [])
+
+    def test_push_epaonnistuu_ohitus_ja_selva_koodi(self):
+        self.nosta_ylavirtaa(2)
+        self.hylkaa_pushit("pre-receive: ei sallittu")
+        fork_ennen = self.sha(self.fork)
+        ok, koodi, selitys = self.valmis()
+        self.assertEqual((ok, koodi), (False, "fork_push_epaonnistui"))
+        self.assertIn("ei sallittu", selitys)
+        self.assertEqual(self.sha(self.fork), fork_ennen)
+        self.assertEqual(len(self.pushit()), 1)
+
+    def test_workflow_oikeuden_puute_tunnistetaan_omalla_koodilla(self):
+        self.nosta_ylavirtaa(1)
+        self.hylkaa_pushit("refusing to allow a Personal Access Token to create or update workflow `.github/workflows/a.yml` without `workflow` scope")
+        ok, koodi, selitys = self.valmis()
+        self.assertEqual((ok, koodi), (False, "fork_workflow_oikeus"))
+        self.assertIn("workflow-oikeutta", selitys)
+        self.assertIn("synkkaa fork kasin", selitys)
+
+    def test_fork_muuttui_synkkauksen_aikana_push_ei_ff(self):
+        self.nosta_ylavirtaa(2)
+
+        def kilpa(cmd, **kw):
+            if "push" in cmd and not getattr(kilpa, "tehty", False):
+                kilpa.tehty = True
+                self.kasvata_forkia("kilpa")          # fork etenee ennen pushia: push ei ole enaa fast-forward
+            return self.suorita(cmd, **kw)
+        ok, koodi, selitys = self.valmis(suorita=kilpa)
+        self.assertEqual((ok, koodi), (False, "fork_ei_ff"))
+        self.assertNotEqual(self.sha(self.fork), self.sha(self.ylavirta))     # mitaan ei ylikirjoitettu
+
+    def test_push_ok_mutta_fork_ei_paivittynyt_on_fork_jaljessa(self):
+        self.nosta_ylavirtaa(1)
+
+        def nielee(cmd, **kw):
+            if "push" in cmd:
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return self.suorita(cmd, **kw)
+        ok, koodi, _ = self.valmis(suorita=nielee)
+        self.assertEqual((ok, koodi), (False, "fork_jaljessa"))
+
+    def test_ylavirta_tai_fork_ei_luettavissa(self):
+        for puuttuva in ("ylavirta", "fork"):
+            with self.subTest(puuttuva=puuttuva):
+                polut = {pk.OMISTAJA: self.ylavirta, self.BOTTI: self.fork}
+                polut[pk.OMISTAJA if puuttuva == "ylavirta" else self.BOTTI] = os.path.join(self.k, "ei-ole.git")
+                self.kutsut.clear()
+                ok, koodi, _ = pk.fork_valmis(self.REPO, self.env, suorita=self.suorita, url=lambda o, r: polut[o])
+                self.assertEqual((ok, koodi), (False, "fork_tarkistus_epaonnistui"))
+                self.assertEqual(self.pushit(), [])
+
+    def test_haaraa_ei_ole_forkissa_on_lukuvirhe(self):
+        _g("--git-dir", self.fork, "branch", "-m", self.HAARA, "toinen")
+        ok, koodi, _ = self.valmis()
+        self.assertEqual((ok, koodi), (False, "fork_tarkistus_epaonnistui"))
+
+    def test_repo_ei_sallittujen_listalla(self):
+        ok, koodi, selitys = pk.fork_valmis("jokin-muu-repo", self.env, suorita=self.suorita, url=self.url)
+        self.assertEqual((ok, koodi), (False, "fork_tarkistus_epaonnistui"))
+        self.assertEqual(self.kutsut, [])
+
+    def test_kelpaamaton_tunnus_ennen_pushia_ei_pushaa(self):
+        self.nosta_ylavirtaa(1)
+        fork_ennen = self.sha(self.fork)
+        for sisalto in ("roskaa", "", "ghp_lyhyt"):
+            with self.subTest(sisalto=sisalto):
+                with open(self.tunnus, "w") as f:
+                    f.write(sisalto)
+                self.kutsut.clear()
+                ok, koodi, selitys = self.valmis()
+                self.assertEqual((ok, koodi), (False, "fork_push_epaonnistui"))
+                self.assertEqual(self.pushit(), [])
+                self.assertEqual(self.sha(self.fork), fork_ennen)
+        ok, koodi, _ = self.valmis(env={"YOJONO_BOT_KAYTTAJA": self.BOTTI, "YOJONO_BOT_TUNNUS": os.path.join(self.k, "ei-ole")})
+        self.assertEqual((ok, koodi), (False, "fork_push_epaonnistui"))
+
+    def test_virheellinen_botin_nimi(self):
+        ok, koodi, _ = self.valmis(env={"YOJONO_BOT_KAYTTAJA": "../x", "YOJONO_BOT_TUNNUS": self.tunnus})
+        self.assertEqual((ok, koodi), (False, "fork_tarkistus_epaonnistui"))
+        self.assertEqual(self.kutsut, [])
+
+    def test_aikakatkaisut_antavat_koodin(self):
+        self.nosta_ylavirtaa(1)
+        for komento, odotettu in (("ls-remote", "fork_tarkistus_epaonnistui"), ("fetch", "fork_tarkistus_epaonnistui"), ("push", "fork_push_epaonnistui")):
+            with self.subTest(komento=komento):
+                def hidas(cmd, **kw):
+                    if komento in cmd:
+                        raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 1))
+                    return self.suorita(cmd, **kw)
+                ok, koodi, selitys = self.valmis(suorita=hidas)
+                self.assertEqual((ok, koodi), (False, odotettu))
+                self.assertIn("aikakatkaisu", selitys)
+
+    def test_git_ei_kaynnisty(self):
+        def puuttuu(cmd, **kw):
+            raise FileNotFoundError("git")
+        ok, koodi, _ = self.valmis(suorita=puuttuu)
+        self.assertEqual((ok, koodi), (False, "fork_tarkistus_epaonnistui"))
+
+    def test_tunnus_ei_vuoda_komentoriveille_ymparistoon_eika_viesteihin(self):
+        self.nosta_ylavirtaa(1)
+        self.hylkaa_pushit("hylatty")
+        with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "gh-salainen", "GH_TOKEN": "gh-toinen"}):
+            ok, koodi, selitys = self.valmis()
+        tunnus = open(self.tunnus).read()
+        self.assertNotIn(tunnus, selitys)
+        for cmd, ymp in self.ymparistot:
+            self.assertNotIn(tunnus, " ".join(cmd))
+            self.assertNotIn(tunnus, json.dumps(ymp))
+            self.assertNotIn("GITHUB_TOKEN", ymp)
+            self.assertNotIn("GH_TOKEN", ymp)
+            self.assertEqual(ymp.get("GIT_TERMINAL_PROMPT"), "0")
+            self.assertTrue(all("@" not in a or a.startswith("-") for a in cmd))      # ei tunnus@-URL:ia
+        push_ymp = [y for c, y in self.ymparistot if "push" in c][0]
+        self.assertIn("GIT_ASKPASS", push_ymp)
+        self.assertFalse(os.path.exists(push_ymp["GIT_ASKPASS"]))                     # askpass poistettu
+        lukuymp = [y for c, y in self.ymparistot if "push" not in c]
+        self.assertTrue(lukuymp and all("GIT_ASKPASS" not in y for y in lukuymp))     # julkinen luku ilman tunnusta
+
+    def test_ei_kirjoita_muualle_kuin_forkin_pohjahaaraan(self):
+        self.nosta_ylavirtaa(2)
+        self.valmis()
+        for cmd in self.kutsut:
+            if "push" in cmd:
+                self.assertEqual([a for a in cmd if a == self.ylavirta], [])      # ylavirtaan ei pushata koskaan
+        self.assertEqual(sorted(self.refit(self.fork)), ["refs/heads/" + self.HAARA])
+
+
+class ForkMasterHaaraTesti(ForkPohja):
+    """ai-pr-reviewer-action kayttaa haaraa master: synkataan master, ei main."""
+    REPO = "ai-pr-reviewer-action"
+    HAARA = "master"
+
+    def test_master_kelataan(self):
+        self.nosta_ylavirtaa(2)
+        self.assertEqual(self.valmis(), (True, "", "kelattu"))
+        self.assertEqual(self.sha(self.fork), self.sha(self.ylavirta))
+        (push,) = self.pushit()
+        self.assertEqual(push[-1], "refs/synkka/ylavirta:refs/heads/master")
+
+
+if __name__ == "__main__":
+    unittest.main()

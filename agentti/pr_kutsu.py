@@ -10,6 +10,8 @@ Turva ("koodi on laki"):
 - ei force-pushia (refspec ilman `+`), ei paikallisia koukkuja (core.hooksPath=/dev/null)
 - ei suojattuja polkuja (.github/, tools/, systemd/, isanta/, rajat.py, config.py, salaisuuden nakoiset tiedostot)
 - enintaan RAJA_PAIVASSA PR-yritysta paivassa; vain stdlib
+- forkin synkkaus (synkkaa_fork): vain kyseisen repon pohjahaara (main; ai-pr-reviewer-action: master), vain fast-forward, ei force-pushia
+  (refspec ilman `+`), ei muita haaroja; jos fork-main eroaa ylavirrasta, ei tehda mitaan (fork_ei_ff); sama tunnus kuin PR:ssa, ei uusia oikeuksia
 
 Kaytto:
     python3 -m agentti.pr_kutsu tarkista REPO HAKEMISTO HAARA          # vain paikalliset tarkistukset, ei verkkoa
@@ -48,6 +50,18 @@ ALAKUULO = "\n\n---\nAgentin tekema ehdotus (yojono). Tony katselmoi ja yhdistaa
 
 class PrVirhe(Exception):
     """Odotettu virhe: viesti on turvallinen tulostaa (ei sisalla tunnusta)."""
+
+
+class ForkVirhe(PrVirhe):
+    """Forkin synkkaus ei onnistunut tai sita ei voi tehda. `koodi` on vakaa (tapahtumaloki ja viikkoraportti), `viesti` selitys ilman koodia;
+    str(virhe) on `koodi: viesti`, joten koodi nakyy myos kehitys.sh:n kautta kulkevassa viestissa.
+    Koodit: fork_jaljessa (fork jaa jaljelle push-yrityksen jalkeen), fork_ei_ff (fork-main eroaa ylavirrasta: ei tehda mitaan),
+    fork_push_epaonnistui (push hylatty tai ei onnistunut), fork_workflow_oikeus (push hylatty, koska botin tunnuksella ei ole
+    workflow-oikeutta ja ylavirran commitit muuttavat .github/workflows-tiedostoja), fork_tarkistus_epaonnistui (tilaa ei saatu luettua)."""
+
+    def __init__(self, koodi, viesti):
+        super().__init__("%s: %s" % (koodi, viesti))
+        self.koodi, self.viesti = koodi, viesti
 
 
 def suojattu(polku):
@@ -150,15 +164,21 @@ def varaa_paikka(tilapolku, pvm=None):
     return True
 
 
+def _git_ymparisto(tmp, botti, tunnuspolku):
+    """Gitin ymparisto pushia varten: tunnus kulkee vain tilapaisen askpass-skriptin (0700, hakemistossa tmp) kautta, GH_/GITHUB_-muuttujat poistetaan."""
+    skripti = os.path.join(tmp, "askpass.sh")
+    with open(os.open(skripti, os.O_CREAT | os.O_WRONLY, 0o700), "w", encoding="ascii") as f:
+        f.write("#!/bin/sh\ncase \"$1\" in\n  Username*) echo %s ;;\n  *) cat %s ;;\nesac\n"
+                % (shlex.quote(botti), shlex.quote(tunnuspolku)))
+    ymp = {k: v for k, v in os.environ.items() if not k.startswith(("GH_", "GITHUB_", "GIT_ASKPASS"))}
+    ymp.update({"GIT_ASKPASS": skripti, "GIT_TERMINAL_PROMPT": "0"})
+    return ymp
+
+
 def pushaa(hakemisto, repo, haara, botti, tunnuspolku, suorita=subprocess.run, sync=True):
     """Pushaa haaran botin forkkiin (ei force). Tunnus kulkee vain tilapaisen askpass-skriptin kautta."""
     with tempfile.TemporaryDirectory() as tmp:
-        skripti = os.path.join(tmp, "askpass.sh")
-        with open(os.open(skripti, os.O_CREAT | os.O_WRONLY, 0o700), "w", encoding="ascii") as f:
-            f.write("#!/bin/sh\ncase \"$1\" in\n  Username*) echo %s ;;\n  *) cat %s ;;\nesac\n"
-                    % (shlex.quote(botti), shlex.quote(tunnuspolku)))
-        ymp = {k: v for k, v in os.environ.items() if not k.startswith(("GH_", "GITHUB_", "GIT_ASKPASS"))}
-        ymp.update({"GIT_ASKPASS": skripti, "GIT_TERMINAL_PROMPT": "0"})
+        ymp = _git_ymparisto(tmp, botti, tunnuspolku)
         kohde = f"https://github.com/{botti}/{repo}.git"
         refspec = f"refs/heads/{haara}:refs/heads/{haara}"
         r = suorita(["git", "-C", hakemisto, "-c", "credential.helper=", "-c", "core.hooksPath=/dev/null",
@@ -193,36 +213,110 @@ def paivita_fork(repo, botti, tunnus, avaa=urllib.request.urlopen):
         return type(e).__name__
 
 
-def fork_jaljessa(repo, botti, avaa=urllib.request.urlopen):
-    """Montako commitia botin fork on jaljessa ylavirrasta (julkinen compare-haku, ei tunnusta) tai None jos ei saada selville."""
-    pohja = pohja_haara(repo)
-    pyynto = urllib.request.Request(
-        f"https://api.github.com/repos/{OMISTAJA}/{repo}/compare/{pohja}...{botti}:{pohja}",
-        headers={"Accept": "application/vnd.github+json", "User-Agent": "yojono-pr-kutsu"})
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+SYNKKA_REFS = ("refs/synkka/ylavirta", "refs/synkka/fork")      # vain valiaikaisen bare-repon sisalla
+
+
+def _github_url(omistaja, repo):
+    return "https://github.com/%s/%s.git" % (omistaja, repo)
+
+
+def _luku_ymparisto():
+    """Julkisten repojen luku (ls-remote, fetch): ei tunnuksia, ei kyselyja."""
+    ymp = {k: v for k, v in os.environ.items() if not k.startswith(("GH_", "GITHUB_", "GIT_ASKPASS"))}
+    ymp["GIT_TERMINAL_PROMPT"] = "0"
+    return ymp
+
+
+def _git_ajo(suorita, argv, koodi, aika, ymp):
     try:
-        with avaa(pyynto, timeout=20) as vastaus:
-            luku = json.loads(vastaus.read().decode("utf-8")).get("behind_by")
-        return luku if isinstance(luku, int) and not isinstance(luku, bool) else None
-    except (urllib.error.URLError, ValueError, OSError):
+        return suorita(argv, capture_output=True, text=True, timeout=aika, check=False, env=ymp)
+    except subprocess.TimeoutExpired:
+        raise ForkVirhe(koodi, "git aikakatkaisu (%d s)" % aika) from None
+    except OSError as e:
+        raise ForkVirhe(koodi, "git ei kaynnisty: " + type(e).__name__) from None
+
+
+def _paa_sha(suorita, osoite, haara, ymp):
+    """Haaran karki ls-remote:lla (julkinen luku) tai None, jos sita ei saada luettua."""
+    r = _git_ajo(suorita, ["git", "-c", "credential.helper=", "ls-remote", "--heads", osoite, "refs/heads/" + haara], "fork_tarkistus_epaonnistui", 60, ymp)
+    rivit = [x.split() for x in (r.stdout or "").splitlines() if x.strip()]
+    if r.returncode != 0 or len(rivit) != 1 or len(rivit[0]) != 2 or rivit[0][1] != "refs/heads/" + haara or not SHA_RE.match(rivit[0][0]):
         return None
+    return rivit[0][0]
 
 
-def fork_valmis(repo, env=None, avaa=urllib.request.urlopen):
-    """Esitarkistus ennen mallikutsua: onko fork ajan tasalla tai saadaanko se synkattua. Palauttaa (ok, selitys).
-    Epavarmuus (ei verkkoa, ei tunnusta) ei esta ajoa: silloin ok=True, ja itse push nostaa selkean virheen."""
+def _on_esivanhempi(suorita, bare, a, b, ymp):
+    """0 = a on b:n esivanhempi, 1 = ei ole; muu = virhe (ForkVirhe)."""
+    r = _git_ajo(suorita, ["git", "-C", bare, "merge-base", "--is-ancestor", a, b], "fork_tarkistus_epaonnistui", 60, ymp)
+    if r.returncode not in (0, 1):
+        raise ForkVirhe("fork_tarkistus_epaonnistui", "historian vertailu epaonnistui")
+    return r.returncode
+
+
+def synkkaa_fork(repo, botti, tunnuspolku, suorita=subprocess.run, url=_github_url):
+    """Kelaa botin forkin pohjahaaran (main; ai-pr-reviewer-action: master) ylavirran tasalle, VAIN fast-forwardina.
+
+    Vaiheet: ls-remote (ylavirta ja fork) -> samat = valmis; muuten fetch molemmat valiaikaiseen bare-repoon -> fork on ylavirran esivanhempi = push
+    (refspec ilman `+`, ei force-pushia, vain tama yksi haara, botin tunnuksella) -> tarkistus ls-remote:lla. Jos fork-main eroaa ylavirrasta
+    (ei fast-forward), ei tehda mitaan (fork_ei_ff). Palauttaa "ajan_tasalla", "kelattu" tai "edella" (fork on vain edella: ei tarvitse tehda mitaan);
+    muuten ForkVirhe(koodi). Tunnus luetaan vain pushia varten, eika se nay prosessilistassa, URL:ssa tai viestissa."""
+    if repo not in REPOT:
+        raise ForkVirhe("fork_tarkistus_epaonnistui", "repo ei ole sallittujen listalla: " + repo)
+    haara = pohja_haara(repo)
+    ylavirta, fork = url(OMISTAJA, repo), url(botti, repo)
+    luku = _luku_ymparisto()
+    u, f = _paa_sha(suorita, ylavirta, haara, luku), _paa_sha(suorita, fork, haara, luku)
+    if u is None or f is None:
+        raise ForkVirhe("fork_tarkistus_epaonnistui", "%s ei ole luettavissa" % ("ylavirran " + haara if u is None else "forkin " + haara))
+    if u == f:
+        return "ajan_tasalla"
+    with tempfile.TemporaryDirectory() as tmp:
+        bare = os.path.join(tmp, "synkka.git")
+        if _git_ajo(suorita, ["git", "init", "-q", "--bare", bare], "fork_tarkistus_epaonnistui", 60, luku).returncode != 0:
+            raise ForkVirhe("fork_tarkistus_epaonnistui", "valiaikaisen repon luonti epaonnistui")
+        for osoite, ref in ((ylavirta, SYNKKA_REFS[0]), (fork, SYNKKA_REFS[1])):
+            r = _git_ajo(suorita, ["git", "-C", bare, "-c", "credential.helper=", "fetch", "-q", "--no-tags", osoite, "refs/heads/%s:%s" % (haara, ref)],
+                         "fork_tarkistus_epaonnistui", 180, luku)
+            if r.returncode != 0:
+                raise ForkVirhe("fork_tarkistus_epaonnistui", "fetch epaonnistui: " + ((r.stderr or "") + (r.stdout or "")).strip()[-200:])
+        if _on_esivanhempi(suorita, bare, SYNKKA_REFS[1], SYNKKA_REFS[0], luku) != 0:      # fork ei ole ylavirran esivanhempi
+            if _on_esivanhempi(suorita, bare, SYNKKA_REFS[0], SYNKKA_REFS[1], luku) == 0:
+                return "edella"
+            raise ForkVirhe("fork_ei_ff", "fork-%s on erkaantunut ylavirrasta (ei fast-forward): mitaan ei tehty, synkkaa kasin" % haara)
+        try:
+            lue_tunnus(tunnuspolku)                                                        # muoto tarkistetaan ennen pushia; itse tunnus ei jaa muistiin
+        except PrVirhe as e:
+            raise ForkVirhe("fork_push_epaonnistui", "tunnus: " + str(e)) from None
+        ymp = _git_ymparisto(tmp, botti, tunnuspolku)
+        r = _git_ajo(suorita, ["git", "-C", bare, "-c", "credential.helper=", "-c", "core.hooksPath=/dev/null", "push", fork, "%s:refs/heads/%s" % (SYNKKA_REFS[0], haara)],
+                     "fork_push_epaonnistui", 180, ymp)
+    if r.returncode != 0:
+        koko = ((r.stderr or "") + (r.stdout or "")).strip()          # luokittelu koko tulosteesta (hint-rivit voivat tyontaa [rejected]-rivin pois lopusta)
+        loppu = koko[-300:]
+        if "workflow" in koko and "scope" in koko:
+            raise ForkVirhe("fork_workflow_oikeus", "ylavirran commitit muuttavat .github/workflows-tiedostoja, eika botin tunnuksella ole workflow-oikeutta "
+                            "(tunnukselle ei anneta sita itse): synkkaa fork kasin. Push: " + loppu)
+        if "non-fast-forward" in koko or "fetch first" in koko or "contains work that you do not" in koko:
+            raise ForkVirhe("fork_ei_ff", "fork-%s muuttui synkkauksen aikana (push ei ollut fast-forward): mitaan ei tehty. Push: %s" % (haara, loppu))
+        raise ForkVirhe("fork_push_epaonnistui", "push forkin %s-haaraan epaonnistui: %s" % (haara, loppu))
+    if _paa_sha(suorita, fork, haara, luku) != u:
+        raise ForkVirhe("fork_jaljessa", "push onnistui, mutta fork-%s ei vastaa ylavirtaa" % haara)
+    return "kelattu"
+
+
+def fork_valmis(repo, env=None, suorita=subprocess.run, url=_github_url):
+    """Esitarkistus ennen mallikutsua: synkkaa botin fork ylavirran tasalle (vain fast-forward). Palauttaa (ok, koodi, selitys); ok=False -> tehtava ohitetaan
+    ilman kulua ja yritysta, ja koodi (fork_*) kirjataan tapahtumalokiin ja raporttiin. Ei lukukelpoista tilaa tai tunnusta = fail closed (mallikutsu menisi hukkaan)."""
     env = os.environ if env is None else env
     try:
         botti = botti_kayttaja(env)
-        jalessa = fork_jaljessa(repo, botti, avaa=avaa)
-        if not jalessa:
-            return True, ""
-        tunnus = lue_tunnus(env.get("YOJONO_BOT_TUNNUS", OLETUS_TUNNUS))
-        paivita_fork(repo, botti, tunnus, avaa=avaa)
-        if not fork_jaljessa(repo, botti, avaa=avaa):
-            return True, ""
-        return False, "fork %s/%s on %s commitia jaljessa eika API-synkka onnistu: Sync fork kasin" % (botti, repo, jalessa)
-    except PrVirhe:
-        return True, ""
+        tulos = synkkaa_fork(repo, botti, env.get("YOJONO_BOT_TUNNUS", OLETUS_TUNNUS), suorita=suorita, url=url)
+    except ForkVirhe as e:
+        return False, e.koodi, e.viesti
+    except PrVirhe as e:
+        return False, "fork_tarkistus_epaonnistui", str(e)
+    return True, "", tulos
 
 
 def avaa_pr(repo, haara, botti, otsikko, kuvaus, tunnus, avaa=urllib.request.urlopen):
