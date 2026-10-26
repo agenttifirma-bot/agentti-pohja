@@ -51,12 +51,12 @@ Loppurivi on aina `OK: …` tai `EPÄONNISTUI: …`. Loki: `/root/julkaisu/loki.
 - paketti turvallinen: ei linkkejä tai laitetiedostoja, ei `/`-alkuisia tai `..`-polkuja, yksi ylätason hakemisto, enintään 50 Mt ja 3000 tiedostoa, vaaditut tiedostot mukana, ei salaisuuden näköisiä tiedostoja (`*.env`, `*.pem`, `*.key`, `id_rsa*`, …) eikä yksityistä avainta (PEM-otsikko + base64-runko),
 - kohteen koodi vastaa omaa manifestiaan (ei paikallisia muutoksia); ensimmäinen julkaisu vaatii `--ensijulkaisu` (git-kloonilla lisäksi puhdas työpuu),
 - palvelut eivät käynnissä, ei kohteen prosessia, lukot vapaana, ajastin ei laukea ikkunan (`IKKUNA_S`) sisällä,
-- snapshotteja alle 20 (raja täynnä keskeyttää ennen muutosta), levytila, ei edellisen ajon jäänteitä (`<koodi>.uusi`), CT ja testikontti käynnissä,
+- snapshotteja alle 20 (raja täynnä keskeyttää ennen muutosta), levytila, ei edellisen ajon jäänteitä (`<koodi>.uusi`), kohdenimi `<koodi>.prev-<aika>` ei ole jo olemassa (aikaleima on sekuntitarkka: kaksi julkaisua samalla sekunnilla keskeytetään ennen muutoksia, jottei vanha koodi siirry prev-kansion sisään), CT ja testikontti käynnissä,
 - tilan ja konfiguraation tiiviste otetaan talteen.
 
 ## Julkaisun kulku
 
-snapshot (`pre-<kohde>-<commit8>-<HHMM>`) → paketti kontille ja sha256-tarkistus → purku `<koodi>.uusi`:iin, manifestin tarkistus → testit → ajastimet pysäytetään vaihdon ajaksi → `mv` (`<koodi>` → `<koodi>.prev-<aika>`, `.uusi` → `<koodi>`) → savukoe (moduulien tuonti) → jälkitarkistukset (manifesti, **tila ja konfiguraatio ennallaan**, palvelut vapaina) → ajastimet takaisin → vanhimmat prev-versiot pois (säilytetään 3). Virheessä keskeneräinen muutos kumotaan automaattisesti (`.viallinen-<aika>`); jos tila tai konfiguraatio muuttui, ajo päättyy kovaan virheeseen.
+snapshot (`pre-<kohde>-<commit8>-<HHMM>`) → paketti kontille ja sha256-tarkistus → purku `<koodi>.uusi`:iin, manifestin tarkistus → testit → ajastimet pysäytetään vaihdon ajaksi → `mv` (`<koodi>` → `<koodi>.prev-<aika>`, `.uusi` → `<koodi>`) → savukoe (moduulien tuonti) → jälkitarkistukset (manifesti, **tila ja konfiguraatio ennallaan**, palvelut vapaina) → ajastimet takaisin → vanhimmat prev-versiot pois (säilytetään 3). Palveluiden ja lukkojen tarkistus toistetaan ajastimien pysäytyksen jälkeen (virhe poistaa `.uusi`:n) ja vaihdon jälkeen (virhe palauttaa edellisen koodin). Virheessä keskeneräinen muutos kumotaan automaattisesti (`.viallinen-<aika>`); jos tila tai konfiguraatio muuttui, ajo päättyy kovaan virheeseen.
 
 **Testit:** kauppatiimi ja yojono ajetaan kontissa uuden koodin kopiolla ennen vaihtoa. **infra-automaatio:** testejä ei ajeta tuotantokontissa CT118, vaan CT115:n tilapäishakemistossa (`TESTI_TAPA=ct115`). CT115:n koko testisarja kaatuu ympäristöeroihin (root, node puuttuu), joten yojono ajaa vain `test.test_pr_kutsu`, `yojono.test_ajuri` ja `test.test_viikkoraportti`.
 

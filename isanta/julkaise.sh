@@ -42,7 +42,7 @@ KUIVA=0; KANARIA=0; ENSIJULKAISU=0; UUDELLEEN=0; SALLI_EI_KARKI=0
 TOIMI=julkaise; KOHDE=""; SNAP_VALINTA=""; KATASTROFI_KANSIO=""; POS=()
 MUUTOKSIA=0                  # kasvaa jokaisesta muuta()-kutsusta; 0 = mitaan ei ole muutettu
 VAIHDETTU=0; UUSI_LUOTU=0; YKSIKOT_ASENNETTU=0; PERUUTUS_TEHTY=0
-TS=$(date +%Y%m%d-%H%M%S)
+TS=${JULKAISU_TS:-$(date +%Y%m%d-%H%M%S)}
 T=""                         # isannan valiaikaishakemisto
 AJASTIN_PYSAYTETTY=()
 LOKI_LISA=""
@@ -228,17 +228,18 @@ tyokalut_kontti() {
   if [ -n "$TESTI_KAYTTAJA$SAVU_KAYTTAJA" ]; then ct sh -c 'command -v runuser >/dev/null 2>&1' || vika "CT$CT:sta puuttuu runuser"; fi
 }
 
-palvelut_vapaana() {
-  local p s
+palvelut_vapaana() {   # palvelut_vapaana [virhe]: "virhe" = muutosten jalkeen, kumoaa keskenerainen (virhe), muuten esitarkistus (vika)
+  local p s f=vika
+  [ "${1:-}" = virhe ] && f=virhe
   for p in $PALVELUT; do
     s=$(ct systemctl is-active "$p.service" 2>/dev/null || true)
-    case "$s" in inactive|failed|"") ;; *) vika "palvelu $p.service on '$s' (odotettu inactive); odota ajon valmistumista" ;; esac
+    case "$s" in inactive|failed|"") ;; *) "$f" "palvelu $p.service on '$s' (odotettu inactive); odota ajon valmistumista" ;; esac
   done
   if [ -n "$PROSESSI_KUVIO" ]; then
-    if ct pgrep -f -- "$PROSESSI_KUVIO" >/dev/null 2>&1; then vika "kohteen prosessi on kaynnissa (kuvio $PROSESSI_KUVIO)"; fi
+    if ct pgrep -f -- "$PROSESSI_KUVIO" >/dev/null 2>&1; then "$f" "kohteen prosessi on kaynnissa (kuvio $PROSESSI_KUVIO)"; fi
   fi
   local l; for l in $LUKOT; do
-    ct sh -c 'exec 9>>"$0" && flock -n 9' "$l" >/dev/null 2>&1 || vika "lukko on varattu: $l (ajo kesken)"
+    ct sh -c 'exec 9>>"$0" && flock -n 9' "$l" >/dev/null 2>&1 || "$f" "lukko on varattu: $l (ajo kesken)"
   done
   info "palvelut ja lukot vapaana."
 }
@@ -516,6 +517,9 @@ julkaise_toimi() {
   fi
 
   PREV="$KOODI.prev-$TS"
+  if [ "$ASENTAJA" = yleinen ]; then
+    ct test ! -e "$PREV" || vika "kohdenimi $PREV on jo olemassa (edellinen ajo samalla sekunnilla); odota sekunti ja aja uudelleen"
+  fi
   SNAP_NIMI="pre-$KOHDE-${COMMIT:0:8}-$(date +%H%M)"
   KONTTI_PAKETTI="/tmp/julkaisu-$KOHDE-$TS.tgz"
   if [ "$KUIVA" = 1 ]; then
@@ -546,7 +550,7 @@ julkaise_toimi() {
   ct sh -c 'cd "$0" && sha256sum -c --quiet .julkaisu-manifesti' "$KOODI" >/dev/null || virhe "asennetun koodin manifesti ei tasmaa"
   info "asennettu koodi vastaa manifestia (${COMMIT:0:12})."
   tarkista_tila_ennallaan "$TILA_ENNEN" "$KONFIG_ENNEN"
-  palvelut_vapaana
+  palvelut_vapaana virhe
   palauta_ajastimet
 
   laji "5/6 Siivous"
@@ -594,7 +598,7 @@ asenna_yleinen() {
   fi
 
   pysayta_ajastimet
-  palvelut_vapaana     # uusintatarkistus ajastimien pysaytyksen jalkeen
+  palvelut_vapaana virhe     # uusintatarkistus ajastimien pysaytyksen jalkeen (kumoaa .uusi:n)
   muuta "koodin vaihto" ct sh -c 'mv "$1" "$2" && { mv "$3" "$1" || { mv "$2" "$1"; exit 1; }; }' sh "$KOODI" "$PREV" "$u" || virhe "koodihakemiston vaihto epaonnistui"
   VAIHDETTU=1; UUSI_LUOTU=0
   info "koodi vaihdettu: $KOODI (uusi), edellinen: $PREV"

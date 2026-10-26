@@ -185,7 +185,11 @@ class Laatikko:
 
     # ---- ajo ----
     def aja(self, *args, kohde="app", skripti=None, env=None):
+        julkaisu = env is None and not any(str(a) in ("--kuiva", "--kanaria", "--peruuta", "--tila", "--itsetesti", "--katastrofi-tila", "--katastrofi-palauta") for a in args)
+        if julkaisu and int(time.time()) == getattr(self, "_viim_s", None):
+            time.sleep(1.05 - time.time() % 1)        # edellinen ajo sai saman sekunnin: prev-nimi tormaisi
         r = subprocess.run(["bash", str(skripti or JULKAISE), kohde, *[str(a) for a in args]], env=env or self.env, capture_output=True, text=True, timeout=300)
+        self._viim_s = int(time.time())
         return r.returncode, r.stdout + r.stderr
 
     def paketoi(self, ref="HEAD", kohde="app"):
@@ -870,6 +874,7 @@ class PeruutusTesti(Pohja):
         self.l.ensimmainen()
         self.koodi_v1 = puu(self.l.koodi)
         self.l.commit(2)
+        time.sleep(1.1)            # prev-nimessa on sekuntitarkkuus
         self.assertOk(*self.l.julkaise())
 
     def test_peruutus_palauttaa_vain_koodin_ja_tila_pysyy_tiivisteella(self):
@@ -999,6 +1004,50 @@ class VikatilanneTesti(Pohja):
         self.assertTrue(list(self.l.koodi.parent.glob(self.l.koodi.name + ".viallinen-*")))
         self.assertIn("keskenerainen muutos kumottu", ulos)
         self.assertIn("PERUUTUS", ulos)
+
+    def test_prev_nimi_tormaa_keskeytetaan_ennen_muutoksia(self):
+        self.valmis()
+        prev = self.l.previt()[0]
+        prev_polku = self.l.koodi.parent / prev
+        prev_ennen = puu(prev_polku)
+        self.l.commit(2)
+        p, c, s = self.l.paketoi()
+        kirj0 = self.l.kirjoitukset()
+        env = dict(self.l.env, JULKAISU_TS=prev.split(".prev-")[1])        # sama sekunti kuin ensijulkaisussa
+        rc, ulos = self.l.aja(p, c, s, env=env)
+        self.assertEpa(rc, ulos, "on jo olemassa")
+        self.assertIn("Mitaan ei muutettu", ulos)
+        self.assertPalautui()
+        self.assertEqual(self.l.previt(), [prev])
+        self.assertEqual(puu(prev_polku), prev_ennen, "vanha prev-kansio muuttui")
+        self.assertFalse((prev_polku / self.l.koodi.name).exists(), "vanha koodi siirtyi prev-kansion sisaan")
+        self.assertEqual(self.l.kirjoitukset(), kirj0)
+        self.assertEqual(self.l.versio_koodissa(), "1")
+
+    def test_palvelu_aktivoituu_jalkitarkistuksessa_kumoaa_muutoksen(self):
+        self.valmis()
+        aktivoi = "open(os.path.join(os.environ['SIM'], 'sysd', 'app.service.active'), 'w').write('active\\n')\n"
+        self.l.commit(2, lisaa={"config.py": "import os\n" + aktivoi})
+        rc, ulos = self.l.julkaise()
+        self.assertEpa(rc, ulos, "palvelu app.service on 'active'")
+        self.assertIn("keskenerainen muutos kumottu", ulos)
+        self.assertPalautui()
+        self.assertEqual(self.l.versio_koodissa(), "1")
+        self.assertTrue(list(self.l.koodi.parent.glob(self.l.koodi.name + ".viallinen-*")), "koodia ei kumottu (.viallinen puuttuu)")
+
+    def test_palvelu_aktivoituu_ennen_vaihtoa_poistaa_uusi_ja_jattaa_koodin(self):
+        self.valmis()
+        aktivoi = "open(os.path.join(os.environ['SIM'], 'sysd', 'app.service.active'), 'w').write('active\\n')"
+        testi = ("import os\nimport unittest\nimport run\n\n\nclass T(unittest.TestCase):\n    def test_versio(self):\n"
+                 "        " + aktivoi + "\n        self.assertEqual(run.VERSIO, 2)\n")
+        self.l.commit(2, lisaa={"tests/test_app.py": testi})
+        rc, ulos = self.l.julkaise()
+        self.assertEpa(rc, ulos, "palvelu app.service on 'active'")
+        self.assertIn("keskenerainen muutos kumottu", ulos)
+        self.assertPalautui()                                  # sis. .uusi poissa ja ajastin takaisin
+        self.assertEqual(self.l.versio_koodissa(), "1")
+        self.assertEqual(len(self.l.previt()), 1)
+        self.assertFalse(list(self.l.koodi.parent.glob(self.l.koodi.name + ".viallinen-*")), "vaihtoa ei pitanyt tehda")
 
     def test_tila_muuttuu_kesken_julkaisun_on_kova_virhe(self):
         self.valmis()
