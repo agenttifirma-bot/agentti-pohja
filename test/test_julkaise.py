@@ -185,7 +185,7 @@ class Laatikko:
 
     # ---- ajo ----
     def aja(self, *args, kohde="app", skripti=None, env=None):
-        julkaisu = env is None and not any(str(a) in ("--kuiva", "--kanaria", "--peruuta", "--tila", "--itsetesti", "--katastrofi-tila", "--katastrofi-palauta") for a in args)
+        julkaisu = "JULKAISU_TS" not in (env or {}) and not any(str(a) in ("--peruuta", "--tila", "--itsetesti", "--katastrofi-tila", "--katastrofi-palauta") for a in args)
         if julkaisu and int(time.time()) == getattr(self, "_viim_s", None):
             time.sleep(1.05 - time.time() % 1)        # edellinen ajo sai saman sekunnin: prev-nimi tormaisi
         r = subprocess.run(["bash", str(skripti or JULKAISE), kohde, *[str(a) for a in args]], env=env or self.env, capture_output=True, text=True, timeout=300)
