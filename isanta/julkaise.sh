@@ -64,10 +64,11 @@ muuta() {
 
 ct()  { "$PCT" exec "$CT" -- "$@"; }
 # aja hakemistossa DIR (kayttajana U, jos annettu): ajaku_hak U DIR komento...
+# sh -c: $0=hakemisto, $1=kayttaja, $2...=komento; shift poistaa vain kayttajan ($0 ei ole $@:ssa)
 ajaku_hak() {
   local u="$1" d="$2"; shift 2
   if [ -n "$u" ]; then
-    ct sh -c 'd="$0"; u="$1"; shift 2; cd "$d" && exec runuser -u "$u" -- "$@"' "$d" "$u" "$@"
+    ct sh -c 'd="$0"; u="$1"; shift; cd "$d" && exec runuser -u "$u" -- "$@"' "$d" "$u" "$@"
   else
     ct sh -c 'cd "$0" && exec "$@"' "$d" "$@"
   fi

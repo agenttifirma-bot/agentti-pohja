@@ -57,6 +57,18 @@ print(json.dumps(out))' "$S" ;;
 esac
 '''
 
+RUNUSER = r'''#!/usr/bin/env bash
+# runuser -u KAYTTAJA [--] KOMENTO [ARGUMENTIT...]: ajaa komennon oikeasti (kayttajanvaihtoa ei simuloida), kirjaa kayttajan ja komennon alun.
+[ "${1:-}" = "-u" ] && [ -n "${2:-}" ] || { echo "runuser: vaara kayttotapa: $*" >&2; exit 1; }
+u="$2"; shift 2
+[ "${1:-}" = "--" ] && shift
+[ -n "${1:-}" ] || { echo "runuser: komento puuttuu" >&2; exit 1; }
+case "$1" in -*) echo "runuser: virheellinen valitsin: $1" >&2; exit 1 ;; esac
+command -v -- "$1" >/dev/null 2>&1 || { echo "runuser: failed to execute $1: No such file or directory" >&2; exit 127; }
+echo "runuser $u $1 $2 $3" >> "$SIM/runuser.log"
+exec "$@"
+'''
+
 KAUPPA_ASENNA = r'''#!/usr/bin/env bash
 set -e
 K="$FAKE_KOODI"; PKG="$1"; VER="$2"
@@ -111,7 +123,7 @@ class Laatikko:
         self.koodi, self.tila, self.konfig, self.yksikot = self.sim / "opt" / "app", self.sim / "var" / "lib" / "app", self.sim / "etc" / "app", self.sim / "etc" / "systemd" / "system"
         for d in (self.koodi, self.tila / "alihak", self.konfig, self.yksikot):
             d.mkdir(parents=True)
-        for nimi, sisalto in (("PCT", PCT), ("pct", PCT), ("systemctl", SYSTEMCTL), ("kauppa-asenna", KAUPPA_ASENNA), ("kauppa-palauta", KAUPPA_PALAUTA)):
+        for nimi, sisalto in (("PCT", PCT), ("pct", PCT), ("systemctl", SYSTEMCTL), ("runuser", RUNUSER), ("kauppa-asenna", KAUPPA_ASENNA), ("kauppa-palauta", KAUPPA_PALAUTA)):
             if nimi == "PCT":
                 continue
             (self.bin / nimi).write_text(sisalto)
@@ -1093,6 +1105,46 @@ class VikatilanneTesti(Pohja):
         rc, ulos = self.l.julkaise(ensi=True)
         self.assertOk(rc, ulos)
         self.assertFalse([r for r in self.l.pct_loki() if "unittest" in r])
+
+
+class KayttajaTesti(Pohja):
+    """TESTI_KAYTTAJA / SAVU_KAYTTAJA: testit ja savukoe ajetaan runuserilla; komennon alku ei saa kadota (shift)."""
+
+    def runuser_loki(self):
+        f = self.l.t / "runuser.log"
+        return f.read_text().splitlines() if f.exists() else []
+
+    def test_testit_ja_savukoe_ajetaan_kayttajana_komento_ehjana(self):
+        self.l.kirjoita_konf(TESTI_KAYTTAJA="kauppa", SAVU_KAYTTAJA="kauppa")
+        self.l.ensimmainen()
+        self.l.commit(2)
+        loki0 = len(self.runuser_loki())
+        rc, ulos = self.l.julkaise()
+        self.assertOk(rc, ulos)
+        self.assertEqual(self.l.versio_koodissa(), "2")
+        uusi = self.runuser_loki()[loki0:]
+        self.assertIn("runuser kauppa python3 -B -m", uusi)                       # testit: python3 mukana
+        self.assertIn("runuser kauppa python3 -B -c", uusi)                       # savukoe: python3 mukana
+        self.assertIn("Ran 1 test", ulos)
+
+    def test_peruutuksen_savukoe_ajetaan_kayttajana_komento_ehjana(self):
+        self.l.kirjoita_konf(TESTI_KAYTTAJA="kauppa", SAVU_KAYTTAJA="kauppa")
+        self.l.ensimmainen()
+        self.l.commit(2)
+        self.assertOk(*self.l.julkaise())
+        loki0 = len(self.runuser_loki())
+        rc, ulos = self.l.aja("--peruuta")
+        self.assertOk(rc, ulos)
+        self.assertEqual(self.l.versio_koodissa(), "1")
+        self.assertIn("runuser kauppa python3 -B -c", self.runuser_loki()[loki0:])
+
+    def test_vaara_kayttajan_komento_kaataa_julkaisun_ja_kumoaa(self):
+        self.l.kirjoita_konf(TESTI_KAYTTAJA="kauppa", SAVU_KAYTTAJA="kauppa")
+        self.l.ensimmainen()
+        self.l.commit(2, savu_ok=False)
+        rc, ulos = self.l.julkaise()
+        self.assertEpa(rc, ulos, "savukoe")
+        self.assertEqual(self.l.versio_koodissa(), "1")
 
 
 class YksikkoTesti(Pohja):
