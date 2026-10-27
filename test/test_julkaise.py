@@ -32,7 +32,7 @@ case "$cmd" in
   listsnapshot) f="$SIM/snap-$1"; [ -f "$f" ] && cat "$f"; echo '`-> current   You are here!' ;;
   snapshot) echo "snapshot $1 $2" >> "$LOG"; printf '%s\n' "\`-> $2 $(date '+%Y-%m-%d %H:%M:%S') sim" >> "$SIM/snap-$1" ;;
   rollback) echo "rollback $*" >> "$LOG" ;;
-  push) echo "push $1 $2 $3" >> "$LOG"; cp "$2" "$3" ;;
+  push) echo "push $1 $2 $3" >> "$LOG"; if [ -n "${SIM_PUSH_VIKA:-}" ]; then case "$3" in *"$SIM_PUSH_VIKA") exit 1 ;; esac; fi; cp "$2" "$3" ;;
   pull) echo "pull $1 $2 $3" >> "$LOG"; cp "$2" "$3" ;;
   exec) ct="$1"; shift; [ "${1:-}" = "--" ] && shift; echo "exec $ct $*" >> "$LOG"; exec "$@" ;;
   *) echo "pct-tynka: tuntematon $cmd" >&2; exit 9 ;;
@@ -1189,6 +1189,61 @@ class SkriptikopioTesti(Pohja):
         self.assertIn("b.sh puuttuu", ulos)
         self.assertEqual((hak / "a.sh").read_text(), "vanha\n")
         self.assertFalse((hak / "b.sh").exists())
+
+    def _skriptit(self):
+        hak = self.l.sim / "opt" / "skriptit"
+        hak.mkdir()
+        (hak / "a.sh").write_text("vanha a\n")
+        os.chmod(hak / "a.sh", 0o750)
+        (hak / "c.sh").write_text("vanha c\n")
+        (hak / "d.sh").write_text("sama\n")
+        self.l.kirjoita_konf(SKRIPTIT_HAKEMISTO=str(hak), SKRIPTIT_PAKETISSA="skriptit")
+        self.l.commit(2, lisaa={"skriptit/a.sh": "uusi a\n", "skriptit/b.sh": "uusi b\n", "skriptit/c.sh": "uusi c\n", "skriptit/d.sh": "sama\n"})
+        return hak
+
+    def test_paivita_skriptit_paivittaa_vain_olemassa_olevat_eroavat(self):
+        hak = self._skriptit()
+        rc, ulos = self.l.julkaise("--paivita-skriptit", ensi=True)
+        self.assertOk(rc, ulos)
+        self.assertEqual((hak / "a.sh").read_text(), "uusi a\n")
+        self.assertEqual((hak / "c.sh").read_text(), "uusi c\n")
+        self.assertEqual((hak / "a.sh").stat().st_mode & 0o777, 0o750)        # oikeudet vanhasta
+        self.assertFalse((hak / "b.sh").exists())                              # uutta ei luoda
+        self.assertIn("b.sh puuttuu", ulos)
+        varmuus = sorted(p.name for p in hak.glob("*.ennen-*"))
+        self.assertEqual(len(varmuus), 2, varmuus)                              # d.sh ei eronnut: ei varmuuskopiota
+        self.assertEqual(next(hak.glob("a.sh.ennen-*")).read_text(), "vanha a\n")
+        self.assertEqual(next(hak.glob("c.sh.ennen-*")).read_text(), "vanha c\n")
+        self.assertEqual(list(hak.glob("*.julkaisu-uusi")), [])
+        self.assertIn("Skripti takaisin", ulos)
+        self.assertEqual(self.l.versio_koodissa(), "2")
+
+    def test_paivita_skriptit_virhe_kumoaa_skriptit_ja_koodin(self):
+        hak = self._skriptit()
+        self.l.env["SIM_PUSH_VIKA"] = "c.sh.julkaisu-uusi"          # a.sh ehtii vaihtua, c.sh:n siirto epaonnistuu
+        rc, ulos = self.l.julkaise("--paivita-skriptit", ensi=True)
+        self.assertNotEqual(rc, 0, ulos)
+        self.assertIn(EPA, ulos)
+        self.assertEqual((hak / "a.sh").read_text(), "vanha a\n")
+        self.assertEqual((hak / "c.sh").read_text(), "vanha c\n")
+        self.assertEqual((hak / "a.sh").stat().st_mode & 0o777, 0o750)
+        self.assertEqual(list(hak.glob("*.julkaisu-uusi")), [])
+        self.assertEqual(self.l.versio_koodissa(), None)             # koodikin takaisin alkuperaiseen
+
+    def test_paivita_skriptit_kuivana_ei_muuta_mitaan(self):
+        hak = self._skriptit()
+        rc, ulos = self.l.julkaise("--paivita-skriptit", "--kuiva", ensi=True)
+        self.assertOk(rc, ulos)
+        self.assertIn("paivitetaan lopuksi", ulos)
+        self.assertEqual((hak / "a.sh").read_text(), "vanha a\n")
+        self.assertEqual(list(hak.glob("*.ennen-*")), [])
+
+    def test_ilman_lippua_skriptit_ennallaan_vaikka_ero(self):
+        hak = self._skriptit()
+        rc, ulos = self.l.julkaise(ensi=True)
+        self.assertOk(rc, ulos)
+        self.assertEqual((hak / "a.sh").read_text(), "vanha a\n")
+        self.assertIn("--paivita-skriptit paivittaa", ulos)
 
 
 class DelegoituAsentajaTesti(Pohja):

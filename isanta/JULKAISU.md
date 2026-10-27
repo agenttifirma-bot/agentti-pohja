@@ -81,3 +81,6 @@ Tarkistaa paketin (sha256, commit), poimii `isanta/julkaise.sh`, `paketoi.sh` ja
 ## Testit
 
 `test/test_julkaise.py` ajaa skriptin hiekkalaatikossa (väärennetty `pct` ja `systemctl`, oikea git ja bash; vain Linux): esitarkistukset (jokainen keskeyttää ilman kirjoituksia), `--kuiva`, kanaria (myös jokaisen esitarkistusfunktion tahallinen rikkominen), julkaisu, peruutus (tilan tiiviste ennen/jälkeen), vikatilanteet, CT118-testit vain CT115:ssä, yksiköt, delegoitu asentaja, katastrofi-tila ja -palautus, `paketoi.sh` ja `asenna-julkaise.sh`.
+
+## Skriptikopiot (`--paivita-skriptit`)
+Konfiguraatio `SKRIPTIT_HAKEMISTO` + `SKRIPTIT_PAKETISSA` (yojono: `/opt/yojono` + `yojono`) kertoo, missä kohteen ajamat skriptikopiot ovat. Oletuksena julkaisu vain raportoi erot. Lisäämällä `--paivita-skriptit` julkaisu päivittää lopuksi (koodivaihdon, savukokeen ja tilatarkistuksen jälkeen) ne `*.sh`-tiedostot, jotka ovat jo kohteessa ja eroavat paketista; uusia tiedostoja ei luoda. Varmuuskopio: `<skripti>.ennen-<kohde>-<commit8>-<aika>`. Virhe kumoaa skriptit ja koodin. Skriptien palautus onnistuneen julkaisun jälkeen on käsin (komento tulostuu loppuun); `--peruuta` palauttaa vain koodin.

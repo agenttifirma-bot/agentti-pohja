@@ -10,7 +10,7 @@
 #
 # KAYTTO (aina yksi komento):
 #   julkaise.sh <kohde> <paketti.tgz> <commit40> <sha256> [--kuiva] [--kanaria]
-#                       [--ensijulkaisu] [--uudelleen] [--salli-ei-karki]
+#                       [--ensijulkaisu] [--uudelleen] [--salli-ei-karki] [--paivita-skriptit]
 #   julkaise.sh <kohde> --peruuta [--kuiva]                 palauttaa VAIN koodin (tila ei muutu)
 #   julkaise.sh <kohde> --katastrofi-tila --snapshot NIMI   kopioi tilan talteen ENNEN pct rollbackia
 #                                                           ja kertoo, mita palautus tuhoaisi (ei aja rollbackia)
@@ -24,6 +24,10 @@
 #   --salli-ei-karki, kirjataan lokiin), turvallinen paketti, kohteen koodi = oma manifestinsa (puhdas),
 #   palvelut/lukot/prosessit vapaana, ajastinikkuna, snapshotteja alle 20, levytila, ei edellisen ajon jaanteita.
 # --kuiva: tekee esitarkistukset ja paketin tarkistuksen, ei muuta mitaan (kaikki muutokset kulkevat muuta()-kautta).
+# --paivita-skriptit: paivittaa lopuksi kohteen skriptikopiot (SKRIPTIT_HAKEMISTO) paketin skripteista, mutta VAIN
+#   tiedostot, jotka ovat jo kohteessa ja eroavat paketista (uusia ei luoda). Ennen kopiointia varmuuskopio
+#   <skripti>.ennen-<kohde>-<commit8>-<aika>; oikeudet ja omistaja kopioidaan vanhasta, tiiviste tarkistetaan. Virhe kumoaa
+#   skriptit ja koodin; onnistumisen jalkeen peruutusohje tulostuu (--peruuta ei palauta skripteja). Oletuksena pois.
 # --kanaria: lisaa tahallaan rikkinaisen esitarkistuksen ja todistaa, etta ajo keskeytyy ilman kirjoituksia.
 # Loppurivi on aina "OK: ..." tai "EPAONNISTUI: ...". Loki: /root/julkaisu/loki.log ja ajo/<kohde>-<aika>.log
 # =============================================================================
@@ -38,7 +42,7 @@ SNAPSHOT_RAJA=20
 PAKETTI_MAX_TAVUA=$((50 * 1024 * 1024))
 PAKETTI_MAX_TIEDOSTOJA=3000
 
-KUIVA=0; KANARIA=0; ENSIJULKAISU=0; UUDELLEEN=0; SALLI_EI_KARKI=0
+KUIVA=0; KANARIA=0; ENSIJULKAISU=0; UUDELLEEN=0; SALLI_EI_KARKI=0; PAIVITA_SKRIPTIT=0; SKRIPTIT_KUMOTTAVAT=()
 TOIMI=julkaise; KOHDE=""; SNAP_VALINTA=""; KATASTROFI_KANSIO=""; POS=()
 MUUTOKSIA=0                  # kasvaa jokaisesta muuta()-kutsusta; 0 = mitaan ei ole muutettu
 VAIHDETTU=0; UUSI_LUOTU=0; YKSIKOT_ASENNETTU=0; PERUUTUS_TEHTY=0
@@ -93,6 +97,10 @@ peruutusohje() {
   echo "PERUUTUS:"
   if [ "$TOIMI" = julkaise ] && [ "$MUUTOKSIA" -gt 0 ]; then
     echo "  Koodi (tila ei muutu):  julkaise.sh $KOHDE --peruuta"
+    local sk
+    for sk in "${SKRIPTIT_KUMOTTAVAT[@]:-}"; do
+      [ -n "$sk" ] && echo "  Skripti takaisin:       pct exec $CT -- mv -f ${sk##*|} ${sk%%|*}"
+    done
     [ -n "${SNAP_NIMI:-}" ] && echo "  Koko kontti (TUHOAA tilan!): ensin julkaise.sh $KOHDE --katastrofi-tila --snapshot $SNAP_NIMI, sitten pct rollback $CT $SNAP_NIMI"
   else
     echo "  Mitaan ei muutettu: peruutusta ei tarvita."
@@ -188,6 +196,7 @@ while [ $# -gt 0 ]; do
     --ensijulkaisu) ENSIJULKAISU=1 ;;
     --uudelleen) UUDELLEEN=1 ;;
     --salli-ei-karki) SALLI_EI_KARKI=1 ;;
+    --paivita-skriptit) PAIVITA_SKRIPTIT=1 ;;
     --peruuta) TOIMI=peruuta ;;
     --tila) TOIMI=tila ;;
     --katastrofi-tila) TOIMI=katastrofi-tila ;;
@@ -400,9 +409,31 @@ raportoi_erot() {   # varoituksia: yksikot ja skriptikopiot (ei muutoksia)
       [ -f "$f" ] || continue
       d=$(ct sh -c 'sha256sum "$0" 2>/dev/null | cut -d" " -f1' "$SKRIPTIT_HAKEMISTO/$(basename "$f")" || true)
       if [ -z "$d" ]; then varoita "skripti $(basename "$f") puuttuu kohteesta $SKRIPTIT_HAKEMISTO"
-      elif [ "$d" != "$(sha256sum "$f" | cut -d' ' -f1)" ]; then varoita "skripti $(basename "$f") eroaa kohteen kopiosta $SKRIPTIT_HAKEMISTO (ei paiviteta tassa)"; fi
+      elif [ "$d" != "$(sha256sum "$f" | cut -d' ' -f1)" ]; then if [ "$PAIVITA_SKRIPTIT" = 1 ]; then info "skripti $(basename "$f") eroaa kohteen kopiosta $SKRIPTIT_HAKEMISTO: paivitetaan lopuksi (--paivita-skriptit)"; else varoita "skripti $(basename "$f") eroaa kohteen kopiosta $SKRIPTIT_HAKEMISTO (ei paiviteta tassa; --paivita-skriptit paivittaa)"; fi; fi
     done
   fi
+}
+
+paivita_skriptit() {   # --paivita-skriptit: vain jo olemassa olevat, eroavat skriptikopiot; varmuuskopio, tiiviste, kumottavissa
+  [ "$PAIVITA_SKRIPTIT" = 1 ] || return 0
+  if [ -z "$SKRIPTIT_HAKEMISTO" ] || [ -z "$SKRIPTIT_PAKETISSA" ]; then varoita "--paivita-skriptit: konfiguraatiossa ei SKRIPTIT_HAKEMISTO/SKRIPTIT_PAKETISSA; ei skriptipaivityksia"; return 0; fi
+  local f n dst bak uusi sha nyt
+  for f in "$NORM/$SKRIPTIT_PAKETISSA"/*.sh; do
+    [ -f "$f" ] || continue
+    n=$(basename "$f"); dst="$SKRIPTIT_HAKEMISTO/$n"
+    ct test -f "$dst" || { info "skripti $n puuttuu kohteesta: uutta ei luoda."; continue; }
+    sha=$(sha256sum "$f" | cut -d' ' -f1)
+    nyt=$(ct sh -c 'sha256sum "$0" | cut -d" " -f1' "$dst")
+    [ "$nyt" != "$sha" ] || continue
+    bak="$dst.ennen-$KOHDE-${COMMIT:0:8}-$TS"; uusi="$dst.julkaisu-uusi"
+    muuta "skriptin varmuuskopio $n" ct cp -p "$dst" "$bak" || virhe "skriptin $n varmuuskopiointi epaonnistui"
+    SKRIPTIT_KUMOTTAVAT+=("$dst|$bak")
+    muuta "skripti kontille $n" "$PCT" push "$CT" "$f" "$uusi" --perms 600 || virhe "skriptin $n siirto kontille epaonnistui"
+    muuta "skriptin vaihto $n" ct sh -c 'chmod --reference="$1" "$0" && chown --reference="$1" "$0" && mv -f "$0" "$1"' "$uusi" "$dst" || virhe "skriptin $n vaihto epaonnistui"
+    ct sh -c 'echo "$1  $0" | sha256sum -c --quiet -' "$dst" "$sha" || virhe "skriptin $n tiiviste ei tasmaa vaihdon jalkeen"
+    info "skripti $dst paivitetty (varmuuskopio: $bak)."
+  done
+  if [ "${#SKRIPTIT_KUMOTTAVAT[@]}" -gt 0 ]; then kirjaa_loki "SKRIPTIT PAIVITETTY: ${SKRIPTIT_KUMOTTAVAT[*]}"; fi
 }
 
 # ---- ajastimet ja kumous --------------------------------------------------------
@@ -427,7 +458,12 @@ palauta_ajastimet() {
 tyhjenna_kontin_tmp() { "$PCT" exec "$CT" -- sh -c 'rm -f "$0"' "${KONTTI_PAKETTI:-/nonexistent}" >/dev/null 2>&1 || true; }
 
 kumoa_kesken() {
-  local ok=0
+  local ok=0 sk
+  for sk in "${SKRIPTIT_KUMOTTAVAT[@]:-}"; do
+    [ -n "$sk" ] || continue
+    ct sh -c 'rm -f "$0.julkaisu-uusi"; [ -f "$1" ] && mv -f "$1" "$0"' "${sk%%|*}" "${sk##*|}" && info "skripti palautettu: ${sk%%|*}" || ok=1
+  done
+  SKRIPTIT_KUMOTTAVAT=()
   if [ "$VAIHDETTU" = 1 ]; then
     if ct sh -c 'mv "$1" "$1.viallinen-$3" && mv "$2" "$1"' sh "$KOODI" "${PREV:-/nonexistent}" "$TS"; then
       info "koodi palautettu edelliseen versioon (viallinen: $KOODI.viallinen-$TS)."; VAIHDETTU=0
@@ -552,6 +588,7 @@ julkaise_toimi() {
   info "asennettu koodi vastaa manifestia (${COMMIT:0:12})."
   tarkista_tila_ennallaan "$TILA_ENNEN" "$KONFIG_ENNEN"
   palvelut_vapaana virhe
+  paivita_skriptit
   palauta_ajastimet
 
   laji "5/6 Siivous"
