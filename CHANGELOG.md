@@ -22,6 +22,7 @@ Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 - isanta: `tila` suodattaa LXC-mount-kohinan (tmp, run-lock, dev-mqueue).
 - isanta: vain luku -komento `tila` (pct list, pvesm status, levy, kuorma, epaonnistuneet palvelut ajossa olevissa konteissa, varmuuskopiot); `snapshot_kutsu tila`; tilannekuva kirjoittaa `isanta.md`.
 - testit: `agentti/tilannekuva.py` mutanttiaukot suljettu: 124 mutanttia, ennen 51 selvisi, nyt 0. Uudet testit kattavat oletushaut (urlopen, aikakatkaisu 20 s, otsakkeet), merkkirajat, mergattujen järjestyksen ja ylityksen, raporttien lajittelun ja 12 raportin rajan, kuluyhteenvedon ja täsmäytyksen rajat, `_komento`n parametrit, palvelinosion jäsennyksen ja `main`in. +24 testiä.
+- tools: automergen rivioraja nousee 200 -> 800 saman repon PR:lle, jossa on vain `test/*.py`-tiedostoja ja dokumentteja (vähintään yksi testitiedosto; `MAX_RIVEJA_TESTIT`). Perustelu: mutaatiotestauksen aukkojen sulkeminen tuottaa satoja rivejä testejä, ja ne jäivät odottamaan käsin-mergeä. Muut rajat ennallaan: botin forkki 400, suojatut polut (`tools/`, `agentti/portti*` jne.) ja poistot estävät edelleen. +3 testiä.
 
 ## [Julkaisematon]
 

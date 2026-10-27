@@ -6,7 +6,7 @@ ei koskaan ladata eika suoriteta). Paatos tehdaan vain PR:n metatiedoista ja tie
 Sallittu vain kun KAIKKI ehdot tayttyvat:
   - PR ei ole luonnos eika forkista, eika siina ole tunnistetta 'ei-automerge'
     (ainoa poikeus: botin forkki, ks. alla)
-  - enintaan 20 tiedostoa ja 200 muutettua rivia
+  - enintaan 20 tiedostoa ja 200 muutettua rivia (saman repon PR, jossa on vain test/*.py ja dokumentteja: 800 rivia)
   - tiedostot vain lisatty tai muokattu (ei poistoa, ei uudelleennimeamista)
   - jokainen tiedosto on dokumentti (*.md, docs/*.md) tai testi (test/*.py)
   - mikaan tiedosto ei ole suojatulla polulla (.github/, tools/, isanta/, systemd/, config, rajat,
@@ -28,6 +28,9 @@ OPT_OUT = "ei-automerge"
 BOTTI = "agenttifirma-bot"
 BOTIN_HAARA = re.compile(r"^yo/(readme|testit|ominaisuus)-[a-z0-9][a-z0-9._-]{0,59}$")
 MAX_RIVEJA_KOODI = 400
+# Saman repon PR, jossa on vain testitiedostoja (test/*.py) ja dokumentteja: testit ovat pitkia, mutaatiotestauksen aukkojen sulkeminen vaatii satoja rivia.
+MAX_RIVEJA_TESTIT = 800
+TESTIPOLKU = re.compile(r"^test/[A-Za-z0-9_./-]+\.py$")
 # Botin koodimuutoksille (testit, ominaisuus): vain nama paatteet; riippuvuus- ja asetustiedostot jaavat ihmiselle.
 KOODIPAATTEET = (".py", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".md")
 
@@ -94,6 +97,12 @@ def botin_koodi_ok(polku):
     return True, ""
 
 
+def _vain_testeja_ja_dokumentteja(tiedostot):
+    """Vahintaan yksi test/*.py ja kaikki muut tiedostot dokumentteja (SALLITUT[:-1]); nimet molemmista (uudelleennimeaminen) tarkistetaan."""
+    nimet = [n for t in tiedostot for n in (t.get("filename"), t.get("previous_filename")) if n is not None]
+    return bool(nimet) and any(TESTIPOLKU.match(n) for n in nimet) and all(TESTIPOLKU.match(n) or any(r.match(n) for r in SALLITUT[:2]) for n in nimet)
+
+
 def arvioi(pr, tiedostot):
     """Palauttaa (sallittu, syyt). pr: dict (draft, head_repo, base_repo, labels, author, head_ref, base_ref), tiedostot: lista dict."""
     syyt = []
@@ -122,6 +131,8 @@ def arvioi(pr, tiedostot):
         syyt.append("liian monta tiedostoa (%d)" % len(tiedostot))
     rivit = sum(int(t.get("changes", 0)) for t in tiedostot)
     raja = MAX_RIVEJA_KOODI if (forkki and not (pr.get("head_ref") or "").startswith("yo/readme-")) else MAX_RIVEJA
+    if not forkki and _vain_testeja_ja_dokumentteja(tiedostot):
+        raja = MAX_RIVEJA_TESTIT
     if rivit > raja:
         syyt.append("liian suuri muutos (%d rivia)" % rivit)
     for t in tiedostot:
