@@ -1,0 +1,2 @@
+# Vastaavat mutantit: muutos ei muuta kayttaytymista, joten testi ei voi eika pida kaataa sita.
+# Muoto: moduuli|laji|vanha|uusi|toisto  # perustelu (avain ei riipu rivinumerosta; ks. ajurin tuloste "sallitut-avain").

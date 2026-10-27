@@ -1,0 +1,77 @@
+name: Mutantit
+
+# Pitkä mutanttiajo GitHubin koneilla, jotta se ei riipu läppärin tai palvelimen kiinniolosta.
+# Käynnistys käsin: Actions -> Mutantit -> Run workflow. Ei aja PR:issä eikä ole vaadittu tarkistus.
+# Tulos: moduulikohtainen taulukko ja selviytyjät työn Summary-sivulla (ei salaisuuksia, ei verkkoa).
+
+on:
+  workflow_dispatch:
+    inputs:
+      moduulit:
+        description: 'Välilyönnillä erotetut moduulit (esim. "agentti/kulu.py yojono/ajuri.py") tai "kaikki"'
+        default: "kaikki"
+        required: true
+      otos:
+        description: "Aja vain N satunnaista mutanttia moduulia kohden (0 = kaikki)"
+        default: "0"
+        required: true
+      vaadi_nolla:
+        description: "Epäonnistu, jos mutantteja selviää (muuten vain raportti)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  suunnitelma:
+    runs-on: ubuntu-latest
+    outputs:
+      moduulit: ${{ steps.lista.outputs.moduulit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      # Syötteet vain ympäristömuuttujina (ei suoraan komentoriville); ajuri validoi nimet itse.
+      - name: Moduulilista
+        id: lista
+        env:
+          MODUULIT: ${{ inputs.moduulit }}
+        run: |
+          if [ "$MODUULIT" = "kaikki" ]; then
+            lista=$(python tools/mutantit.py --kaikki --listaa)
+          else
+            # shellcheck disable=SC2086
+            lista=$(python tools/mutantit.py --listaa $MODUULIT)
+          fi
+          echo "moduulit=$lista" >> "$GITHUB_OUTPUT"
+
+  mutantit:
+    needs: suunnitelma
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        moduuli: ${{ fromJSON(needs.suunnitelma.outputs.moduulit) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Mutantit (${{ matrix.moduuli }})
+        env:
+          MODUULI: ${{ matrix.moduuli }}
+          OTOS: ${{ inputs.otos }}
+          VAADI_NOLLA: ${{ inputs.vaadi_nolla }}
+        run: |
+          valinnat=""
+          if [ "$VAADI_NOLLA" != "true" ]; then valinnat="--ala-kaadu"; fi
+          # shellcheck disable=SC2086
+          python tools/mutantit.py "$MODUULI" --rinnakkain "$(nproc)" --otos "$OTOS" $valinnat \
+            --markdown "$GITHUB_STEP_SUMMARY" --json "$RUNNER_TEMP/mutantit.json"
