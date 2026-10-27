@@ -20,3 +20,5 @@ yojono/ajuri.py|vakio|0|1|7  # oletusarvo 0 vs 1 (yrityksia): raja MAX_YRITYKSIA
 agentti/sandbox_kutsu.py|vakio|False|True|0  # tar.add(recursive=...): lisataan vain tavallisia tiedostoja, joten rekursiolla ei ole vaikutusta
 agentti/loki_keraaja.py|aritmetiikka|st.st_size - siirtyma|st.st_size + siirtyma|0  # read(n) lukee korkeintaan tiedoston loppuun asti, joten liian suuri n antaa saman datan (kayttaja-ilmeinen raja on 4 000 000)
 tools/automerge.py|vakio|2|3|0  # SALLITUT[:2] vs [:3]: kolmas kuvio (test/*.py) tunnistetaan jo TESTIPOLKU-ehdolla, joten tulos on sama
+agentti/pr_kutsu.py|vakio|0|1|4  # tila.get("n", 0): oletusta ei koskaan kayteta, koska isinstance(n, int) -ehto vaatii n:n olemassaolon
+agentti/pr_kutsu.py|vakio|0|1|7  # tila.get("n", 0): oletusta ei koskaan kayteta, koska isinstance(n, int) -ehto vaatii n:n olemassaolon
