@@ -1,2 +1,10 @@
 # Vastaavat mutantit: muutos ei muuta kayttaytymista, joten testi ei voi eika pida kaataa sita.
 # Muoto: moduuli|laji|vanha|uusi|toisto  # perustelu (avain ei riipu rivinumerosta; ks. ajurin tuloste "sallitut-avain").
+agentti/portti.py|vakio|6|7|0  # round-tarkkuus 6 vs 7 desimaalia: varaus on 0.02:n kerrannainen, tulos sama
+agentti/portti.py|vakio|6|7|1  # round-tarkkuus 6 vs 7 desimaalia: varaus on 0.02:n kerrannainen, tulos sama
+agentti/portti.py|vakio|1|2|1  # f.read(RAJA + 1 | + 2): molemmat lukevat rajan yli, pituustarkistus tuottaa saman tuloksen
+agentti/portti.py|vakio|1|2|2  # f.read(RAJA + 1 | + 2): molemmat lukevat rajan yli, pituustarkistus tuottaa saman tuloksen
+agentti/portti.py|aritmetiikka|syote * HINTA_ARVIO_USD_PER_M[0]|syote / HINTA_ARVIO_USD_PER_M[0]|0  # hinta on 1.0, joten kertominen ja jakaminen antavat saman
+agentti/portti.py|vakio|30|31|0  # HTTP-kasittelijan aikakatkaisun arvo ei ole testattavissa ilman 30 s odotusta
+agentti/portti.py|return None|return False|return None|0  # kutsuja kayttaa tulosta vain totuusarvona: False ja None toimivat samoin
+agentti/portti.py|vakio|True|False|12  # print(..., flush=True): puskurointi ei nay testissa
