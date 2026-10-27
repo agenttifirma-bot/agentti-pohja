@@ -1136,8 +1136,9 @@ class SkriptiViestitTesti(Pohja):
         return ajuri.suorita_katselmointi(t("a", budjetti=0.8), PVM, self.perus, s)
 
     def test_pitka_tuloste_rajataan_viimeiseen_300_merkkiin(self):
-        tulos = self.aja_skripti(self.skripti("printf 'E%.0s' $(seq 1 400) >&2\nexit 1\n"))
+        tulos = self.aja_skripti(self.skripti("printf 'A' >&2\nprintf 'E%.0s' $(seq 1 300) >&2\nexit 1\n"))
         self.assertEqual(tulos.viesti.count("E"), 300)
+        self.assertNotIn("A", tulos.viesti)
 
     def test_ei_tulostetta_ei_raporttia_kertoo_poistumiskoodin(self):
         tulos = self.aja_skripti(self.skripti("exit 3\n"))
