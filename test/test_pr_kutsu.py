@@ -3,6 +3,7 @@ import json
 import os
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 import urllib.error
@@ -660,6 +661,229 @@ class ForkMasterHaaraTesti(ForkPohja):
         self.assertEqual(self.sha(self.fork), self.sha(self.ylavirta))
         (push,) = self.pushit()
         self.assertEqual(push[-1], "refs/synkka/ylavirta:refs/heads/master")
+
+
+# --- Mutaatiotestauksessa (tools/mutantit.py) selvinneet haarat ---
+
+def _ok(stdout="", stderr="", koodi=0):
+    return SimpleNamespace(returncode=koodi, stdout=stdout, stderr=stderr)
+
+
+class SuojattuRajatTest(unittest.TestCase):
+    def test_alkupiste_vinoviiva_poistetaan(self):
+        self.assertTrue(pk.suojattu("./tools/x.py"))
+        self.assertTrue(pk.suojattu("././.github/a.yml"))
+        self.assertFalse(pk.suojattu("./docs/a.md"))
+
+
+class GitApuTest(unittest.TestCase):
+    def test_git_parametrit_ja_tyhjat_tulosteet(self):
+        nahty = {}
+
+        def suorita(cmd, **kw):
+            nahty["cmd"], nahty["kw"] = cmd, kw
+            return _ok(stdout=None, stderr=" virhe \n", koodi=3)
+        self.assertEqual(pk._git("/h", "status", suorita=suorita), (3, "", "virhe"))
+        self.assertEqual(nahty["cmd"], ["git", "-C", "/h", "status"])
+        self.assertEqual(nahty["kw"], {"capture_output": True, "text": True, "timeout": 60, "check": False})
+        self.assertEqual(pk._git("/h", "x", suorita=lambda *a, **k: _ok(stdout=" ulos ", stderr=None)), (0, "ulos", ""))
+
+    def test_vain_viisi_suojattua_nimea_viestissa(self):
+        with tee_repo({"tools/%d.py" % i: "x" for i in range(7)}) as hak:
+            with self.assertRaises(pk.PrVirhe) as ctx:
+                pk.tarkista("agentti-pohja", hak, "yo/koe")
+        self.assertEqual(str(ctx.exception).count("tools/"), 5)
+
+    def test_github_url(self):
+        self.assertEqual(pk._github_url("o", "r"), "https://github.com/o/r.git")
+
+
+class PaivarajaTarkkaTest(unittest.TestCase):
+    def tila(self, data):
+        d = tempfile.mkdtemp()
+        polku = os.path.join(d, "tila.json")
+        with open(polku, "w") as f:
+            json.dump(data, f)
+        return polku
+
+    def test_paikkoja_jaljella(self):
+        self.assertEqual(pk.paikkoja_jaljella(self.tila({"pvm": "2026-10-21", "n": 3}), "2026-10-21"), pk.RAJA_PAIVASSA - 3)
+        self.assertEqual(pk.paikkoja_jaljella(self.tila({"pvm": "2026-10-20", "n": 3}), "2026-10-21"), pk.RAJA_PAIVASSA)
+        self.assertEqual(pk.paikkoja_jaljella(self.tila({"pvm": "2026-10-21", "n": "x"}), "2026-10-21"), pk.RAJA_PAIVASSA)
+        self.assertEqual(pk.paikkoja_jaljella(self.tila({"pvm": "2026-10-21"}), "2026-10-21"), pk.RAJA_PAIVASSA)
+        self.assertEqual(pk.paikkoja_jaljella(self.tila({"pvm": "2026-10-21", "n": pk.RAJA_PAIVASSA + 50}), "2026-10-21"), 0)
+        self.assertEqual(pk.paikkoja_jaljella(os.path.join(tempfile.mkdtemp(), "ei-ole.json"), "2026-10-21"), pk.RAJA_PAIVASSA)
+
+    def test_oletuspaiva_ja_ymparistopolku(self):
+        tanaan = pk.date.today().isoformat()
+        polku = self.tila({"pvm": tanaan, "n": 4})
+        self.assertEqual(pk.paikkoja_jaljella(polku), pk.RAJA_PAIVASSA - 4)
+        with mock.patch.dict(os.environ, {"YOJONO_PR_TILA": polku}):
+            self.assertEqual(pk.paikkoja_jaljella(), pk.RAJA_PAIVASSA - 4)
+
+    def test_varaa_paikka_laskuri(self):
+        polku = self.tila({"pvm": "2026-10-21"})
+        self.assertTrue(pk.varaa_paikka(polku, "2026-10-21"))
+        with open(polku) as f:
+            self.assertEqual(json.load(f), {"pvm": "2026-10-21", "n": 1})
+        polku = self.tila({"pvm": "2026-10-20", "n": 50})
+        self.assertTrue(pk.varaa_paikka(polku, "2026-10-21"))
+        with open(polku) as f:
+            self.assertEqual(json.load(f), {"pvm": "2026-10-21", "n": 1})
+        polku = self.tila({"pvm": "2026-10-21", "n": pk.RAJA_PAIVASSA})
+        self.assertIs(pk.varaa_paikka(polku, "2026-10-21"), False)
+        polku = self.tila({"pvm": pk.date.today().isoformat(), "n": 2})
+        self.assertTrue(pk.varaa_paikka(polku))
+        with open(polku) as f:
+            self.assertEqual(json.load(f)["n"], 3)
+
+
+class PushaaTarkkaTest(unittest.TestCase):
+    def aja(self, vastaus, sync=True):
+        nahty = {}
+
+        def suorita(cmd, **kw):
+            nahty["kw"] = {k: v for k, v in kw.items() if k != "env"}
+            return vastaus
+        try:
+            pk.pushaa("/h", "agentti-pohja", "yo/koe", "botti", "/t", suorita=suorita, sync=sync)
+        except pk.PrVirhe as e:
+            return str(e), nahty
+        return None, nahty
+
+    def test_parametrit(self):
+        _, nahty = self.aja(_ok())
+        self.assertEqual(nahty["kw"], {"capture_output": True, "text": True, "timeout": 180, "check": False})
+
+    def test_viesti_yhdistaa_stderr_ja_stdout_ja_rajaa_300(self):
+        viesti, _ = self.aja(_ok(stdout="OUT", stderr="E" * 400, koodi=1))
+        self.assertEqual(viesti, "push epaonnistui (onko fork olemassa ja token voimassa?): " + "E" * 297 + "OUT")
+
+    def test_workflow_vaatii_molemmat_sanat(self):
+        for teksti in ("workflow rikki", "scope puuttuu"):
+            viesti, _ = self.aja(_ok(stderr=teksti, koodi=1))
+            self.assertTrue(viesti.startswith("push epaonnistui"), viesti)
+        viesti, _ = self.aja(_ok(stderr="workflow scope", koodi=1))
+        self.assertIn("API-synkronointi: ok. Push: workflow scope", viesti)
+        viesti, _ = self.aja(_ok(stderr="workflow scope", koodi=1), sync="HTTP 404")
+        self.assertIn("API-synkronointi: HTTP 404. Push:", viesti)
+
+
+class PaivitaForkTest(unittest.TestCase):
+    def test_tulokset_ja_aikakatkaisu(self):
+        nahty = {}
+
+        def avaa(pyynto, timeout=None):
+            nahty["timeout"], nahty["data"] = timeout, json.loads(pyynto.data)
+            return Vastaus({})
+        self.assertIs(pk.paivita_fork("agentti-pohja", "botti", TUNNUS, avaa=avaa), True)
+        self.assertEqual(nahty, {"timeout": 30, "data": {"branch": "main"}})
+
+        def http(pyynto, timeout=None):
+            raise urllib.error.HTTPError("u", 409, "x", {}, None)
+
+        def yhteys(pyynto, timeout=None):
+            raise urllib.error.URLError("verkko")
+        self.assertEqual(pk.paivita_fork("agentti-pohja", "botti", TUNNUS, avaa=http), "HTTP 409")
+        self.assertEqual(pk.paivita_fork("agentti-pohja", "botti", TUNNUS, avaa=yhteys), "URLError")
+
+
+class AvaaPrTarkkaTest(unittest.TestCase):
+    def test_aikakatkaisu(self):
+        nahty = {}
+
+        def avaa(pyynto, timeout=None):
+            nahty["timeout"] = timeout
+            return Vastaus({"html_url": "https://github.com/o/r/pull/1"})
+        pk.avaa_pr("agentti-pohja", "yo/koe", "botti", "otsikko", "kuvaus", TUNNUS, avaa=avaa)
+        self.assertEqual(nahty["timeout"], 30)
+
+
+class ForkTarkkaTest(ForkPohja):
+    def suorita(self, cmd, **kw):
+        self.aikarajat = getattr(self, "aikarajat", [])
+        self.aikarajat.append((list(cmd), kw.get("timeout")))
+        return super().suorita(cmd, **kw)
+
+    def raja(self, sana, nimi=None):
+        return [t for c, t in self.aikarajat if sana in c and (nimi is None or nimi in c)]
+
+    def test_aikarajat(self):
+        self.nosta_ylavirtaa(1)
+        self.assertEqual(self.valmis()[2], "kelattu")
+        self.assertEqual(set(self.raja("ls-remote")), {60})
+        self.assertEqual(set(self.raja("init")), {60})
+        self.assertEqual(set(self.raja("fetch")), {180})
+        self.assertEqual(set(self.raja("merge-base")), {60})
+        self.assertEqual(set(self.raja("push")), {180})
+
+    def test_luettavuusviesti_kertoo_kumpi(self):
+        self.nosta_ylavirtaa(1)
+        for nimi, odotettu in (("ylavirta.git", "ylavirran main ei ole luettavissa"), ("fork.git", "forkin main ei ole luettavissa")):
+            with self.subTest(nimi=nimi):
+                def rikki(cmd, **kw):
+                    if "ls-remote" in cmd and cmd[-2].endswith(nimi):
+                        return _ok(koodi=2)
+                    return self.suorita(cmd, **kw)
+                ok, koodi, selitys = self.valmis(suorita=rikki)
+                self.assertEqual((ok, koodi, selitys), (False, "fork_tarkistus_epaonnistui", odotettu))
+
+    def korvaa(self, sana, tulos):
+        def f(cmd, **kw):
+            if sana in cmd:
+                return tulos
+            return self.suorita(cmd, **kw)
+        return f
+
+    def test_fetch_virheen_viesti(self):
+        self.nosta_ylavirtaa(1)
+        ok, koodi, selitys = self.valmis(suorita=self.korvaa("fetch", _ok(stdout="O", stderr="E" * 300, koodi=1)))
+        self.assertEqual((ok, koodi, selitys), (False, "fork_tarkistus_epaonnistui", "fetch epaonnistui: " + "E" * 199 + "O"))
+
+    def test_push_virheen_viesti_ja_luokittelu(self):
+        self.nosta_ylavirtaa(1)
+        ok, koodi, selitys = self.valmis(suorita=self.korvaa("push", _ok(stdout="O", stderr="E" * 400, koodi=1)))
+        self.assertEqual((ok, koodi), (False, "fork_push_epaonnistui"))
+        self.assertTrue(selitys.endswith("haaraan epaonnistui: " + "E" * 299 + "O"), selitys)
+        for teksti in ("workflow rikki", "scope puuttuu"):
+            ok, koodi, _ = self.valmis(suorita=self.korvaa("push", _ok(stderr=teksti, koodi=1)))
+            self.assertEqual(koodi, "fork_push_epaonnistui", teksti)
+        ok, koodi, _ = self.valmis(suorita=self.korvaa("push", _ok(stderr="workflow scope", koodi=1)))
+        self.assertEqual(koodi, "fork_workflow_oikeus")
+        ok, koodi, _ = self.valmis(suorita=self.korvaa("push", _ok(stdout="non-fast-forward", koodi=1)))
+        self.assertEqual(koodi, "fork_ei_ff")
+
+
+class MainTarkkaTest(unittest.TestCase):
+    def ajaa(self, argv):
+        ulos, virhe = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "stdout", ulos), mock.patch.object(sys, "stderr", virhe):
+            koodi = pk.main(argv)
+        return koodi, ulos.getvalue(), virhe.getvalue()
+
+    def test_argv_otetaan_sys_argv_sta(self):
+        with tee_repo({"docs/a.md": "x"}) as hak, mock.patch.object(sys, "argv", ["x", "tarkista", "agentti-pohja", hak, "yo/koe"]):
+            self.assertEqual(self.ajaa(None)[:2], (0, "ok: 1 tiedostoa\n"))
+
+    def test_pr_komento(self):
+        d = tempfile.mkdtemp()
+        kuvaus = os.path.join(d, "k.md")
+        with open(kuvaus, "w", encoding="utf-8") as f:
+            f.write("Kuvaus")
+        with mock.patch.object(pk, "luo_pr", return_value="https://github.com/o/r/pull/9") as luo:
+            self.assertEqual(self.ajaa(["pr", "agentti-pohja", "/h", "yo/koe", "Otsikko", kuvaus]),
+                             (0, "https://github.com/o/r/pull/9\n", ""))
+        self.assertEqual(luo.call_args[0], ("agentti-pohja", "/h", "yo/koe", "Otsikko", "Kuvaus"))
+
+    def test_virheet(self):
+        koodi, _, virhe = self.ajaa(["pr", "agentti-pohja", "/h", "yo/koe", "O", "/ei/ole/tiedostoa"])
+        self.assertEqual(koodi, 1)
+        self.assertIn("pr_kutsu: tiedostovirhe: FileNotFoundError", virhe)
+        koodi, _, virhe = self.ajaa(["tarkista", "kauppatiimi", "/x", "yo/a"])
+        self.assertEqual(koodi, 1)
+        self.assertIn("pr_kutsu: repo ei ole sallittujen listalla", virhe)
+        self.assertEqual(self.ajaa(["pr", "a"])[0], 2)
+        self.assertIn("kaytto: pr_kutsu", self.ajaa([])[2])
 
 
 if __name__ == "__main__":
