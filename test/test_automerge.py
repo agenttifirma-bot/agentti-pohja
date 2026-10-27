@@ -1,5 +1,7 @@
 import json
+import os
 import subprocess
+import tempfile
 import unittest
 from unittest import mock
 
@@ -243,6 +245,72 @@ class MainTesti(unittest.TestCase):
         with mock.patch.dict("os.environ", {"GITHUB_REPOSITORY": "o/r", "PR_NUMBER": "7"}, clear=False), \
                 mock.patch.object(am.subprocess, "run", f), mock.patch("builtins.print"):
             self.assertEqual(am.main(), 1)
+
+
+class AutomergeTarkkaTesti(unittest.TestCase):
+    def test_tyhja_polku(self):
+        self.assertEqual(am.polku_ok(""), (False, "tyhja polku"))
+        self.assertEqual(am.polku_ok(None), (False, "tyhja polku"))
+
+    def test_base_repon_nimi_otetaan_ensimmaisen_kautoviivan_jalkeen(self):
+        pr = dict(BOTTI_PR, base_repo="o/a/b", head_repo="agenttifirma-bot/a/b")
+        self.assertEqual(am.botin_forkki_syyt(pr), [])
+
+    def test_readme_haarassa_md_tiedoston_syy_tulee_vain_kerran_ja_oikealla_tekstilla(self):
+        ok, syyt = am.arvioi(BOTTI_PR, [tied("a b.md")])
+        self.assertFalse(ok)
+        self.assertEqual(syyt, ["ei sallittu tyyppi: a b.md"])
+
+    def test_puuttuva_changes_kentta_on_nolla(self):
+        ok, syyt = am.arvioi(PR, [tied("a.md", changes=am.MAX_RIVEJA), {"filename": "b.md", "status": "added"}])
+        self.assertTrue(ok, syyt)
+
+    def test_gh_kutsun_parametrit(self):
+        nahty = {}
+
+        def f(args, **kw):
+            nahty["args"], nahty["kw"] = args, kw
+            return subprocess.CompletedProcess(args, 0, "", "")
+        with mock.patch.object(am.subprocess, "run", f):
+            am._gh("pr", "view")
+        self.assertEqual(nahty["args"], ["gh", "pr", "view"])
+        self.assertEqual(nahty["kw"], {"capture_output": True, "text": True, "timeout": 120})
+
+    def test_virheviestit_rajataan_200_merkkiin(self):
+        def f(args, **kw):
+            return subprocess.CompletedProcess(args, 1, "", "A" * 100 + "B" * 200)
+        with mock.patch.object(am.subprocess, "run", f):
+            for fn, alku in ((am.hae_pr, "PR:n haku epaonnistui: "), (am.hae_tiedostot, "tiedostojen haku epaonnistui: ")):
+                with self.assertRaises(RuntimeError) as e:
+                    fn("o/r", "7")
+                self.assertEqual(str(e.exception), alku + "B" * 200)
+
+    def test_automergen_kytkenta_epaonnistuu(self):
+        pr, tiedostot = PR, [tied("README.md")]
+
+        def f(args, **kw):
+            if args[1:3] == ["pr", "merge"]:
+                return subprocess.CompletedProcess(args, 1, "", "A" * 100 + "B" * 200)
+            return gh_feikki(pr, tiedostot, [])(args, **kw)
+        with mock.patch.dict("os.environ", {"GITHUB_REPOSITORY": "o/r", "PR_NUMBER": "7"}, clear=False), \
+                mock.patch.object(am.subprocess, "run", f), mock.patch("builtins.print") as pr_:
+            self.assertEqual(am.main(), 1)
+        self.assertEqual(pr_.call_args[0][0], "Automerge: kytkenta epaonnistui: " + "B" * 200)
+
+    def test_yhteenveto_kirjoittaa_tiedostoon_rivinvaihdolla(self):
+        with tempfile.TemporaryDirectory() as d:
+            polku = os.path.join(d, "yhteenveto.md")
+            with mock.patch.dict("os.environ", {"GITHUB_STEP_SUMMARY": polku}), mock.patch("builtins.print") as pr_:
+                am.yhteenveto("eka")
+                am.yhteenveto("toka")
+            with open(polku) as f:
+                self.assertEqual(f.read(), "eka\ntoka\n")
+            self.assertEqual([c[0][0] for c in pr_.call_args_list], ["eka", "toka"])
+
+    def test_yhteenveto_ei_kaadu_kirjoitusvirheeseen(self):
+        with mock.patch.dict("os.environ", {"GITHUB_STEP_SUMMARY": "/ei/ole/hakemistoa/y.md"}), mock.patch("builtins.print") as pr_:
+            am.yhteenveto("x")
+        pr_.assert_called_once_with("x")
 
 
 if __name__ == "__main__":
