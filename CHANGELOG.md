@@ -34,6 +34,7 @@ Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 - testit: mutanttiaukot suljettu viidestä pienestä moduulista (yhteensä 18 selviytyjää → 0): `kulu.py` (7), `llm.py` (4), `maaritys.py` (4), `ajo.py` (2), `config.py` (1). Uudet testit kattavat kirjanpidon rakennevirheet ja tiedostomuodon, pyöristykset, LLM:n oikean HTTP-kerroksen (paikallinen palvelin: otsakkeet, virhekoodit, uudelleenohjausta ei seurata), hinnaston mukaisen kuluarvion, määrityksen pituusrajat sekä ajon oletusliput. +17 testiä.
 - testit: `agentti/ilmoita.py` mutanttiaukot suljettu: 63 mutanttia, ennen 17 selvisi, nyt 0. Uudet testit kattavat tunnustiedoston jäsennyksen, tuntirajan tarkan rajan ja roskakirjausten pudotuksen, molempien tunnusten vaatimuksen sekä `main`in argumenttimäärät, paluukoodit ja virhepolut. +9 testiä.
 - testit: `tools/automerge.py` mutanttiaukot suljettu: 148 mutanttia, ennen 18 selvisi, nyt 0 (1 ekvivalentti sallittu). Uudet testit kattavat tyhjan polun, repon nimen, README-haaran, gh-kutsun parametrit, virheviestien 200 merkin rajan ja yhteenvetotiedoston.
+- testit: `agentti/pr_kutsu.py` viimeiset 3 selviytyjaa: oletusarvoinen synkronointiviesti testattu, kaksi ekvivalenttia (`tila.get("n", 0)`) sallittu.
 
 ## [Julkaisematon]
 

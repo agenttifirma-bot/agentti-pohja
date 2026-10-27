@@ -186,6 +186,13 @@ class PrTest(unittest.TestCase):
         self.assertIn("HTTP 403", teksti)
         self.assertNotIn("onko fork olemassa", teksti)
 
+    def test_oletuksena_synkronointi_on_ok_viestissa(self):
+        def suorita(cmd, **kw):
+            return SimpleNamespace(returncode=1, stdout="", stderr="refusing ... `workflow` scope")
+        with self.assertRaises(pk.PrVirhe) as ctx:
+            pk.pushaa("/h", "agentti-pohja", "yo/koe", "botti", "/t", suorita=suorita)
+        self.assertIn("API-synkronointi: ok.", str(ctx.exception))
+
     def test_synkkavirhe_palautetaan_koodina(self):
         def avaa(pyynto, timeout):
             raise urllib.error.HTTPError(pyynto.full_url, 422, "x", {}, None)
