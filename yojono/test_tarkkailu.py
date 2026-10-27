@@ -169,5 +169,72 @@ class TarkkailuTesti(Pohja):
         self.assertIn('"Bash" "Edit" "Write"', s)
 
 
+class OhitusTesti(Pohja):
+    """Mallikutsu ohitetaan, kun GitHub-tilannekuva on sama kuin saman roolin viimeksi analysoitu."""
+
+    def setUp(self):
+        super().setUp()
+        self.kuva = self.t / "kuva_sisalto"
+        self.kuva.write_text("kuva-1")
+        self.kutsut = self.t / "kutsut"
+        self.agentti_skripti(f'echo x >> {self.kutsut}\n'
+                             "echo '{\"total_cost_usd\": 0.3, \"is_error\": false, \"subtype\": \"success\", \"result\": \"## Havainnot - a ## Ehdotukset 1. PARAS\"}'")
+
+    def aja2(self, nimi="r1", **extra):
+        return self.aja(raportti=nimi, TARKKAILU_KUVAKOMENTO=f'cat {self.kuva} > "$0/github.md"; date +%s%N > "$0/palvelin.md"', **extra)
+
+    def maara(self):
+        return len(self.kutsut.read_text().split()) if self.kutsut.exists() else 0
+
+    def test_sama_github_kuva_ohitetaan_vaikka_muu_kuva_muuttuu(self):
+        self.assertEqual(self.aja2("r1").returncode, 0)
+        r = self.aja2("r2")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.maara(), 1)
+        js = json.loads((self.perus / "raportit" / "r2.json").read_text())
+        self.assertEqual(js["total_cost_usd"], 0)
+        teksti = self.raportti("r2")
+        self.assertIn("ohitettu: GitHub-tilannekuva", teksti)
+        self.assertGreaterEqual(len(teksti.encode()), 200)  # ajurin raportin vahimmaiskoko
+
+    def test_muuttunut_github_kuva_ajaa_agentin(self):
+        self.aja2("r1")
+        self.kuva.write_text("kuva-2")
+        self.aja2("r2")
+        self.assertEqual(self.maara(), 2)
+        self.aja2("r3")
+        self.assertEqual(self.maara(), 2)
+
+    def test_eri_rooli_ei_ohitu(self):
+        self.aja2("r1")
+        self.aja(raportti="r2", teema="laatu", TARKKAILU_KUVAKOMENTO=f'cat {self.kuva} > "$0/github.md"')
+        self.assertEqual(self.maara(), 2)
+
+    def test_pakota_ja_vanheneminen(self):
+        self.aja2("r1")
+        self.aja2("r2", YOJONO_PAKOTA="1")
+        self.assertEqual(self.maara(), 2)
+        self.aja2("r3", TARKKAILU_OHITUS_S="0")
+        self.assertEqual(self.maara(), 3)
+
+    def test_haku_epaonnistui_ei_ohitu_eika_kirjaudu(self):
+        self.kuva.write_text("(haku epaonnistui: URLError)")
+        self.aja2("r1")
+        self.aja2("r2")
+        self.assertEqual(self.maara(), 2)
+        self.assertFalse((self.perus / "tarkkailu-kuvat.tsv").exists())
+
+    def test_epaonnistunutta_ajoa_ei_kirjata(self):
+        self.agentti_skripti(f'echo x >> {self.kutsut}\n'
+                             "echo '{\"total_cost_usd\": 0.8, \"is_error\": true, \"subtype\": \"error_max_budget_usd\"}'")
+        self.aja2("r1")
+        self.aja2("r2")
+        self.assertEqual(self.maara(), 2)
+
+    def test_kuiva_ajo_ei_kirjaa(self):
+        self.aja2("r1", TARKKAILU_KUIVA="1")
+        self.assertFalse((self.perus / "tarkkailu-kuvat.tsv").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
