@@ -189,11 +189,23 @@ def lue_sallitut(polku):
     return avaimet
 
 
+# Moduulit, joiden testit ovat muun nimisessa tiedostossa kuin test_<nimi>.py (testimoduulin polku suhteessa juureen).
+LISATESTIT = {
+    "agentti/data.py": ["test/test_apurit.py"],
+    "agentti/sydan.py": ["test/test_apurit.py"],
+    "agentti/telegram.py": ["test/test_apurit.py"],
+    "agentti/skeema.py": ["test/test_skeema_tulos.py"],
+    "agentti/tulos.py": ["test/test_skeema_tulos.py"],
+    "agentti/snapshot_kutsu.py": ["test/test_snapshot.py"],
+}
+
+
 def testimoduulit(moduuli, juuri=JUURI):
-    """agentti/x.py -> test/test_x.py; yojono/x.py -> yojono/test_x.py. Palauttaa pistemuotoiset nimet."""
+    """agentti/x.py -> test/test_x.py; yojono/x.py -> yojono/test_x.py; lisaksi LISATESTIT. Palauttaa pistemuotoiset nimet."""
     hak, tied = os.path.split(moduuli)
     nimi = tied[:-3]
     ehdokkaat = [os.path.join("test", "test_" + nimi + ".py"), os.path.join(hak, "test_" + nimi + ".py")]
+    ehdokkaat += [os.path.normpath(p) for p in LISATESTIT.get(moduuli.replace(os.sep, "/"), [])]
     return [p[:-3].replace(os.sep, ".") for p in ehdokkaat if os.path.exists(os.path.join(juuri, p))]
 
 
