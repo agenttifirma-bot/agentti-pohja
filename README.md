@@ -75,6 +75,7 @@ Pohjan päälle on rakennettu osat, joilla agentit tekevät tarkistettavaa työt
 | Julkaisukomento | `isanta/julkaise.sh` | Yksi isännän skripti kolmelle kohteelle (kauppatiimi CT119, infra-automaatio CT118, yojono-ajuri CT115): julkaisu, peruutus (vain koodi; tilan ja konfiguraation tiiviste ennen/jälkeen), `--kuiva`, `--kanaria`, `--katastrofi-tila` (tila talteen ennen `pct rollback`:ia). Vaatii `git archive` -paketin, jossa on commit-tunniste. Ks. [`isanta/JULKAISU.md`](isanta/JULKAISU.md). |
 | Viikkoraportti | `agentti/viikkoraportti.py` | Lukee lokin ja tulostaa kulut agenteittain, virheet virhekoodeittain, ohitetut tehtävät syineen ja sääntöpohjaiset vihjeet (ei mallikutsua). |
 | Automerge | `tools/automerge.py` | Yhdistää automaattisesti vain pienet dokumentti- ja testimuutokset sekä botin `yo/readme-*`-PR:t, joissa on pelkkiä `.md`-tiedostoja. Koodi, työnkulut ja suojatut polut jäävät aina ihmiselle. |
+| Mutanttitestaus | `tools/mutantit.py` | Muuttaa koodia pienin virhein (AST-mutantit) ja tarkistaa, että moduulin testit huomaavat sen. Selviytyjä = testeistä puuttuu tarkistus. Paikallisesti `python tools/mutantit.py agentti/kulu.py`; pitkä ajo GitHubissa: Actions → Mutantit → Run workflow. Vastaavat mutantit sallitaan `tools/mutantit.sallitut.txt`-tiedostossa perusteluineen. |
 
 Periaate on sama kuin pohjassa: koodi on laki. Raja ei ole kehotteessa vaan tarkistuksessa, ja jokainen automaattinen muutos on katselmoitavissa PR:nä.
 
