@@ -271,5 +271,83 @@ class Ajo(Pohja):
         self.assertEqual((self.agentti.parent / "claude.env").read_text().strip(), "1")
 
 
+@unittest.skipUnless(sys.platform.startswith("linux"), "kehitys.sh on palvelinskripti: vaatii GNU timeoutin (Linux)")
+class Ohitus(Pohja):
+    """Mallikutsu ohitetaan, kun saman repon + aiheen edellinen ajo oli onnistunut mutta tulokseton ja HEAD on sama."""
+
+    def agentti_onnistuu(self, muutos=""):
+        kirjoita(self.agentti, "#!/bin/sh\necho x >> \"$0.kutsut\"\n" + muutos +
+                 "\necho '{\"total_cost_usd\": 0.4, \"is_error\": false, \"subtype\": \"success\", \"result\": \"ei tehtavaa\"}'\n", True)
+
+    def kutsuja(self):
+        f = self.agentti.parent / "claude.kutsut"
+        return len(f.read_text().split()) if f.exists() else 0
+
+    def json_kulu(self):
+        (js,) = list((self.perus / "raportit").glob("*.json"))
+        return json.loads(js.read_text())
+
+    def test_toinen_tulokseton_ajo_samalle_headille_ohitetaan(self):
+        self.agentti_onnistuu()
+        self.assertEqual(self.aja(REPO, "1.00", "testit").returncode, 0)
+        self.assertEqual(self.kutsuja(), 1)
+        self.assertEqual(self.json_kulu()["total_cost_usd"], 0.4)
+        r = self.aja(REPO, "1.00", "testit")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.kutsuja(), 1)
+        self.assertEqual(self.json_kulu()["total_cost_usd"], 0)
+        rap = self.raportti("testit")
+        self.assertIn("ohitettu: repo ei muuttunut", rap)
+        self.assertIn("- PR: ei avattu", rap)
+
+    def test_uusi_commit_poistaa_ohituksen(self):
+        self.agentti_onnistuu()
+        self.aja(REPO, "1.00", "testit")
+        repo = self.lahde / REPO
+        kirjoita(repo / "uusi.py", "x = 1\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "uusi")
+        self.aja(REPO, "1.00", "testit")
+        self.assertEqual(self.kutsuja(), 2)
+
+    def test_pakota_ohittaa_ohituksen(self):
+        self.agentti_onnistuu()
+        self.aja(REPO, "1.00", "testit")
+        self.aja(REPO, "1.00", "testit", YOJONO_PAKOTA="1")
+        self.assertEqual(self.kutsuja(), 2)
+
+    def test_ohitus_vanhenee(self):
+        self.agentti_onnistuu()
+        self.aja(REPO, "1.00", "testit")
+        self.aja(REPO, "1.00", "testit", KEHITYS_OHITUS_S="0")
+        self.assertEqual(self.kutsuja(), 2)
+
+    def test_muu_aihe_ei_ohitu(self):
+        self.agentti_onnistuu()
+        self.aja(REPO, "1.00", "testit")
+        self.aja(REPO, "1.00", "readme")
+        self.assertEqual(self.kutsuja(), 2)
+
+    def test_epaonnistunutta_agenttia_ei_kirjata_tuloksettomaksi(self):
+        kirjoita(self.agentti, "#!/bin/sh\necho x >> \"$0.kutsut\"\necho '{\"total_cost_usd\": 1.0, \"is_error\": true, \"subtype\": \"error_max_budget_usd\"}'\n", True)
+        self.aja(REPO, "1.00", "testit")
+        self.aja(REPO, "1.00", "testit")
+        self.assertEqual(self.kutsuja(), 2)
+
+    def test_ajo_jossa_syntyi_muutos_ei_kirjaudu_ja_poistaa_vanhan_kirjauksen(self):
+        self.agentti_onnistuu()
+        self.aja(REPO, "1.00", "readme")
+        self.agentti_onnistuu('echo "rivi" >> README.md')
+        self.pr_kutsu()
+        self.aja(REPO, "1.00", "readme", YOJONO_PAKOTA="1")
+        self.aja(REPO, "1.00", "readme")
+        self.assertEqual(self.kutsuja(), 3)
+
+    def test_kuiva_ajo_ei_ohita_eika_kirjaa(self):
+        self.agentti_onnistuu()
+        self.aja(REPO, "1.00", "testit", kuiva="1")
+        self.assertFalse((self.perus / "kehitys-tyhjat.tsv").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

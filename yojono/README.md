@@ -82,3 +82,9 @@ Ajastus: kopioi `systemd/yojono.service.mall` ja `systemd/yojono.timer.mall` nim
 
 - Ei merge-, push- eikä käyttöönottotyyppejä. Uusi tehtävätyyppi vaatii oman suorittajan ja testit.
 - Ajuri ei näe salaisuuksia: katselmoi.sh lukee ne itse omasta tiedostostaan.
+
+## Mallikutsun ohitus (kulun pienennys)
+
+- `kehitys.sh`: jos saman repon + aiheen + teeman edellinen onnistunut ajo ei tuottanut muutoksia ja repon HEAD on sama, mallikutsua ei tehda (raportti: "ohitettu", kulu 0). Tila: `<perus>/kehitys-tyhjat.tsv`. Raja `KEHITYS_OHITUS_S` (oletus 604800 s = 7 vrk).
+- `tarkkailu.sh`: jos GitHub-tilannekuva (`github.md`) on identtinen saman roolin viimeksi analysoidun kanssa, mallikutsua ei tehda. Tila: `<perus>/tarkkailu-kuvat.tsv`. Raja `TARKKAILU_OHITUS_S` (oletus 172800 s = 2 vrk).
+- Vain onnistunut agenttiajo (`is_error` false, `subtype` success) kirjataan; budjetti- ja mallivirheet eivat ohita seuraavaa yritysta. `YOJONO_PAKOTA=1` ohittaa ohituksen; kuiva-ajo ei ohita eika kirjaa.
