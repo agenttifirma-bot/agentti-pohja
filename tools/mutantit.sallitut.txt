@@ -1,2 +1,4 @@
 # Vastaavat mutantit: muutos ei muuta kayttaytymista, joten testi ei voi eika pida kaataa sita.
 # Muoto: moduuli|laji|vanha|uusi|toisto  # perustelu (avain ei riipu rivinumerosta; ks. ajurin tuloste "sallitut-avain").
+agentti/pr_kutsu.py|vakio|2|3|0  # normpath poistaa jo alun ./-merkinnat, joten silmukka ei koskaan aja (kuollut suoja)
+agentti/pr_kutsu.py|vakio|1|2|0  # rsplit(maxsplit 1 vs 2) ja [-1]: viimeinen osa on sama

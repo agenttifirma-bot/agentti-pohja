@@ -20,6 +20,7 @@ Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 - yojono: tyhja/liian lyhyt raportti (<200 tavua, ei kehitys) ei ole VALMIS; Telegram-HALYTYS kun >=3 epaonnistuu tai yritykset loppuvat; kulut.md saa taasmaysrivit (tehtavat vs kirjattu paivakulu). +6 testia.
 - isanta: `tila` suodattaa LXC-mount-kohinan (tmp, run-lock, dev-mqueue).
 - isanta: vain luku -komento `tila` (pct list, pvesm status, levy, kuorma, epaonnistuneet palvelut ajossa olevissa konteissa, varmuuskopiot); `snapshot_kutsu tila`; tilannekuva kirjoittaa `isanta.md`.
+- testit: `agentti/pr_kutsu.py` mutanttiaukot suljettu: 262 mutanttia, ennen 58 selvisi, nyt 0 (2 vastaavaa kirjattu perusteluineen). Uudet testit kattavat `_git`-kutsun parametrit, päiväkatkon laskurin kaikki haarat, `pushaa`n virheviestit ja `workflow`/`scope`-tunnistuksen, forkin päivityksen (`paivita_fork`), aikarajat, lukuvirheiden viestit, fetch- ja push-virheiden rajaukset sekä `main`in komennot. +20 testiä.
 
 ## [Julkaisematon]
 
