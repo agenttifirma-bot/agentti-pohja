@@ -56,6 +56,9 @@ git checkout -q -b "$HAARA"
 
 testaa() {
   if [ -f package.json ]; then
+    # Havainto 27.10.: palvelun ProtectHome=read-only estaa npm:n kirjoituksen ~/.npm:iin (EROFS, "Log files were not written"),
+    # joten npm ci kaatui repoissa, joilla on oikeita riippuvuuksia. Valimuisti ja lokit ajon omaan tilapaishakemistoon.
+    export npm_config_cache="$TMP/npm-cache" npm_config_logs_dir="$TMP/npm-logs"
     # JS-repot: riippuvuudet asennetaan ilman elinkaaria (--ignore-scripts), sitten repon oma testikomento (esim. vitest).
     # Havainto 24.10.: pelkka `node --test` ei riita (vitest-repot) eika node ollut asennettuna CT115:ssa.
     if [ -f package-lock.json ]; then

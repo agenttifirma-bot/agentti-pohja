@@ -200,6 +200,7 @@ class Ajo(Pohja):
         git(r, "commit", "-q", "-m", "js")
         bin_ = self.perus.parent / "bin"
         kirjoita(bin_ / "npm", '#!/bin/sh\necho "$@" >> "' + str(self.perus.parent / "npm.kutsut") + '"\n'
+                 'echo "cache=$npm_config_cache logs=$npm_config_logs_dir" >> "' + str(self.perus.parent / "npm.ymp") + '"\n'
                  'if [ "$1" = "install" ]; then mkdir -p node_modules/better-sqlite3; fi\n'
                  'if [ "$1" = "test" ]; then exit ' + str(npm_test_koodi) + '; fi\nexit 0\n', True)
         return dict(PATH=str(bin_) + os.pathsep + os.environ["PATH"])
@@ -216,6 +217,19 @@ class Ajo(Pohja):
         self.assertTrue(any(k.startswith("rebuild better-sqlite3") for k in kutsut), kutsut)
         self.assertLess([k.split()[0] for k in kutsut].index("rebuild"), len(kutsut) - 1)
         self.assertIn(REPO, self.kutsut())
+
+    def test_npm_valimuisti_ja_lokit_ajon_tilapaishakemistoon(self):
+        # ProtectHome=read-only: npm ei saa kirjoittaa ~/.npm:iin, joten valimuisti ja lokit ovat ajon omassa hakemistossa
+        env = self.js_repo(0)
+        self.agentti_skripti('echo "uusi rivi" >> README.md')
+        self.pr_kutsu()
+        r = self.aja(REPO, "1.00", "readme", **env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rivit = (self.perus.parent / "npm.ymp").read_text().splitlines()
+        self.assertTrue(rivit)
+        for rivi in rivit:
+            self.assertRegex(rivi, r"cache=\S*/kehitys\.\w+/npm-cache logs=\S*/kehitys\.\w+/npm-logs", rivi)
+            self.assertNotIn("/.npm", rivi)
 
     def test_js_repo_punainen_npm_test_estaa_prn(self):
         env = self.js_repo(1)
