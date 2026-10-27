@@ -18,3 +18,4 @@ yojono/ajuri.py|vakio|True|False|5  # luokittele_virhe('', True, True, meta): pa
 yojono/ajuri.py|vakio|True|False|6  # luokittele_virhe('', True, True, meta): paivittyi/md_on-arvoilla ei ole vaikutusta, koska tuloksesta kaytetaan vain claude-metan koodeja (budjetti, malli)
 yojono/ajuri.py|vakio|0|1|7  # oletusarvo 0 vs 1 (yrityksia): raja MAX_YRITYKSIA on 2, joten tulos on sama
 agentti/sandbox_kutsu.py|vakio|False|True|0  # tar.add(recursive=...): lisataan vain tavallisia tiedostoja, joten rekursiolla ei ole vaikutusta
+agentti/loki_keraaja.py|aritmetiikka|st.st_size - siirtyma|st.st_size + siirtyma|0  # read(n) lukee korkeintaan tiedoston loppuun asti, joten liian suuri n antaa saman datan (kayttaja-ilmeinen raja on 4 000 000)
