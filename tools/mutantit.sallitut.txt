@@ -22,3 +22,5 @@ agentti/loki_keraaja.py|aritmetiikka|st.st_size - siirtyma|st.st_size + siirtyma
 tools/automerge.py|vakio|2|3|0  # SALLITUT[:2] vs [:3]: kolmas kuvio (test/*.py) tunnistetaan jo TESTIPOLKU-ehdolla, joten tulos on sama
 agentti/pr_kutsu.py|vakio|0|1|4  # tila.get("n", 0): oletusta ei koskaan kayteta, koska isinstance(n, int) -ehto vaatii n:n olemassaolon
 agentti/pr_kutsu.py|vakio|0|1|7  # tila.get("n", 0): oletusta ei koskaan kayteta, koska isinstance(n, int) -ehto vaatii n:n olemassaolon
+agentti/skeema.py|vakio|10|11|0  # maxLength-oletus 10 ** 9: eroaa vasta yli miljardin merkin merkkijonolla (1 Gt muistia), joten ei kaytannossa testattavissa
+agentti/skeema.py|vakio|9|10|0  # maxLength-oletus 10 ** 9: eroaa vasta yli miljardin merkin merkkijonolla (1 Gt muistia), joten ei kaytannossa testattavissa
