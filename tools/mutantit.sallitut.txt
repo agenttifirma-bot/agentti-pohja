@@ -10,3 +10,10 @@ agentti/portti.py|aritmetiikka|syote * HINTA_ARVIO_USD_PER_M[0]|syote / HINTA_AR
 agentti/portti.py|vakio|30|31|0  # HTTP-kasittelijan aikakatkaisun arvo ei ole testattavissa ilman 30 s odotusta
 agentti/portti.py|return None|return False|return None|0  # kutsuja kayttaa tulosta vain totuusarvona: False ja None toimivat samoin
 agentti/portti.py|vakio|True|False|12  # print(..., flush=True): puskurointi ei nay testissa
+yojono/ajuri.py|vakio|1|2|0  # split(' ', maxsplit): vain ensimmaista sanaa (rooli) kaytetaan, joten maxsplit 1 ja 2 antavat saman
+yojono/ajuri.py|and/or|t['tyyppi'] == 'kehitys' and t.get('aihe') == 'ominaisuus'|t['tyyppi'] == 'kehitys' or t.get('aihe') == 'ominaisuus'|0  # ehdon puolet toteutuvat vain yhdessa: aiemmat tarkistukset hylkaavat jo kehitys-tehtavan muilla aiheilla ja ominaisuus-aiheen muilla tyypeilla
+yojono/ajuri.py|vakio|7|8|0  # pvm[:7] vs [:8]: samassa kuussa kaikki ISO-paivat jakavat myos kahdeksan ensimmaista merkkia (vuosi-kk-)
+yojono/ajuri.py|vakio|0|1|4  # oletusarvo 0 vs 1 (yrityksia): raja MAX_YRITYKSIA on 2, joten tulos on sama
+yojono/ajuri.py|vakio|True|False|5  # luokittele_virhe('', True, True, meta): paivittyi/md_on-arvoilla ei ole vaikutusta, koska tuloksesta kaytetaan vain claude-metan koodeja (budjetti, malli)
+yojono/ajuri.py|vakio|True|False|6  # luokittele_virhe('', True, True, meta): paivittyi/md_on-arvoilla ei ole vaikutusta, koska tuloksesta kaytetaan vain claude-metan koodeja (budjetti, malli)
+yojono/ajuri.py|vakio|0|1|7  # oletusarvo 0 vs 1 (yrityksia): raja MAX_YRITYKSIA on 2, joten tulos on sama

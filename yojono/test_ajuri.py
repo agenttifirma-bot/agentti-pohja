@@ -1,6 +1,9 @@
+import io
 import json
 import os
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -1084,3 +1087,251 @@ class TestVirhekoodiKirjaus(Pohja):
             yht.close()
         self.assertEqual(tiedot["virhekoodit"], {"aikakatkaisu": 2, "malli_virhe": 1})
         self.assertNotIn("tuntematon", tiedot["virhekoodit"])
+
+
+# --- Mutaatiotestauksessa (tools/mutantit.py) selvinneet haarat ---
+
+class RajatTesti(Pohja):
+    def test_paivakaton_rajat(self):
+        self.assertEqual(ajuri.tarkista_jono(jono([], katto=0.5))[0], 0.5)
+        self.assertEqual(ajuri.tarkista_jono(jono([], katto=1))[0], 1.0)
+        self.assertEqual(ajuri.tarkista_jono(jono([], katto=50))[0], 50.0)
+        with self.assertRaises(ajuri.JonoVirhe):
+            ajuri.tarkista_jono(jono([], katto=50.5))
+
+    def test_toiston_rajat(self):
+        for ok in (1, 365):
+            ajuri.tarkista_jono(jono([dict(t("a"), toisto_pv=ok)]))
+        for huono in (0, 366, 1.5, True, "7"):
+            with self.assertRaises(ajuri.JonoVirhe):
+                ajuri.tarkista_jono(jono([dict(t("a"), toisto_pv=huono)]))
+
+    def test_tilatiedosto_on_jarjestetty_ja_sisennetty(self):
+        polku = self.perus / "tila.json"
+        ajuri.kirjoita_tila(polku, {"b": 1, "a": {"y": 2}})
+        self.assertEqual(polku.read_text(), '{\n  "a": {\n    "y": 2\n  },\n  "b": 1\n}')
+
+    def test_syy_katkeaa_300_merkkiin(self):
+        self.assertEqual(len(ajuri.syy_viestiksi(None, "x" * 500)), 300)
+
+
+class SkriptiViestitTesti(Pohja):
+    def skripti(self, runko):
+        polku = self.perus / "s.sh"
+        polku.write_text("#!/bin/sh\n" + runko)
+        polku.chmod(polku.stat().st_mode | stat.S_IXUSR)
+        (self.perus / "raportit").mkdir(exist_ok=True)
+        return polku
+
+    def raportit(self, json_teksti, md_runko, koodi):
+        r = self.perus / "raportit"
+        rivit = ""
+        if json_teksti is not None:
+            rivit += "printf '%s' '" + json_teksti + "' > \"" + str(r) + "/" + PVM + "-$1.json\"\n"
+        if md_runko is not None:
+            rivit += md_runko.replace("{MD}", str(r) + "/" + PVM + "-$1.md")
+        return self.skripti(rivit + "exit %d\n" % koodi)
+
+    def aja_skripti(self, s):
+        return ajuri.suorita_katselmointi(t("a", budjetti=0.8), PVM, self.perus, s)
+
+    def test_pitka_tuloste_rajataan_viimeiseen_300_merkkiin(self):
+        tulos = self.aja_skripti(self.skripti("printf 'A' >&2\nprintf 'E%.0s' $(seq 1 300) >&2\nexit 1\n"))
+        self.assertEqual(tulos.viesti.count("E"), 300)
+        self.assertNotIn("A", tulos.viesti)
+
+    def test_ei_tulostetta_ei_raporttia_kertoo_poistumiskoodin(self):
+        tulos = self.aja_skripti(self.skripti("exit 3\n"))
+        self.assertEqual((tulos.koodi, tulos.viesti), ("raporttia_ei_syntynyt", "raporttia_ei_syntynyt: skripti ei tuottanut raporttia (poistumiskoodi 3)"))
+
+    def test_raportti_syntyi_mutta_koodi_nollasta_poikkeaa(self):
+        tulos = self.aja_skripti(self.raportit('{"total_cost_usd": 0.1}', 'yes raportti | head -n 60 > "{MD}"\n', 2))
+        self.assertEqual((tulos.koodi, tulos.viesti), ("tuntematon", "tuntematon: poistumiskoodi 2"))
+
+    def test_malli_virheen_viesti(self):
+        cases = (
+            ('{"total_cost_usd": 0.1, "is_error": true}', "claude palautti virheen (subtype: ?)"),
+            ('{"total_cost_usd": 0.1, "is_error": true, "subtype": "success"}', "claude palautti virheen (subtype: success)"),
+            ('{"total_cost_usd": 0.1, "is_error": false, "subtype": "error_during_execution"}', "claude palautti virheen (subtype: error_during_execution)"),
+            ('{"total_cost_usd": 0.1, "is_error": true, "subtype": "Huono Arvo"}', "claude palautti virheen (subtype: ?)"),
+        )
+        for j, odotettu in cases:
+            with self.subTest(j=j):
+                tulos = self.aja_skripti(self.raportit(j, "echo lyhyt > \"{MD}\"\n", 1))
+                self.assertEqual(tulos.koodi, "malli_virhe")
+                self.assertEqual(tulos.viesti, "malli_virhe: " + odotettu if "malli_virhe" not in odotettu else odotettu)
+
+    def test_tuntematon_malli_ei_ylikirjoita_viestia(self):
+        tulos = self.aja_skripti(self.skripti("echo 'unrecognized_model: foo' >&2\nexit 1\n"))
+        self.assertEqual(tulos.koodi, "malli_virhe")
+        self.assertIn("unrecognized_model: foo", tulos.viesti)
+        self.assertNotIn("subtype", tulos.viesti)
+
+
+class LisatiedotRajatTesti(Pohja):
+    def md(self, teksti):
+        p = self.perus / "r.md"
+        p.write_text(teksti)
+        return p
+
+    def test_syyn_ja_ehdotuksen_pituusrajat(self):
+        self.assertEqual(ajuri.raportin_lisatiedot("kehitys", self.md("- PR: ei\n- Syy: " + "s" * 200 + "\n")), " EI PR:AA (" + "s" * 120 + ")")
+        ulos = ajuri.raportin_lisatiedot("tarkkailu", self.md("1. PARAS " + "p" * 300 + "\n"))
+        self.assertEqual(ulos.strip(), "PARAS " + "p" * 154)
+
+
+class TelegramTarkkaTesti(unittest.TestCase):
+    ENV = {"YOJONO_TELEGRAM_TOKEN": "t", "YOJONO_TELEGRAM_CHAT": "1"}
+
+    def test_puuttuva_asetus_palauttaa_false(self):
+        with mock.patch("urllib.request.urlopen") as u:
+            self.assertIs(ajuri.laheta_telegram("x", env={}), False)
+            self.assertIs(ajuri.laheta_telegram("x", env={"YOJONO_TELEGRAM_TOKEN": "t"}), False)
+            self.assertIs(ajuri.laheta_telegram("x", env={"YOJONO_TELEGRAM_CHAT": "1"}), False)
+            u.assert_not_called()
+
+    def test_tulos_ja_aikakatkaisu(self):
+        with mock.patch("urllib.request.urlopen") as u:
+            u.return_value.__enter__.return_value.status = 200
+            self.assertIs(ajuri.laheta_telegram("x", env=self.ENV), True)
+            self.assertEqual(u.call_args.kwargs, {"timeout": 20})
+            u.return_value.__enter__.return_value.status = 500
+            self.assertIs(ajuri.laheta_telegram("x", env=self.ENV), False)
+
+    def test_verkkovirhe_palauttaa_false(self):
+        with mock.patch("urllib.request.urlopen", side_effect=OSError("x")), mock.patch("sys.stderr"):
+            self.assertIs(ajuri.laheta_telegram("x", env=self.ENV), False)
+
+
+class PrNumeroRajaTesti(Pohja):
+    def test_lukuraja_20000_merkkia(self):
+        r = self.perus / "r.md"
+        r.write_text("a" * 19977 + "\n- PR: https://x/pull/55\n")
+        self.assertEqual(ajuri.pr_numero(str(r)), 5)
+
+
+class LokiTarkkaTesti(Pohja):
+    def tiedot(self, polku):
+        from agentti import tapahtumaloki
+        yht = tapahtumaloki.avaa(polku)
+        try:
+            return yht.execute("SELECT kulu_usd, tulos, tiedot_json FROM tapahtuma ORDER BY id").fetchall()
+        finally:
+            yht.close()
+
+    def test_paluuarvot(self):
+        self.assertIs(ajuri._kirjaa_tapahtuma(t("a"), "ok", 0.1, {}, None), False)
+        polku = str(self.perus / "loki.db")
+        self.assertIs(ajuri._kirjaa_tapahtuma(t("a"), "ok", 0.123456, {"x": 1}, polku), True)
+        (kulu, tulos, _), = self.tiedot(polku)
+        self.assertEqual((kulu, tulos), (0.1235, "ok"))
+        with mock.patch("sys.stderr"):
+            self.assertIs(ajuri._kirjaa_tapahtuma(t("a"), "ok", 0.1, {}, "/ei/ole/loki.db"), False)
+
+    def test_ohituksen_malli_ja_koodi(self):
+        polku = str(self.perus / "loki.db")
+        self.assertIs(ajuri.kirjaa_ohitus(dict(t("a"), malli="sonnet"), "fork_ei_ff", PVM, polku), True)
+        self.assertIs(ajuri.kirjaa_ohitus(t("b"), "outo_koodi", PVM, polku), True)
+        a, b = [json.loads(r[2]) for r in self.tiedot(polku)]
+        self.assertEqual((a["malli"], a["virhekoodi"]), ("sonnet", "fork_ei_ff"))
+        self.assertEqual((b["malli"], b["virhekoodi"]), ("oletus", "tuntematon"))
+
+
+class AjoTarkkaTesti(Pohja):
+    def test_perushakemisto_luodaan_sisakkain(self):
+        sisakkain = self.perus / "a" / "b"
+        ajuri.aja(sisakkain, "/x", laheta=lambda x: None, pvm=PVM, kuiva=True)
+        self.assertTrue((sisakkain / "lukko").exists())
+        ajuri.aja(sisakkain, "/x", laheta=lambda x: None, pvm=PVM, kuiva=True)
+
+    def test_yon_aikaraja_mittaa_kulunutta_aikaa(self):
+        self.kirjoita_jono(jono([t("a")]))
+        ajettu = []
+        ok = lambda tehtava, *_: (ajettu.append(tehtava["id"]), ajuri.Tulos(True, 0.1, "x.md", "ok"))[1]
+        self.aja(ok, nyt=lambda: 6000)       # ei aikaa kulunut: ajetaan
+        self.assertEqual(ajettu, ["a"])
+        (self.perus / "tila.json").unlink()
+        ajettu.clear()
+        aika = iter([0, ajuri.ILTA_AIKARAJA_S + 1])
+        teksti, _ = self.aja(ok, nyt=lambda: next(aika))
+        self.assertEqual(ajettu, [])
+        self.assertIn("- a: ohitettu (yon aikaraja)", teksti)
+
+    def test_ohitusviestit_ovat_tarkkoja(self):
+        (self.perus / "tila.json").write_text(json.dumps({"kulut": {PVM: 2.5}, "tehtavat": {}}))
+        self.kirjoita_jono({"paivakatto": 3.0, "kuukausikatto": 3.0, "tehtavat": [t("a", budjetti=1.0)]})
+        teksti, _ = self.aja(lambda *_: ajuri.Tulos(True, 0.1, "x.md", "ok"))
+        self.assertIn("- a: ohitettu (kuukausikatto: jaljella 0.50 < 1.00)", teksti)
+        (self.perus / "tila.json").write_text(json.dumps({"kulut": {PVM: 5.0}, "tehtavat": {}}))
+        teksti, _ = self.aja(lambda *_: ajuri.Tulos(True, 0.1, "x.md", "ok"))
+        self.assertIn("- a: ohitettu (kuukausikatto: jaljella 0.00 < 1.00)", teksti)
+        self.kirjoita_jono(jono([t("a", budjetti=1.0)]))
+        (self.perus / "tila.json").write_text(json.dumps({"kulut": {PVM: 2.5}, "tehtavat": {}}))
+        teksti, _ = self.aja(lambda *_: ajuri.Tulos(True, 0.1, "x.md", "ok"))
+        self.assertIn("- a: ohitettu (paivakatto: jaljella 0.50 < 1.00)", teksti)
+
+    def test_yksi_pr_paikka_riittaa(self):
+        k = dict(t("a", repo="agentti-pohja"), tyyppi="kehitys", aihe="readme")
+        self.kirjoita_jono(jono([k]))
+        with mock.patch.object(ajuri.pr_kutsu, "paikkoja_jaljella", return_value=1):
+            teksti, _ = self.aja(lambda *_: ajuri.Tulos(True, 0.1, "x.md", "ok"))
+        self.assertIn("a: VALMIS", teksti)
+        (self.perus / "tila.json").unlink()
+        with mock.patch.object(ajuri.pr_kutsu, "paikkoja_jaljella", return_value=0):
+            teksti, _ = self.aja(lambda *_: ajuri.Tulos(True, 0.1, "x.md", "ok"))
+        self.assertIn("PR-paivaraja taynna", teksti)
+
+    def test_kulu_kirjataan_nelja_desimaalia(self):
+        self.kirjoita_jono(jono([t("a")]))
+        self.aja(lambda *_: ajuri.Tulos(True, 0.123456, "x.md", "ok"))
+        tila = self.tila()
+        self.assertEqual(tila["kulut"][PVM], 0.1235)
+        self.assertEqual(tila["tehtavat"]["a"]["kulu"], 0.1235)
+
+
+class PeilausTarkkaTesti(Pohja):
+    def test_paluuarvot_ja_parametrit(self):
+        self.assertIs(ajuri.peilaa(None), False)
+        with mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as r:
+            self.assertIs(ajuri.peilaa("/p.sh"), True)
+        self.assertEqual(r.call_args.args[0], ["/p.sh"])
+        self.assertEqual(r.call_args.kwargs, {"capture_output": True, "text": True, "timeout": 300, "check": False})
+        with mock.patch.object(subprocess, "run", side_effect=OSError("x")), mock.patch("sys.stderr"):
+            self.assertIs(ajuri.peilaa("/p.sh"), False)
+
+    def test_virheilmoitus(self):
+        def aja(koodi, ulos, virhe):
+            err = io.StringIO()
+            with mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], koodi, ulos, virhe)), mock.patch.object(sys, "stderr", err):
+                tulos = ajuri.peilaa("/p.sh")
+            return tulos, err.getvalue()
+        self.assertEqual(aja(0, "ok", ""), (True, ""))
+        self.assertEqual(aja(3, "ulos", "virhe"), (False, "Peilaus epaonnistui (koodi 3): virhe\n"))
+        self.assertEqual(aja(3, "ulos", ""), (False, "Peilaus epaonnistui (koodi 3): ulos\n"))
+        self.assertEqual(aja(3, "", "v" * 300), (False, "Peilaus epaonnistui (koodi 3): " + "v" * 200 + "\n"))
+
+
+class MainTarkkaTesti(Pohja):
+    def env(self):
+        return mock.patch.dict(os.environ, {"YOJONO_PERUS": str(self.perus)})
+
+    def test_tila_tulostaa_json_sisennettyna(self):
+        (self.perus / "tila.json").write_text(json.dumps({"viesti": "k\u00e4yt\u00f6"}))
+        ulos = io.StringIO()
+        with self.env(), mock.patch.object(sys, "stdout", ulos):
+            self.assertEqual(ajuri.main(["tila"]), 0)
+        self.assertEqual(ulos.getvalue(), '{\n  "viesti": "k\u00e4yt\u00f6"\n}\n')
+        (self.perus / "tila.json").unlink()
+        ulos = io.StringIO()
+        with self.env(), mock.patch.object(sys, "stdout", ulos):
+            ajuri.main(["tila"])
+        self.assertEqual(ulos.getvalue(), "{}\n")
+
+    def test_peilaus_vain_ajolla(self):
+        self.kirjoita_jono(jono([]))
+        with self.env(), mock.patch.dict(os.environ, {"YOJONO_PEILAA": "/p.sh"}), mock.patch.object(ajuri, "peilaa") as p, mock.patch("builtins.print"):
+            self.assertEqual(ajuri.main(["ajo"]), 0)
+            p.assert_called_once_with("/p.sh")
+            p.reset_mock()
+            self.assertEqual(ajuri.main(["kuiva"]), 0)
+            p.assert_not_called()
