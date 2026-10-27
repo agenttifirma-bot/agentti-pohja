@@ -597,6 +597,36 @@ class TestTelegram(unittest.TestCase):
         self.assertTrue(pyynto.full_url.startswith("https://"))
 
 
+class PysyvaJonoTesti(unittest.TestCase):
+    """yojono/jono.pysyva.json: valmis pysyva jono ikkunaan 21-07 (doc 51); tarkistetaan ettei se rikkoudu ajuria vasten."""
+    POLKU = Path(__file__).resolve().parent / "jono.pysyva.json"
+
+    def lue(self):
+        return json.loads(self.POLKU.read_text(encoding="utf-8"))
+
+    def test_jono_on_kelvollinen_ja_katot_jarkevat(self):
+        d = self.lue()
+        katto, tehtavat = ajuri.tarkista_jono(d)
+        self.assertEqual(katto, 5.0)
+        self.assertGreaterEqual(d["kuukausikatto"], katto)
+        self.assertEqual(len({x["id"] for x in tehtavat}), len(tehtavat))
+        self.assertTrue(all(x.get("toisto_pv") for x in tehtavat), "kaikki tehtavat toistuvia (pysyva jono)")
+
+    def test_kehitys_ja_katselmointi_vain_sallituille_repoille(self):
+        from agentti import pr_kutsu
+        for x in self.lue()["tehtavat"]:
+            if x["tyyppi"] in ("kehitys", "katselmointi"):
+                self.assertIn(x["repo"], pr_kutsu.REPOT, x["id"])
+
+    def test_aikataulumallit_ovat_yon_ikkunassa(self):
+        hak = Path(__file__).resolve().parent / "systemd"
+        a = (hak / "yojono-a.timer.mall").read_text()
+        c = (hak / "yojono-c.timer.mall").read_text()
+        self.assertIn("OnCalendar=*-*-* 21:30:00 Europe/Helsinki", a)
+        self.assertIn("OnCalendar=*-*-* 05:00:00 Europe/Helsinki", c)
+        self.assertIn("Unit=yojono.service", a + c)
+
+
 class TestMain(Pohja):
     def test_virheellinen_jono_palauttaa_2(self):
         self.kirjoita_jono(jono([t("a", repo="../x")]))

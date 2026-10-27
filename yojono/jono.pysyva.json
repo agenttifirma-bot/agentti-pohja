@@ -1,0 +1,161 @@
+{
+  "paivakatto": 5.0,
+  "kuukausikatto": 100.0,
+  "tehtavat": [
+    {
+      "id": "tarkkailu-automaatio",
+      "tyyppi": "tarkkailu",
+      "repo": "agenttifirma",
+      "budjetti": 0.8,
+      "teema": "automaatio",
+      "toisto_pv": 2
+    },
+    {
+      "id": "tarkkailu-laatu",
+      "tyyppi": "tarkkailu",
+      "repo": "agenttifirma",
+      "budjetti": 0.8,
+      "teema": "laatu",
+      "toisto_pv": 2
+    },
+    {
+      "id": "tarkkailu-infra",
+      "tyyppi": "tarkkailu",
+      "repo": "agenttifirma",
+      "budjetti": 0.8,
+      "teema": "infra",
+      "toisto_pv": 2
+    },
+    {
+      "id": "tarkkailu-kasvu",
+      "tyyppi": "tarkkailu",
+      "repo": "agenttifirma",
+      "budjetti": 0.8,
+      "teema": "kasvu",
+      "toisto_pv": 3
+    },
+    {
+      "id": "kehitys-testit-agentti-pohja",
+      "tyyppi": "kehitys",
+      "repo": "agentti-pohja",
+      "aihe": "testit",
+      "budjetti": 1.2,
+      "toisto_pv": 3
+    },
+    {
+      "id": "kehitys-testit-llm-stopcheck",
+      "tyyppi": "kehitys",
+      "repo": "llm-stopcheck",
+      "aihe": "testit",
+      "budjetti": 1.2,
+      "toisto_pv": 4
+    },
+    {
+      "id": "kehitys-testit-mcp-model-router",
+      "tyyppi": "kehitys",
+      "repo": "mcp-model-router",
+      "aihe": "testit",
+      "budjetti": 1.2,
+      "toisto_pv": 4
+    },
+    {
+      "id": "kehitys-testit-ai-pr-reviewer-action",
+      "tyyppi": "kehitys",
+      "repo": "ai-pr-reviewer-action",
+      "aihe": "testit",
+      "budjetti": 1.0,
+      "toisto_pv": 5
+    },
+    {
+      "id": "katselmointi-agentti-pohja",
+      "tyyppi": "katselmointi",
+      "repo": "agentti-pohja",
+      "budjetti": 1.5,
+      "toisto_pv": 5
+    },
+    {
+      "id": "katselmointi-mcp-model-router",
+      "tyyppi": "katselmointi",
+      "repo": "mcp-model-router",
+      "budjetti": 1.5,
+      "toisto_pv": 7
+    },
+    {
+      "id": "katselmointi-llm-stopcheck",
+      "tyyppi": "katselmointi",
+      "repo": "llm-stopcheck",
+      "budjetti": 1.5,
+      "toisto_pv": 7
+    },
+    {
+      "id": "katselmointi-ai-pr-reviewer-action",
+      "tyyppi": "katselmointi",
+      "repo": "ai-pr-reviewer-action",
+      "budjetti": 1.5,
+      "toisto_pv": 7
+    },
+    {
+      "id": "kehitys-readme-mcp-model-router",
+      "tyyppi": "kehitys",
+      "repo": "mcp-model-router",
+      "aihe": "readme",
+      "budjetti": 1.0,
+      "toisto_pv": 7
+    },
+    {
+      "id": "kehitys-readme-llm-stopcheck",
+      "tyyppi": "kehitys",
+      "repo": "llm-stopcheck",
+      "aihe": "readme",
+      "budjetti": 1.0,
+      "toisto_pv": 7
+    },
+    {
+      "id": "kehitys-readme-ai-pr-reviewer-action",
+      "tyyppi": "kehitys",
+      "repo": "ai-pr-reviewer-action",
+      "aihe": "readme",
+      "budjetti": 1.0,
+      "toisto_pv": 7
+    },
+    {
+      "id": "kehitys-riippuvuudet-agentti-pohja",
+      "tyyppi": "kehitys",
+      "repo": "agentti-pohja",
+      "aihe": "riippuvuudet",
+      "budjetti": 1.0,
+      "toisto_pv": 7
+    },
+    {
+      "id": "kehitys-riippuvuudet-mcp-model-router",
+      "tyyppi": "kehitys",
+      "repo": "mcp-model-router",
+      "aihe": "riippuvuudet",
+      "budjetti": 1.0,
+      "toisto_pv": 7
+    },
+    {
+      "id": "kehitys-riippuvuudet-llm-stopcheck",
+      "tyyppi": "kehitys",
+      "repo": "llm-stopcheck",
+      "aihe": "riippuvuudet",
+      "budjetti": 1.0,
+      "toisto_pv": 7
+    },
+    {
+      "id": "kehitys-riippuvuudet-ai-pr-reviewer-action",
+      "tyyppi": "kehitys",
+      "repo": "ai-pr-reviewer-action",
+      "aihe": "riippuvuudet",
+      "budjetti": 1.0,
+      "toisto_pv": 7
+    },
+    {
+      "id": "ideointi-agenttifirma",
+      "tyyppi": "ideointi",
+      "repo": "agenttifirma",
+      "budjetti": 1.0,
+      "toisto_pv": 3
+    }
+  ]
+}

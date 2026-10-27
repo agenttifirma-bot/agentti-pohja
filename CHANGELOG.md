@@ -38,6 +38,7 @@ Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 - yojono: mallikutsun ohitus kulun pienentamiseksi. `kehitys.sh` ohittaa tuloksettoman ajon, jos repon HEAD ei ole muuttunut (max 7 vrk); `tarkkailu.sh` ohittaa roolin, jos GitHub-tilannekuva on identtinen (max 2 vrk). Vain onnistuneet ajot kirjataan; `YOJONO_PAKOTA=1` ohittaa.
 - testit: sydan, telegram, skeema, tulos ja snapshot_kutsu mutanttiaukot suljettu (37 selviytyjaa -> 0, paitsi 2 ekvivalenttia skeeman 10**9-oletusrajassa, jotka sallitaan erikseen). Uudet testit kattavat HTTP-tilakoodien rajat, aikakatkaisut, tyyppitarkistukset, CLI-koodit ja virheviestit.
 - testit: `isanta/julkaise.sh` esitarkistusten rajat: paketin tiedostomaara (3000), paketin koko (50 Mt) ja kontin levytila (`LEVY_MIN_MT`) testattu.
+- yojono: pysyva jono ikkunaan 21-07 (`jono.pysyva.json`, 20 toistuvaa tehtavaa, paivakatto 5 USD) ja ajastinmallit 21:30 (A) ja 05:00 (C); testit tarkistavat jonon kelpoisuuden, sallitut repot ja ajat.
 
 ## [Julkaisematon]
 

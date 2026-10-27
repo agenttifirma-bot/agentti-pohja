@@ -1,0 +1,11 @@
+# Mallitiedosto (ajo C): aamu-ajo 05:00, vzdump 02:30, rclone 04:00 ja trendit 04:30 ovat sita ennen. Paivakatsaus 07:30 on erillinen.
+[Unit]
+Description=Yojono aamu-ajo (C)
+
+[Timer]
+OnCalendar=*-*-* 05:00:00 Europe/Helsinki
+Persistent=false
+Unit=yojono.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+# Mallitiedosto (ajo A): ilta-ajo 21:30. Kayttaa samaa yojono.service-yksikkoa; paivakatto ja lukko rajaavat kulun ja paallekkaisyyden.
+[Unit]
+Description=Yojono ilta-ajo (A)
+
+[Timer]
+OnCalendar=*-*-* 21:30:00 Europe/Helsinki
+Persistent=false
+Unit=yojono.service
+
+[Install]
+WantedBy=timers.target
