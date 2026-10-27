@@ -249,7 +249,7 @@ class SuorituksenParametritTesti(unittest.TestCase):
         self.assertNotIn("A", viesti)
         self.assertIn("koodi 1", viesti)
 
-    def test_tar_add_ei_rekursiota_ja_json_ei_dict(self):
+    def test_json_ei_dict(self):
         def f(komento, input=None, capture_output=True, timeout=None):
             return subprocess.CompletedProcess(komento, 0, b"[1]", b"")
         with mock.patch.object(sk.subprocess, "run", f):
