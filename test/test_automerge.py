@@ -17,6 +17,8 @@ def tied(nimi, status="modified", changes=5, **lisa):
 BOTTI_PR = {"draft": False, "head_repo": "agenttifirma-bot/r", "base_repo": "o/r", "labels": [], "author": "agenttifirma-bot",
             "head_ref": "yo/readme-2026-10-22", "base_ref": "main"}
 
+BOTTI_PR_TESTIT = dict(BOTTI_PR, head_ref="yo/testit-2026-10-22")
+
 
 class BotinForkkiTesti(unittest.TestCase):
     def test_botin_readme_pr_kelpaa(self):
@@ -148,6 +150,24 @@ class ArvioiTesti(unittest.TestCase):
 
     def test_poisto_ei_kelpaa(self):
         self.assertFalse(am.arvioi(PR, [tied("README.md", status="removed")])[0])
+
+    def test_pelkat_testit_saavat_suuremman_rajan(self):
+        self.assertTrue(am.arvioi(PR, [tied("test/test_a.py", changes=am.MAX_RIVEJA_TESTIT)])[0])
+        self.assertFalse(am.arvioi(PR, [tied("test/test_a.py", changes=am.MAX_RIVEJA_TESTIT + 1)])[0])
+        self.assertTrue(am.arvioi(PR, [tied("test/test_a.py", changes=500), tied("CHANGELOG.md", changes=2)])[0])
+        self.assertTrue(am.arvioi(PR, [tied("test/test_a.py", changes=500), tied("docs/a.md", changes=2)])[0])
+
+    def test_suuri_raja_vain_testeille_ja_dokumenteille(self):
+        self.assertFalse(am.arvioi(PR, [tied("README.md", changes=am.MAX_RIVEJA + 1)])[0])
+        self.assertFalse(am.arvioi(PR, [tied("docs/a.md", changes=am.MAX_RIVEJA + 1)])[0])
+        self.assertFalse(am.arvioi(PR, [tied("test/test_a.py", changes=500), tied("src/a.py", changes=2)])[0])
+        self.assertFalse(am.arvioi(PR, [tied("test/test_a.py", changes=500), tied("tools/x.py", changes=2)])[0])
+        self.assertFalse(am.arvioi(PR, [tied("test/test_a.py", changes=500), tied("agentti/portti.py", changes=2)])[0])
+        self.assertFalse(am.arvioi(PR, [tied("test/test_a.py", changes=500, status="removed")])[0])
+        self.assertFalse(am.arvioi(PR, [tied("test/test_b.py", changes=500, status="renamed", previous_filename="src/b.py")])[0])
+
+    def test_botin_forkin_testit_pysyvat_400_rajassa(self):
+        self.assertFalse(am.arvioi(BOTTI_PR_TESTIT, [tied("test/test_a.py", changes=am.MAX_RIVEJA_KOODI + 1)])[0])
 
     def test_koon_rajat(self):
         self.assertTrue(am.arvioi(PR, [tied("README.md", changes=am.MAX_RIVEJA)])[0])
