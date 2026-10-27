@@ -88,3 +88,10 @@ Ajastus: kopioi `systemd/yojono.service.mall` ja `systemd/yojono.timer.mall` nim
 - `kehitys.sh`: jos saman repon + aiheen + teeman edellinen onnistunut ajo ei tuottanut muutoksia ja repon HEAD on sama, mallikutsua ei tehda (raportti: "ohitettu", kulu 0). Tila: `<perus>/kehitys-tyhjat.tsv`. Raja `KEHITYS_OHITUS_S` (oletus 604800 s = 7 vrk).
 - `tarkkailu.sh`: jos GitHub-tilannekuva (`github.md`) on identtinen saman roolin viimeksi analysoidun kanssa, mallikutsua ei tehda. Tila: `<perus>/tarkkailu-kuvat.tsv`. Raja `TARKKAILU_OHITUS_S` (oletus 172800 s = 2 vrk).
 - Vain onnistunut agenttiajo (`is_error` false, `subtype` success) kirjataan; budjetti- ja mallivirheet eivat ohita seuraavaa yritysta. `YOJONO_PAKOTA=1` ohittaa ohituksen; kuiva-ajo ei ohita eika kirjaa.
+
+## Pysyva jono ja kolme ajoa (ikkuna 21-07)
+
+- `jono.pysyva.json`: valmis pysyva jono (20 toistuvaa tehtavaa: tarkkailu, kehitys testit/readme/riippuvuudet, katselmointi, ideointi), paivakatto 5 USD, kuukausikatto 100 USD. Jarjestys = prioriteetti; `toisto_pv` ajaa tehtavan uudelleen, ja mallikutsun ohitus (kehitys.sh, tarkkailu.sh) estaa turhan kulun, kun repo tai GitHub-tilannekuva ei ole muuttunut.
+- Ajastimet: `yojono.timer` 01:00 (nykyinen), `systemd/yojono-a.timer.mall` 21:30 ja `systemd/yojono-c.timer.mall` 05:00. Ajurin lukko estaa paallekkaiset ajot.
+- Kayttoonotto (Tonyn kasin, isanta/CT115): varmuuskopio nykyisesta `/var/lib/yojono/jono.json`, kopioi `jono.pysyva.json` sen tilalle, asenna molemmat ajastimet `/etc/systemd/system/` ilman `.mall`-paatetta, `systemctl daemon-reload`, `systemctl enable --now yojono-a.timer yojono-c.timer`. Peruutus: `systemctl disable --now yojono-a.timer yojono-c.timer` ja vanha jono.json takaisin.
+
