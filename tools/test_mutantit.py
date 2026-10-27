@@ -4,6 +4,7 @@ import os
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 from tools import mutantit as mu
 
@@ -122,6 +123,14 @@ class AjoTesti(unittest.TestCase):
     def setUp(self):
         self.repo = MiniRepo()
         self.addCleanup(self.repo.sulje)
+
+    def test_lisatestit_liitetaan_moduuliin(self):
+        os.makedirs(os.path.join(self.repo.juuri, "test"), exist_ok=True)
+        with open(os.path.join(self.repo.juuri, "test", "test_apurit.py"), "w") as f:
+            f.write("")
+        with mock.patch.dict(mu.LISATESTIT, {"agentti/mod.py": ["test/test_apurit.py"]}):
+            self.assertEqual(mu.testimoduulit("agentti/mod.py", self.repo.juuri), ["test.test_mod", "test.test_apurit"])
+        self.assertEqual(mu.testimoduulit("agentti/mod.py", self.repo.juuri), ["test.test_mod"])
 
     def test_testimoduulit_loytyvat_nimella(self):
         self.assertEqual(mu.testimoduulit("agentti/mod.py", self.repo.juuri), ["test.test_mod"])

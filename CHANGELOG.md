@@ -39,6 +39,7 @@ Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 - testit: sydan, telegram, skeema, tulos ja snapshot_kutsu mutanttiaukot suljettu (37 selviytyjaa -> 0, paitsi 2 ekvivalenttia skeeman 10**9-oletusrajassa, jotka sallitaan erikseen). Uudet testit kattavat HTTP-tilakoodien rajat, aikakatkaisut, tyyppitarkistukset, CLI-koodit ja virheviestit.
 - testit: `isanta/julkaise.sh` esitarkistusten rajat: paketin tiedostomaara (3000), paketin koko (50 Mt) ja kontin levytila (`LEVY_MIN_MT`) testattu.
 - yojono: pysyva jono ikkunaan 21-07 (`jono.pysyva.json`, 20 toistuvaa tehtavaa, paivakatto 5 USD) ja ajastinmallit 21:30 (A) ja 05:00 (C); testit tarkistavat jonon kelpoisuuden, sallitut repot ja ajat.
+- tools: `mutantit.py` kattaa nyt myos moduulit, joiden testit ovat muun nimisessa tiedostossa (`LISATESTIT`: data, sydan, telegram, skeema, tulos, snapshot_kutsu). Ensiajo loysi 37 selviytyjaa (sydan 7, telegram 5, skeema 9, tulos 1, snapshot_kutsu 15), jotka suljetaan omissa testi-PR:issa.
 
 ## [Julkaisematon]
 
