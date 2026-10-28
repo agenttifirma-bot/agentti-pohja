@@ -668,6 +668,52 @@ class ToistuvaJumiTesti(Pohja):
         self.assertEqual(kutsut, [])
 
 
+class AamupakettiTesti(Pohja):
+    """C-ajon jalkeen PR-lista Telegramiin kerran per ajopaiva (agentti.aamupaketti)."""
+
+    def nyt(self, *a):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        return datetime(*a, tzinfo=ZoneInfo("Europe/Helsinki"))
+
+    def test_lahetetaan_c_ajon_aikaan_ja_merkitaan(self):
+        kutsut = []
+        self.assertIs(ajuri.laheta_aamupaketti(self.perus, self.nyt(2026, 10, 29, 5, 40), lambda a: kutsut.append(a) or 0), True)
+        self.assertEqual(kutsut, [["--laheta"]])
+        self.assertEqual((self.perus / "aamupaketti.pvm").read_text().strip(), "2026-10-28")
+
+    def test_ei_kahta_kertaa_samalla_ajopaivalla(self):
+        kutsut = []
+        f = lambda a: kutsut.append(a) or 0
+        ajuri.laheta_aamupaketti(self.perus, self.nyt(2026, 10, 29, 5, 10), f)
+        self.assertIs(ajuri.laheta_aamupaketti(self.perus, self.nyt(2026, 10, 29, 6, 0), f), False)
+        self.assertEqual(len(kutsut), 1)
+
+    def test_ei_muina_kellonaikoina(self):
+        kutsut = []
+        for h in (21, 1, 4, 8, 12):
+            self.assertIs(ajuri.laheta_aamupaketti(self.perus, self.nyt(2026, 10, 29, h, 0), lambda a: kutsut.append(a) or 0), False)
+        self.assertEqual(kutsut, [])
+
+    def test_uusi_ajopaiva_lahettaa_taas(self):
+        f = lambda a: 0
+        ajuri.laheta_aamupaketti(self.perus, self.nyt(2026, 10, 29, 5, 10), f)
+        self.assertIs(ajuri.laheta_aamupaketti(self.perus, self.nyt(2026, 10, 30, 5, 10), f), True)
+
+    def test_ilman_tzdataa_kaytetaan_annettua_aikaa(self):
+        from datetime import datetime
+        with mock.patch.dict("sys.modules", {"zoneinfo": None}):
+            self.assertIs(ajuri.laheta_aamupaketti(self.perus, datetime(2026, 10, 29, 5, 10), lambda a: 0), True)
+
+    def test_lahetysvirhe_ei_merkitse_eika_kaada(self):
+        self.assertIs(ajuri.laheta_aamupaketti(self.perus, self.nyt(2026, 10, 29, 5, 10), lambda a: 1), False)
+        self.assertFalse((self.perus / "aamupaketti.pvm").exists())
+
+        def kaatuu(a):
+            raise OSError("verkko")
+        self.assertIs(ajuri.laheta_aamupaketti(self.perus, self.nyt(2026, 10, 29, 5, 10), kaatuu), False)
+
+
 class AjopaivaTesti(unittest.TestCase):
     """Yoikkunan ajot A 21:30, B 01:00 ja C 05:00 jakavat yhden paivakaton (ajopaiva vaihtuu klo 09 Helsingin aikaa)."""
 
