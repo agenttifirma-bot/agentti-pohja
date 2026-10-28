@@ -1,0 +1,1 @@
+- yojono: pysyvaan jonoon lisatty `kehitys-testit-evalkit` (aihe testit, budjetti 1,20 USD, toisto 5 vrk); evalkit on `pr_kutsu`n sallittujen repojen listalla (#94) ja botin fork on olemassa.
