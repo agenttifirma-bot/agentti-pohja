@@ -31,6 +31,10 @@ MAX_RIVEJA_KOODI = 400
 # Saman repon PR, jossa on vain testitiedostoja (test/*.py) ja dokumentteja: testit ovat pitkia, mutaatiotestauksen aukkojen sulkeminen vaatii satoja rivia.
 MAX_RIVEJA_TESTIT = 800
 TESTIPOLKU = re.compile(r"^test/[A-Za-z0-9_./-]+\.py$")
+# Laajennus 28.10.2026 (Tony hyvaksyi): yojonon testitiedostot (vain lisays/muokkaus; nimessa ei salaisuuksiin viittaavaa sanaa)
+# ja CHANGELOG-fragmenttien poisto (tools/changelog_kokoa.py poistaa ne koostaessaan). Muu yojono/ pysyy suojattuna.
+YOJONO_TESTI = re.compile(r"^yojono/test_(?!.*(secret|token|credential|password|key))[a-z0-9_]+\.py$", re.IGNORECASE)
+FRAGMENTTI = re.compile(r"^docs/muutokset/[A-Za-z0-9_.-]+\.md$")
 # Botin koodimuutoksille (testit, ominaisuus): vain nama paatteet; riippuvuus- ja asetustiedostot jaavat ihmiselle.
 KOODIPAATTEET = (".py", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".md")
 
@@ -60,6 +64,8 @@ def polku_ok(polku):
     """(ok, syy). Suojattu polku voittaa aina sallitun."""
     if not polku:
         return False, "tyhja polku"
+    if YOJONO_TESTI.match(polku):
+        return True, ""
     for s in SUOJATUT:
         if s.search(polku):
             return False, "suojattu polku: " + polku
@@ -97,10 +103,14 @@ def botin_koodi_ok(polku):
     return True, ""
 
 
+def _testi(nimi):
+    return bool(TESTIPOLKU.match(nimi) or YOJONO_TESTI.match(nimi))
+
+
 def _vain_testeja_ja_dokumentteja(tiedostot):
     """Vahintaan yksi test/*.py ja kaikki muut tiedostot dokumentteja (SALLITUT[:-1]); nimet molemmista (uudelleennimeaminen) tarkistetaan."""
     nimet = [n for t in tiedostot for n in (t.get("filename"), t.get("previous_filename")) if n is not None]
-    return bool(nimet) and any(TESTIPOLKU.match(n) for n in nimet) and all(TESTIPOLKU.match(n) or any(r.match(n) for r in SALLITUT[:2]) for n in nimet)
+    return bool(nimet) and any(_testi(n) for n in nimet) and all(_testi(n) or any(r.match(n) for r in SALLITUT[:2]) for n in nimet)
 
 
 def arvioi(pr, tiedostot):
@@ -136,7 +146,8 @@ def arvioi(pr, tiedostot):
     if rivit > raja:
         syyt.append("liian suuri muutos (%d rivia)" % rivit)
     for t in tiedostot:
-        if t.get("status") not in ("added", "modified"):
+        poisto_ok = (not forkki and t.get("status") == "removed" and bool(FRAGMENTTI.match(str(t.get("filename")))))
+        if t.get("status") not in ("added", "modified") and not poisto_ok:
             syyt.append("tiedoston tila %s: %s" % (t.get("status"), t.get("filename")))
         for nimi in (t.get("filename"), t.get("previous_filename")):
             if nimi is None:

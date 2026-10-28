@@ -1,0 +1,1 @@
+- tools: automerge sallii yojonon testitiedostot (yojono/test_*.py, vain lisays/muokkaus) ja docs/muutokset-fragmenttien poiston (CHANGELOG-koonti); muu yojono/ ja riippuvuustiedostot pysyvat suojattuina. Tony hyvaksyi laajennuksen 28.10.2026 (doc 63).

@@ -153,6 +153,33 @@ class ArvioiTesti(unittest.TestCase):
     def test_poisto_ei_kelpaa(self):
         self.assertFalse(am.arvioi(PR, [tied("README.md", status="removed")])[0])
 
+    def test_yojonon_testitiedostot_kelpaavat_mutta_muu_yojono_ei(self):
+        for nimi in ("yojono/test_kehitys.py", "yojono/test_ajuri.py"):
+            with self.subTest(nimi=nimi):
+                self.assertTrue(am.arvioi(PR, [tied(nimi)])[0])
+        for nimi in ("yojono/ajuri.py", "yojono/kehitys.sh", "yojono/test_token.py", "yojono/test_api_key.py",
+                     "yojono/ali/test_x.py", "yojono/test_x.sh", "yojono/test_X-y.py"):
+            with self.subTest(nimi=nimi):
+                self.assertFalse(am.arvioi(PR, [tied(nimi)])[0])
+        self.assertFalse(am.arvioi(PR, [tied("yojono/test_a.py"), tied("yojono/ajuri.py")])[0])
+        self.assertFalse(am.arvioi(PR, [tied("yojono/test_a.py", status="removed")])[0])
+        self.assertFalse(am.arvioi(BOTTI_PR_TESTIT, [tied("yojono/test_a.py")])[0])
+
+    def test_yojonon_testit_saavat_suuremman_rajan(self):
+        self.assertTrue(am.arvioi(PR, [tied("yojono/test_a.py", changes=am.MAX_RIVEJA_TESTIT)])[0])
+        self.assertFalse(am.arvioi(PR, [tied("yojono/test_a.py", changes=am.MAX_RIVEJA_TESTIT + 1)])[0])
+
+    def test_changelog_fragmentin_poisto_kelpaa_vain_samassa_repossa(self):
+        koonti = [tied("CHANGELOG.md"), tied("docs/muutokset/a-b.md", status="removed"), tied("docs/muutokset/c.md", status="removed")]
+        ok, syyt = am.arvioi(PR, koonti)
+        self.assertTrue(ok, syyt)
+        for nimi in ("docs/muutokset/ali/x.md", "docs/ohje.md", "README.md", "docs/muutokset/x.py", "docs/muutokset/.env.md"):
+            with self.subTest(nimi=nimi):
+                self.assertFalse(am.arvioi(PR, [tied(nimi, status="removed")])[0])
+        self.assertFalse(am.arvioi(BOTTI_PR, [tied("docs/muutokset/a.md", status="removed")])[0])
+        t = tied("docs/muutokset/a.md", status="renamed", previous_filename="docs/muutokset/b.md")
+        self.assertFalse(am.arvioi(PR, [t])[0])
+
     def test_pelkat_testit_saavat_suuremman_rajan(self):
         self.assertTrue(am.arvioi(PR, [tied("test/test_a.py", changes=am.MAX_RIVEJA_TESTIT)])[0])
         self.assertFalse(am.arvioi(PR, [tied("test/test_a.py", changes=am.MAX_RIVEJA_TESTIT + 1)])[0])
