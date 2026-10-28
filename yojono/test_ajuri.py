@@ -633,6 +633,41 @@ class PysyvaJonoTesti(unittest.TestCase):
                 self.assertGreaterEqual(x["budjetti"], 2.0, x["id"])
 
 
+class ToistuvaJumiTesti(Pohja):
+    """Aamuraportti 28.10.: epaonnistunut toistuva tehtava ei saa jumittua, kun yritykset (3 ajoa yossa) on kaytetty."""
+
+    def tila_jumissa(self, pvm="2026-10-10"):
+        (self.perus / "tila.json").write_text(json.dumps({"kulut": {}, "tehtavat": {
+            "a": {"tila": "epaonnistui", "yrityksia": ajuri.MAX_YRITYKSIA, "pvm": pvm, "kulu": 0.5, "raportti": "", "viesti": "x", "koodi": "malli_virhe"}}}))
+
+    def test_ei_yritykseen_ennen_toisto_pv(self):
+        self.kirjoita_jono(jono([{**t("a"), "toisto_pv": 5}]))
+        self.tila_jumissa("2026-10-17")   # 2 pv sitten (PVM 2026-10-19)
+        kutsut = []
+        self.aja(lambda *a: kutsut.append(1))
+        self.assertEqual(kutsut, [])
+
+    def test_toisto_pv_kuluttua_yritetaan_taas_ja_laskuri_nollataan(self):
+        self.kirjoita_jono(jono([{**t("a"), "toisto_pv": 5}]))
+        self.tila_jumissa("2026-10-10")   # 9 pv sitten
+        kutsut = []
+
+        def suorita(tehtava, *a):
+            kutsut.append(1)
+            return ajuri.Tulos(False, 0.3, "", "taas virhe", "malli_virhe")
+
+        self.aja(suorita)
+        self.assertEqual(len(kutsut), 1)
+        self.assertEqual(self.tila()["tehtavat"]["a"]["yrityksia"], 1)   # ei MAX+1
+
+    def test_ilman_toisto_pv_jumi_pysyy(self):
+        self.kirjoita_jono(jono([t("a")]))
+        self.tila_jumissa("2026-10-10")
+        kutsut = []
+        self.aja(lambda *a: kutsut.append(1))
+        self.assertEqual(kutsut, [])
+
+
 class AjopaivaTesti(unittest.TestCase):
     """Yoikkunan ajot A 21:30, B 01:00 ja C 05:00 jakavat yhden paivakaton (ajopaiva vaihtuu klo 09 Helsingin aikaa)."""
 

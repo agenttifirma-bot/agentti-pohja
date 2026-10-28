@@ -322,6 +322,13 @@ class Ohitus(Pohja):
         self.aja(REPO, "1.00", "testit", KEHITYS_OHITUS_S="0")
         self.assertEqual(self.kutsuja(), 2)
 
+    def test_riippuvuudet_ei_ohitu_vaikka_head_sama(self):
+        """Aamuraportti 28.10.: riippuvuuksien ajantasaisuus muuttuu ylavirrassa, vaikka repon HEAD pysyy samana."""
+        self.agentti_onnistuu()
+        self.aja(REPO, "1.00", "riippuvuudet")
+        self.aja(REPO, "1.00", "riippuvuudet")
+        self.assertEqual(self.kutsuja(), 2)
+
     def test_muu_aihe_ei_ohitu(self):
         self.agentti_onnistuu()
         self.aja(REPO, "1.00", "testit")
