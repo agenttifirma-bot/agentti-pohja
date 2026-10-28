@@ -14,6 +14,10 @@ Julkaisu ja peruutus vaihtavat **vain koodihakemiston** (sisarhakemisto + `mv`, 
 
 Kohdekohtaiset asetukset ovat tiedostoissa `isanta/julkaisu/<kohde>.conf` (asennus: `/root/julkaisu/`). Ne ovat pelkkää dataa: skripti lukee ne rivi riviltä (ei `source`), sallii vain tunnetut avaimet ja turvalliset merkit, eikä niihin kuulu salaisuuksia.
 
+## Terveystarkistus (valinnainen)
+
+Konfiguraation `TERVEYS_KOMENTO` (esim. `python3 -B -m yojono tila`) ajetaan asennuksen jälkeen kohteen koodihakemistossa, `SAVU_KAYTTAJA`:na ja 60 sekunnin aikarajalla. Poistumiskoodi 0 = ok. Epäonnistuminen kumoaa koodin automaattisesti (sama kumous kuin savukokeessa); tila ja konfiguraatio tarkistetaan tiivisteellä heti perään, joten komennon pitää olla vain luku. Tyhjä arvo = ei tarkistusta. Koko kontin snapshot-rollbackia ei käytetä automaattisesti, koska se tuhoaisi tilan.
+
 ## Paketti
 
 `julkaise.sh` vaatii paketin, jossa on **commit-tunniste** (`git archive` tallentaa sen tar-otsikkoon) ja **tasan yksi ylätason hakemisto**. Muu paketti hylätään.

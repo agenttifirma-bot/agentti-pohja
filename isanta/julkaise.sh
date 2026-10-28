@@ -134,7 +134,7 @@ virhe() {
 }
 
 # ---- konfiguraatio (vain data, ei koskaan source) -------------------------------
-SALLITUT_AVAIMET="KOHDE CT REPO REPO_URL JULKINEN HAARA KOODI KOODI_OMISTAJA KOODI_MODE KOODI_GIT TILA KONFIG PALVELUT AJASTIMET PROSESSI_KUVIO LUKOT IKKUNA_S ASENTAJA PALAUTTAJA POIS VAADITUT TESTI_TAPA TESTI_CT TESTI_KAYTTAJA TESTI_ARGUMENTIT SAVU_KAYTTAJA SAVU_MODUULIT YKSIKOT_ASENNUS YKSIKKOKANSIO PREV_MAARA LEVY_MIN_MT SKRIPTIT_HAKEMISTO SKRIPTIT_PAKETISSA"
+SALLITUT_AVAIMET="KOHDE CT REPO REPO_URL JULKINEN HAARA KOODI KOODI_OMISTAJA KOODI_MODE KOODI_GIT TILA KONFIG PALVELUT AJASTIMET PROSESSI_KUVIO LUKOT IKKUNA_S ASENTAJA PALAUTTAJA POIS VAADITUT TESTI_TAPA TESTI_CT TESTI_KAYTTAJA TESTI_ARGUMENTIT SAVU_KAYTTAJA SAVU_MODUULIT TERVEYS_KOMENTO YKSIKOT_ASENNUS YKSIKKOKANSIO PREV_MAARA LEVY_MIN_MT SKRIPTIT_HAKEMISTO SKRIPTIT_PAKETISSA"
 
 nollaa_konf() {
   local k; for k in $SALLITUT_AVAIMET; do printf -v "$k" '%s' ""; done
@@ -511,6 +511,15 @@ print("savu OK")'
   info "savukoe ok ($SAVU_MODUULIT)."
 }
 
+# Toiminnallinen terveystarkistus (valinnainen, TERVEYS_KOMENTO): komento ajetaan asennetun koodin hakemistossa (SAVU_KAYTTAJA:na),
+# aikarajalla 60 s; poistumiskoodi 0 = ok. Epaonnistuminen kumoaa koodin (virhe -> kumoa_kesken). Komennon pitaa olla vain luku (tila ja
+# konfiguraatio tarkistetaan tiivisteella heti perassa). Tyhja arvo = ei tarkistusta.
+terveystarkistus() {
+  [ -n "$TERVEYS_KOMENTO" ] || return 0
+  local out; out=$(ajaku_hak "$SAVU_KAYTTAJA" "$KOODI" timeout 60 $TERVEYS_KOMENTO 2>&1) || { echo "$out" | tail -3 | sed 's/^/    /'; return 1; }
+  info "terveystarkistus ok ($TERVEYS_KOMENTO)."
+}
+
 # =============================================================================
 # TOIMINNOT
 # =============================================================================
@@ -645,6 +654,7 @@ asenna_yleinen() {
   fi
   asenna_yksikot || virhe "yksikoiden asennus epaonnistui"
   savukoe || virhe "savukoe epaonnistui (paluu edelliseen versioon)"
+  terveystarkistus || virhe "terveystarkistus epaonnistui (paluu edelliseen versioon)"
 }
 
 asenna_delegoitu() {

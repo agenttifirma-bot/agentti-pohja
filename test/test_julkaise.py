@@ -1049,6 +1049,40 @@ class VikatilanneTesti(Pohja):
         self.assertIn("keskenerainen muutos kumottu", ulos)
         self.assertIn("PERUUTUS", ulos)
 
+    TERVEYS_PY = "import sys\nsys.exit(1 if open('VERSION').read().strip() == '2' else 0)\n"
+
+    def test_terveystarkistus_ok_ja_kaatuu_automaattinen_paluu(self):
+        self.l.commit(1, lisaa={"terveys.py": self.TERVEYS_PY})
+        self.l.kirjoita_konf(TERVEYS_KOMENTO="python3 -B terveys.py")
+        self.valmis()
+        self.l.commit(3, lisaa={"terveys.py": self.TERVEYS_PY})
+        rc, ulos = self.l.julkaise()
+        self.assertEqual(rc, 0, ulos)
+        self.assertIn("terveystarkistus ok (python3 -B terveys.py)", ulos)
+        self.assertEqual(self.l.versio_koodissa(), "3")
+        self.l.commit(2, lisaa={"terveys.py": self.TERVEYS_PY})
+        koodi_ennen, tila_ennen = puu(self.l.koodi), puu(self.l.tila)
+        rc, ulos = self.l.julkaise()
+        self.assertEpa(rc, ulos, "terveystarkistus epaonnistui")
+        self.assertEqual(self.l.versio_koodissa(), "3")
+        self.assertEqual(puu(self.l.koodi), koodi_ennen)
+        self.assertEqual(puu(self.l.tila), tila_ennen)
+        self.assertTrue(list(self.l.koodi.parent.glob(self.l.koodi.name + ".viallinen-*")))
+        self.assertIn("keskenerainen muutos kumottu", ulos)
+        self.assertEqual((self.l.t / "sysd" / "app.timer.active").read_text().strip(), "active", "ajastin ei palautunut")
+
+    def test_terveystarkistus_puuttuessa_ei_ajeta(self):
+        self.valmis()
+        self.l.commit(2)
+        rc, ulos = self.l.julkaise()
+        self.assertEqual(rc, 0, ulos)
+        self.assertNotIn("terveystarkistus", ulos)
+
+    def test_terveyskomennon_kielletty_merkki_hylataan_konfiguraatiossa(self):
+        self.l.kirjoita_konf(TERVEYS_KOMENTO="python3 -c x; rm -rf /")
+        rc, ulos = self.l.julkaise(ensi=True)
+        self.assertEpa(rc, ulos, "kielletty merkki arvossa TERVEYS_KOMENTO")
+
     def test_prev_nimi_tormaa_keskeytetaan_ennen_muutoksia(self):
         self.valmis()
         prev = self.l.previt()[0]
