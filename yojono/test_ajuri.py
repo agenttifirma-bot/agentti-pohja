@@ -668,6 +668,41 @@ class ToistuvaJumiTesti(Pohja):
         self.assertEqual(kutsut, [])
 
 
+class OpitTesti(Pohja):
+    """Oppiva silmukka: opit.md paivittyy enintaan kerran ~vuorokaudessa, virhe ei kaada ajoa."""
+
+    def test_puuttuva_tiedosto_paivitetaan_polulla(self):
+        kutsut = []
+        self.assertIs(ajuri.paivita_opit(self.perus, 1000.0, lambda a: kutsut.append(a) or 0), True)
+        self.assertEqual(kutsut, [["--kirjoita", str(self.perus / "opit.md")]])
+
+    def test_tuore_tiedosto_jaa_rauhaan_vanha_paivitetaan(self):
+        polku = self.perus / "opit.md"
+        polku.write_text("x")
+        os.utime(polku, (1000, 1000))
+        kutsut = []
+        f = lambda a: kutsut.append(a) or 0
+        self.assertIs(ajuri.paivita_opit(self.perus, 1000 + ajuri.OPIT_IKA_S - 1, f), False)
+        self.assertIs(ajuri.paivita_opit(self.perus, 1000 + ajuri.OPIT_IKA_S, f), True)
+        self.assertEqual(len(kutsut), 1)
+
+    def test_nollasta_poikkeava_paluukoodi_ei_ole_onnistuminen(self):
+        self.assertIs(ajuri.paivita_opit(self.perus, 1.0, lambda a: 1), False)
+
+    def test_poikkeus_ei_kaada(self):
+        def rikki(a):
+            raise OSError("verkko")
+        with mock.patch.object(sys, "stderr", io.StringIO()) as err:
+            self.assertIs(ajuri.paivita_opit(self.perus, 1.0, rikki), False)
+        self.assertIn("Opit-paivitys epaonnistui: OSError", err.getvalue())
+
+    def test_oletuskirjoittaja_on_pr_opit_ja_nyt_oletus_kello(self):
+        from agentti import pr_opit
+        with mock.patch.object(pr_opit, "main", return_value=0) as m:
+            self.assertIs(ajuri.paivita_opit(self.perus), True)
+        m.assert_called_once_with(["--kirjoita", str(self.perus / "opit.md")])
+
+
 class AamupakettiTesti(Pohja):
     """C-ajon jalkeen PR-lista Telegramiin kerran per ajopaiva (agentti.aamupaketti)."""
 
@@ -1483,3 +1518,11 @@ class MainTarkkaTesti(Pohja):
             p.reset_mock()
             self.assertEqual(ajuri.main(["kuiva"]), 0)
             p.assert_not_called()
+
+    def test_opit_paivittyy_vain_ajolla(self):
+        self.kirjoita_jono(jono([]))
+        with self.env(), mock.patch.object(ajuri, "paivita_opit") as p, mock.patch("builtins.print"):
+            self.assertEqual(ajuri.main(["kuiva"]), 0)
+            p.assert_not_called()
+            self.assertEqual(ajuri.main(["ajo"]), 0)
+            p.assert_called_once_with(str(self.perus))
