@@ -107,7 +107,11 @@ def main(argv=None, hae=None, env=None):
         return 2
     teksti = muotoile(keraa(hae))
     try:   # laatumittari on lisa: virhe ei esta aamupakettia
-        teksti += "\n\n" + pr_laatu.muotoile(pr_laatu.keraa(hae))
+        laatu = pr_laatu.keraa(hae)
+        teksti += "\n\n" + pr_laatu.muotoile(laatu)
+        kulut = pr_laatu.lue_kulut(env.get("YOJONO_PERUS"))
+        if kulut:   # nostoehdot vaativat kulutiedon; ilman sita rivia ei nayteta
+            teksti += "\n" + pr_laatu.nostoehdot(laatu, pr_laatu.kulu_ajalta(kulut))[1]
     except Exception:
         pass
     print(teksti)

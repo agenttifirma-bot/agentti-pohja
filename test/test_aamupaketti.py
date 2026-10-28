@@ -140,6 +140,17 @@ class MuotoiluJaMainTesti(unittest.TestCase):
         _, ulos, _, _ = self.ajaa([])
         self.assertIn("Yojono-PR:t 30 vrk: 0 mergattu, 0 suljettu, 0 auki", ulos)
 
+    def test_main_nostoehdot_vain_kulutiedon_kanssa(self):
+        import json, os, tempfile
+        _, ilman, _, _ = self.ajaa([], env={"YOJONO_PERUS": "/ei/ole/olemassa"})
+        self.assertNotIn("Paivakaton nosto", ilman)
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "tila.json"), "w") as f:
+                json.dump({"kulut": {"2999-01-01": 1.0}}, f)
+            _, ulos, _, _ = self.ajaa([], env={"YOJONO_PERUS": d})
+        self.assertIn("Paivakaton nosto (30 vrk)", ulos)
+        self.assertIn("ei viela:", ulos)
+
     def test_main_laatumittarin_virhe_ei_esta_aamupakettia(self):
         with mock.patch.object(ap.pr_laatu, "keraa", side_effect=RuntimeError("x")):
             rc, ulos, _, _ = self.ajaa([])
