@@ -1,1 +1,0 @@
-- agentti: `evalkit` lisatty PR-kutsun sallittujen repojen listaan (`REPOT`), jotta yojono voi avata sen PR:ita botin forkista (vaatii botin forkin repoon `agenttifirma-bot/evalkit`).
