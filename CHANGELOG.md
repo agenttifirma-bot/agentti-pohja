@@ -41,6 +41,7 @@ Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 - yojono: pysyva jono ikkunaan 21-07 (`jono.pysyva.json`, 20 toistuvaa tehtavaa, paivakatto 5 USD) ja ajastinmallit 21:30 (A) ja 05:00 (C); testit tarkistavat jonon kelpoisuuden, sallitut repot ja ajat.
 - tools: `mutantit.py` kattaa nyt myos moduulit, joiden testit ovat muun nimisessa tiedostossa (`LISATESTIT`: data, sydan, telegram, skeema, tulos, snapshot_kutsu). Ensiajo loysi 37 selviytyjaa (sydan 7, telegram 5, skeema 9, tulos 1, snapshot_kutsu 15), jotka suljetaan omissa testi-PR:issa.
 - agentti: `aamupaketti` (python3 -m agentti.aamupaketti [--laheta]) kokoaa avoimet PR:t ryhmiin (Tonyn mergattavat / automerge / muut) ja lahettaa Telegramiin; vain luku, ei tunnuksia GitHubiin.
+- yojono: kulukatto ja toisto lasketaan ajopaivalle, joka vaihtuu klo 09 Helsingin aikaa (ajot 21:30, 01:00 ja 05:00 jakavat yhden katon, aiemmin 01:00-ajo kulutti koko kalenteripaivan katon); katselmoinnin budjetti 1,50 -> 2,50 (agentti-pohja) ja 2,00 (muut), koska toteutunut kulu oli 1,86 USD.
 
 ## [Julkaisematon]
 

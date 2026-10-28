@@ -92,6 +92,7 @@ Ajastus: kopioi `systemd/yojono.service.mall` ja `systemd/yojono.timer.mall` nim
 ## Pysyva jono ja kolme ajoa (ikkuna 21-07)
 
 - `jono.pysyva.json`: valmis pysyva jono (20 toistuvaa tehtavaa: tarkkailu, kehitys testit/readme/riippuvuudet, katselmointi, ideointi), paivakatto 5 USD, kuukausikatto 100 USD. Jarjestys = prioriteetti; `toisto_pv` ajaa tehtavan uudelleen, ja mallikutsun ohitus (kehitys.sh, tarkkailu.sh) estaa turhan kulun, kun repo tai GitHub-tilannekuva ei ole muuttunut.
+- Ajopaiva: kulukatto (`paivakatto`) ja `toisto_pv` lasketaan ajopaivalle, joka vaihtuu klo 09 Helsingin aikaa, joten yoikkunan ajot A, B ja C jakavat yhden katon (`ajuri.ajopaiva`).
 - Ajastimet: `yojono.timer` 01:00 (nykyinen), `systemd/yojono-a.timer.mall` 21:30 ja `systemd/yojono-c.timer.mall` 05:00. Ajurin lukko estaa paallekkaiset ajot.
 - Kayttoonotto (Tonyn kasin, isanta/CT115): varmuuskopio nykyisesta `/var/lib/yojono/jono.json`, kopioi `jono.pysyva.json` sen tilalle, asenna molemmat ajastimet `/etc/systemd/system/` ilman `.mall`-paatetta, `systemctl daemon-reload`, `systemctl enable --now yojono-a.timer yojono-c.timer`. Peruutus: `systemctl disable --now yojono-a.timer yojono-c.timer` ja vanha jono.json takaisin.
 

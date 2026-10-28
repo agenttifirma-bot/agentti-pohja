@@ -18,7 +18,7 @@ import sys
 import time
 import urllib.request
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from agentti import pr_kutsu
@@ -45,6 +45,7 @@ OLETUS_PAIVAKATTO = 3.0
 MAX_YRITYKSIA = 2
 TEHTAVA_AIKARAJA_S = 1800
 ILTA_AIKARAJA_S = 3 * 3600
+AJOPAIVAN_ALKU_H = 9   # ajopaiva (kulukatto, toisto) vaihtuu klo 09 Helsingin aikaa: yoikkuna 21-07 mahtuu yhteen ajopaivaan
 TELEGRAM_MAX = 3900
 ID_RE = re.compile(r"^[a-z0-9_-]{1,60}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
@@ -143,6 +144,17 @@ def lue_kuukausikatto(jono, paivakatto):
     if isinstance(arvo, bool) or not isinstance(arvo, (int, float)) or not paivakatto <= arvo <= 2000:
         raise JonoVirhe("kuukausikatto pitaa olla luku valilta paivakatto-2000 USD")
     return float(arvo)
+
+
+def ajopaiva(nyt=None):
+    """Ajopaivan paivays (ISO). Vaihtuu klo AJOPAIVAN_ALKU_H Europe/Helsinki: ajot A 21:30, B 01:00 ja C 05:00 jakavat yhden paivakaton,
+    eika kalenteripaivan vaihtuminen yolla nollaa tai jaa sita kahtia."""
+    try:
+        from zoneinfo import ZoneInfo
+        nyt = nyt or datetime.now(ZoneInfo("Europe/Helsinki"))
+    except Exception:  # ei tzdataa: palvelimen oma aika
+        nyt = nyt or datetime.now()
+    return (nyt - timedelta(hours=AJOPAIVAN_ALKU_H)).date().isoformat()
 
 
 def kuukauden_kulu(tila, pvm):
@@ -439,7 +451,7 @@ def skripti_tyypille(skripti, tyyppi):
 def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.monotonic, pvm=None, kuiva=False,
         telegram=laheta_telegram, fork_tarkista=None):
     """Ajaa jonon. Palauttaa tekstiyhteenvedon. Paivakatto: ennen tehtavaa varataan sen koko budjetti."""
-    pvm = pvm or date.today().isoformat()
+    pvm = pvm or ajopaiva()
     perus = Path(perus)
     perus.mkdir(parents=True, exist_ok=True)
     with open(perus / "lukko", "w") as lukko:
