@@ -91,11 +91,61 @@ class MuotoiluJaMainTesti(unittest.TestCase):
             rc = ap.main(argv, hae=feikki({}, {}), env=env or {})
         return rc, ulos.getvalue(), virhe.getvalue(), t
 
+    def test_oletushaku_lukee_json_ja_pyytaa_user_agentin(self):
+        class V:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return b'[{"number": 1}]'
+        with mock.patch.object(ap.urllib.request, "urlopen", return_value=V()) as u:
+            self.assertEqual(ap._oletushaku("https://api.github.com/x"), [{"number": 1}])
+        pyynto = u.call_args[0][0]
+        self.assertEqual(pyynto.get_header("User-agent"), "agenttifirma-aamupaketti")
+        self.assertEqual(u.call_args[1]["timeout"], 20)
+
+    def test_ci_tila_kesken_kun_runeja_ei_tai_haku_kaatuu(self):
+        self.assertEqual(ap._ci(lambda u: {"check_runs": []}, "r", "abc"), "kesken")
+
+        def kaatuu(url):
+            raise OSError("x")
+        self.assertEqual(ap._ci(kaatuu, "r", "abc"), "kesken")
+        self.assertEqual(ap._ci(lambda u: {"check_runs": [{"status": "completed", "conclusion": "success"}]}, "r", "abc"), "vihrea")
+        self.assertEqual(ap._ci(lambda u: {"check_runs": [{"status": "completed", "conclusion": "failure"}]}, "r", "abc"), "punainen")
+
+    def test_pr_ilman_head_kenttaa_ei_kaada(self):
+        p = {"number": 1, "title": "x", "draft": False, "html_url": "https://github.com/o/r/pull/1", "head": None}
+        seen = []
+
+        def hae(url):
+            if "/pulls?state=open" in url:
+                return [p] if "agentti-pohja" in url else []
+            seen.append(url)
+            if "/check-runs" in url:
+                return {"check_runs": []}
+            return [{"filename": "test/test_a.py"}]
+        self.assertEqual(len(ap.keraa(hae)["muut"]), 1)
+        self.assertIn("/commits//check-runs", seen[0])
+
+    def test_main_lukee_sys_argvn_oletuksena(self):
+        ulos, virhe = io.StringIO(), io.StringIO()
+        with mock.patch.object(ap.sys, "argv", ["aamupaketti", "--muu"]), contextlib.redirect_stdout(ulos), contextlib.redirect_stderr(virhe):
+            self.assertEqual(ap.main(hae=feikki({}, {}), env={}), 2)
+
     def test_main_tulostaa_ilman_lahetysta(self):
         rc, ulos, _, t = self.ajaa([])
         self.assertEqual(rc, 0)
         self.assertIn("Aamupaketti", ulos)
         t.assert_not_called()
+
+    def test_main_liittaa_yojono_pr_laatumittarin(self):
+        _, ulos, _, _ = self.ajaa([])
+        self.assertIn("Yojono-PR:t 30 vrk: 0 mergattu, 0 suljettu, 0 auki", ulos)
+
+    def test_main_laatumittarin_virhe_ei_esta_aamupakettia(self):
+        with mock.patch.object(ap.pr_laatu, "keraa", side_effect=RuntimeError("x")):
+            rc, ulos, _, _ = self.ajaa([])
+        self.assertEqual(rc, 0)
+        self.assertIn("Aamupaketti", ulos)
+        self.assertNotIn("Yojono-PR:t", ulos)
 
     def test_main_laheta_kayttaa_yojonon_telegram_ymparistoa(self):
         rc, _, _, t = self.ajaa(["--laheta"], env={"YOJONO_TELEGRAM_TOKEN": "tok", "YOJONO_TELEGRAM_CHAT": "42"})
