@@ -626,6 +626,43 @@ class PysyvaJonoTesti(unittest.TestCase):
         self.assertIn("OnCalendar=*-*-* 05:00:00 Europe/Helsinki", c)
         self.assertIn("Unit=yojono.service", a + c)
 
+    def test_katselmoinnin_budjetti_kattaa_toteutuneen_kulun(self):
+        """27.-28.10. yo: katselmointi maksoi 1,86 USD ja kaatui 1,50 USD:n budjettiin ilman raporttia."""
+        for x in self.lue()["tehtavat"]:
+            if x["tyyppi"] == "katselmointi":
+                self.assertGreaterEqual(x["budjetti"], 2.0, x["id"])
+
+
+class AjopaivaTesti(unittest.TestCase):
+    """Yoikkunan ajot A 21:30, B 01:00 ja C 05:00 jakavat yhden paivakaton (ajopaiva vaihtuu klo 09 Helsingin aikaa)."""
+
+    def pvm(self, *a):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        return ajuri.ajopaiva(datetime(*a, tzinfo=ZoneInfo("Europe/Helsinki")))
+
+    def test_yon_kolme_ajoa_samalla_ajopaivalla(self):
+        a = self.pvm(2026, 10, 27, 21, 30)
+        self.assertEqual(a, "2026-10-27")
+        self.assertEqual(self.pvm(2026, 10, 28, 1, 0), a)
+        self.assertEqual(self.pvm(2026, 10, 28, 5, 0), a)
+        self.assertEqual(self.pvm(2026, 10, 28, 8, 59), a)
+
+    def test_ajopaiva_vaihtuu_klo_9(self):
+        self.assertEqual(self.pvm(2026, 10, 28, 9, 0), "2026-10-28")
+        self.assertEqual(self.pvm(2026, 10, 28, 21, 30), "2026-10-28")
+
+    def test_ajopaiva_kayttaa_helsingin_aikaa_vaikka_palvelin_olisi_utc(self):
+        from datetime import datetime, timezone
+        # 2026-10-28 01:00 Helsinki (EET, UTC+2) = 2026-10-27 23:00 UTC
+        self.assertEqual(ajuri.ajopaiva(datetime(2026, 10, 27, 23, 0, tzinfo=timezone.utc)), "2026-10-27")
+
+    def test_ilman_tzdataa_kaytetaan_annettua_aikaa_tai_palvelimen_aikaa(self):
+        from datetime import datetime
+        with mock.patch.dict("sys.modules", {"zoneinfo": None}):
+            self.assertEqual(ajuri.ajopaiva(datetime(2026, 10, 28, 1, 0)), "2026-10-27")
+            self.assertRegex(ajuri.ajopaiva(), r"^\d{4}-\d{2}-\d{2}$")
+
 
 class TestMain(Pohja):
     def test_virheellinen_jono_palauttaa_2(self):
