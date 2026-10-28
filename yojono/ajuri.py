@@ -542,6 +542,36 @@ def peilaa(skripti):
         return False
 
 
+AAMUPAKETTI_TUNNIT = (5, 6, 7)   # Helsingin kello: C-ajo alkaa 05:00 ja kestaa enintaan ILTA_AIKARAJA_S (3 h); B (01:00) paattyy ennen 05:00
+
+
+def laheta_aamupaketti(perus, nyt=None, laheta=None):
+    """C-ajon jalkeen kerran per ajopaiva: avoimet PR:t ryhmiteltyina Telegramiin (agentti.aamupaketti --laheta), jotta Tony nakee aamulla
+    mita mergataan. Virhe ei koskaan kaada ajoa. Palauttaa True vain jos paketti lahetettiin."""
+    try:
+        try:
+            from zoneinfo import ZoneInfo
+            nyt = nyt or datetime.now(ZoneInfo("Europe/Helsinki"))
+        except Exception:
+            nyt = nyt or datetime.now()
+        if nyt.hour not in AAMUPAKETTI_TUNNIT:
+            return False
+        merkki = Path(perus) / "aamupaketti.pvm"
+        pvm = ajopaiva(nyt)
+        if merkki.exists() and merkki.read_text().strip() == pvm:
+            return False
+        if laheta is None:
+            from agentti import aamupaketti
+            laheta = aamupaketti.main
+        if laheta(["--laheta"]) != 0:
+            return False
+        merkki.write_text(pvm + "\n")
+        return True
+    except Exception as virhe:  # aamupaketti on lisa, ei saa kaataa yoajoa
+        print(f"Aamupaketti epaonnistui: {type(virhe).__name__}", file=sys.stderr)
+        return False
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Yojonon ajuri")
     p.add_argument("komento", choices=["ajo", "kuiva", "tila"])
@@ -557,6 +587,7 @@ def main(argv=None):
             print(tulos)
         elif a.komento == "ajo":
             peilaa(os.environ.get("YOJONO_PEILAA"))
+            laheta_aamupaketti(perus)
     except JonoVirhe as virhe:
         print(f"jono.json virheellinen: {virhe}", file=sys.stderr)
         return 2

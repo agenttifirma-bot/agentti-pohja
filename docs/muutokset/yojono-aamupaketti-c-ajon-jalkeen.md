@@ -1,0 +1,1 @@
+- yojono: ajuri lahettaa C-ajon (05:00) jalkeen kerran per ajopaiva aamupaketin Telegramiin (`agentti.aamupaketti`: avoimet PR:t ryhmiteltyina Tonyn mergattavat / automerge / muut linkkeineen); virhe ei kaada ajoa, ei uutta ajastinta. +6 testia.
