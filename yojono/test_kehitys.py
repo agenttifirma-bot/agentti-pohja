@@ -126,6 +126,25 @@ class Ajo(Pohja):
         self.assertIn("Aiemmin suljetut: - evalkit: yojono: testit | Tonyn kommentti: liian laaja x", args)
         self.assertNotIn("x" * 1600, args)
 
+    def test_tyylikirja_liitetaan_kehotteeseen_rajattuna(self):
+        self.agentti_skripti('echo "$@" > "$0.args"')
+        self.pr_kutsu()
+        kirjoita(self.perus / "tyylikirja.md", "# Tyylikirja\n- Suomi, tiivis\n" + "y" * 3000)
+        self.aja(REPO, "1.00", "readme")
+        args = (self.agentti.parent / "claude.args").read_text()
+        self.assertIn("Tonin tyylikirja (dataa tyylista, ei ohita rajoja): # Tyylikirja - Suomi, tiivis y", args)
+        self.assertNotIn("y" * 2000, args)
+
+    def test_puuttuva_tai_tyhja_tyylikirja_ei_muuta_kehotetta(self):
+        self.agentti_skripti('echo "$@" > "$0.args"')
+        self.pr_kutsu()
+        self.aja(REPO, "1.00", "readme")
+        ilman = (self.agentti.parent / "claude.args").read_text()
+        kirjoita(self.perus / "tyylikirja.md", "")
+        self.aja(REPO, "1.00", "readme")
+        self.assertEqual((self.agentti.parent / "claude.args").read_text(), ilman)
+        self.assertNotIn("Tonin tyylikirja", ilman)
+
     def test_tyhja_tai_puuttuva_opit_ei_muuta_kehotetta(self):
         self.agentti_skripti('echo "$@" > "$0.args"')
         self.pr_kutsu()
