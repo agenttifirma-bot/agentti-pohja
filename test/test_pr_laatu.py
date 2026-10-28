@@ -1,6 +1,10 @@
 import contextlib
 import io
+import json
+import os
+import tempfile
 import unittest
+import unittest.mock
 from unittest import mock
 from datetime import datetime, timezone
 
@@ -111,6 +115,79 @@ class MuotoiluJaMainTesti(unittest.TestCase):
             rc, ulos, virhe = self.ajaa(a)
             self.assertEqual((rc, ulos), (2, ""))
             self.assertIn("kaytto:", virhe)
+
+
+def _tulos(mergattu, suljettu):
+    return {"yht": {"mergattu": mergattu, "suljettu": suljettu, "auki": 0}, "repoittain": {}, "aiheittain": {}}
+
+
+class KuluTesti(unittest.TestCase):
+    def test_kulu_ajalta_summaa_vain_ikkunan_sisalta(self):
+        kulut = {"2026-09-27": 100.0, "2026-09-28": 1.5, "2026-10-28": 2.5, "x": 9.0, "2026-10-01": "ei-luku"}
+        self.assertEqual(pl.kulu_ajalta(kulut, 30, NYT), 4.0)
+        self.assertEqual(pl.kulu_ajalta(kulut, 29, NYT), 2.5)
+        self.assertEqual(pl.kulu_ajalta(None, 30, NYT), 0)
+
+    def test_kulu_ajalta_oletusaika_on_nyt(self):
+        tanaan = datetime.now(timezone.utc).date().isoformat()
+        self.assertEqual(pl.kulu_ajalta({tanaan: 1.25}), 1.25)
+
+    def test_lue_kulut_tiedostosta_ja_virheet_tyhjaksi(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(pl.lue_kulut(d), {})
+            with open(os.path.join(d, "tila.json"), "w") as f:
+                json.dump({"kulut": {"2026-10-27": 3.0}}, f)
+            self.assertEqual(pl.lue_kulut(d), {"2026-10-27": 3.0})
+            for sisalto in ("ei json", "[]", '{"kulut": 5}'):
+                with open(os.path.join(d, "tila.json"), "w") as f:
+                    f.write(sisalto)
+                self.assertEqual(pl.lue_kulut(d), {}, sisalto)
+
+    def test_lue_kulut_oletuspolku_ymparistosta(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "tila.json"), "w") as f:
+                json.dump({"kulut": {"a": 1}}, f)
+            with unittest.mock.patch.dict(os.environ, {"YOJONO_PERUS": d}):
+                self.assertEqual(pl.lue_kulut(), {"a": 1})
+
+
+class NostoehdotTesti(unittest.TestCase):
+    def test_kaikki_ehdot_tayttyvat(self):
+        ok, rivi = pl.nostoehdot(_tulos(20, 0), 80.0)
+        self.assertTrue(ok)
+        self.assertIn("EHDOT TAYTTYVAT", rivi)
+        self.assertIn("paatettyja 20/20", rivi)
+        self.assertIn("kulu per merge 4.0 USD", rivi)
+
+    def test_liian_vahan_prita(self):
+        ok, rivi = pl.nostoehdot(_tulos(19, 0), 10.0)
+        self.assertIs(ok, False)
+        self.assertIn("PR:ia liian vahan", rivi)
+        self.assertNotIn("mergausprosentti alle", rivi)
+
+    def test_mergausprosentti_raja(self):
+        ok75, rivi75 = pl.nostoehdot(_tulos(15, 5), 10.0)               # 75 % tasan
+        self.assertIs(ok75, True)
+        self.assertIn("mergausprosentti 75 %", rivi75)
+        ok, rivi = pl.nostoehdot(_tulos(14, 6), 10.0)                   # 70 %
+        self.assertIs(ok, False)
+        self.assertIn("mergausprosentti alle rajan", rivi)
+
+    def test_kulu_per_merge_raja(self):
+        self.assertIs(pl.nostoehdot(_tulos(20, 0), 80.0)[0], True)
+        ok, rivi = pl.nostoehdot(_tulos(20, 0), 80.1)
+        self.assertIs(ok, False)
+        self.assertIn("kulu per merge yli rajan", rivi)
+
+    def test_ei_mergattuja(self):
+        ok, rivi = pl.nostoehdot(_tulos(0, 0), 5.0)
+        self.assertIs(ok, False)
+        self.assertIn("kulu per merge - ", rivi)
+        self.assertIn("mergausprosentti 0 %", rivi)
+        self.assertIn("kulu per merge yli rajan", rivi)
+
+    def test_paivia_nakyy_rivilla(self):
+        self.assertIn("(14 vrk)", pl.nostoehdot(_tulos(1, 0), 1.0, 14)[1])
 
 
 if __name__ == "__main__":

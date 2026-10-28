@@ -3,6 +3,7 @@
 Kasi laadun arviointi korvautuu luvulla: mergausprosentti repoittain ja tehtavan otsikon (aihe) mukaan. Kaytto: python3 -m agentti.pr_laatu [PAIVIA]
 Aamupaketti liittaa tiivistelman riviin 'Yojono-PR:t'."""
 import json
+import os
 import re
 import sys
 import urllib.request
@@ -13,6 +14,12 @@ from .pr_kutsu import REPOT
 OMISTAJA = "tonyweckstrom1987"
 BOTTI = "agenttifirma-bot"
 OLETUS_PAIVIA = 30
+# Paivakaton noston ehdot (Tony 28.10.: nostetaan, kun laatu on riittava ja virheita vahan). Aloitusarvot; Tony saataa tarvittaessa.
+NOSTO_MIN_PAATETTYJA = 20      # mergattuja + suljettuja ikkunassa
+NOSTO_MIN_MERGE_PROS = 75
+NOSTO_MAX_KULU_PER_MERGE = 4.0  # USD; kulu = koko yojonon kulu ikkunassa (myos tarkkailu/katselmointi), jaettuna mergattujen PR:ien maaralla
+OLETUS_PERUS = "/var/lib/yojono"
+PVM_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 AIHE_RE = re.compile(r"yojono:\s*(testit|readme|riippuvuudet|ominaisuus)", re.I)
 
 
@@ -59,6 +66,43 @@ def keraa(hae=None, paivia=OLETUS_PAIVIA, nyt=None):
             for kohde in (tulos["yht"], tulos["repoittain"].setdefault(repo, uusi()), tulos["aiheittain"].setdefault(aihe(p.get("title")), uusi())):
                 kohde[tila] += 1
     return tulos
+
+
+def lue_kulut(perus=None):
+    """tila.json:n 'kulut' ({ajopaiva: USD}); tyhja sanakirja, jos tiedostoa ei saa luettua."""
+    polku = os.path.join(perus or os.environ.get("YOJONO_PERUS", OLETUS_PERUS), "tila.json")
+    try:
+        with open(polku, encoding="utf-8") as f:
+            kulut = json.load(f).get("kulut")
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return kulut if isinstance(kulut, dict) else {}
+
+
+def kulu_ajalta(kulut, paivia=OLETUS_PAIVIA, nyt=None):
+    """Kulujen summa viimeiselta `paivia` ajopaivalta (avain ISO-paiva >= nyt - paivia)."""
+    nyt = nyt or datetime.now(timezone.utc)
+    raja = (nyt - timedelta(days=paivia)).date().isoformat()
+    return sum(float(v) for k, v in (kulut or {}).items() if PVM_RE.match(str(k)) and str(k) >= raja and isinstance(v, (int, float)))
+
+
+def nostoehdot(tulos, kulu, paivia=OLETUS_PAIVIA):
+    """(tayttyy, rivi): tayttyyko paivakaton noston ehdot (riittavasti PR:ia, mergausprosentti, kulu per merge)."""
+    y = tulos["yht"]
+    paatetyt = y["mergattu"] + y["suljettu"]
+    osuus = round(100 * y["mergattu"] / paatetyt) if paatetyt else 0
+    kpm = kulu / y["mergattu"] if y["mergattu"] else None
+    syyt = []
+    if paatetyt < NOSTO_MIN_PAATETTYJA:
+        syyt.append("PR:ia liian vahan")
+    if osuus < NOSTO_MIN_MERGE_PROS:
+        syyt.append("mergausprosentti alle rajan")
+    if kpm is None or kpm > NOSTO_MAX_KULU_PER_MERGE:
+        syyt.append("kulu per merge yli rajan")
+    rivi = "Paivakaton nosto (%d vrk): paatettyja %d/%d, mergausprosentti %d %% (vah. %d), kulu per merge %s (enint. %.1f USD) -> %s" % (
+        paivia, paatetyt, NOSTO_MIN_PAATETTYJA, osuus, NOSTO_MIN_MERGE_PROS, "-" if kpm is None else "%.1f USD" % kpm,
+        NOSTO_MAX_KULU_PER_MERGE, "EHDOT TAYTTYVAT: ehdota Tonylle nostoa" if not syyt else "ei viela: " + ", ".join(syyt))
+    return not syyt, rivi
 
 
 def _osuus(t):
