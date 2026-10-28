@@ -1,0 +1,1 @@
+- isanta: julkaise.sh tukee valinnaista toiminnallista terveystarkistusta (TERVEYS_KOMENTO, 60 s); epaonnistuminen kumoaa koodin automaattisesti. yojono-ajuri.conf: python3 -B -m yojono tila. Porras 2, osa 2 (doc 63).
