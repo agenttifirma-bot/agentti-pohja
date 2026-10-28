@@ -32,7 +32,7 @@ from datetime import date
 
 OMISTAJA = "tonyweckstrom1987"
 OLETUS_BOTTI = "agenttifirma-bot"
-REPOT = ("agentti-pohja", "mcp-model-router", "ai-pr-reviewer-action", "llm-stopcheck", "ideapankki")
+REPOT = ("agentti-pohja", "mcp-model-router", "ai-pr-reviewer-action", "llm-stopcheck", "ideapankki", "evalkit")
 HAARA_RE = re.compile(r"^yo/[a-z0-9][a-z0-9._-]{0,59}$")
 BOTTI_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 TUNNUS_RE = re.compile(r"^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$")

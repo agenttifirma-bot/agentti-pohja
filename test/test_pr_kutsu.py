@@ -330,10 +330,19 @@ class MainTest(unittest.TestCase):
             self.assertEqual(pk.main(["tarkista", "agentti-pohja", hak, "yo/koe"]), 0)
 
 
+class RepolistaTesti(unittest.TestCase):
+    def test_sallitut_repot_tarkasti(self):
+        self.assertEqual(set(pk.REPOT), {"agentti-pohja", "mcp-model-router", "ai-pr-reviewer-action", "llm-stopcheck", "ideapankki", "evalkit"})
+
+    def test_tuntematon_repo_hylataan(self):
+        with self.assertRaises(pk.PrVirhe):
+            pk.tarkista("evalkit-vaara", "/ei/ole", "yo/koe")
+
+
 class OletushaaraTesti(unittest.TestCase):
     def test_pohja_haara(self):
         self.assertEqual(pk.pohja_haara("ai-pr-reviewer-action"), "master")
-        for repo in ("agentti-pohja", "mcp-model-router", "llm-stopcheck", "ideapankki"):
+        for repo in ("agentti-pohja", "mcp-model-router", "llm-stopcheck", "ideapankki", "evalkit"):
             self.assertEqual(pk.pohja_haara(repo), "main")
 
     def test_pr_avataan_master_pohjaan(self):
