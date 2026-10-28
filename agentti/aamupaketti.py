@@ -8,7 +8,7 @@ import os
 import sys
 import urllib.request
 
-from . import telegram
+from . import pr_laatu, telegram
 from .pr_kutsu import REPOT
 
 OMISTAJA = "tonyweckstrom1987"
@@ -106,6 +106,10 @@ def main(argv=None, hae=None, env=None):
         print("kaytto: python3 -m agentti.aamupaketti [--laheta]", file=sys.stderr)
         return 2
     teksti = muotoile(keraa(hae))
+    try:   # laatumittari on lisa: virhe ei esta aamupakettia
+        teksti += "\n\n" + pr_laatu.muotoile(pr_laatu.keraa(hae))
+    except Exception:
+        pass
     print(teksti)
     if "--laheta" in a:
         ok = telegram.laheta(teksti, {"TELEGRAM_BOT_TOKEN": env.get("YOJONO_TELEGRAM_TOKEN"), "TELEGRAM_CHAT_ID": env.get("YOJONO_TELEGRAM_CHAT")})

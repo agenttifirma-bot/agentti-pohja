@@ -1,0 +1,1 @@
+- agentti: `pr_laatu.py` (python3 -m agentti.pr_laatu [PAIVIA]) laskee yojonon (botin) PR:t viimeiselta 30 vrk: mergattu / suljettu / auki, mergausprosentti repoittain ja aiheittain (testit, readme, riippuvuudet, ominaisuus); aamupaketti liittaa tiivistelman. Laatua ei enaa arvioida tuntumalla. +20 testia.
