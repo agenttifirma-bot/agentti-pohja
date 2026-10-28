@@ -117,6 +117,25 @@ class Ajo(Pohja):
         self.assertNotIn("Edit", sallitut)
         self.assertNotIn("Write", sallitut)
 
+    def test_opit_liitetaan_kehotteeseen_datana_rajattuna_yhdelle_riville(self):
+        self.agentti_skripti('echo "$@" > "$0.args"')
+        self.pr_kutsu()
+        kirjoita(self.perus / "opit.md", "Aiemmin suljetut:\n- evalkit: yojono: testit | Tonyn kommentti: liian laaja\n" + "x" * 3000)
+        self.aja(REPO, "1.00", "readme")
+        args = (self.agentti.parent / "claude.args").read_text()
+        self.assertIn("Aiemmin suljetut: - evalkit: yojono: testit | Tonyn kommentti: liian laaja x", args)
+        self.assertNotIn("x" * 1600, args)
+
+    def test_tyhja_tai_puuttuva_opit_ei_muuta_kehotetta(self):
+        self.agentti_skripti('echo "$@" > "$0.args"')
+        self.pr_kutsu()
+        self.aja(REPO, "1.00", "readme")
+        ilman = (self.agentti.parent / "claude.args").read_text()
+        kirjoita(self.perus / "opit.md", "")
+        self.aja(REPO, "1.00", "readme")
+        self.assertEqual((self.agentti.parent / "claude.args").read_text(), ilman)
+        self.assertNotIn("Aiemmin suljetut", ilman)
+
     def test_oletus_tyohakemisto_ei_ole_var_lib_yojonon_alla(self):
         rivi = [l for l in SKRIPTI.read_text().splitlines() if l.startswith("TYO=")][0]
         self.assertIn("/var/tmp/yojono-tyo", rivi)

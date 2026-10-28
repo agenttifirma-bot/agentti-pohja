@@ -572,6 +572,26 @@ def laheta_aamupaketti(perus, nyt=None, laheta=None):
         return False
 
 
+OPIT_IKA_S = 20 * 3600   # opit.md paivitetaan enintaan kerran ~vuorokaudessa (tiedoston ika)
+
+
+def paivita_opit(perus, nyt=None, kirjoita=None):
+    """Oppiva silmukka: paivittaa <perus>/opit.md:n (suljetut yojono-PR:t ja Tonyn kommentit), jos se puuttuu tai on yli OPIT_IKA_S vanha.
+    kehitys.sh liittaa sen kehotteeseen datana. Virhe ei koskaan kaada ajoa. Palauttaa True vain jos tiedosto paivitettiin."""
+    try:
+        polku = Path(perus) / "opit.md"
+        nyt = time.time() if nyt is None else nyt
+        if polku.exists() and nyt - polku.stat().st_mtime < OPIT_IKA_S:
+            return False
+        if kirjoita is None:
+            from agentti import pr_opit
+            kirjoita = pr_opit.main
+        return kirjoita(["--kirjoita", str(polku)]) == 0
+    except Exception as virhe:  # opit ovat lisa, ei saa kaataa yoajoa
+        print(f"Opit-paivitys epaonnistui: {type(virhe).__name__}", file=sys.stderr)
+        return False
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Yojonon ajuri")
     p.add_argument("komento", choices=["ajo", "kuiva", "tila"])
@@ -581,6 +601,8 @@ def main(argv=None):
     if a.komento == "tila":
         print(json.dumps(lue_json(Path(perus) / "tila.json", {}), indent=2, ensure_ascii=False))
         return 0
+    if a.komento == "ajo":
+        paivita_opit(perus)
     try:
         tulos = aja(perus, skripti, kuiva=a.komento == "kuiva", fork_tarkista=pr_kutsu.fork_valmis)
         if a.komento == "kuiva":
