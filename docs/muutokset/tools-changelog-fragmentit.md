@@ -1,0 +1,1 @@
+- tools: `changelog_kokoa.py` ja `docs/muutokset/`: jokainen PR kirjoittaa muutosrivinsa omaan fragmenttitiedostoonsa CHANGELOG.md:n sijaan, joten rinnakkaiset PR:t eivat konfliktoi (konfliktit toistuivat lahes jokaisen mergen jalkeen). Kokoaja lisaa fragmentit Unreleased-listan loppuun ja poistaa ne (`--kuiva` esikatselee). +11 testia.
