@@ -67,6 +67,14 @@
       "toisto_pv": 5
     },
     {
+      "id": "kehitys-testit-evalkit",
+      "tyyppi": "kehitys",
+      "repo": "evalkit",
+      "aihe": "testit",
+      "budjetti": 1.2,
+      "toisto_pv": 5
+    },
+    {
       "id": "katselmointi-agentti-pohja",
       "tyyppi": "katselmointi",
       "repo": "agentti-pohja",
