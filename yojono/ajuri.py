@@ -185,6 +185,8 @@ def valitse_ajettavat(tehtavat, tila, pvm):
             continue
         elif s.get("yrityksia", 0) < MAX_YRITYKSIA and s.get("pvm") != pvm:
             ulos.append(t)
+        elif t.get("toisto_pv") and _paivia_valissa(s.get("pvm"), pvm) >= t["toisto_pv"]:
+            ulos.append(t)   # toistuva tehtava ei jumiudu: yritykset loppuneena yritetaan taas, kun toisto_pv on kulunut (laskuri nollataan ajossa)
     return ulos
 
 
@@ -505,6 +507,8 @@ def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.mon
             ajetut.append(t["id"])
             tila["kulut"][pvm] = round(kulu_nyt + tulos.kulu, 4)
             vanha = tila["tehtavat"].get(t["id"], {})
+            if t.get("toisto_pv") and vanha.get("tila") == "epaonnistui" and vanha.get("yrityksia", 0) >= MAX_YRITYKSIA:
+                vanha = {**vanha, "yrityksia": 0}   # uusi jakso: edellisen jakson loppuneet yritykset eivat esta
             tila["tehtavat"][t["id"]] = {
                 "tila": "valmis" if tulos.ok else "epaonnistui",
                 "yrityksia": vanha.get("yrityksia", 0) + (0 if tulos.ok else 1),

@@ -56,12 +56,13 @@ git checkout -q -b "$HAARA"
 
 # Kulun pienennys (27.10.: noin puolet yon kulusta meni tuloksettomiin ajoihin): jos saman repon + aiheen + teeman viimeinen ajo
 # ei tuottanut muutoksia ja repon HEAD on sama, mallikutsua ei tehda. Rajoitus: enintaan KEHITYS_OHITUS_S sekuntia (oletus 7 vrk),
-# jotta malli saa uuden yrityksen myos muuttumattomaan repoon. YOJONO_PAKOTA=1 ohittaa ohituksen. Kuiva-ajo ei ohita eika kirjaa.
+# jotta malli saa uuden yrityksen myos muuttumattomaan repoon. Aihe `riippuvuudet` ei ohitu koskaan: riippuvuuksien ajantasaisuus muuttuu
+# ylavirrassa vaikka repon HEAD pysyisi samana (aamuraportti 28.10.). YOJONO_PAKOTA=1 ohittaa ohituksen. Kuiva-ajo ei ohita eika kirjaa.
 SHA=$(git rev-parse HEAD)
 TYHJAT="$BASE/kehitys-tyhjat.tsv"
 AVAIN="$REPO|$AIHE|$(printf '%s' "${YOJONO_TEEMA:-}" | cksum | cut -d' ' -f1)"
 OHITETTU=""
-if [ -z "$KUIVA" ] && [ -z "${YOJONO_PAKOTA:-}" ] && [ -f "$TYHJAT" ]; then
+if [ -z "$KUIVA" ] && [ -z "${YOJONO_PAKOTA:-}" ] && [ "$AIHE" != "riippuvuudet" ] && [ -f "$TYHJAT" ]; then
   if awk -F'\t' -v k="$AVAIN" -v s="$SHA" -v nyt="$(date +%s)" -v raja="${KEHITYS_OHITUS_S:-604800}" '$1==k && $2==s && nyt-$3<raja {f=1} END{exit !f}' "$TYHJAT"; then
     OHITETTU=1
   fi

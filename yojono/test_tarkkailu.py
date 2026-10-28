@@ -180,8 +180,8 @@ class OhitusTesti(Pohja):
         self.agentti_skripti(f'echo x >> {self.kutsut}\n'
                              "echo '{\"total_cost_usd\": 0.3, \"is_error\": false, \"subtype\": \"success\", \"result\": \"## Havainnot - a ## Ehdotukset 1. PARAS\"}'")
 
-    def aja2(self, nimi="r1", **extra):
-        return self.aja(raportti=nimi, TARKKAILU_KUVAKOMENTO=f'cat {self.kuva} > "$0/github.md"; date +%s%N > "$0/palvelin.md"', **extra)
+    def aja2(self, nimi="r1", teema="laatu", **extra):
+        return self.aja(raportti=nimi, teema=teema, TARKKAILU_KUVAKOMENTO=f'cat {self.kuva} > "$0/github.md"; date +%s%N > "$0/palvelin.md"', **extra)
 
     def maara(self):
         return len(self.kutsut.read_text().split()) if self.kutsut.exists() else 0
@@ -207,8 +207,18 @@ class OhitusTesti(Pohja):
 
     def test_eri_rooli_ei_ohitu(self):
         self.aja2("r1")
-        self.aja(raportti="r2", teema="laatu", TARKKAILU_KUVAKOMENTO=f'cat {self.kuva} > "$0/github.md"')
+        self.aja(raportti="r2", teema="kasvu", TARKKAILU_KUVAKOMENTO=f'cat {self.kuva} > "$0/github.md"')
         self.assertEqual(self.maara(), 2)
+
+    def test_kasvu_ohitetaan_mutta_infra_ja_automaatio_eivat(self):
+        """Aamuraportti 28.10.: palvelin voi rikkoutua ilman GitHub-muutosta, joten infra/automaatio analysoidaan aina."""
+        for rooli, odotus in (("kasvu", 1), ("infra", 2), ("automaatio", 2)):
+            with self.subTest(rooli=rooli):
+                (self.kutsut).unlink(missing_ok=True)
+                (self.perus / "tarkkailu-kuvat.tsv").unlink(missing_ok=True)
+                self.aja2("a", teema=rooli)
+                self.aja2("b", teema=rooli)
+                self.assertEqual(self.maara(), odotus)
 
     def test_pakota_ja_vanheneminen(self):
         self.aja2("r1")

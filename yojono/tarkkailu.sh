@@ -71,7 +71,8 @@ for nimi in sorted(os.listdir(d)):
 # 1c. Ohitus ennen mallikutsua (kulun pienennys): jos GitHub-tilannekuva (github.md: PR:t, commitit, mergatut) on identtinen saman roolin
 # viimeksi analysoidun kanssa, uutta analysoitavaa ei ole. Muu tilannekuva (palvelin, ajastimet, kulut) muuttuu jatkuvasti eika kelpaa
 # vertailuun. Enintaan TARKKAILU_OHITUS_S sekuntia (oletus 2 vrk), jotta jokainen rooli analysoidaan vahintaan joka toinen paiva.
-# Ei ohitusta, jos haku epaonnistui. YOJONO_PAKOTA=1 ohittaa ohituksen; kuiva-ajo ei ohita eika kirjaa.
+# Vain roolit laatu ja kasvu ohittuvat: infra ja automaatio katsovat palvelinta, ajastimia ja kuluja, jotka eivat nay github.md:ssa
+# (palvelin voi rikkoutua ilman GitHub-muutosta; aamuraportti 28.10.). Ei ohitusta, jos haku epaonnistui. YOJONO_PAKOTA=1 ohittaa ohituksen; kuiva-ajo ei ohita eika kirjaa.
 KUVAHASH=""
 if [ -f "$TMP/kuva/github.md" ] && ! grep -q 'haku epaonnistui' "$TMP/kuva/github.md"; then
   KUVAHASH=$("$PYTHON" -I -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$TMP/kuva/github.md" 2>/dev/null || true)
@@ -79,7 +80,7 @@ fi
 KUVAT="$BASE/tarkkailu-kuvat.tsv"
 AVAIN="$ROOLI|$REPO|$(printf '%s' "$TEEMA" | cksum | cut -d' ' -f1)"
 OHITETTU=""
-if [ -z "$KUIVA" ] && [ -z "${YOJONO_PAKOTA:-}" ] && [ -n "$KUVAHASH" ] && [ -f "$KUVAT" ]; then
+if [ -z "$KUIVA" ] && [ -z "${YOJONO_PAKOTA:-}" ] && { [ "$ROOLI" = laatu ] || [ "$ROOLI" = kasvu ]; } && [ -n "$KUVAHASH" ] && [ -f "$KUVAT" ]; then
   if awk -F'\t' -v k="$AVAIN" -v h="$KUVAHASH" -v nyt="$(date +%s)" -v raja="${TARKKAILU_OHITUS_S:-172800}" '$1==k && $2==h && nyt-$3<raja {f=1} END{exit !f}' "$KUVAT"; then
     OHITETTU=1
   fi

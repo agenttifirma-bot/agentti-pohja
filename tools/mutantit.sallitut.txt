@@ -24,3 +24,4 @@ agentti/pr_kutsu.py|vakio|0|1|4  # tila.get("n", 0): oletusta ei koskaan kayteta
 agentti/pr_kutsu.py|vakio|0|1|7  # tila.get("n", 0): oletusta ei koskaan kayteta, koska isinstance(n, int) -ehto vaatii n:n olemassaolon
 agentti/skeema.py|vakio|10|11|0  # maxLength-oletus 10 ** 9: eroaa vasta yli miljardin merkin merkkijonolla (1 Gt muistia), joten ei kaytannossa testattavissa
 agentti/skeema.py|vakio|9|10|0  # maxLength-oletus 10 ** 9: eroaa vasta yli miljardin merkin merkkijonolla (1 Gt muistia), joten ei kaytannossa testattavissa
+yojono/ajuri.py|vakio|0|1|11  # vanha.get("yrityksia", 0) >= MAX_YRITYKSIA: oletusarvo 0 vs 1 on molemmat < MAX_YRITYKSIA (2), joten tulos on sama; kentta on aina olemassa epaonnistuneella tehtavalla
