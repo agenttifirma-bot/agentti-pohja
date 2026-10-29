@@ -542,7 +542,7 @@ def peilaa(skripti):
         return False
 
 
-AAMUPAKETTI_TUNNIT = (5, 6, 7)   # Helsingin kello: C-ajo alkaa 05:00 ja kestaa enintaan ILTA_AIKARAJA_S (3 h); B (01:00) paattyy ennen 05:00
+AAMUPAKETTI_TUNNIT = (5, 6, 7, 8)   # Helsingin kello: C-ajo alkaa 05:00 ja kestaa enintaan ILTA_AIKARAJA_S (3 h) eli voi paattya vasta 08:xx; ajopaiva vaihtuu 09:00; B (01:00) paattyy ennen 05:00
 
 
 def laheta_aamupaketti(perus, nyt=None, laheta=None):

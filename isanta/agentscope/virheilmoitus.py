@@ -141,12 +141,13 @@ def yksikon_viesti(yksikko, show=None, rivit=None, nyt=None, ajolokit=None, syy_
     except (KeyError, ValueError):
         pass
     nimi = koodiksi(yksikko)
-    nyt = nyt or datetime.now()
+    paikallinen = nyt or datetime.now()          # ajolokin paiva verrataan palvelimen omaan paivaan (ennallaan)
+    nyt = nyt or helsinki_nyt()                   # viestin aika Tonin kellossa
     otsikko = f"{yksikko} {nyt.strftime('%d.%m.%Y %H:%M')}"
     koodit, lisa = [], []
     polku = (AJOLOKIT if ajolokit is None else ajolokit).get(nimi)
     if polku:
-        koodit, lisa = ajorivin_tiedot(polku, nyt.strftime("%Y-%m-%d"))
+        koodit, lisa = ajorivin_tiedot(polku, paikallinen.strftime("%Y-%m-%d"))
     syy = SYYT.get(tulos, "")
     if koodit:
         syy = (syy_haku or koodin_syy)(koodit[0]) or syy
@@ -159,10 +160,20 @@ def yksikon_viesti(yksikko, show=None, rivit=None, nyt=None, ajolokit=None, syy_
 ILMOITETTU = "/var/lib/yojono/ilmoitettu.json"
 
 
+def helsinki_nyt():
+    """Nykyhetki Europe/Helsinki-ajassa (ajurin ajopaiva lasketaan siina); ilman tzdataa palvelimen oma aika."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("Europe/Helsinki"))
+    except Exception:
+        return datetime.now()
+
+
 def _ajopaiva(nyt=None):
-    """Ajurin ajopaiva vaihtuu klo 09:00 (yojono/ajuri.py): yoajot A/B/C ovat samaa paivaa."""
+    """Ajurin ajopaiva vaihtuu klo 09:00 Helsingin aikaa (yojono/ajuri.py): yoajot A/B/C ovat samaa paivaa.
+    Ilman annettua aikaa kaytetaan Helsingin aikaa, jotta paiva tasmaa tila.json:n `pvm`-arvoihin palvelimen aikavyohykkeesta riippumatta."""
     from datetime import timedelta
-    return ((nyt or datetime.now()) - timedelta(hours=9)).strftime("%Y-%m-%d")
+    return ((nyt or helsinki_nyt()) - timedelta(hours=9)).strftime("%Y-%m-%d")
 
 
 def _lue_ilmoitetut():

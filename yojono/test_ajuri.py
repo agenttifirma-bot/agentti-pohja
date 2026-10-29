@@ -735,9 +735,20 @@ class AamupakettiTesti(Pohja):
 
     def test_ei_muina_kellonaikoina(self):
         kutsut = []
-        for h in (21, 1, 4, 8, 12):
+        for h in (21, 1, 4, 9, 12):
             self.assertIs(ajuri.laheta_aamupaketti(self.perus, self.nyt(2026, 10, 29, h, 0), lambda a: kutsut.append(a) or 0), False)
         self.assertEqual(kutsut, [])
+
+    def test_myohaan_paattynyt_c_ajo_lahettaa_viela_klo_8(self):
+        kutsut = []
+        self.assertIs(ajuri.laheta_aamupaketti(self.perus, self.nyt(2026, 10, 29, 8, 40), lambda a: kutsut.append(a) or 0), True)
+        self.assertEqual(kutsut, [["--laheta"]])
+        self.assertEqual((self.perus / "aamupaketti.pvm").read_text().strip(), "2026-10-28")   # sama ajopaiva kuin klo 05:xx
+
+    def test_ikkuna_kattaa_c_ajon_koko_keston(self):
+        self.assertEqual(ajuri.AAMUPAKETTI_TUNNIT[0], 5)
+        self.assertGreaterEqual(ajuri.AAMUPAKETTI_TUNNIT[-1], 5 + ajuri.ILTA_AIKARAJA_S // 3600)
+        self.assertLess(ajuri.AAMUPAKETTI_TUNNIT[-1], ajuri.AJOPAIVAN_ALKU_H)
 
     def test_uusi_ajopaiva_lahettaa_taas(self):
         f = lambda a: 0

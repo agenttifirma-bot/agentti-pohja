@@ -143,6 +143,57 @@ class MainTesti(unittest.TestCase):
             self.assertEqual(self.aja(["--kirjoita", polku2], hae)[0], 0)
             self.assertIn("yojono: testit evalkit", lue(polku2))
 
+    def test_hakuvirhe_ei_tyhjenna_olemassa_olevaa_tiedostoa(self):
+        def rikki(url):
+            raise OSError("verkko")
+        with tempfile.TemporaryDirectory() as d:
+            polku = os.path.join(d, "opit.md")
+            with open(polku, "w", encoding="utf-8") as f:
+                f.write("vanha oppi\n")
+            koodi, ulos, virhe = self.aja(["--kirjoita", polku], rikki)
+            self.assertEqual((koodi, ulos), (1, ""))
+            self.assertIn("haku epaonnistui", virhe)
+            self.assertIn("evalkit", virhe)
+            self.assertEqual(lue(polku), "vanha oppi\n")
+            self.assertEqual(os.listdir(d), ["opit.md"])
+
+    def test_osittainen_hakuvirhe_ei_kirjoita_vajaata_tulosta(self):
+        def osittain(url):
+            if "/evalkit/" in url:
+                raise OSError("verkko")
+            return feikki({"ideapankki": [pr(1, "yojono: readme ideapankki")]})(url)
+        with tempfile.TemporaryDirectory() as d:
+            polku = os.path.join(d, "opit.md")
+            koodi, _, _ = self.aja(["--kirjoita", polku], osittain)
+            self.assertEqual(koodi, 1)
+            self.assertFalse(os.path.exists(polku))
+
+    def test_kommenttien_hakuvirhe_ei_kirjoita_tiedostoa(self):
+        def kommentit_rikki(url):
+            if "/issues/" in url:
+                raise OSError("kommentit")
+            return feikki({"evalkit": [pr(1, "yojono: testit evalkit")]})(url)
+        with tempfile.TemporaryDirectory() as d:
+            polku = os.path.join(d, "opit.md")
+            self.assertEqual(self.aja(["--kirjoita", polku], kommentit_rikki)[0], 1)
+            self.assertFalse(os.path.exists(polku))
+
+    def test_aito_tyhja_tulos_tyhjentaa_edelleen(self):
+        with tempfile.TemporaryDirectory() as d:
+            polku = os.path.join(d, "opit.md")
+            with open(polku, "w", encoding="utf-8") as f:
+                f.write("vanha oppi\n")
+            self.assertEqual(self.aja(["--kirjoita", polku], feikki({}))[0], 0)
+            self.assertEqual(lue(polku), "")
+
+    def test_virheet_listaan_vain_pyydettaessa(self):
+        def rikki(url):
+            raise OSError("x")
+        v = []
+        self.assertEqual(po.keraa(rikki, 30, NYT, virheet=v), [])
+        self.assertEqual(sorted(set(v)), sorted(po.REPOT))
+        self.assertEqual(po.keraa(rikki, 30, NYT), [])
+
     def test_kayttovirheet(self):
         for argv in (["--kirjoita"], ["x"], ["1", "2"], ["--kirjoita", "p", "x"]):
             koodi, _, virhe = self.aja(argv)
