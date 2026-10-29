@@ -16,7 +16,7 @@ def feikki(prt, tiedostot, ci="success", ci_tila="completed"):
             return {"check_runs": [{"status": ci_tila, "conclusion": ci}]}
         if "/files" in url:
             nro = int(url.split("/pulls/")[1].split("/")[0])
-            return [{"filename": n} for n in tiedostot[nro]]
+            return [n if isinstance(n, dict) else {"filename": n} for n in tiedostot[nro]]
         raise AssertionError(url)
     return hae
 
@@ -74,13 +74,83 @@ class KerausTesti(unittest.TestCase):
         self.assertNotIn("\n", otsikko)
 
 
+def t(nimi, lisatty=1, poistettu=0, **kw):
+    return dict({"filename": nimi, "additions": lisatty, "deletions": poistettu}, **kw)
+
+
+class RiskiTesti(unittest.TestCase):
+    def riski(self, *tiedostot):
+        return ap.arvioi_riski(list(tiedostot))
+
+    def test_matala_vain_dokumentit_ja_testit_pienena(self):
+        self.assertEqual(self.riski(t("README.md"), t("test/test_a.py", 20), t("docs/a.md")), ("matala", ""))
+
+    def test_keskitaso_koodi_tai_koko(self):
+        self.assertEqual(self.riski(t("yojono/ajuri.py")), ("keskitaso", "koodia"))
+        self.assertEqual(self.riski(t("README.md", 61)), ("keskitaso", "61 rivia"))
+        self.assertEqual(self.riski(*[t("docs/%d.md" % i) for i in range(6)]), ("keskitaso", "6 tiedostoa"))
+
+    def test_rajat_tasan(self):
+        self.assertEqual(self.riski(t("README.md", 60))[0], "matala")
+        self.assertEqual(self.riski(t("README.md", 300))[0], "keskitaso")
+        self.assertEqual(self.riski(t("README.md", 301))[0], "korkea")
+        self.assertEqual(self.riski(*[t("docs/%d.md" % i) for i in range(5)])[0], "matala")
+
+    def test_korkea_kriittiset_polut_ja_nimet(self):
+        for polku in (".github/workflows/ci.yml", "tools/automerge.py", "isanta/julkaise.sh", "agentti/rajat.py", "config.py",
+                      "kauppa-retro.service", "x/kauppa-ajo.timer", "salkku.py", "kirjanpito.py", "riskivahti.py", "a/.env"):
+            with self.subTest(polku=polku):
+                self.assertEqual(self.riski(t("README.md"), t(polku))[0], "korkea")
+
+    def test_korkea_poisto_nimeaminen_ja_vanha_polku(self):
+        self.assertEqual(self.riski(t("a.md", status="removed")), ("korkea", "poisto tai nimeaminen"))
+        self.assertEqual(self.riski(t("a.md", status="renamed")), ("korkea", "poisto tai nimeaminen"))
+        self.assertEqual(self.riski(t("uusi.md", previous_filename="tools/vanha.py"))[0], "korkea")
+
+    def test_korkea_kun_tiedostolista_katkaistu(self):
+        self.assertEqual(self.riski(*[t("docs/%d.md" % i) for i in range(ap.MAX_TIEDOSTOJA_HAKUUN)]), ("korkea", "yli 99 tiedostoa"))
+
+    def test_puuttuvat_ja_tyhjat_rivimaarat_eivat_kaada(self):
+        self.assertEqual(self.riski({"filename": "a.md", "additions": None}), ("matala", ""))
+        self.assertEqual(self.riski(), ("matala", ""))
+
+    def test_yhteenveto_kriittiset_ensin_ja_summat(self):
+        y = ap.yhteenveto([t("README.md", 3, 1), t("tools/a.py", 5, 2), t("README.md", 1, 0)])
+        self.assertEqual(y["tiedostot"], ["tools/a.py", "README.md"])
+        self.assertEqual((y["lisatty"], y["poistettu"], y["riski"]), (9, 3, "korkea"))
+
+
+class YhteenvetoMuotoTesti(unittest.TestCase):
+    def teksti(self, tiedostot):
+        return ap.muotoile(ap.keraa(feikki({"agentti-pohja": [pr(1, "otsikko")]}, {1: tiedostot})))
+
+    def test_suojattu_pr_nayttaa_ci_riskin_tiedostot_ja_linkin(self):
+        teksti = self.teksti([t("tools/a.py", 5, 2), t("README.md", 1)])
+        self.assertIn("- agentti-pohja #1 otsikko (CI vihrea) [riski: korkea, kriittinen polku tools/a.py]\n"
+                      "  tiedostot: tools/a.py, README.md | +6/-2\n  https://github.com/o/r/pull/1", teksti)
+
+    def test_tiedostolista_katkaistaan(self):
+        teksti = self.teksti([t("tools/a.py")] + [t("docs/%d.md" % i) for i in range(5)])
+        self.assertIn("tiedostot: tools/a.py, docs/0.md, docs/1.md, docs/2.md (+2) |", teksti)
+
+    def test_ci_kesken_naytetaan_suojatulle(self):
+        teksti = ap.muotoile(ap.keraa(feikki({"agentti-pohja": [pr(1)]}, {1: [t("tools/a.py")]}, ci_tila="in_progress")))
+        self.assertIn("(CI kesken) [riski: korkea", teksti)
+
+    def test_automerge_ja_muut_rivit_ennallaan(self):
+        teksti = ap.muotoile(ap.keraa(feikki({"agentti-pohja": [pr(1), pr(2, draft=True)]}, {1: [t("test/test_a.py")]})))
+        self.assertNotIn("riski", teksti)
+        self.assertNotIn("tiedostot:", teksti)
+
+
 class MuotoiluJaMainTesti(unittest.TestCase):
     def test_muotoilu_nayttaa_ryhmat_ja_linkit(self):
         hae = feikki({"agentti-pohja": [pr(1, "suojattu"), pr(2, "tavallinen")]}, {1: ["yojono/a.py"], 2: ["test/test_a.py"]})
         teksti = ap.muotoile(ap.keraa(hae))
         self.assertIn("Sinun mergattavat (suojatut polut): 1", teksti)
         self.assertIn("Automerge hoitaa (CI vihrea): 1", teksti)
-        self.assertIn("- agentti-pohja #1 suojattu (CI vihrea)\n  https://github.com/o/r/pull/1", teksti)
+        self.assertIn("- agentti-pohja #1 suojattu (CI vihrea) [riski: keskitaso, koodia]\n  tiedostot: yojono/a.py | +0/-0\n  https://github.com/o/r/pull/1", teksti)
+        self.assertIn("- agentti-pohja #2 tavallinen (CI vihrea)\n  https://github.com/o/r/pull/2", teksti)
 
     def test_tyhja(self):
         self.assertIn("Ei avoimia PR:ita.", ap.muotoile({"tony": [], "automerge": [], "muut": []}))

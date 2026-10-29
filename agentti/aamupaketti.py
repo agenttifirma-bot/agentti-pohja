@@ -5,16 +5,70 @@ ja muut (luonnos, CI kesken tai punainen). Kaytto: python3 -m agentti.aamupakett
 --laheta kayttaa ymparistoa YOJONO_TELEGRAM_TOKEN ja YOJONO_TELEGRAM_CHAT (kuten yojonon yhteenveto)."""
 import json
 import os
+import posixpath
 import sys
 import urllib.request
 
 from . import pr_laatu, telegram
-from .pr_kutsu import REPOT
+from .pr_kutsu import REPOT, suojattu as _kriittinen_polku
 
 OMISTAJA = "tonyweckstrom1987"
 MAX_PR_REPOA_KOHDEN = 15
 MAX_TIEDOSTOJA_HAKUUN = 100
 OTSIKKO_MAX = 70
+KRIITTISET_NIMET = ("riskivahti.py", "salkku.py", "kirjanpito.py")
+KRIITTISET_PAATTEET = (".service", ".timer")
+RISKI_RIVEJA_KORKEA = 300
+RISKI_RIVEJA_KESKI = 60
+RISKI_TIEDOSTOJA_KESKI = 5
+NAYTA_TIEDOSTOJA = 4
+
+
+def _matala_tiedosto(polku):
+    p = polku.lower()
+    return p.endswith((".md", ".txt")) or p.startswith(("docs/", "test/")) or posixpath.basename(p).startswith("test_")
+
+
+def _kriittinen(polku):
+    nimi = posixpath.basename(polku.lower())
+    return _kriittinen_polku(polku) or nimi.endswith(KRIITTISET_PAATTEET) or nimi in KRIITTISET_NIMET
+
+
+def arvioi_riski(tiedostot):
+    """(taso, syy): 'korkea', 'keskitaso' tai 'matala'. Karkea ja deterministinen arvio katselmoinnin kohdistamiseen, ei turvatakuu:
+    korkea = kriittinen polku (suojatut, *.service/*.timer, riskivahti/salkku/kirjanpito), poisto tai nimeaminen, yli 300 rivia tai tiedostolista katkaistu;
+    keskitaso = yli 60 rivia, yli 5 tiedostoa tai muu kuin dokumentti/testi; muuten matala."""
+    nimet = [n for t in tiedostot for n in (t.get("filename"), t.get("previous_filename")) if n]
+    rivit = sum(int(t.get("additions") or 0) + int(t.get("deletions") or 0) for t in tiedostot)
+    if len(tiedostot) >= MAX_TIEDOSTOJA_HAKUUN:
+        return "korkea", "yli %d tiedostoa" % (MAX_TIEDOSTOJA_HAKUUN - 1)
+    for n in nimet:
+        if _kriittinen(n):
+            return "korkea", "kriittinen polku %s" % n
+    if any(t.get("status") in ("removed", "renamed") for t in tiedostot):
+        return "korkea", "poisto tai nimeaminen"
+    if rivit > RISKI_RIVEJA_KORKEA:
+        return "korkea", "%d rivia" % rivit
+    if rivit > RISKI_RIVEJA_KESKI:
+        return "keskitaso", "%d rivia" % rivit
+    if len(tiedostot) > RISKI_TIEDOSTOJA_KESKI:
+        return "keskitaso", "%d tiedostoa" % len(tiedostot)
+    if not all(_matala_tiedosto(n) for n in nimet):
+        return "keskitaso", "koodia"
+    return "matala", ""
+
+
+def yhteenveto(tiedostot):
+    """Tonyn mergattavan PR:n yhteenveto: tiedostot (kriittiset ensin), rivimaarat ja riski."""
+    nimet = []
+    for t in tiedostot:
+        n = t.get("filename")
+        if n and n not in nimet:
+            nimet.append(n)
+    nimet.sort(key=lambda n: not _kriittinen(n))
+    riski, syy = arvioi_riski(tiedostot)
+    return {"tiedostot": nimet, "lisatty": sum(int(t.get("additions") or 0) for t in tiedostot),
+            "poistettu": sum(int(t.get("deletions") or 0) for t in tiedostot), "riski": riski, "riskisyy": syy}
 
 
 def _suojattu(polku):
@@ -74,6 +128,7 @@ def keraa(hae=None):
                 continue
             suojattu = any(_suojattu(n) for t in tiedostot for n in (t.get("filename"), t.get("previous_filename")) if n)
             if suojattu:
+                rivi.update(yhteenveto(tiedostot))
                 ryhmat["tony"].append(rivi)
             elif rivi["ci"] == "vihrea":
                 ryhmat["automerge"].append(rivi)
@@ -85,6 +140,11 @@ def keraa(hae=None):
 
 def _rivi(r):
     lisa = " [%s]" % r["syy"] if r["syy"] else (" (CI %s)" % r["ci"] if r["ci"] else "")
+    if r.get("riski"):
+        lisa += " [riski: %s%s]" % (r["riski"], ", " + r["riskisyy"] if r.get("riskisyy") else "")
+        nimet = r.get("tiedostot") or []
+        nayta = ", ".join(nimet[:NAYTA_TIEDOSTOJA]) + (" (+%d)" % (len(nimet) - NAYTA_TIEDOSTOJA) if len(nimet) > NAYTA_TIEDOSTOJA else "")
+        return "- %s #%s %s%s\n  tiedostot: %s | +%d/-%d\n  %s" % (r["repo"], r["numero"], r["otsikko"], lisa, nayta, r["lisatty"], r["poistettu"], r["url"])
     return "- %s #%s %s%s\n  %s" % (r["repo"], r["numero"], r["otsikko"], lisa, r["url"])
 
 
