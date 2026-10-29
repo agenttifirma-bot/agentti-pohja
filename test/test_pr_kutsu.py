@@ -70,7 +70,7 @@ class TarkistaTest(unittest.TestCase):
 
     def test_vaarat_repot_ja_haarat(self):
         with tee_repo({"a.md": "x"}) as hak:
-            for repo in ("kauppatiimi", "../x", ""):
+            for repo in ("tuntematon-repo", "../x", ""):
                 with self.assertRaises(pk.PrVirhe):
                     pk.tarkista(repo, hak, "yo/koe")
             for haara in ("main", "yo/", "yo/Iso", "feature/x", "yo/a b", "yo/../x", None):
@@ -325,14 +325,39 @@ class KokoketjuTest(unittest.TestCase):
 class MainTest(unittest.TestCase):
     def test_kayttovirhe_ja_tarkista(self):
         self.assertEqual(pk.main([]), 2)
-        self.assertEqual(pk.main(["tarkista", "kauppatiimi", "/x", "yo/a"]), 1)
+        self.assertEqual(pk.main(["tarkista", "tuntematon-repo", "/x", "yo/a"]), 1)
         with tee_repo({"docs/a.md": "x"}) as hak:
             self.assertEqual(pk.main(["tarkista", "agentti-pohja", hak, "yo/koe"]), 0)
 
 
+class RajatutPolutTest(unittest.TestCase):
+    def test_kauppatiimi_vain_readme_ja_testit(self):
+        with tee_repo({"test_uusi.py": "x", "README.md": "y"}) as hak:
+            self.assertEqual(sorted(pk.tarkista("kauppatiimi", hak, "yo/koe")), ["README.md", "test_uusi.py"])
+
+    def test_kauppatiimi_tuotantokoodi_ja_alihakemistot_hylataan(self):
+        for polku in ("riskivahti.py", "salkku.py", "kirjanpito.py", "retro.py", "db.py", "kauppa-ajo.timer", "docs/a.md",
+                      "sub/test_a.py", "test_a.sh", "tests.py", "./riskivahti.py", "test_a/../salkku.py"):
+            with self.subTest(polku=polku), tee_repo({"test_ok.py": "x", polku: "y"}) as hak:
+                with self.assertRaises(pk.PrVirhe) as ctx:
+                    pk.tarkista("kauppatiimi", hak, "yo/koe")
+                self.assertIn("tee kasin", str(ctx.exception))
+
+    def test_rajaus_ei_koske_muita_repoja(self):
+        with tee_repo({"salkku.py": "x"}) as hak:
+            self.assertEqual(pk.tarkista("agentti-pohja", hak, "yo/koe"), ["salkku.py"])
+
+    def test_sallittu_polku(self):
+        self.assertTrue(pk.sallittu_polku("kauppatiimi", "test_k7.py"))
+        self.assertTrue(pk.sallittu_polku("kauppatiimi", "./README.md"))
+        self.assertFalse(pk.sallittu_polku("kauppatiimi", "salkku.py"))
+        self.assertFalse(pk.sallittu_polku("kauppatiimi", "../test_a.py"))
+        self.assertTrue(pk.sallittu_polku("evalkit", "mika/tahansa.py"))
+
+
 class RepolistaTesti(unittest.TestCase):
     def test_sallitut_repot_tarkasti(self):
-        self.assertEqual(set(pk.REPOT), {"agentti-pohja", "mcp-model-router", "ai-pr-reviewer-action", "llm-stopcheck", "ideapankki", "evalkit"})
+        self.assertEqual(set(pk.REPOT), {"agentti-pohja", "mcp-model-router", "ai-pr-reviewer-action", "llm-stopcheck", "ideapankki", "evalkit", "kauppatiimi"})
 
     def test_tuntematon_repo_hylataan(self):
         with self.assertRaises(pk.PrVirhe):
@@ -895,7 +920,7 @@ class MainTarkkaTest(unittest.TestCase):
         koodi, _, virhe = self.ajaa(["pr", "agentti-pohja", "/h", "yo/koe", "O", "/ei/ole/tiedostoa"])
         self.assertEqual(koodi, 1)
         self.assertIn("pr_kutsu: tiedostovirhe: FileNotFoundError", virhe)
-        koodi, _, virhe = self.ajaa(["tarkista", "kauppatiimi", "/x", "yo/a"])
+        koodi, _, virhe = self.ajaa(["tarkista", "tuntematon-repo", "/x", "yo/a"])
         self.assertEqual(koodi, 1)
         self.assertIn("pr_kutsu: repo ei ole sallittujen listalla", virhe)
         self.assertEqual(self.ajaa(["pr", "a"])[0], 2)

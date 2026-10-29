@@ -32,7 +32,7 @@ from datetime import date
 
 OMISTAJA = "tonyweckstrom1987"
 OLETUS_BOTTI = "agenttifirma-bot"
-REPOT = ("agentti-pohja", "mcp-model-router", "ai-pr-reviewer-action", "llm-stopcheck", "ideapankki", "evalkit")
+REPOT = ("agentti-pohja", "mcp-model-router", "ai-pr-reviewer-action", "llm-stopcheck", "ideapankki", "evalkit", "kauppatiimi")
 HAARA_RE = re.compile(r"^yo/[a-z0-9][a-z0-9._-]{0,59}$")
 BOTTI_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 TUNNUS_RE = re.compile(r"^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$")
@@ -44,6 +44,9 @@ OTSIKKO_MAX = 120
 KUVAUS_MAX = 4000
 SUOJATUT_ALKUOSAT = (".github/", "tools/", "systemd/", "isanta/")
 SUOJATUT_NIMET = ("rajat.py", "config.py")
+# Rajatut repot: PR saa muuttaa vain naita polkuja (muut repot: kaikki paitsi suojatut). kauppatiimi: vain juuren README ja test_*.py,
+# joten riskivahti.py, salkku.py, kirjanpito.py ym. tuotantokoodi pysyy Tonyn kasissa.
+RAJATUT_POLUT = {"kauppatiimi": re.compile(r"^(readme\.md|test_[a-z0-9_]+\.py)$")}
 SALAINEN_RE = re.compile(r"(\.env|token|secret|api_?key|\.pem|id_ed25519|id_rsa)", re.IGNORECASE)
 ALAKUULO = "\n\n---\nAgentin tekema ehdotus (yojono). Tony katselmoi ja yhdistaa; mitaan ei oteta kayttoon automaattisesti."
 
@@ -74,6 +77,17 @@ def suojattu(polku):
     alut = tuple(a.rstrip("/") for a in SUOJATUT_ALKUOSAT)
     return (p.startswith("/") or ".." in osat or osat[0] in alut or ".github" in osat
             or nimi in SUOJATUT_NIMET or bool(SALAINEN_RE.search(nimi)))
+
+
+def sallittu_polku(repo, polku):
+    """Onko polku repon rajatulla sallittujen listalla (repot ilman rajausta: aina True)."""
+    saanto = RAJATUT_POLUT.get(repo)
+    if saanto is None:
+        return True
+    p = posixpath.normpath(polku.strip()).lower()
+    while p.startswith("./"):
+        p = p[2:]
+    return bool(saanto.match(p))
 
 
 def lue_tunnus(polku):
@@ -131,6 +145,9 @@ def tarkista(repo, hakemisto, haara, pohja=None, suorita=subprocess.run):
     huonot = [t for t in tiedostot if suojattu(t)]
     if huonot:
         raise PrVirhe("suojattuja polkuja muutettu, tee kasin: " + ", ".join(huonot[:5]))
+    rajatut = [t for t in tiedostot if not sallittu_polku(repo, t)]
+    if rajatut:
+        raise PrVirhe("repon %s PR saa muuttaa vain sallittuja polkuja (README, test_*.py), tee kasin: %s" % (repo, ", ".join(rajatut[:5])))
     return tiedostot
 
 

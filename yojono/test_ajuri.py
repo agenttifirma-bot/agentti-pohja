@@ -353,7 +353,7 @@ class TestKehitys(Pohja):
         ajuri.tarkista_jono({"tehtavat": [self.kt()]})
 
     def test_virheet(self):
-        for huono in (self.kt(aihe="muu"), self.kt(aihe=None), self.kt(repo="kauppatiimi"), self.kt(repo="agenttifirma")):
+        for huono in (self.kt(aihe="muu"), self.kt(aihe=None), self.kt(repo="tuntematon-repo"), self.kt(repo="agenttifirma")):
             with self.assertRaises(ajuri.JonoVirhe):
                 ajuri.tarkista_jono({"tehtavat": [huono]})
         with self.assertRaises(ajuri.JonoVirhe):
@@ -395,7 +395,7 @@ class TestOminaisuus(Pohja):
 
     def test_teema_vaaditaan_ja_kuuluu_vain_ominaisuudelle(self):
         huonot = [{k: v for k, v in self.ot().items() if k != "teema"}, self.ot(teema=""), self.ot(teema="a\nb"),
-                  self.ot(aihe="readme"), self.ot(repo="kauppatiimi")]
+                  self.ot(aihe="readme"), self.ot(repo="tuntematon-repo")]
         for huono in huonot:
             with self.subTest(huono=huono):
                 with self.assertRaises(ajuri.JonoVirhe):
