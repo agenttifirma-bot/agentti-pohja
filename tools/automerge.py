@@ -30,11 +30,12 @@ BOTIN_HAARA = re.compile(r"^yo/(readme|testit|ominaisuus)-[a-z0-9][a-z0-9._-]{0,
 MAX_RIVEJA_KOODI = 400
 # Saman repon PR, jossa on vain testitiedostoja (test/*.py) ja dokumentteja: testit ovat pitkia, mutaatiotestauksen aukkojen sulkeminen vaatii satoja rivia.
 MAX_RIVEJA_TESTIT = 800
-TESTIPOLKU = re.compile(r"^test/[A-Za-z0-9_./-]+\.py$")
+TESTIPOLKU = re.compile(r"^test/[A-Za-z0-9_./-]+\.py\Z")
 # Laajennus 28.10.2026 (Tony hyvaksyi): yojonon testitiedostot (vain lisays/muokkaus; nimessa ei salaisuuksiin viittaavaa sanaa)
+# (korjaus 29.10.: vain UUSI tiedosto, koska olemassa olevan testin muokkaus voisi heikentaa kulukattoa vartioivaa testia; `\\Z` ettei rivinvaihto paase lapi)
 # ja CHANGELOG-fragmenttien poisto (tools/changelog_kokoa.py poistaa ne koostaessaan). Muu yojono/ pysyy suojattuna.
-YOJONO_TESTI = re.compile(r"^yojono/test_(?!.*(secret|token|credential|password|key))[a-z0-9_]+\.py$", re.IGNORECASE)
-FRAGMENTTI = re.compile(r"^docs/muutokset/[A-Za-z0-9_.-]+\.md$")
+YOJONO_TESTI = re.compile(r"^yojono/test_(?!.*(secret|token|credential|password|key))[a-z0-9_]+\.py\Z", re.IGNORECASE)
+FRAGMENTTI = re.compile(r"^docs/muutokset/[A-Za-z0-9_.-]+\.md\Z")
 # Botin koodimuutoksille (testit, ominaisuus): vain nama paatteet; riippuvuus- ja asetustiedostot jaavat ihmiselle.
 KOODIPAATTEET = (".py", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".md")
 
@@ -149,6 +150,9 @@ def arvioi(pr, tiedostot):
         poisto_ok = (not forkki and t.get("status") == "removed" and bool(FRAGMENTTI.match(str(t.get("filename")))))
         if t.get("status") not in ("added", "modified") and not poisto_ok:
             syyt.append("tiedoston tila %s: %s" % (t.get("status"), t.get("filename")))
+        if any(n is not None and YOJONO_TESTI.match(n) for n in (t.get("filename"), t.get("previous_filename"))) and (
+                t.get("status") != "added" or t.get("previous_filename") is not None):
+            syyt.append("yojono-testia ei muokata automaattisesti (vain uusi tiedosto): " + str(t.get("filename")))
         for nimi in (t.get("filename"), t.get("previous_filename")):
             if nimi is None:
                 continue

@@ -156,7 +156,7 @@ class ArvioiTesti(unittest.TestCase):
     def test_yojonon_testitiedostot_kelpaavat_mutta_muu_yojono_ei(self):
         for nimi in ("yojono/test_kehitys.py", "yojono/test_ajuri.py"):
             with self.subTest(nimi=nimi):
-                self.assertTrue(am.arvioi(PR, [tied(nimi)])[0])
+                self.assertTrue(am.arvioi(PR, [tied(nimi, status="added")])[0])
         for nimi in ("yojono/ajuri.py", "yojono/kehitys.sh", "yojono/test_token.py", "yojono/test_api_key.py",
                      "yojono/ali/test_x.py", "yojono/test_x.sh", "yojono/test_X-y.py"):
             with self.subTest(nimi=nimi):
@@ -165,9 +165,22 @@ class ArvioiTesti(unittest.TestCase):
         self.assertFalse(am.arvioi(PR, [tied("yojono/test_a.py", status="removed")])[0])
         self.assertFalse(am.arvioi(BOTTI_PR_TESTIT, [tied("yojono/test_a.py")])[0])
 
+    def test_olemassa_olevan_yojono_testin_muokkaus_ei_kelpaa(self):
+        # test_ajuri.py vartioi kulukattoa: muokkaus (vaikka assertin poisto) kuuluu ihmiselle
+        for status in ("modified", "removed", "renamed", "changed"):
+            with self.subTest(status=status):
+                self.assertFalse(am.arvioi(PR, [tied("yojono/test_ajuri.py", status=status)])[0])
+        self.assertFalse(am.arvioi(PR, [tied("yojono/test_uusi.py", status="added", previous_filename="yojono/test_ajuri.py")])[0])
+
+    def test_polun_perassa_rivinvaihto_ei_paase_lapi(self):
+        self.assertFalse(am.arvioi(PR, [tied("yojono/test_x.py\n", status="added")])[0])
+        self.assertIsNone(am.YOJONO_TESTI.match("yojono/test_x.py\n"))
+        self.assertIsNone(am.TESTIPOLKU.match("test/x.py\n"))
+        self.assertIsNone(am.FRAGMENTTI.match("docs/muutokset/x.md\n"))
+
     def test_yojonon_testit_saavat_suuremman_rajan(self):
-        self.assertTrue(am.arvioi(PR, [tied("yojono/test_a.py", changes=am.MAX_RIVEJA_TESTIT)])[0])
-        self.assertFalse(am.arvioi(PR, [tied("yojono/test_a.py", changes=am.MAX_RIVEJA_TESTIT + 1)])[0])
+        self.assertTrue(am.arvioi(PR, [tied("yojono/test_a.py", status="added", changes=am.MAX_RIVEJA_TESTIT)])[0])
+        self.assertFalse(am.arvioi(PR, [tied("yojono/test_a.py", status="added", changes=am.MAX_RIVEJA_TESTIT + 1)])[0])
 
     def test_changelog_fragmentin_poisto_kelpaa_vain_samassa_repossa(self):
         koonti = [tied("CHANGELOG.md"), tied("docs/muutokset/a-b.md", status="removed"), tied("docs/muutokset/c.md", status="removed")]

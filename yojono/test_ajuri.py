@@ -14,6 +14,15 @@ from yojono import ajuri
 PVM = "2026-10-19"
 
 
+def setUpModule():
+    # Tuotannossa YOJONO_LOKI on asetettu (kehitys-testit-ajo perii sen): ilman tata testit kirjoittivat feikkitapahtumia (repo "r") oikeaan
+    # tapahtumalokiin ja vaaristivat mittarit (havainto 29.10.). Testit, jotka tarvitsevat lokin, asettavat polun itse (mock.patch.dict).
+    patcher = mock.patch.dict(os.environ)
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
+    os.environ.pop("YOJONO_LOKI", None)
+
+
 def jono(tehtavat, katto=3.0):
     return {"paivakatto": katto, "tehtavat": tehtavat}
 
@@ -795,6 +804,15 @@ class TestMain(Pohja):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEristys(Pohja):
+    def test_ymparistossa_oleva_tuotantoloki_ei_saa_testiajoja(self):
+        # simuloi tuotantoa: setUpModule poistaa YOJONO_LOKI:n, joten aja() ei kirjaa mihinkaan
+        self.assertNotIn("YOJONO_LOKI", os.environ)
+        self.kirjoita_jono(jono([t("a")]))
+        self.aja(lambda tehtava, pvm, perus, skripti: ajuri.Tulos(True, 0.1, "", "ok"))
+        self.assertFalse(ajuri._kirjaa_tapahtuma(t("a"), "ok", 0.1, {}, None))
 
 
 class LokiKirjaus(Pohja):
