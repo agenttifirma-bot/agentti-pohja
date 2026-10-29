@@ -131,7 +131,7 @@ class YojonoTesti(unittest.TestCase):
         self.assertIn(n.utcoffset(), (timedelta(hours=2), timedelta(hours=3)))
         with mock.patch.dict(sys.modules, {"zoneinfo": None}):          # ei tzdataa: palvelimen oma aika, ei kaatumista
             self.assertIsNone(v.helsinki_nyt().tzinfo)
-        # palvelin UTC:ssa: 07:30 UTC = 10:30 Helsingissa on jo uusi ajopaiva, 05:30 UTC = 08:30 Helsingissa vielä vanha
+        # palvelin UTC:ssa: 07:30 UTC = 10:30 Helsingissa on jo uusi ajopaiva, 05:30 UTC = 08:30 Helsingissa viela vanha
         hki = timezone(timedelta(hours=3))
         with mock.patch.object(v, "helsinki_nyt", return_value=datetime(2026, 10, 21, 7, 30, tzinfo=timezone.utc).astimezone(hki)):
             self.assertEqual(v._ajopaiva(), "2026-10-21")
