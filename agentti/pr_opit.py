@@ -23,8 +23,9 @@ def siisti(teksti, raja):
     return " ".join(puhdas.split())[:raja]
 
 
-def keraa(hae=None, paivia=pr_laatu.OLETUS_PAIVIA, nyt=None):
-    """Lista {'repo', 'otsikko', 'kommentit', 'suljettu'}, uusin ensin. Vain botin PR:t, jotka on avattu `paivia` paivan sisalla ja suljettu mergaamatta."""
+def keraa(hae=None, paivia=pr_laatu.OLETUS_PAIVIA, nyt=None, virheet=None):
+    """Lista {'repo', 'otsikko', 'kommentit', 'suljettu'}, uusin ensin. Vain botin PR:t, jotka on avattu `paivia` paivan sisalla ja suljettu mergaamatta.
+    Jos `virheet` on lista, siihen lisataan niiden repojen nimet, joiden PR-lista tai kommentit ei saatu haettua (tulos on silloin vajaa)."""
     hae = hae or pr_laatu._oletushaku
     nyt = nyt or datetime.now(timezone.utc)
     raja = nyt - timedelta(days=paivia)
@@ -33,6 +34,8 @@ def keraa(hae=None, paivia=pr_laatu.OLETUS_PAIVIA, nyt=None):
         try:
             prt = hae("https://api.github.com/repos/%s/%s/pulls?state=closed&sort=created&direction=desc&per_page=50" % (pr_laatu.OMISTAJA, repo))
         except Exception:
+            if virheet is not None:
+                virheet.append(repo)
             continue
         for p in prt:
             luotu = pr_laatu._aika(p.get("created_at"))
@@ -44,6 +47,8 @@ def keraa(hae=None, paivia=pr_laatu.OLETUS_PAIVIA, nyt=None):
                 kommentit = hae("https://api.github.com/repos/%s/%s/issues/%s/comments?per_page=20" % (pr_laatu.OMISTAJA, repo, int(p.get("number"))))
             except Exception:
                 kommentit = []
+                if virheet is not None:
+                    virheet.append(repo)
             tonyn = [siisti(k.get("body"), KOMMENTTI_MAX) for k in kommentit if ((k.get("user") or {}).get("login") or "").lower() == pr_laatu.OMISTAJA]
             opit.append({"repo": repo, "otsikko": siisti(p.get("title"), OTSIKKO_MAX), "kommentit": [k for k in tonyn if k][:KOMMENTTEJA_PRLLA],
                          "suljettu": str(p.get("closed_at") or "")})
@@ -88,7 +93,11 @@ def main(argv=None, hae=None):
     if len(a) > 1 or (a and not a[0].isdigit()):
         print("kaytto: python3 -m agentti.pr_opit [--kirjoita POLKU] [PAIVIA]", file=sys.stderr)
         return 2
-    teksti = muotoile(keraa(hae, int(a[0]) if a else pr_laatu.OLETUS_PAIVIA))
+    virheet = []
+    teksti = muotoile(keraa(hae, int(a[0]) if a else pr_laatu.OLETUS_PAIVIA, virheet=virheet))
+    if virheet and polku:   # vajaa haku ei saa korvata aiempaa tiedostoa (tyhja teksti tyhjentaisi opit); tiedosto jaa ennalleen ja ika vanhaksi
+        print("pr_opit: haku epaonnistui (%s), tiedostoa ei kirjoitettu" % ", ".join(sorted(set(virheet))), file=sys.stderr)
+        return 1
     if polku:
         kirjoita(polku, teksti)
     else:

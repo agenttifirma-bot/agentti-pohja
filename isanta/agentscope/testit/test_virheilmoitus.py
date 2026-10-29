@@ -123,6 +123,29 @@ class YojonoTesti(unittest.TestCase):
         self.assertEqual(v._ajopaiva(datetime(2026, 10, 21, 8, 59)), "2026-10-20")
         self.assertEqual(v._ajopaiva(datetime(2026, 10, 21, 9, 0)), "2026-10-21")
 
+    def test_oletusaika_on_helsingin_aikaa(self):
+        import sys
+        from datetime import timedelta, timezone
+        from unittest import mock
+        n = v.helsinki_nyt()
+        self.assertIn(n.utcoffset(), (timedelta(hours=2), timedelta(hours=3)))
+        with mock.patch.dict(sys.modules, {"zoneinfo": None}):          # ei tzdataa: palvelimen oma aika, ei kaatumista
+            self.assertIsNone(v.helsinki_nyt().tzinfo)
+        # palvelin UTC:ssa: 07:30 UTC = 10:30 Helsingissa on jo uusi ajopaiva, 05:30 UTC = 08:30 Helsingissa viela vanha
+        hki = timezone(timedelta(hours=3))
+        with mock.patch.object(v, "helsinki_nyt", return_value=datetime(2026, 10, 21, 7, 30, tzinfo=timezone.utc).astimezone(hki)):
+            self.assertEqual(v._ajopaiva(), "2026-10-21")
+        with mock.patch.object(v, "helsinki_nyt", return_value=datetime(2026, 10, 21, 5, 30, tzinfo=timezone.utc).astimezone(hki)):
+            self.assertEqual(v._ajopaiva(), "2026-10-20")
+
+    def test_viestin_otsikon_aika_on_helsingin_aikaa_kun_nyt_puuttuu(self):
+        from datetime import timedelta, timezone
+        from unittest import mock
+        hki = datetime(2026, 10, 21, 10, 30, tzinfo=timezone(timedelta(hours=3)))
+        with mock.patch.object(v, "helsinki_nyt", return_value=hki):
+            t = v.yksikon_viesti("trendit.service", show={"Result": "exit-code"}, rivit=[], ajolokit={})
+        self.assertIn("trendit.service 21.10.2026 10:30", t)
+
     def test_vain_tanaan_epaonnistuneet_luokiteltuina(self):
         t = v.yojono_viesti(self.TILA, nyt=NYT_Y)
         self.assertIn("Virhe: yojono_tehtava_epaonnistui", t)
