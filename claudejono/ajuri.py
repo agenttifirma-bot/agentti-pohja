@@ -110,7 +110,7 @@ def git(repo, *args, check=True):
     return r
 
 
-AUTO_MAX_PAIVA = 6      # Tonyn paatos 30.10.2026: itse keksittyja tehtavia enintaan 6 / vrk (koodi on laki)
+AUTO_MAX_PAIVA = 30     # Tonyn paatos 30.10.2026: itse keksittyja tehtavia enintaan 30 / vrk (nostettu 6 -> 30; koodi on laki)
 AUTO_PER_AJO = 2
 AUTO_NIMI_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 TONYLLE = "tonylle.md"

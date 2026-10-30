@@ -198,7 +198,7 @@ class Itsesuunnittelu(Pohja):
         self.assertFalse(ajuri.sallittu_polku("claude-jono/tulokset/../../x.md"))
 
     def test_raja_on_laissa(self):
-        self.assertLessEqual(ajuri.AUTO_MAX_PAIVA, 6)
+        self.assertLessEqual(ajuri.AUTO_MAX_PAIVA, 30)
 
 
 class OmaKayttaja(unittest.TestCase):
