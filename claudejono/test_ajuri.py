@@ -201,5 +201,32 @@ class Itsesuunnittelu(Pohja):
         self.assertLessEqual(ajuri.AUTO_MAX_PAIVA, 6)
 
 
+class OmaKayttaja(unittest.TestCase):
+    """Tonyn paatos 30.10.2026: agentti ajetaan omana kayttajanaan, ajuri jaa rootiksi."""
+
+    def test_runuser_ja_minimiymparisto(self):
+        env = {"CLAUDEJONO_KAYTTAJA": "claudejono", "CLAUDEJONO_CLAUDE": "/var/lib/claudejono/.local/bin/claude",
+               "GIT_SSH_COMMAND": "ssh -i /etc/claude-jono/deploy_key", "YOJONO_TELEGRAM_TOKEN": "x", "PATH": "/root/bin:/usr/bin"}
+        kom, alaenv, cwd = ajuri.lapsen_ajo("k", env, "/opt/agentscope")
+        self.assertEqual(kom[:4], ["runuser", "-u", "claudejono", "--"])
+        self.assertEqual(kom[4], "/var/lib/claudejono/.local/bin/claude")
+        self.assertEqual(cwd, "/opt/agentscope/tyo")
+        self.assertEqual(alaenv["HOME"], "/var/lib/claudejono")
+        for kielletty in ("GIT_SSH_COMMAND", "YOJONO_TELEGRAM_TOKEN", "CLAUDEJONO_KAYTTAJA"):
+            self.assertNotIn(kielletty, alaenv)
+        self.assertNotIn("/root", alaenv["PATH"])
+
+    def test_root_ja_virheellinen_nimi_hylataan(self):
+        for nimi in ("root", "a b", "../x", "Claude"):
+            with self.assertRaises(ajuri.JonoVirhe):
+                ajuri.lapsen_ajo("k", {"CLAUDEJONO_KAYTTAJA": nimi}, "/opt/agentscope")
+
+    def test_ilman_kayttajaa_ennallaan_mutta_ilman_ssh_avainta(self):
+        kom, alaenv, cwd = ajuri.lapsen_ajo("k", {"GIT_SSH_COMMAND": "ssh -i x", "A": "1"}, "/opt/agentscope")
+        self.assertEqual(kom[0], "claude")
+        self.assertEqual(cwd, "/opt/agentscope")
+        self.assertEqual(alaenv, {"A": "1"})
+
+
 if __name__ == "__main__":
     unittest.main()
