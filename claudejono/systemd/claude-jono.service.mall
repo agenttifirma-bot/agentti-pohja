@@ -13,7 +13,7 @@ Environment=CLAUDEJONO_TYOHAK=/opt/agentscope
 Environment=CLAUDEJONO_CLAUDE=/root/.local/bin/claude
 # Testattu CT115:ssa 30.10.2026: auto-tila toimii headless-ajossa ilman lupakyselya
 Environment=CLAUDEJONO_LUPATILA=auto
-Environment=GIT_SSH_COMMAND=ssh -i /etc/claude-jono/deploy_key -o IdentitiesOnly=yes
+Environment="GIT_SSH_COMMAND=ssh -i /etc/claude-jono/deploy_key -o IdentitiesOnly=yes"
 EnvironmentFile=-/etc/yojono/telegram.env
 ExecStart=/usr/bin/python3 -B -m claudejono ajo
 TimeoutStartSec=3600
