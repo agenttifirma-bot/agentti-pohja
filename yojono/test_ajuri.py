@@ -635,6 +635,18 @@ class PysyvaJonoTesti(unittest.TestCase):
         self.assertIn("OnCalendar=*-*-* 05:00:00 Europe/Helsinki", c)
         self.assertIn("Unit=yojono.service", a + c)
 
+    def test_katselmointi_ajetaan_ennen_halvempia_tehtavia(self):
+        """28.-30.10.: katselmointi-agentti-pohja (2,50 USD) ohittui joka yo, koska tarkkailu ja kehitys kuluttivat paivakaton ensin.
+        Jarjestys = prioriteetti, joten kallein tehtava ensimmaiseksi: tuore paiva (kulu 0) mahtuu aina ajoon."""
+        d = self.lue()
+        katto, tehtavat = ajuri.tarkista_jono(d)
+        ids = [x["id"] for x in tehtavat]
+        kalleimmat = max(x["budjetti"] for x in tehtavat)
+        self.assertEqual(tehtavat[0]["id"], "katselmointi-agentti-pohja")
+        self.assertEqual(tehtavat[0]["budjetti"], kalleimmat)
+        self.assertLess(ids.index("katselmointi-agentti-pohja"), ids.index("tarkkailu-automaatio"))
+        self.assertLessEqual(tehtavat[0]["budjetti"], katto)
+
     def test_katselmoinnin_budjetti_kattaa_toteutuneen_kulun(self):
         """27.-28.10. yo: katselmointi maksoi 1,86 USD ja kaatui 1,50 USD:n budjettiin ilman raporttia."""
         for x in self.lue()["tehtavat"]:
