@@ -7,6 +7,7 @@
 set -eu
 [ "$(id -u)" = 0 ] || { echo "aja rootina" >&2; exit 1; }
 LAHDE=$(cd "$(dirname "$0")" && pwd)
+command -v sudo >/dev/null 2>&1 || { echo "sudo puuttuu: aja ensin 'apt-get install -y sudo' ja sitten tama skripti uudelleen" >&2; exit 1; }
 
 id claudejono >/dev/null 2>&1 || useradd --system --home-dir /var/lib/claudejono --create-home --shell /bin/bash claudejono
 id prbotti >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin prbotti
