@@ -115,6 +115,7 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None):
     t = seuraava_tehtava(repo)
     if t is None:
         return "jono tyhja"
+    (Path(tyohak) / "tyo").mkdir(parents=True, exist_ok=True)
     kehote = rakenna_kehote(t)
     alaenv = {k: v for k, v in env.items() if not k.startswith(("YOJONO_TELEGRAM_", "CLAUDEJONO_GIT"))}
     try:
