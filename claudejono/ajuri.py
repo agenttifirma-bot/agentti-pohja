@@ -85,7 +85,10 @@ def kirjoita_tulos(repo, nimi, ok, teksti, nyt=None):
 
 
 def git(repo, *args, check=True):
-    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=check, timeout=300)
+    r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=False, timeout=300)
+    if check and r.returncode != 0:
+        raise JonoVirhe(f"git {args[0]} epaonnistui ({r.returncode}): {(r.stderr or r.stdout).strip()[-300:]}")
+    return r
 
 
 def julkaise(repo, polku):
@@ -135,7 +138,11 @@ def main(argv=None):
     repo = Path(os.environ.get("CLAUDEJONO_REPO", "/var/lib/claude-jono/docs"))
     tyohak = Path(os.environ.get("CLAUDEJONO_TYOHAK", "/opt/agentscope"))
     if a.komento == "seuraava":
-        git(repo, "pull", "-q", "--rebase", "origin", "main")
+        try:
+            git(repo, "pull", "-q", "--rebase", "origin", "main")
+        except JonoVirhe as virhe:
+            print(f"claude-jono virhe: {virhe}", file=sys.stderr)
+            return 1
         t = seuraava_tehtava(repo)
         print(t.name if t else "jono tyhja")
         return 0
@@ -151,7 +158,7 @@ def main(argv=None):
             laheta_telegram = None
         try:
             print(aja(repo, tyohak, laheta=laheta_telegram))
-        except (JonoVirhe, subprocess.CalledProcessError) as virhe:
+        except JonoVirhe as virhe:
             print(f"claude-jono virhe: {type(virhe).__name__}: {str(virhe)[:200]}", file=sys.stderr)
             return 1
     return 0
