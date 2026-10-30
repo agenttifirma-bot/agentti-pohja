@@ -1,0 +1,20 @@
+# Mallitiedosto: ei asenna mitaan. Asennus README.md:n mukaan (Tonyn paatos, doc 71).
+[Unit]
+Description=Claude-jono: yksi tehtava docs-repon claude-jono/-kansiosta
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# root, koska terminaali-Clauden tilauskirjautuminen on rootin ~/.claude:ssa (CT115). Rajat: kehote.md + /opt/agentscope/.claude/settings.json.
+WorkingDirectory=/opt/agentti-pohja
+Environment=CLAUDEJONO_REPO=/var/lib/claude-jono/docs
+Environment=CLAUDEJONO_TYOHAK=/opt/agentscope
+Environment=CLAUDEJONO_CLAUDE=/root/.local/bin/claude
+# Varmista kasin ennen kayttoonottoa (ks. README): Environment=CLAUDEJONO_LUPATILA=...
+Environment=GIT_SSH_COMMAND=ssh -i /etc/claude-jono/deploy_key -o IdentitiesOnly=yes
+EnvironmentFile=-/etc/yojono/telegram.env
+ExecStart=/usr/bin/python3 -B -m claudejono ajo
+TimeoutStartSec=3600
+NoNewPrivileges=true
+PrivateTmp=true
