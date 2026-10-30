@@ -3,6 +3,7 @@
 Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 
 ## Unreleased
+- claudejono: raportin loppuun 'Tonylle opittavaa' -osio (yksi käsite + komento kokeiltavaksi), Tonyn toive 30.10.2026.
 - claudejono: itsesuunnittelu painottaa tulostaulun mittareita (Tonyn päätös 30.10.2026): vähintään joka toinen tehtävä ulospäin näkyvää tai Tonya henkilökohtaisesti auttavaa työtä; jokaisessa tehtävässä Mittari-rivi.
 - claudejono: itsesuunnittelun vuorokausiraja 6 -> 30 tehtävää (Tonyn päätös 30.10.2026); 2 / ajo ennallaan.
 - claudejono: agentti omana käyttäjänään (Tonyn päätös 30.10.2026). Ajuri jää rootiksi, agentti ajetaan `runuser -u claudejono` minimiympäristöllä (ei rootin ympäristöä, ei SSH-avainta). PR:t `sudo -u prbotti /usr/local/sbin/claudejono-pr`: polut rajattu `/opt/agentscope/tyo`:hon, haarat haetaan prbotin tilapäisrepoon (agentin `core.fsmonitor` ym. ei aja komentoja; testattu). `asenna-kayttaja.sh` luo käyttäjät, oikeudet ja sudoersin sekä tarkistaa, ettei agentti lue avaimia eikä voi muuttaa kattoja. +3 testiä.
