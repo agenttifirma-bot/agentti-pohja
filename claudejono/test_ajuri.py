@@ -111,7 +111,7 @@ class Ajo(Pohja):
         tulos = tarkistus / ajuri.JONO / "tulokset" / "2026-10-30-01-a.md"
         self.assertIn("VALMIS", tulos.read_text())
         self.assertIn("raportti", tulos.read_text())
-        self.assertEqual(ajuri.aja(self.repo, self.tmp, env={}, suorita=f), "jono tyhja")
+        self.assertEqual(ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_ITSESUUNNITTELU": "0"}, suorita=f), "jono tyhja")
 
     def test_agentin_muut_muutokset_estavat_commitin(self):
         self.lisaa_tehtava("2026-10-30-01-a.md")
@@ -130,6 +130,75 @@ class Ajo(Pohja):
     def test_julkaise_kieltaa_muun_polun(self):
         with self.assertRaises(ajuri.JonoVirhe):
             ajuri.julkaise(self.repo, self.repo / "README.md")
+
+
+class Itsesuunnittelu(Pohja):
+    PVM = "2026-10-30"
+
+    def nyt(self):
+        from datetime import datetime, timezone
+        return datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)
+
+    def malli(self, tulos, kutsut=None):
+        def f(kom, **kw):
+            if kutsut is not None:
+                kutsut.append(kom)
+            return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": tulos}), "")
+        return f
+
+    def origin_tiedostot(self):
+        t = self.tmp / ("tark" + str(len(list(self.tmp.iterdir()))))
+        subprocess.run(["git", "clone", "-q", str(self.origin), str(t)], check=True, capture_output=True)
+        return sorted(str(p.relative_to(t)) for p in (t / ajuri.JONO).rglob("*.md")) if (t / ajuri.JONO).exists() else []
+
+    def test_luo_tehtavat_ja_tonylle_rajattuina(self):
+        self.lisaa_tehtava("2026-10-30-01-a.md")
+        (self.repo / ajuri.JONO / "tulokset").mkdir()
+        (self.repo / ajuri.JONO / "tulokset" / "2026-10-30-01-a.md").write_text("ok")
+        git(self.repo, "add", "-A"); git(self.repo, "commit", "-q", "-m", "t"); git(self.repo, "push", "-q", "origin", "main")
+        vastaus = json.dumps({"tehtavat": [
+            {"nimi": "korjaa-x", "sisalto": "# X\n\nValmis kun: x"},
+            {"nimi": "HUONO NIMI", "sisalto": "y"},
+            {"nimi": "toinen", "sisalto": "# Y"},
+            {"nimi": "kolmas", "sisalto": "# Z"}], "tonylle": "Nosta katto?"})
+        v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli("Tassa:\n" + vastaus), nyt=self.nyt())
+        self.assertIn("itsesuunnittelu", v)
+        tied = self.origin_tiedostot()
+        self.assertIn("claude-jono/tehtavat/2026-10-30-02-auto-korjaa-x.md", tied)
+        self.assertIn("claude-jono/tehtavat/2026-10-30-03-auto-toinen.md", tied)
+        self.assertNotIn("claude-jono/tehtavat/2026-10-30-04-auto-kolmas.md", tied)   # AUTO_PER_AJO = 2
+        self.assertIn("claude-jono/tonylle.md", tied)
+        self.assertEqual(ajuri.seuraava_tehtava(self.repo).name, "2026-10-30-02-auto-korjaa-x.md")
+
+    def test_paivaraja_estaa_mallikutsun(self):
+        teht = self.repo / ajuri.JONO / "tehtavat"
+        teht.mkdir(parents=True)
+        for i in range(ajuri.AUTO_MAX_PAIVA):
+            (teht / f"2026-10-30-{i + 1:02d}-auto-t{i}.md").write_text("x")
+        kutsut = []
+        v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli("{}", kutsut), nyt=self.nyt())
+        self.assertIn("paivaraja", v)
+        self.assertEqual(kutsut, [])
+
+    def test_virheellinen_json_ei_luo_mitaan(self):
+        v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli("ei jsonia"), nyt=self.nyt())
+        self.assertIn("ei tuottanut", v)
+        self.assertEqual(self.origin_tiedostot(), [])
+
+    def test_tyhja_lista_ei_committaa(self):
+        v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli('{"tehtavat": [], "tonylle": ""}'), nyt=self.nyt())
+        self.assertEqual(v, "jono tyhja (ei uusia tehtavia)")
+
+    def test_sallitut_polut(self):
+        self.assertTrue(ajuri.sallittu_polku("claude-jono/tulokset/2026-10-30-01-a.md"))
+        self.assertTrue(ajuri.sallittu_polku("claude-jono/tehtavat/2026-10-30-01-auto-a.md"))
+        self.assertTrue(ajuri.sallittu_polku("claude-jono/tonylle.md"))
+        self.assertFalse(ajuri.sallittu_polku("claude-jono/tehtavat/2026-10-30-01-a.md"))   # vain pilvi-Claude/Tony kirjoittaa muut
+        self.assertFalse(ajuri.sallittu_polku("README.md"))
+        self.assertFalse(ajuri.sallittu_polku("claude-jono/tulokset/../../x.md"))
+
+    def test_raja_on_laissa(self):
+        self.assertLessEqual(ajuri.AUTO_MAX_PAIVA, 6)
 
 
 if __name__ == "__main__":
