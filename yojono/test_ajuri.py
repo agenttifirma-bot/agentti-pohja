@@ -641,6 +641,13 @@ class PysyvaJonoTesti(unittest.TestCase):
             if x["tyyppi"] == "katselmointi":
                 self.assertGreaterEqual(x["budjetti"], 2.0, x["id"])
 
+    def test_ohittamattomien_tarkkailuroolien_budjetti_kattaa_toteutuneen_kulun(self):
+        """29.10.: tarkkailu-automaatio maksoi 1,02 USD ja kaatui 0,80 USD:n budjettiin ilman raporttia. infra ja automaatio
+        eivat ohitu (tarkkailu.sh lukee palvelimen, ajastimet ja kulut), joten ne tarvitsevat enemman kuin laatu/kasvu."""
+        for x in self.lue()["tehtavat"]:
+            if x["tyyppi"] == "tarkkailu" and x.get("teema") in ("automaatio", "infra"):
+                self.assertGreaterEqual(x["budjetti"], 1.1, x["id"])
+
 
 class ToistuvaJumiTesti(Pohja):
     """Aamuraportti 28.10.: epaonnistunut toistuva tehtava ei saa jumittua, kun yritykset (3 ajoa yossa) on kaytetty."""

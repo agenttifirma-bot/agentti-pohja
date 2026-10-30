@@ -6,7 +6,7 @@
       "id": "tarkkailu-automaatio",
       "tyyppi": "tarkkailu",
       "repo": "agenttifirma",
-      "budjetti": 0.8,
+      "budjetti": 1.1,
       "teema": "automaatio",
       "toisto_pv": 2
     },
@@ -22,7 +22,7 @@
       "id": "tarkkailu-infra",
       "tyyppi": "tarkkailu",
       "repo": "agenttifirma",
-      "budjetti": 0.8,
+      "budjetti": 1.1,
       "teema": "infra",
       "toisto_pv": 2
     },
