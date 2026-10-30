@@ -175,8 +175,19 @@ class TestAjo(Pohja):
             return ajuri.Tulos(True, 1.0, "x.md", "ok")
 
         self.aja(suorita)
-        self.assertEqual(len(kutsut), 3)  # kolme tehtavaa a 1,00 USD tayttaa 3,00 USD:n katon
+        # varaus 1,30/tehtava: 0 -> 1 -> 2 kulua, kolmas tarvitsisi 1,30 > 1,00 jaljella -> kaksi ajoa
+        self.assertEqual(len(kutsut), 2)
         self.assertLessEqual(self.tila()["kulut"][PVM], 3.0)
+
+    def test_varaus_kattaa_budjetin_ylityksen(self):
+        """28.10.: katselmointi maksoi 1,86 / 1,50 USD ja vei paivakulun 5,32 / 5,00. Varauksella ylitys mahtuu kattoon."""
+        self.kirjoita_jono(jono([t("a", budjetti=1.5), t("b", budjetti=1.5), t("c", budjetti=1.5)], katto=5.0))
+        self.aja(lambda *_: ajuri.Tulos(True, 1.86, "x.md", "ok"))
+        self.assertLessEqual(self.tila()["kulut"][PVM], 5.0)
+        self.assertEqual(ajuri.varattava(1.5), 1.95)
+
+    def test_varauskerroin_ei_alle_laissa_sovitun(self):
+        self.assertGreaterEqual(ajuri.VARAUSKERROIN, 1.3)
 
     def test_epaonnistunut_kirjataan_ja_kulu_lasketaan(self):
         self.kirjoita_jono(jono([t("a", budjetti=1.5)]))
@@ -1492,14 +1503,14 @@ class AjoTarkkaTesti(Pohja):
         (self.perus / "tila.json").write_text(json.dumps({"kulut": {PVM: 2.5}, "tehtavat": {}}))
         self.kirjoita_jono({"paivakatto": 3.0, "kuukausikatto": 3.0, "tehtavat": [t("a", budjetti=1.0)]})
         teksti, _ = self.aja(lambda *_: ajuri.Tulos(True, 0.1, "x.md", "ok"))
-        self.assertIn("- a: ohitettu (kuukausikatto: jaljella 0.50 < 1.00)", teksti)
+        self.assertIn("- a: ohitettu (kuukausikatto: jaljella 0.50 < varaus 1.30)", teksti)
         (self.perus / "tila.json").write_text(json.dumps({"kulut": {PVM: 5.0}, "tehtavat": {}}))
         teksti, _ = self.aja(lambda *_: ajuri.Tulos(True, 0.1, "x.md", "ok"))
-        self.assertIn("- a: ohitettu (kuukausikatto: jaljella 0.00 < 1.00)", teksti)
+        self.assertIn("- a: ohitettu (kuukausikatto: jaljella 0.00 < varaus 1.30)", teksti)
         self.kirjoita_jono(jono([t("a", budjetti=1.0)]))
         (self.perus / "tila.json").write_text(json.dumps({"kulut": {PVM: 2.5}, "tehtavat": {}}))
         teksti, _ = self.aja(lambda *_: ajuri.Tulos(True, 0.1, "x.md", "ok"))
-        self.assertIn("- a: ohitettu (paivakatto: jaljella 0.50 < 1.00)", teksti)
+        self.assertIn("- a: ohitettu (paivakatto: jaljella 0.50 < varaus 1.30)", teksti)
 
     def test_yksi_pr_paikka_riittaa(self):
         k = dict(t("a", repo="agentti-pohja"), tyyppi="kehitys", aihe="readme")
