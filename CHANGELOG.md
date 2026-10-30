@@ -3,6 +3,7 @@
 Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 
 ## Unreleased
+- claudejono: itsesuunnittelu painottaa tulostaulun mittareita (Tonyn päätös 30.10.2026): vähintään joka toinen tehtävä ulospäin näkyvää tai Tonya henkilökohtaisesti auttavaa työtä; jokaisessa tehtävässä Mittari-rivi.
 - claudejono: itsesuunnittelun vuorokausiraja 6 -> 30 tehtävää (Tonyn päätös 30.10.2026); 2 / ajo ennallaan.
 - claudejono: agentti omana käyttäjänään (Tonyn päätös 30.10.2026). Ajuri jää rootiksi, agentti ajetaan `runuser -u claudejono` minimiympäristöllä (ei rootin ympäristöä, ei SSH-avainta). PR:t `sudo -u prbotti /usr/local/sbin/claudejono-pr`: polut rajattu `/opt/agentscope/tyo`:hon, haarat haetaan prbotin tilapäisrepoon (agentin `core.fsmonitor` ym. ei aja komentoja; testattu). `asenna-kayttaja.sh` luo käyttäjät, oikeudet ja sudoersin sekä tarkistaa, ettei agentti lue avaimia eikä voi muuttaa kattoja. +3 testiä.
 - claudejono: itsesuunnittelu (Tonyn lupa 30.10.2026). Kun jono on tyhjä, CT115:n Claude ehdottaa jatkotehtävät JSONina; ajuri validoi nimet ja koon, kirjoittaa `<pvm>-NN-auto-<nimi>.md`, rajaa 2 / ajo ja 6 / vrk (koodissa) ja kirjaa Tonyn päätettävät `tonylle.md`:hen. Commit sallii vain tulokset, `-auto-`-tehtävät ja `tonylle.md`:n. Kytkin `CLAUDEJONO_ITSESUUNNITTELU=0`. +6 testiä.
