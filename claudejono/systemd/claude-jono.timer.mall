@@ -1,0 +1,12 @@
+# Mallitiedosto: ei asenna mitaan.
+[Unit]
+Description=Claude-jono 30 min valein
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+Persistent=true
+Unit=claude-jono.service
+
+[Install]
+WantedBy=timers.target
