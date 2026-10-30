@@ -45,6 +45,14 @@ class Nimi(unittest.TestCase):
             self.assertFalse(ajuri.kelvollinen_nimi(n), n)
 
 
+class GitVirhe(Pohja):
+    def test_git_virhe_kertoo_gitin_viestin(self):
+        with self.assertRaises(ajuri.JonoVirhe) as cm:
+            ajuri.git(self.tmp / "ei-ole", "pull")
+        self.assertIn("git pull epaonnistui", str(cm.exception))
+        self.assertTrue(len(str(cm.exception)) > len("git pull epaonnistui (128): "))
+
+
 class Valinta(Pohja):
     def test_tyhja_jono(self):
         self.assertIsNone(ajuri.seuraava_tehtava(self.repo))
