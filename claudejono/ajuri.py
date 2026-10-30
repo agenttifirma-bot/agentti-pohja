@@ -61,6 +61,25 @@ def claude_komento(kehote, env):
     return kom
 
 
+def lapsen_ajo(kehote, env, tyohak):
+    """(komento, ymparisto, cwd) Claude-lapsiprosessille.
+
+    Jos CLAUDEJONO_KAYTTAJA on asetettu (Tonyn paatos 30.10.2026), ajuri jaa rootiksi (git, deploy key, Telegram), mutta agentti
+    ajetaan tavallisena kayttajana runuserilla: se ei nae deploy keyta, botin tunnusta, yojonon kattoja eika salaisuuksia, eika
+    saa rootin ymparistoa. Ilman muuttujaa toiminta on ennallaan."""
+    kom = claude_komento(kehote, env)
+    kayttaja = env.get("CLAUDEJONO_KAYTTAJA", "")
+    if not kayttaja:
+        alaenv = {k: v for k, v in env.items() if not k.startswith(("YOJONO_TELEGRAM_", "CLAUDEJONO_GIT", "GIT_SSH"))}
+        return kom, alaenv, str(tyohak)
+    if not re.match(r"^[a-z_][a-z0-9_-]{0,31}$", kayttaja) or kayttaja == "root":
+        raise JonoVirhe("CLAUDEJONO_KAYTTAJA ei kelpaa")
+    koti = env.get("CLAUDEJONO_KOTI", f"/var/lib/{kayttaja}")
+    alaenv = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": koti, "USER": kayttaja, "LOGNAME": kayttaja,
+              "LANG": env.get("LANG", "C.UTF-8")}
+    return ["runuser", "-u", kayttaja, "--", *kom], alaenv, str(Path(tyohak) / "tyo")
+
+
 def tulkitse(stdout, koodi):
     """(ok, teksti) claude -p --output-format json -tulosteesta. Lukukelvoton tuloste = epaonnistui."""
     try:
@@ -167,9 +186,9 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
         return "jono tyhja (itsesuunnittelun paivaraja taynna)"
     kehote = (KEHOTE.read_text(encoding="utf-8") + "\n\n" + SUUNNITTELU.read_text(encoding="utf-8")
               + f"\n\nEhdota enintaan {tilaa} tehtavaa.\n")
-    alaenv = {k: v for k, v in env.items() if not k.startswith(("YOJONO_TELEGRAM_", "CLAUDEJONO_GIT"))}
+    kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak)
     try:
-        r = suorita(claude_komento(kehote, env), cwd=str(tyohak), capture_output=True, text=True,
+        r = suorita(kom, cwd=cwd, capture_output=True, text=True,
                     timeout=int(env.get("CLAUDEJONO_AIKARAJA_S", OLETUS_AIKARAJA_S)), env=alaenv, check=False)
         ok, teksti = tulkitse(r.stdout, r.returncode)
     except subprocess.TimeoutExpired:
@@ -211,9 +230,9 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None):
         return "jono tyhja"
     (Path(tyohak) / "tyo").mkdir(parents=True, exist_ok=True)
     kehote = rakenna_kehote(t)
-    alaenv = {k: v for k, v in env.items() if not k.startswith(("YOJONO_TELEGRAM_", "CLAUDEJONO_GIT"))}
+    kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak)
     try:
-        r = suorita(claude_komento(kehote, env), cwd=str(tyohak), capture_output=True, text=True,
+        r = suorita(kom, cwd=cwd, capture_output=True, text=True,
                     timeout=int(env.get("CLAUDEJONO_AIKARAJA_S", OLETUS_AIKARAJA_S)), env=alaenv, check=False)
         ok, teksti = tulkitse(r.stdout, r.returncode)
     except subprocess.TimeoutExpired:
