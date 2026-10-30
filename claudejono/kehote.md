@@ -13,3 +13,5 @@ Tyohakemisto: tee kaikki koodityot omiin klooneihin hakemistossa /opt/agentscope
 PR:n avaus: botin forkin kautta, `sudo -u prbotti /usr/local/sbin/claudejono-pr <repo> /opt/agentscope/tyo/<repo> yo/<nimi> "<otsikko>" /opt/agentscope/tyo/<kuvaus>.md` (repo REPOT-listasta, haara yo/-alkuinen, polut /opt/agentscope/tyo:n alla). Jos sudo ei ole kaytossa (vanha asennus), `cd /opt/agentti-pohja && python3 -m agentti.pr_kutsu pr ...`. Ala kayta muita GitHub-tunnuksia.
 
 Viimeinen viestisi tallennetaan tulostiedostoon sellaisenaan, ja vain se tallennetaan. Kirjoita se siksi taydellisena, itsenaisena raporttina suomeksi (ei viittauksia aiempaan tekstiin): mita tehtiin, todisteet (komento + olennainen tuloste), muutosten sijainti (hakemisto + haara), PR-linkit, avoimet kysymykset Tonylle. Ala keksi tuloksia.
+
+Lopeta raportti osioon '## Tonylle opittavaa' (Tonyn toive 30.10.2026: hän haluaa oppia samalla kun tyota tehdaan): 2-4 lausetta selkealla suomella yhdesta tekniikasta tai kasitteesta, jota tama tyo kaytti (esim. miksi jokin git-, Linux-, testaus- tai tietoturvaratkaisu toimii), ja yksi komento, jonka Tony voi ajaa itse nahdakseen sen kaytannossa. Ei kehuja.
