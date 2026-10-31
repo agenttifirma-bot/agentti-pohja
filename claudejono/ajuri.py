@@ -213,6 +213,7 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
         nro += 1
     if suunn["tonylle"].strip():
         tp = Path(repo) / JONO / TONYLLE
+        tp.parent.mkdir(parents=True, exist_ok=True)
         vanha = tp.read_text(encoding="utf-8") if tp.exists() else "# Tonyn paatettavat\n"
         tp.write_text(vanha.rstrip() + f"\n\n## {nyt.isoformat(timespec='minutes')} (CT115)\n{suunn['tonylle'].strip()}\n", encoding="utf-8")
         polut.append(tp)
