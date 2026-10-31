@@ -268,3 +268,14 @@ class TestHalytys(unittest.TestCase):
                  mock.patch("yojono.ajuri.laheta_telegram", viestit.append):
                 self.assertEqual(ajuri.main(["ajo"]), 1)
             self.assertEqual(len(viestit), 1)
+
+
+class TestClaudejonoPr(unittest.TestCase):
+    """Vika 31.10.2026: upload-pack ei peri GIT_CONFIG_COUNT-muuttujia, joten safe.directory pitaa antaa tiedostona."""
+
+    def test_safe_directory_tiedostona_ja_git_polulle(self):
+        teksti = (Path(__file__).parent / "claudejono-pr").read_text()
+        self.assertNotIn("GIT_CONFIG_KEY_0", teksti)
+        self.assertIn('GIT_CONFIG_GLOBAL="$T/gitconfig"', teksti)
+        self.assertIn("%s/.git", teksti)
+        self.assertIn("--update-head-ok", teksti)

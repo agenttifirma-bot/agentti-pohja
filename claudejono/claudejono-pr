@@ -16,7 +16,11 @@ case "$KUV" in "$TYO"/*) ;; *) echo "claudejono-pr: kuvaustiedoston pitaa olla $
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT INT TERM
 git init -q "$T/r"
-GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$HAK" \
+# safe.directory tilapaiseen globaaliin tiedostoon: paikallinen siirto ajaa upload-packin, joka ei peri GIT_CONFIG_COUNT-
+# muuttujia (git tyhjentaa ne), ja tarkistus koskee polkua .git (vika 31.10.2026: "dubious ownership ... /.git").
+# Testattu: agentin core.fsmonitor ja core.hooksPath eivat suoritu fetchissa.
+printf '[safe]\n\tdirectory = %s\n\tdirectory = %s/.git\n' "$HAK" "$HAK" > "$T/gitconfig"
+GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$T/gitconfig" \
   git -C "$T/r" fetch -q --no-tags --update-head-ok -- "$HAK" '+refs/heads/*:refs/heads/*'
 head -c 60000 -- "$KUV" > "$T/kuvaus.md"
 cd /opt/agentti-pohja
