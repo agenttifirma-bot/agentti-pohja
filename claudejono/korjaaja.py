@@ -3,7 +3,7 @@
 systemd `OnFailure=korjaaja@%n.service` -> `python3 -m claudejono.korjaaja <yksikko>` (rootina). Ajuri:
   1. tarkistaa yksikon nimen, sallitun listan ja silmukan eston (korjaaja ei korjaa itseaan),
   2. tarkistaa toistorajan (sama yksikko enintaan 1 diagnoosi / 6 h) ja paivakaton (kustannuskatto),
-  3. kerää `journalctl -u <yksikko> -n 80` ITSE (agentti ei saa journal-oikeuksia) ja antaa sen agentille tekstina, datana,
+  3. keraa `journalctl -u <yksikko> -n 80` ITSE (agentti ei saa journal-oikeuksia) ja antaa sen agentille tekstina, datana,
   4. ajaa Clauden kayttajana claudejono aikarajalla (10 min) ja kierrosrajalla,
   5. kirjoittaa diagnoosin docs-repoon claude-jono/korjaukset/<pvm>-<yksikko>.md ja lahettaa Telegram-tiivistelman.
 Korjaaja ei kaynnista palveluita uudelleen, ei muuta asetuksia eika mergea. Se ei koske ajurin omaan polkusaantoon
