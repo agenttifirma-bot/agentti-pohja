@@ -46,9 +46,11 @@ OTSIKKO_MAX = 120
 KUVAUS_MAX = 4000
 SUOJATUT_ALKUOSAT = (".github/", "tools/", "systemd/", "isanta/")
 SUOJATUT_NIMET = ("rajat.py", "config.py")
-# Rajatut repot: PR saa muuttaa vain naita polkuja (muut repot: kaikki paitsi suojatut). kauppatiimi: vain juuren README ja test_*.py,
-# joten riskivahti.py, salkku.py, kirjanpito.py ym. tuotantokoodi pysyy Tonyn kasissa.
-RAJATUT_POLUT = {"kauppatiimi": re.compile(r"^(readme\.md|test_[a-z0-9_]+\.py)$")}
+# Repokohtaiset lisasuojaukset (yleisten suojattujen lisaksi). kauppatiimi (Tonyn paatos 31.10.2026, "vapaat kadet paperilla"):
+# agentti saa muuttaa strategiaa, analyysia, testeja ja paperiasetuksia, mutta oikean rahan lukot pysyvat Tonyn kasissa:
+# riskivahti, salkku, kirjanpito, asetusten valitsin (fail closed), palvelu-/ajastintiedostot, data/ ja tietokannat.
+REPON_SUOJATUT = {"kauppatiimi": re.compile(
+    r"(^|/)(riskivahti\.py|salkku\.py|kirjanpito\.py|asetukset\.py)$|\.(service|timer|db|sqlite3?)$|^data/")}
 SALAINEN_RE = re.compile(r"(\.env|token|secret|api_?key|\.pem|id_ed25519|id_rsa)", re.IGNORECASE)
 ALAKUULO = "\n\n---\nAgentin tekema ehdotus (yojono). Tony katselmoi ja yhdistaa; mitaan ei oteta kayttoon automaattisesti."
 
@@ -82,14 +84,16 @@ def suojattu(polku):
 
 
 def sallittu_polku(repo, polku):
-    """Onko polku repon rajatulla sallittujen listalla (repot ilman rajausta: aina True)."""
-    saanto = RAJATUT_POLUT.get(repo)
+    """Saako polkua muuttaa repon lisasuojausten puolesta (repot ilman lisasuojausta: aina True)."""
+    saanto = REPON_SUOJATUT.get(repo)
     if saanto is None:
         return True
     p = posixpath.normpath(polku.strip()).lower()
     while p.startswith("./"):
         p = p[2:]
-    return bool(saanto.match(p))
+    if p.startswith("/") or ".." in p.split("/"):
+        return False
+    return not saanto.search(p)
 
 
 def lue_tunnus(polku):
@@ -170,7 +174,7 @@ def tarkista(repo, hakemisto, haara, pohja=None, suorita=subprocess.run):
         raise PrVirhe("suojattuja polkuja muutettu, tee kasin: " + ", ".join(huonot[:5]))
     rajatut = [t for t in tiedostot if not sallittu_polku(repo, t)]
     if rajatut:
-        raise PrVirhe("repon %s PR saa muuttaa vain sallittuja polkuja (README, test_*.py), tee kasin: %s" % (repo, ", ".join(rajatut[:5])))
+        raise PrVirhe("repon %s suojattuja polkuja muutettu (oikean rahan lukot), tee kasin: %s" % (repo, ", ".join(rajatut[:5])))
     return tiedostot
 
 
