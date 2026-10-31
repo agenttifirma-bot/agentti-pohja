@@ -1,0 +1,26 @@
+[Unit]
+Description=uhkatieto: julkisten tietoturvasyotteiden keraaja (ei LLM:aa, ei lahetyksia)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=uhkatieto
+Group=uhkatieto
+WorkingDirectory=/opt/agentit/agentti-pohja
+ExecStart=/usr/bin/python3 -B -m uhkatieto --tila /var/lib/uhkatieto
+TimeoutStartSec=900
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/uhkatieto
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
