@@ -6,6 +6,8 @@ Proxmox-hiekkalaatikko, jossa agentit saavat kokeilla vapaasti ja jokainen kokei
 
 Koodi, kuvaukset ja dokumentit ovat tarkoituksella ASCII-muodossa (repon isanta-kansion tapa).
 
+**Agentti-SRE** (vikojen injektointi ja korjausmittaus): ks. `sre/README.md`.
+
 ## Arkkitehtuuri
 
 ```

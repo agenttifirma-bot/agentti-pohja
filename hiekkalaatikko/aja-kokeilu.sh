@@ -214,6 +214,39 @@ if [ -d "$HAKEMISTO/kokeilut/$KOKEILU.d" ]; then
   done
 fi
 
+# 4b. valinnainen salainen alustus (esim. SRE-vika): kokeilut/NIMI.alustus.sh ajetaan kloonissa, ja kokeilut/NIMI.salainen.d/:n
+# tiedostot ovat kontissa vain taman ajan (/root/.hl-salainen). Ne poistetaan ENNEN adapteria, joten agentti ei nae vikaskriptia.
+# Oma tiedosto (NIMI.*) voittaa; muuten ryhman yhteinen (RYHMA.*, esim. sre.alustus.sh kaikille sre-*-kokeiluille). Nimi annetaan argumenttina.
+RYHMA="${KOKEILU%%-*}"
+ALUSTUS_SH=""; TARKISTUS_SH=""; SALAINEN=""
+for k in "$KOKEILU" "$RYHMA"; do
+  if [ -z "$ALUSTUS_SH" ] && [ -f "$HAKEMISTO/kokeilut/$k.alustus.sh" ]; then ALUSTUS_SH="$HAKEMISTO/kokeilut/$k.alustus.sh"; fi
+  if [ -z "$TARKISTUS_SH" ] && [ -f "$HAKEMISTO/kokeilut/$k.tarkistus.sh" ]; then TARKISTUS_SH="$HAKEMISTO/kokeilut/$k.tarkistus.sh"; fi
+  if [ -z "$SALAINEN" ] && [ -d "$HAKEMISTO/kokeilut/$k.salainen.d" ]; then SALAINEN="$HAKEMISTO/kokeilut/$k.salainen.d"; fi
+done
+salainen_sisaan() {
+  ct exec "$CT_ID" -- mkdir -p /root/.hl-salainen
+  if [ -n "$SALAINEN" ]; then
+    for f in "$SALAINEN"/*; do
+      if [ -f "$f" ]; then ct push "$CT_ID" "$f" "/root/.hl-salainen/$(basename "$f")"; fi
+    done
+  fi
+}
+salainen_pois() { ct exec "$CT_ID" -- rm -rf /root/.hl-salainen; }
+if [ -n "$ALUSTUS_SH" ]; then
+  salainen_sisaan
+  ct push "$CT_ID" "$ALUSTUS_SH" /root/.hl-salainen/alustus.sh
+  ALUSTUS_RC=0
+  if [ "$KUIVA" = 1 ]; then
+    echo "+ $PCT exec $CT_ID -- timeout 120 bash /root/.hl-salainen/alustus.sh $KOKEILU"
+  else
+    "$PCT" exec "$CT_ID" -- timeout 120 bash /root/.hl-salainen/alustus.sh "$KOKEILU" >"$LOKIT/alustus.stdout" 2>&1 || ALUSTUS_RC=$?
+  fi
+  salainen_pois
+  # alustus epaonnistui -> adapteria ei ajeta (ADAPTERI_AJETTU=0 -> kirjataan keskeytetty, ei mallin syyksi)
+  [ "$ALUSTUS_RC" = 0 ] || { echo "aja-kokeilu.sh: alustus epaonnistui (rc=$ALUSTUS_RC), ks. $LOKIT/alustus.stdout" >&2; exit 1; }
+fi
+
 # 5. adapteri aikakatolla (isannan puolella; kontissa ei ole LLM-tunnuksia eika LLM-reittia)
 ADAPTERI_KOMENTO=("$ADAPTERI_TIEDOSTO")
 case "$ADAPTERI_TIEDOSTO" in *.py) ADAPTERI_KOMENTO=(python3 -I "$ADAPTERI_TIEDOSTO") ;; esac
@@ -232,22 +265,24 @@ else
 fi
 
 # 6. objektiivinen tarkistus (jos kokeilulla on sellainen)
-if [ -f "$HAKEMISTO/kokeilut/$KOKEILU.tarkistus.sh" ] && [ "$KESKEYTETTY" = 0 ]; then
+if [ -n "$TARKISTUS_SH" ] && [ "$KESKEYTETTY" = 0 ]; then
   # tarkistustiedostot ja kokeilun omat lisatiedostot kirjoitetaan uudelleen isannalta: agentin muokkaus ei vaikuta tarkistukseen
   if [ -d "$HAKEMISTO/kokeilut/$KOKEILU.d" ]; then
     for f in "$HAKEMISTO/kokeilut/$KOKEILU.d"/*; do
       if [ -f "$f" ]; then ct push "$CT_ID" "$f" "/root/kokeilu/$(basename "$f")"; fi
     done
   fi
-  ct push "$CT_ID" "$HAKEMISTO/kokeilut/$KOKEILU.tarkistus.sh" /root/kokeilu/tarkistus.sh
+  ct push "$CT_ID" "$TARKISTUS_SH" /root/kokeilu/tarkistus.sh
+  if [ -n "$SALAINEN" ]; then salainen_sisaan; fi
   if [ "$KUIVA" = 1 ]; then
-    echo "+ $PCT exec $CT_ID -- timeout 120 bash /root/kokeilu/tarkistus.sh"
+    echo "+ $PCT exec $CT_ID -- timeout 120 bash /root/kokeilu/tarkistus.sh $KOKEILU"
   else
     set +e
-    timeout 150 "$PCT" exec "$CT_ID" -- timeout 120 bash /root/kokeilu/tarkistus.sh >"$LOKIT/tarkistus.stdout" 2>&1
+    timeout 150 "$PCT" exec "$CT_ID" -- timeout 120 bash /root/kokeilu/tarkistus.sh "$KOKEILU" >"$LOKIT/tarkistus.stdout" 2>&1
     TARKISTUS_RC=$?
     set -e
   fi
+  if [ -n "$SALAINEN" ]; then salainen_pois; fi
 fi
 
 # 7. lokien keruu: tyokansio (max 50 Mt), proxyn lokista estetyt pyynnot (-> rajarikkeet)
