@@ -240,6 +240,27 @@ class PrTest(unittest.TestCase):
             self.assertNotIn(TUNNUS, str(ctx.exception))
 
 
+class OlemassaOlevaPrTest(unittest.TestCase):
+    """Vika 31.10.2026: haaralle oli jo PR, push paivitti sen, mutta raportti luuli epaonnistuneen (HTTP 422)."""
+
+    def test_422_ja_avoin_pr_palauttaa_osoitteen(self):
+        def avaa(pyynto, timeout):
+            if pyynto.get_method() == "POST":
+                raise urllib.error.HTTPError(pyynto.full_url, 422, "x", {}, io.BytesIO(b"{}"))
+            self.assertIn("head=b%3Ayo%2Fkoe", pyynto.full_url)
+            return Vastaus([{"html_url": "https://github.com/o/r/pull/7"}])
+        self.assertEqual(pk.avaa_pr("agentti-pohja", "yo/koe", "b", "o", "k", TUNNUS, avaa=avaa),
+                         "https://github.com/o/r/pull/7 (paivitetty)")
+
+    def test_422_ilman_avointa_pr_on_virhe(self):
+        def avaa(pyynto, timeout):
+            if pyynto.get_method() == "POST":
+                raise urllib.error.HTTPError(pyynto.full_url, 422, "x", {}, io.BytesIO(b"{}"))
+            return Vastaus([])
+        with self.assertRaises(pk.PrVirhe):
+            pk.avaa_pr("agentti-pohja", "yo/koe", "b", "o", "k", TUNNUS, avaa=avaa)
+
+
 class PaivarajaTest(unittest.TestCase):
     def test_raja(self):
         with tempfile.TemporaryDirectory() as d:
