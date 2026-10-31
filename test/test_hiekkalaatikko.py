@@ -46,7 +46,7 @@ class CtValiTesti(unittest.TestCase):
     def test_kielletyt(self):
         tuotanto = [110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 211]
         muut = [0, 1, 100, 9000, 9001, 9099, 9200, 99999, -9100, "9099", "9200", "", " 9100", "9100 ", "9100;ls", "09100",
-                "9100\n", "9e3", "9100.0", "-9100", None, 9100.0, True, [9100], "９１００"]
+                "9100\n", "9e3", "9100.0", "-9100", None, 9100.0, True, [9100], "\uff19\uff11\uff10\uff10"]
         for n in tuotanto + muut:
             self.assertFalse(hl.ct_id_sallittu(n), repr(n))
 
@@ -138,7 +138,7 @@ class LokiTesti(unittest.TestCase):
         self.assertFalse(os.path.exists(self.p))
 
     def test_skandit_eivat_rikko_asciita(self):
-        hl.kirjaa_rivi(self.p, rivi(malli="mä"))
+        hl.kirjaa_rivi(self.p, rivi(malli="m\u00e4"))
         with open(self.p, "rb") as f:
             f.read().decode("ascii")
 
