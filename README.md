@@ -1,5 +1,7 @@
 # agentti-pohja
 
+> **Tapaustutkimus / Case study:** [Turvallisesti itseohjautuva agenttijono kotipalvelimella](docs/tapaustutkimus.md) (suomi + English)
+
 Yhteinen runko ajastetuille tekoälyagenteille: päivittäinen tiivistäjä, uutisseuranta, raportti, mikä tahansa "kerää dataa, tiivistä mallilla, lähetä Telegramiin" -agentti. Vain Pythonin standardikirjasto, ei riippuvuuksia, ei `pip install` -vaihetta palvelimella.
 
 Pohja koostuu osista, jotka jokainen agentti tarvitsee ja jotka on helppo tehdä väärin:

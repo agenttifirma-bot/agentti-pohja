@@ -443,6 +443,17 @@ def kirjaa_ohitus(t, koodi, pvm, polku=None):
     return _kirjaa_tapahtuma(t, "ohitettu", 0.0, tiedot, polku)
 
 
+# Koodi on laki (Tonyn paatos 30.10.2026): claude --max-budget-usd pysayttaa vasta budjetin ylittaneen vuoron jalkeen, joten
+# todellinen kulu voi ylittaa tehtavan budjetin (28.10.: 1,86 / 1,50 USD -> paivakulu 5,32 / 5,00). Ennen tehtavaa varataan siksi
+# budjetti x VARAUSKERROIN. Kerroin vain tiukentaa kattoa; sen pienentaminen alle 1,3:n vaatii Tonyn luvan.
+VARAUSKERROIN = 1.3
+
+
+def varattava(budjetti):
+    """Paiva- ja kuukausikatosta ennen tehtavaa varattava summa (USD)."""
+    return round(budjetti * VARAUSKERROIN, 4)
+
+
 def skripti_tyypille(skripti, tyyppi):
     """`skripti` on joko polku (vanha: vain katselmointi) tai sanakirja tyyppi -> polku."""
     if isinstance(skripti, dict):
@@ -452,7 +463,7 @@ def skripti_tyypille(skripti, tyyppi):
 
 def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.monotonic, pvm=None, kuiva=False,
         telegram=laheta_telegram, fork_tarkista=None):
-    """Ajaa jonon. Palauttaa tekstiyhteenvedon. Paivakatto: ennen tehtavaa varataan sen koko budjetti."""
+    """Ajaa jonon. Palauttaa tekstiyhteenvedon. Paivakatto: ennen tehtavaa varataan budjetti x VARAUSKERROIN."""
     pvm = pvm or ajopaiva()
     perus = Path(perus)
     perus.mkdir(parents=True, exist_ok=True)
@@ -483,12 +494,13 @@ def aja(perus, skripti, laheta=print, suorita=suorita_katselmointi, nyt=time.mon
             if nyt() - alku > ILTA_AIKARAJA_S:
                 rivit.append(f"- {t['id']}: ohitettu (yon aikaraja)")
                 continue
-            if kuukausikatto is not None and kuukausikatto - kuukauden_kulu(tila, pvm) < t["budjetti"]:
+            varaus = varattava(t["budjetti"])
+            if kuukausikatto is not None and kuukausikatto - kuukauden_kulu(tila, pvm) < varaus:
                 rivit.append(f"- {t['id']}: ohitettu (kuukausikatto: jaljella "
-                             f"{max(kuukausikatto - kuukauden_kulu(tila, pvm), 0):.2f} < {t['budjetti']:.2f})")
+                             f"{max(kuukausikatto - kuukauden_kulu(tila, pvm), 0):.2f} < varaus {varaus:.2f})")
                 continue
-            if katto - kulu_nyt < t["budjetti"]:
-                rivit.append(f"- {t['id']}: ohitettu (paivakatto: jaljella {katto - kulu_nyt:.2f} < {t['budjetti']:.2f})")
+            if katto - kulu_nyt < varaus:
+                rivit.append(f"- {t['id']}: ohitettu (paivakatto: jaljella {katto - kulu_nyt:.2f} < varaus {varaus:.2f})")
                 continue
             if t["tyyppi"] == "kehitys" and pr_kutsu.paikkoja_jaljella() <= 0:
                 # Ei kalliin mallikutsun jalkeen hukkaan menevaa tyota: PR-paivaraja on taynna, yritys ei kulu
