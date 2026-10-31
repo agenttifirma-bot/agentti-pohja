@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import date
 
@@ -364,6 +365,24 @@ def fork_valmis(repo, env=None, suorita=subprocess.run, url=_github_url):
     return True, "", tulos
 
 
+def olemassa_oleva_pr(repo, haara, botti, tunnus, avaa=urllib.request.urlopen):
+    """Avoimen PR:n osoite haaralle botti:haara, tai None (myos virheissa)."""
+    kysely = urllib.parse.urlencode({"head": f"{botti}:{haara}", "state": "open"})
+    pyynto = urllib.request.Request(
+        f"https://api.github.com/repos/{OMISTAJA}/{repo}/pulls?{kysely}",
+        headers={"Authorization": "Bearer " + tunnus, "Accept": "application/vnd.github+json", "User-Agent": "yojono-pr-kutsu"})
+    try:
+        with avaa(pyynto, timeout=30) as vastaus:
+            lista = json.loads(vastaus.read().decode("utf-8"))
+    except (urllib.error.URLError, ValueError, OSError):
+        return None
+    if isinstance(lista, list) and lista and isinstance(lista[0], dict):
+        osoite = lista[0].get("html_url")
+        if isinstance(osoite, str) and osoite.startswith("https://github.com/"):
+            return osoite
+    return None
+
+
 def avaa_pr(repo, haara, botti, otsikko, kuvaus, tunnus, avaa=urllib.request.urlopen):
     """Avaa PR forkista alkuperaiseen repoon. Palauttaa PR:n osoitteen."""
     runko = {
@@ -381,6 +400,11 @@ def avaa_pr(repo, haara, botti, otsikko, kuvaus, tunnus, avaa=urllib.request.url
         with avaa(pyynto, timeout=30) as vastaus:
             osoite = json.loads(vastaus.read().decode("utf-8")).get("html_url")
     except urllib.error.HTTPError as e:
+        if e.code == 422:
+            # Yleisin syy: haaralle on jo avoin PR. Push on silloin jo paivittanyt sen (vika 31.10.: raportit luulivat epaonnistuneen).
+            olemassa = olemassa_oleva_pr(repo, haara, botti, tunnus, avaa=avaa)
+            if olemassa:
+                return olemassa + " (paivitetty)"
         raise PrVirhe("GitHub hylkasi PR:n (HTTP %s)" % e.code)
     except (urllib.error.URLError, ValueError, OSError) as e:
         raise PrVirhe("PR-pyynto epaonnistui: " + type(e).__name__)

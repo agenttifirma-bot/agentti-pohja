@@ -1,0 +1,1 @@
+- pr_kutsu: jos haaralle on jo avoin PR (GitHub HTTP 422), palautetaan sen osoite merkinnällä (paivitetty), koska push on jo paivittanyt PR:n.
