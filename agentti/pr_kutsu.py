@@ -30,12 +30,14 @@ import urllib.error
 import urllib.request
 from datetime import date
 
+from . import github_app
+
 OMISTAJA = "tonyweckstrom1987"
 OLETUS_BOTTI = "agenttifirma-bot"
 REPOT = ("agentti-pohja", "mcp-model-router", "ai-pr-reviewer-action", "llm-stopcheck", "ideapankki", "evalkit", "kauppatiimi")
 HAARA_RE = re.compile(r"^yo/[a-z0-9][a-z0-9._-]{0,59}$")
 BOTTI_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
-TUNNUS_RE = re.compile(r"^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$")
+TUNNUS_RE = re.compile(r"^(github_pat_|ghp_|ghs_)[A-Za-z0-9_]{20,}$")      # ghs_ = GitHub Appin asennustunnus (1 h)
 OLETUS_TUNNUS = "/etc/yojono/github-bot.token"
 OLETUS_TILA = "/var/lib/yojono/pr-tila.json"
 RAJA_PAIVASSA = 100
@@ -100,6 +102,27 @@ def lue_tunnus(polku):
     if not TUNNUS_RE.match(tunnus):
         raise PrVirhe("tunnustiedoston muoto ei kelpaa")
     return tunnus
+
+
+def tunnus_tiedosto(env, repo, rooli, tmp):
+    """Polku tiedostoon, jossa on kaytettava tunnus. rooli: 'fork' (push, forkin synkkaus) tai 'pr' (PR:n avaus).
+
+    Jos YOJONO_APP_ASETUKSET on asetettu, haetaan lyhytikainen GitHub App -asennustunnus (vain tama repo, vain rooliin tarvittava oikeus)
+    ja kirjoitetaan se tmp-hakemistoon (600). Jos haku epaonnistuu, kaytetaan vanhaa PAT-tiedostoa varalla (virheesta tulostetaan vain tyyppi/tila).
+    Ilman asetusta kaytetaan PAT:ia kuten ennen."""
+    asetukset = env.get("YOJONO_APP_ASETUKSET")
+    if asetukset:
+        try:
+            tila = os.path.dirname(env.get("YOJONO_PR_TILA", OLETUS_TILA))
+            tunnus = github_app.hae_tunnus(asetukset, rooli, repo, tila)
+            polku = os.path.join(tmp, "app-" + rooli + ".tok")
+            with open(os.open(polku, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), "w", encoding="ascii") as f:
+                f.write(tunnus)
+            return polku
+        except (github_app.AppVirhe, OSError, UnicodeEncodeError) as e:
+            print("pr_kutsu: App-tunnus ei saatavilla (%s), kaytetaan PAT-varaa" % (e if isinstance(e, github_app.AppVirhe) else type(e).__name__),
+                  file=sys.stderr)
+    return env.get("YOJONO_BOT_TUNNUS", OLETUS_TUNNUS)
 
 
 def botti_kayttaja(env=None):
@@ -328,7 +351,8 @@ def fork_valmis(repo, env=None, suorita=subprocess.run, url=_github_url):
     env = os.environ if env is None else env
     try:
         botti = botti_kayttaja(env)
-        tulos = synkkaa_fork(repo, botti, env.get("YOJONO_BOT_TUNNUS", OLETUS_TUNNUS), suorita=suorita, url=url)
+        with tempfile.TemporaryDirectory() as tmp:
+            tulos = synkkaa_fork(repo, botti, tunnus_tiedosto(env, repo, "fork", tmp), suorita=suorita, url=url)
     except ForkVirhe as e:
         return False, e.koodi, e.viesti
     except PrVirhe as e:
@@ -366,13 +390,14 @@ def luo_pr(repo, hakemisto, haara, otsikko, kuvaus, env=None, suorita=subprocess
     env = os.environ if env is None else env
     botti = botti_kayttaja(env)
     tarkista(repo, hakemisto, haara, suorita=suorita)
-    tunnuspolku = env.get("YOJONO_BOT_TUNNUS", OLETUS_TUNNUS)
-    tunnus = lue_tunnus(tunnuspolku)
-    if not varaa_paikka(env.get("YOJONO_PR_TILA", OLETUS_TILA)):
-        raise PrVirhe("paivaraja %d PR-yritysta taynna" % RAJA_PAIVASSA)
-    sync = paivita_fork(repo, botti, tunnus, avaa=avaa)
-    pushaa(hakemisto, repo, haara, botti, tunnuspolku, suorita=suorita, sync=sync)
-    return avaa_pr(repo, haara, botti, otsikko, kuvaus, tunnus, avaa=avaa)
+    with tempfile.TemporaryDirectory() as tmp:
+        forkpolku = tunnus_tiedosto(env, repo, "fork", tmp)
+        forktunnus = lue_tunnus(forkpolku)                 # puuttuva/virheellinen tunnus ei kuluta paivarajaa
+        if not varaa_paikka(env.get("YOJONO_PR_TILA", OLETUS_TILA)):
+            raise PrVirhe("paivaraja %d PR-yritysta taynna" % RAJA_PAIVASSA)
+        sync = paivita_fork(repo, botti, forktunnus, avaa=avaa)
+        pushaa(hakemisto, repo, haara, botti, forkpolku, suorita=suorita, sync=sync)
+        return avaa_pr(repo, haara, botti, otsikko, kuvaus, lue_tunnus(tunnus_tiedosto(env, repo, "pr", tmp)), avaa=avaa)
 
 
 def main(argv=None):
