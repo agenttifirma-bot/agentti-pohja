@@ -1,0 +1,44 @@
+format-version: 6.1.0
+collection:
+  name: ATLAS
+  version: '2026.10'
+tactics:
+  AML.TA0000:
+    name: Ei Tama
+    created-date: '2021-05-13'
+techniques:
+  AML.T0000:
+    name: Search Open Technical Databases
+    description: 'Adversaries may search for publicly available research.
+
+      Toinen kappale.'
+    references: []
+    created-date: '2021-05-13'
+    modified-date: '2026-09-15'
+    id: AML.T0000
+  AML.T0000.000:
+    name: 'Journals and Conference Proceedings'
+    description: x
+    created-date: '2021-05-13'
+    id: AML.T0000.000
+  AML.T0051:
+    name: 'LLM Prompt Injection: it''s a
+      long name'
+    description: 'name: huijaus
+      created-date: 1999-01-01'
+    created-date: '2023-04-01'
+mitigations:
+  AML.M0000:
+    name: Limit Public Release of Information
+    created-date: '2021-05-13'
+case-studies:
+  AML.CS0000:
+    name: Evasion of Deep Learning Detector
+    created-date: '2020-12-15'
+    references:
+    - id: ref-1
+      title: 'sisakkainen otsikko'
+entities:
+  AML.E0001:
+    name: Ei Mukaan
+    created-date: '2020-01-01'

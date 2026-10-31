@@ -1,0 +1,1 @@
+- agentti: uusi `agentti.autonomia` (vain luku): laatumittarit agenteittain (yojono, claude-jono, pilvi) ja muutosluokittain (mergaus-%, revertit, CI, katselmoinnin loydokset, Tonyn kommentit; lahde GitHubin julkinen API, valinnaisesti tapahtumaloki) seka autonomiaportaiden arvio kynnyksineen. Ei muuta automerge-saantoja eika kattoja; portaat ovat ehdotus, jonka Tony hyvaksyy.
