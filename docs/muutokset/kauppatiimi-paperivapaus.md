@@ -1,0 +1,1 @@
+- kauppatiimi: botin PR saa muuttaa strategia-, analyysi- ja paperiasetustiedostoja (Tonyn päätös 31.10.2026, vapaat kädet paperilla). Suojattuina pysyvät riskivahti.py, salkku.py, kirjanpito.py, asetukset.py, rajat.py, config.py, palvelu- ja ajastintiedostot, data/ ja tietokannat.
