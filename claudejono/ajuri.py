@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -276,10 +277,35 @@ def main(argv=None):
             laheta_telegram = None
         try:
             print(aja(repo, tyohak, laheta=laheta_telegram))
-        except JonoVirhe as virhe:
-            print(f"claude-jono virhe: {type(virhe).__name__}: {str(virhe)[:200]}", file=sys.stderr)
+        except Exception as virhe:  # kaikki kaatumiset halytetaan (vika 30.10.: FileNotFoundError jai hiljaiseksi 20 h)
+            kuvaus = f"{type(virhe).__name__}: {str(virhe)[:200]}"
+            print(f"claude-jono virhe: {kuvaus}", file=sys.stderr)
+            halyta(repo.parent / "viimeisin-halytys.json", kuvaus, laheta_telegram)
             return 1
     return 0
+
+
+HALYTYS_TOISTO_S = 6 * 3600
+
+
+def halyta(tila, kuvaus, laheta, nyt=None):
+    """Lahettaa Telegram-halytyksen kaatumisesta. Sama virhe toistetaan enintaan 6 h valein, jottei 30 min ajastin
+    tayta kanavaa. Palauttaa True, jos viesti lahetettiin."""
+    nyt = time.time() if nyt is None else nyt
+    try:
+        edellinen = json.loads(Path(tila).read_text())
+    except (OSError, ValueError):
+        edellinen = {}
+    if edellinen.get("kuvaus") == kuvaus and nyt - edellinen.get("aika", 0) < HALYTYS_TOISTO_S:
+        return False
+    if not laheta:
+        return False
+    laheta(f"HALYTYS claude-jono kaatui: {kuvaus}\nTarkista: journalctl -u claude-jono.service -n 40 --no-pager")
+    try:
+        Path(tila).write_text(json.dumps({"kuvaus": kuvaus, "aika": nyt}))
+    except OSError:
+        pass
+    return True
 
 
 if __name__ == "__main__":

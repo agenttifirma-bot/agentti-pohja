@@ -1,3 +1,4 @@
+import os
 import json
 import subprocess
 import tempfile
@@ -233,3 +234,37 @@ class OmaKayttaja(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHalytys(unittest.TestCase):
+    """Vika 30.10.2026: kaatuminen jai hiljaiseksi 20 tunniksi."""
+
+    def test_halytys_lahtee_ja_toisto_rajataan(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            tila = Path(d) / "h.json"
+            viestit = []
+            self.assertTrue(ajuri.halyta(tila, "FileNotFoundError: runuser", viestit.append, nyt=1000))
+            self.assertFalse(ajuri.halyta(tila, "FileNotFoundError: runuser", viestit.append, nyt=1000 + 1800))
+            self.assertTrue(ajuri.halyta(tila, "toinen virhe", viestit.append, nyt=1000 + 1900))
+            self.assertTrue(ajuri.halyta(tila, "toinen virhe", viestit.append, nyt=1000 + 1900 + 6 * 3600))
+            self.assertEqual(len(viestit), 3)
+            self.assertIn("HALYTYS", viestit[0])
+
+    def test_ilman_telegramia_ei_kaadu(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self.assertFalse(ajuri.halyta(Path(d) / "h.json", "x", None))
+
+    def test_main_halyttaa_odottamattomasta_virheesta(self):
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d) / "docs"
+            repo.mkdir()
+            viestit = []
+            with mock.patch.dict(os.environ, {"CLAUDEJONO_REPO": str(repo), "CLAUDEJONO_TYOHAK": d}), \
+                 mock.patch.object(ajuri, "aja", side_effect=FileNotFoundError("runuser")), \
+                 mock.patch("yojono.ajuri.laheta_telegram", viestit.append):
+                self.assertEqual(ajuri.main(["ajo"]), 1)
+            self.assertEqual(len(viestit), 1)
