@@ -208,7 +208,10 @@ class OmaKayttaja(unittest.TestCase):
         env = {"CLAUDEJONO_KAYTTAJA": "claudejono", "CLAUDEJONO_CLAUDE": "/var/lib/claudejono/.local/bin/claude",
                "GIT_SSH_COMMAND": "ssh -i /etc/claude-jono/deploy_key", "YOJONO_TELEGRAM_TOKEN": "x", "PATH": "/root/bin:/usr/bin"}
         kom, alaenv, cwd = ajuri.lapsen_ajo("k", env, "/opt/agentscope")
-        self.assertEqual(kom[:4], ["runuser", "-u", "claudejono", "--"])
+        self.assertEqual(kom[:4], ["/usr/sbin/runuser", "-u", "claudejono", "--"])
+        # Popen hakee komennon lapsen PATHista: runuserin on oltava absoluuttinen polku
+        self.assertTrue(kom[0].startswith("/"))
+        self.assertNotIn("/usr/sbin", alaenv["PATH"].split(":"))
         self.assertEqual(kom[4], "/var/lib/claudejono/.local/bin/claude")
         self.assertEqual(cwd, "/opt/agentscope/tyo")
         self.assertEqual(alaenv["HOME"], "/var/lib/claudejono")

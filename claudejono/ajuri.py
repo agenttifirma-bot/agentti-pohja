@@ -61,6 +61,9 @@ def claude_komento(kehote, env):
     return kom
 
 
+RUNUSER = "/usr/sbin/runuser"
+
+
 def lapsen_ajo(kehote, env, tyohak):
     """(komento, ymparisto, cwd) Claude-lapsiprosessille.
 
@@ -77,7 +80,8 @@ def lapsen_ajo(kehote, env, tyohak):
     koti = env.get("CLAUDEJONO_KOTI", f"/var/lib/{kayttaja}")
     alaenv = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": koti, "USER": kayttaja, "LOGNAME": kayttaja,
               "LANG": env.get("LANG", "C.UTF-8")}
-    return ["runuser", "-u", kayttaja, "--", *kom], alaenv, str(Path(tyohak) / "tyo")
+    # Absoluuttinen polku: Popen etsii komennon lapsen PATHista, jossa ei ole /usr/sbin:ia (vika 30.10.2026).
+    return [RUNUSER, "-u", kayttaja, "--", *kom], alaenv, str(Path(tyohak) / "tyo")
 
 
 def tulkitse(stdout, koodi):
