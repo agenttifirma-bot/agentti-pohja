@@ -1,0 +1,12 @@
+# Mallitiedosto: ei asenna mitaan.
+[Unit]
+Description=Tilasivu 15 min valein
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=15min
+Persistent=true
+Unit=tilasivu.service
+
+[Install]
+WantedBy=timers.target
