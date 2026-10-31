@@ -1,0 +1,11 @@
+[Unit]
+Description=uhkatieto: ajastus (1x/vrk)
+
+[Timer]
+# systemd kayttaa palvelimen aikavyohyketta (tarkista `timedatectl`). Yo-ajo: NVD ja CISA paivittyvat paivan mittaan.
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target
