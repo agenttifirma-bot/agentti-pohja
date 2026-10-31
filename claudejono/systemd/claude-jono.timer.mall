@@ -1,10 +1,10 @@
 # Mallitiedosto: ei asenna mitaan.
 [Unit]
-Description=Claude-jono 30 min valein
+Description=Claude-jono 10 min valein (edellisen ajon paattymisesta)
 
 [Timer]
 OnBootSec=5min
-OnUnitActiveSec=30min
+OnUnitInactiveSec=10min
 Persistent=true
 Unit=claude-jono.service
 

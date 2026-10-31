@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -61,6 +62,29 @@ def claude_komento(kehote, env):
     return kom
 
 
+RUNUSER = "/usr/sbin/runuser"
+
+
+def lapsen_ajo(kehote, env, tyohak):
+    """(komento, ymparisto, cwd) Claude-lapsiprosessille.
+
+    Jos CLAUDEJONO_KAYTTAJA on asetettu (Tonyn paatos 30.10.2026), ajuri jaa rootiksi (git, deploy key, Telegram), mutta agentti
+    ajetaan tavallisena kayttajana runuserilla: se ei nae deploy keyta, botin tunnusta, yojonon kattoja eika salaisuuksia, eika
+    saa rootin ymparistoa. Ilman muuttujaa toiminta on ennallaan."""
+    kom = claude_komento(kehote, env)
+    kayttaja = env.get("CLAUDEJONO_KAYTTAJA", "")
+    if not kayttaja:
+        alaenv = {k: v for k, v in env.items() if not k.startswith(("YOJONO_TELEGRAM_", "CLAUDEJONO_GIT", "GIT_SSH"))}
+        return kom, alaenv, str(tyohak)
+    if not re.match(r"^[a-z_][a-z0-9_-]{0,31}$", kayttaja) or kayttaja == "root":
+        raise JonoVirhe("CLAUDEJONO_KAYTTAJA ei kelpaa")
+    koti = env.get("CLAUDEJONO_KOTI", f"/var/lib/{kayttaja}")
+    alaenv = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": koti, "USER": kayttaja, "LOGNAME": kayttaja,
+              "LANG": env.get("LANG", "C.UTF-8")}
+    # Absoluuttinen polku: Popen etsii komennon lapsen PATHista, jossa ei ole /usr/sbin:ia (vika 30.10.2026).
+    return [RUNUSER, "-u", kayttaja, "--", *kom], alaenv, str(Path(tyohak) / "tyo")
+
+
 def tulkitse(stdout, koodi):
     """(ok, teksti) claude -p --output-format json -tulosteesta. Lukukelvoton tuloste = epaonnistui."""
     try:
@@ -91,17 +115,37 @@ def git(repo, *args, check=True):
     return r
 
 
-def julkaise(repo, polku):
-    """Committaa ja pushaa VAIN tulostiedoston. Jos indeksissa on jotain muuta, ei tehda mitaan."""
-    suht = str(Path(polku).relative_to(repo))
-    if not suht.startswith(f"{JONO}/tulokset/"):
-        raise JonoVirhe("vain tulostiedoston saa committaa")
-    git(repo, "add", "--", suht)
-    staged = [r for r in git(repo, "diff", "--cached", "--name-only").stdout.splitlines() if r]
-    if staged != [suht]:
+AUTO_MAX_PAIVA = 30     # Tonyn paatos 30.10.2026: itse keksittyja tehtavia enintaan 30 / vrk (nostettu 6 -> 30; koodi on laki)
+AUTO_PER_AJO = 2
+AUTO_NIMI_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
+TONYLLE = "tonylle.md"
+SUUNNITTELU = Path(__file__).resolve().parent / "suunnittelu.md"
+
+
+def sallittu_polku(suht):
+    """Ajuri saa committaa vain: tulokset/<nimi>.md, tehtavat/<pvm>-NN-auto-*.md ja tonylle.md."""
+    osat = suht.split("/")
+    if len(osat) == 3 and osat[0] == JONO and osat[1] == "tulokset" and kelvollinen_nimi(osat[2]):
+        return True
+    if len(osat) == 3 and osat[0] == JONO and osat[1] == "tehtavat" and kelvollinen_nimi(osat[2]) and "-auto-" in osat[2]:
+        return True
+    return suht == f"{JONO}/{TONYLLE}"
+
+
+def julkaise(repo, polut, viesti=None):
+    """Committaa ja pushaa VAIN annetut sallitut polut. Jos indeksissa on jotain muuta, ei tehda mitaan."""
+    if not isinstance(polut, (list, tuple)):
+        polut = [polut]
+    suhteet = [str(Path(p).relative_to(repo)) for p in polut]
+    for suht in suhteet:
+        if not sallittu_polku(suht):
+            raise JonoVirhe(f"polkua ei saa committaa: {suht}")
+    git(repo, "add", "--", *suhteet)
+    staged = sorted(r for r in git(repo, "diff", "--cached", "--name-only").stdout.splitlines() if r)
+    if not staged or not set(staged) <= set(suhteet):
         git(repo, "reset", "-q", check=False)
-        raise JonoVirhe(f"indeksissa muuta kuin tulos: {staged[:5]}")
-    git(repo, "commit", "-q", "-m", f"claude-jono: tulos {Path(polku).name}")
+        raise JonoVirhe(f"indeksissa muuta kuin sallitut polut: {staged[:5]}")
+    git(repo, "commit", "-q", "-m", viesti or f"claude-jono: tulos {Path(polut[0]).name}")
     for _ in range(3):
         if git(repo, "push", "-q", "origin", "HEAD", check=False).returncode == 0:
             return True
@@ -109,16 +153,92 @@ def julkaise(repo, polku):
     return False
 
 
+def auto_tanaan(repo, pvm):
+    teht = Path(repo) / JONO / "tehtavat"
+    return sum(1 for p in teht.glob(f"{pvm}-*-auto-*.md")) if teht.is_dir() else 0
+
+
+def seuraava_numero(repo, pvm):
+    teht = Path(repo) / JONO / "tehtavat"
+    nrot = [int(p.name[11:13]) for p in teht.glob(f"{pvm}-[0-9][0-9]-*.md")] if teht.is_dir() else []
+    return max(nrot, default=0) + 1
+
+
+def jasenna_suunnitelma(teksti):
+    """Mallin loppuvastauksesta JSON-olio {"tehtavat": [{"nimi", "sisalto"}], "tonylle": "..."}. Virheellinen -> None."""
+    try:
+        alku, loppu = teksti.index("{"), teksti.rindex("}")
+        d = json.loads(teksti[alku:loppu + 1])
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(d, dict) or not isinstance(d.get("tehtavat", []), list):
+        return None
+    ok = []
+    for t in d.get("tehtavat", []):
+        if (isinstance(t, dict) and isinstance(t.get("nimi"), str) and AUTO_NIMI_RE.match(t["nimi"])
+                and isinstance(t.get("sisalto"), str) and 0 < len(t["sisalto"].encode("utf-8")) <= TEHTAVA_MAX_TAVUA):
+            ok.append(t)
+    tonylle = d.get("tonylle") if isinstance(d.get("tonylle"), str) else ""
+    return {"tehtavat": ok, "tonylle": tonylle[:3000]}
+
+
+def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
+    """Jono tyhja: Claude ehdottaa jatkotehtavat. Ajuri nimeaa, rajaa (AUTO_MAX_PAIVA, AUTO_PER_AJO) ja committaa ne."""
+    nyt = nyt or datetime.now().astimezone()
+    pvm = nyt.date().isoformat()
+    tilaa = min(AUTO_PER_AJO, AUTO_MAX_PAIVA - auto_tanaan(repo, pvm))
+    if tilaa <= 0:
+        return "jono tyhja (itsesuunnittelun paivaraja taynna)"
+    kehote = (KEHOTE.read_text(encoding="utf-8") + "\n\n" + SUUNNITTELU.read_text(encoding="utf-8")
+              + f"\n\nEhdota enintaan {tilaa} tehtavaa.\n")
+    kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak)
+    try:
+        r = suorita(kom, cwd=cwd, capture_output=True, text=True,
+                    timeout=int(env.get("CLAUDEJONO_AIKARAJA_S", OLETUS_AIKARAJA_S)), env=alaenv, check=False)
+        ok, teksti = tulkitse(r.stdout, r.returncode)
+    except subprocess.TimeoutExpired:
+        return "jono tyhja (suunnittelu: aikakatkaisu)"
+    suunn = jasenna_suunnitelma(teksti) if ok else None
+    if suunn is None:
+        return "jono tyhja (suunnittelu ei tuottanut kelvollista JSONia)"
+    polut = []
+    nro = seuraava_numero(repo, pvm)
+    for t in suunn["tehtavat"][:tilaa]:
+        p = Path(repo) / JONO / "tehtavat" / f"{pvm}-{nro:02d}-auto-{t['nimi']}.md"
+        if not kelvollinen_nimi(p.name):
+            continue
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("<!-- CT115:n Claude kirjoitti itse (itsesuunnittelu) -->\n" + t["sisalto"].rstrip() + "\n", encoding="utf-8")
+        polut.append(p)
+        nro += 1
+    if suunn["tonylle"].strip():
+        tp = Path(repo) / JONO / TONYLLE
+        tp.parent.mkdir(parents=True, exist_ok=True)
+        vanha = tp.read_text(encoding="utf-8") if tp.exists() else "# Tonyn paatettavat\n"
+        tp.write_text(vanha.rstrip() + f"\n\n## {nyt.isoformat(timespec='minutes')} (CT115)\n{suunn['tonylle'].strip()}\n", encoding="utf-8")
+        polut.append(tp)
+    if not polut:
+        return "jono tyhja (ei uusia tehtavia)"
+    julkaise(repo, polut, f"claude-jono: itsesuunnittelu {len([p for p in polut if p.name != TONYLLE])} tehtavaa")
+    viesti = "claude-jono: itsesuunnittelu -> " + ", ".join(p.name for p in polut)
+    if laheta:
+        laheta(viesti)
+    return viesti
+
+
 def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None):
     env = dict(os.environ if env is None else env)
     git(repo, "pull", "-q", "--rebase", "origin", "main")
     t = seuraava_tehtava(repo)
     if t is None:
+        if env.get("CLAUDEJONO_ITSESUUNNITTELU", "1") == "1":
+            return suunnittele(repo, tyohak, env, suorita, laheta)
         return "jono tyhja"
+    (Path(tyohak) / "tyo").mkdir(parents=True, exist_ok=True)
     kehote = rakenna_kehote(t)
-    alaenv = {k: v for k, v in env.items() if not k.startswith(("YOJONO_TELEGRAM_", "CLAUDEJONO_GIT"))}
+    kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak)
     try:
-        r = suorita(claude_komento(kehote, env), cwd=str(tyohak), capture_output=True, text=True,
+        r = suorita(kom, cwd=cwd, capture_output=True, text=True,
                     timeout=int(env.get("CLAUDEJONO_AIKARAJA_S", OLETUS_AIKARAJA_S)), env=alaenv, check=False)
         ok, teksti = tulkitse(r.stdout, r.returncode)
     except subprocess.TimeoutExpired:
@@ -158,10 +278,35 @@ def main(argv=None):
             laheta_telegram = None
         try:
             print(aja(repo, tyohak, laheta=laheta_telegram))
-        except JonoVirhe as virhe:
-            print(f"claude-jono virhe: {type(virhe).__name__}: {str(virhe)[:200]}", file=sys.stderr)
+        except Exception as virhe:  # kaikki kaatumiset halytetaan (vika 30.10.: FileNotFoundError jai hiljaiseksi 20 h)
+            kuvaus = f"{type(virhe).__name__}: {str(virhe)[:200]}"
+            print(f"claude-jono virhe: {kuvaus}", file=sys.stderr)
+            halyta(repo.parent / "viimeisin-halytys.json", kuvaus, laheta_telegram)
             return 1
     return 0
+
+
+HALYTYS_TOISTO_S = 6 * 3600
+
+
+def halyta(tila, kuvaus, laheta, nyt=None):
+    """Lahettaa Telegram-halytyksen kaatumisesta. Sama virhe toistetaan enintaan 6 h valein, jottei 30 min ajastin
+    tayta kanavaa. Palauttaa True, jos viesti lahetettiin."""
+    nyt = time.time() if nyt is None else nyt
+    try:
+        edellinen = json.loads(Path(tila).read_text())
+    except (OSError, ValueError):
+        edellinen = {}
+    if edellinen.get("kuvaus") == kuvaus and nyt - edellinen.get("aika", 0) < HALYTYS_TOISTO_S:
+        return False
+    if not laheta:
+        return False
+    laheta(f"HALYTYS claude-jono kaatui: {kuvaus}\nTarkista: journalctl -u claude-jono.service -n 40 --no-pager")
+    try:
+        Path(tila).write_text(json.dumps({"kuvaus": kuvaus, "aika": nyt}))
+    except OSError:
+        pass
+    return True
 
 
 if __name__ == "__main__":

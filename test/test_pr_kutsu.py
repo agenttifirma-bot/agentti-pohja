@@ -331,17 +331,20 @@ class MainTest(unittest.TestCase):
 
 
 class RajatutPolutTest(unittest.TestCase):
-    def test_kauppatiimi_vain_readme_ja_testit(self):
-        with tee_repo({"test_uusi.py": "x", "README.md": "y"}) as hak:
-            self.assertEqual(sorted(pk.tarkista("kauppatiimi", hak, "yo/koe")), ["README.md", "test_uusi.py"])
+    """Tonyn paatos 31.10.2026: kauppatiimissa vapaat kadet paperilla, oikean rahan lukot suojattu."""
 
-    def test_kauppatiimi_tuotantokoodi_ja_alihakemistot_hylataan(self):
-        for polku in ("riskivahti.py", "salkku.py", "kirjanpito.py", "retro.py", "db.py", "kauppa-ajo.timer", "docs/a.md",
-                      "sub/test_a.py", "test_a.sh", "tests.py", "./riskivahti.py", "test_a/../salkku.py"):
+    def test_kauppatiimi_strategia_ja_testit_sallitaan(self):
+        with tee_repo({"test_uusi.py": "x", "README.md": "y", "ab_tilasto.py": "z", "paperi_asetukset.py": "w", "retro.py": "v"}) as hak:
+            self.assertEqual(sorted(pk.tarkista("kauppatiimi", hak, "yo/koe")),
+                             ["README.md", "ab_tilasto.py", "paperi_asetukset.py", "retro.py", "test_uusi.py"])
+
+    def test_kauppatiimi_lukot_hylataan(self):
+        for polku in ("riskivahti.py", "salkku.py", "kirjanpito.py", "asetukset.py", "rajat.py", "config.py", "kauppa-ajo.timer",
+                      "kauppa.service", "data/havainnot.md", "historia.db", "kokeilut.sqlite3", "sub/salkku.py", "./riskivahti.py",
+                      "test_a/../salkku.py", ".github/workflows/ci.yml"):
             with self.subTest(polku=polku), tee_repo({"test_ok.py": "x", polku: "y"}) as hak:
-                with self.assertRaises(pk.PrVirhe) as ctx:
+                with self.assertRaises(pk.PrVirhe):
                     pk.tarkista("kauppatiimi", hak, "yo/koe")
-                self.assertIn("tee kasin", str(ctx.exception))
 
     def test_rajaus_ei_koske_muita_repoja(self):
         with tee_repo({"salkku.py": "x"}) as hak:
@@ -350,7 +353,10 @@ class RajatutPolutTest(unittest.TestCase):
     def test_sallittu_polku(self):
         self.assertTrue(pk.sallittu_polku("kauppatiimi", "test_k7.py"))
         self.assertTrue(pk.sallittu_polku("kauppatiimi", "./README.md"))
+        self.assertTrue(pk.sallittu_polku("kauppatiimi", "k7.py"))
+        self.assertTrue(pk.sallittu_polku("kauppatiimi", "paperi_asetukset.py"))
         self.assertFalse(pk.sallittu_polku("kauppatiimi", "salkku.py"))
+        self.assertFalse(pk.sallittu_polku("kauppatiimi", "paperi/../salkku.py"))
         self.assertFalse(pk.sallittu_polku("kauppatiimi", "../test_a.py"))
         self.assertTrue(pk.sallittu_polku("evalkit", "mika/tahansa.py"))
 
