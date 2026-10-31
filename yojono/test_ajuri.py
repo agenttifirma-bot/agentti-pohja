@@ -175,8 +175,19 @@ class TestAjo(Pohja):
             return ajuri.Tulos(True, 1.0, "x.md", "ok")
 
         self.aja(suorita)
-        self.assertEqual(len(kutsut), 3)  # kolme tehtavaa a 1,00 USD tayttaa 3,00 USD:n katon
+        # varaus 1,30/tehtava: 0 -> 1 -> 2 kulua, kolmas tarvitsisi 1,30 > 1,00 jaljella -> kaksi ajoa
+        self.assertEqual(len(kutsut), 2)
         self.assertLessEqual(self.tila()["kulut"][PVM], 3.0)
+
+    def test_varaus_kattaa_budjetin_ylityksen(self):
+        """28.10.: katselmointi maksoi 1,86 / 1,50 USD ja vei paivakulun 5,32 / 5,00. Varauksella ylitys mahtuu kattoon."""
+        self.kirjoita_jono(jono([t("a", budjetti=1.5), t("b", budjetti=1.5), t("c", budjetti=1.5)], katto=5.0))
+        self.aja(lambda *_: ajuri.Tulos(True, 1.86, "x.md", "ok"))
+        self.assertLessEqual(self.tila()["kulut"][PVM], 5.0)
+        self.assertEqual(ajuri.varattava(1.5), 1.95)
+
+    def test_varauskerroin_ei_alle_laissa_sovitun(self):
+        self.assertGreaterEqual(ajuri.VARAUSKERROIN, 1.3)
 
     def test_epaonnistunut_kirjataan_ja_kulu_lasketaan(self):
         self.kirjoita_jono(jono([t("a", budjetti=1.5)]))
@@ -634,6 +645,18 @@ class PysyvaJonoTesti(unittest.TestCase):
         self.assertIn("OnCalendar=*-*-* 21:30:00 Europe/Helsinki", a)
         self.assertIn("OnCalendar=*-*-* 05:00:00 Europe/Helsinki", c)
         self.assertIn("Unit=yojono.service", a + c)
+
+    def test_katselmointi_ajetaan_ennen_halvempia_tehtavia(self):
+        """28.-30.10.: katselmointi-agentti-pohja (2,50 USD) ohittui joka yo, koska tarkkailu ja kehitys kuluttivat paivakaton ensin.
+        Jarjestys = prioriteetti, joten kallein tehtava ensimmaiseksi: tuore paiva (kulu 0) mahtuu aina ajoon."""
+        d = self.lue()
+        katto, tehtavat = ajuri.tarkista_jono(d)
+        ids = [x["id"] for x in tehtavat]
+        kalleimmat = max(x["budjetti"] for x in tehtavat)
+        self.assertEqual(tehtavat[0]["id"], "katselmointi-agentti-pohja")
+        self.assertEqual(tehtavat[0]["budjetti"], kalleimmat)
+        self.assertLess(ids.index("katselmointi-agentti-pohja"), ids.index("tarkkailu-automaatio"))
+        self.assertLessEqual(tehtavat[0]["budjetti"], katto)
 
     def test_katselmoinnin_budjetti_kattaa_toteutuneen_kulun(self):
         """27.-28.10. yo: katselmointi maksoi 1,86 USD ja kaatui 1,50 USD:n budjettiin ilman raporttia."""
@@ -1480,14 +1503,14 @@ class AjoTarkkaTesti(Pohja):
         (self.perus / "tila.json").write_text(json.dumps({"kulut": {PVM: 2.5}, "tehtavat": {}}))
         self.kirjoita_jono({"paivakatto": 3.0, "kuukausikatto": 3.0, "tehtavat": [t("a", budjetti=1.0)]})
         teksti, _ = self.aja(lambda *_: ajuri.Tulos(True, 0.1, "x.md", "ok"))
-        self.assertIn("- a: ohitettu (kuukausikatto: jaljella 0.50 < 1.00)", teksti)
+        self.assertIn("- a: ohitettu (kuukausikatto: jaljella 0.50 < varaus 1.30)", teksti)
         (self.perus / "tila.json").write_text(json.dumps({"kulut": {PVM: 5.0}, "tehtavat": {}}))
         teksti, _ = self.aja(lambda *_: ajuri.Tulos(True, 0.1, "x.md", "ok"))
-        self.assertIn("- a: ohitettu (kuukausikatto: jaljella 0.00 < 1.00)", teksti)
+        self.assertIn("- a: ohitettu (kuukausikatto: jaljella 0.00 < varaus 1.30)", teksti)
         self.kirjoita_jono(jono([t("a", budjetti=1.0)]))
         (self.perus / "tila.json").write_text(json.dumps({"kulut": {PVM: 2.5}, "tehtavat": {}}))
         teksti, _ = self.aja(lambda *_: ajuri.Tulos(True, 0.1, "x.md", "ok"))
-        self.assertIn("- a: ohitettu (paivakatto: jaljella 0.50 < 1.00)", teksti)
+        self.assertIn("- a: ohitettu (paivakatto: jaljella 0.50 < varaus 1.30)", teksti)
 
     def test_yksi_pr_paikka_riittaa(self):
         k = dict(t("a", repo="agentti-pohja"), tyyppi="kehitys", aihe="readme")

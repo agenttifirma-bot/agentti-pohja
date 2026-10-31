@@ -3,6 +3,13 @@
   "kuukausikatto": 100.0,
   "tehtavat": [
     {
+      "id": "katselmointi-agentti-pohja",
+      "tyyppi": "katselmointi",
+      "repo": "agentti-pohja",
+      "budjetti": 2.5,
+      "toisto_pv": 5
+    },
+    {
       "id": "tarkkailu-automaatio",
       "tyyppi": "tarkkailu",
       "repo": "agenttifirma",
@@ -72,13 +79,6 @@
       "repo": "evalkit",
       "aihe": "testit",
       "budjetti": 1.2,
-      "toisto_pv": 5
-    },
-    {
-      "id": "katselmointi-agentti-pohja",
-      "tyyppi": "katselmointi",
-      "repo": "agentti-pohja",
-      "budjetti": 2.5,
       "toisto_pv": 5
     },
     {

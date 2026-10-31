@@ -1,0 +1,4 @@
+# /etc/sudoers.d/claudejono (root:root 0440). Tarkista: visudo -cf /etc/sudoers.d/claudejono
+# claude-jonon agentti (claudejono) saa ajaa vain PR-kaaren prbottina. Ei muuta sudoa.
+Defaults:claudejono env_reset, !setenv
+claudejono ALL=(prbotti) NOPASSWD: /usr/local/sbin/claudejono-pr
