@@ -258,6 +258,73 @@ class Itsesuunnittelu(Pohja):
     def test_raja_on_laissa(self):
         self.assertLessEqual(ajuri.AUTO_MAX_PAIVA, 30)
 
+    def test_tyhja_kierros_aloittaa_tauon(self):
+        kutsut = []
+        tyhja = self.malli('{"tehtavat": [], "tonylle": "Sama kohta"}', kutsut)
+        ajuri.suunnittele(self.repo, self.tmp, {}, tyhja, nyt=self.nyt())
+        from datetime import timedelta
+        v = ajuri.suunnittele(self.repo, self.tmp, {}, tyhja, nyt=self.nyt() + timedelta(minutes=10))
+        self.assertIn("tauolla", v)
+        self.assertEqual(len(kutsut), 1)   # toista mallikutsua ei tehty
+        self.assertEqual((self.repo / ajuri.JONO / ajuri.TONYLLE).read_text().count("Sama kohta"), 1)
+
+    def test_tauko_paattyy_ajan_kuluttua(self):
+        from datetime import timedelta
+        kutsut = []
+        tyhja = self.malli('{"tehtavat": [], "tonylle": ""}', kutsut)
+        ajuri.suunnittele(self.repo, self.tmp, {}, tyhja, nyt=self.nyt())
+        ajuri.suunnittele(self.repo, self.tmp, {}, tyhja, nyt=self.nyt() + timedelta(seconds=ajuri.SUUNNITTELU_TAUKO_S + 1))
+        self.assertEqual(len(kutsut), 2)
+
+    def test_uusi_tulos_paattaa_tauon(self):
+        kutsut = []
+        tyhja = self.malli('{"tehtavat": [], "tonylle": ""}', kutsut)
+        ajuri.suunnittele(self.repo, self.tmp, {}, tyhja, nyt=self.nyt())
+        (self.repo / ajuri.JONO / "tulokset").mkdir(parents=True)
+        (self.repo / ajuri.JONO / "tulokset" / "2026-10-30-01-a.md").write_text("ok")
+        ajuri.suunnittele(self.repo, self.tmp, {}, tyhja, nyt=self.nyt())
+        self.assertEqual(len(kutsut), 2)
+
+    def test_virheellinen_json_aloittaa_tauon(self):
+        kutsut = []
+        ajuri.suunnittele(self.repo, self.tmp, {}, self.malli("ei jsonia", kutsut), nyt=self.nyt())
+        v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli("ei jsonia", kutsut), nyt=self.nyt())
+        self.assertIn("tauolla", v)
+        self.assertEqual(len(kutsut), 1)
+
+    def test_tehtavia_tuottanut_kierros_ei_aloita_taukoa(self):
+        kutsut = []
+        f = self.malli(json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A"}], "tonylle": ""}), kutsut)
+        ajuri.suunnittele(self.repo, self.tmp, {}, f, nyt=self.nyt())
+        ajuri.suunnittele(self.repo, self.tmp, {}, f, nyt=self.nyt())
+        self.assertEqual(len(kutsut), 2)
+
+    def test_tauon_voi_saataa_ymparistosta(self):
+        kutsut = []
+        tyhja = self.malli('{"tehtavat": [], "tonylle": ""}', kutsut)
+        env = {"CLAUDEJONO_SUUNNITTELU_TAUKO_S": "0"}
+        ajuri.suunnittele(self.repo, self.tmp, env, tyhja, nyt=self.nyt())
+        ajuri.suunnittele(self.repo, self.tmp, env, tyhja, nyt=self.nyt())
+        self.assertEqual(len(kutsut), 2)
+
+    def test_rikkinainen_tilatiedosto_ei_esta(self):
+        (self.tmp / ajuri.SUUNNITTELU_TILA).write_text("{rikki")
+        kutsut = []
+        ajuri.suunnittele(self.repo, self.tmp, {}, self.malli('{"tehtavat": [], "tonylle": ""}', kutsut), nyt=self.nyt())
+        self.assertEqual(len(kutsut), 1)
+
+
+class TulosKatkaisu(Pohja):
+    def test_ylipitka_raportti_merkitaan_katkaistuksi(self):
+        p = ajuri.kirjoita_tulos(self.repo, "2026-10-30-01-a.md", True, "\u00e4" * ajuri.TULOS_MAX_TAVUA)
+        t = p.read_text(encoding="utf-8")
+        self.assertIn("raportti katkaistu", t)
+        self.assertIn(str(2 * ajuri.TULOS_MAX_TAVUA), t)
+
+    def test_lyhyt_raportti_ilman_merkintaa(self):
+        p = ajuri.kirjoita_tulos(self.repo, "2026-10-30-01-a.md", True, "lyhyt")
+        self.assertNotIn("katkaistu", p.read_text(encoding="utf-8"))
+
 
 class TonylleKirjoitus(Pohja):
     """suunnittele(): tonylle.md luodaan tai jatketaan, ja kirjoitus rajataan."""
