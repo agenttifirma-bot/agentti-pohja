@@ -41,6 +41,43 @@ class SuodatusTest(unittest.TestCase):
         self.assertTrue(t.sopii(i, ["python"], ["berlin"]))
 
 
+class SanarajaTest(unittest.TestCase):
+    H = ["intern", "ai", "sre"]
+
+    def test_alimerkkijono_ei_riita(self):
+        self.assertFalse(t.sopii({"otsikko": "International Tax Manager"}, self.H))
+        self.assertFalse(t.sopii({"otsikko": "Maintainer of sresearch"}, self.H))
+
+    def test_kokonainen_sana_kay(self):
+        self.assertTrue(t.sopii({"otsikko": "Backend Intern"}, self.H))
+        self.assertTrue(t.sopii({"otsikko": "AI Infrastructure Engineer"}, self.H))
+        self.assertTrue(t.sopii({"otsikko": "Intern, Platform"}, self.H))
+
+    def test_erikoismerkit_escapataan(self):
+        self.assertTrue(t.sopii({"otsikko": "C++ Developer"}, ["c++"]))
+        self.assertFalse(t.sopii({"otsikko": "Cxx Developer"}, ["c++"]))
+
+
+class RemoteAlueTest(unittest.TestCase):
+    P = ["helsinki", "remote", "finland"]
+
+    def ok(self, sij):
+        return t.sopii({"otsikko": "Python dev", "sijainti": sij}, ["python"], self.P)
+
+    def test_hylkaa_ei_eurooppa(self):
+        for sij in ("Remote - United States", "Remote, US", "Remote (USA)", "Remote - Canada", "Remote Americas",
+                    "Remote - APAC", "Remote LATAM", "Remote - India", "Remote - U.S."):
+            self.assertFalse(self.ok(sij), sij)
+
+    def test_hyvaksy_remote_ilman_aluetta_ja_eurooppa(self):
+        for sij in ("Remote", "Remote - Europe", "Remote EMEA", "Remote - EU", "Remote, Finland", "Remote Nordics",
+                    "Helsinki, Finland"):
+            self.assertTrue(self.ok(sij), sij)
+
+    def test_ei_remote_ei_vaikuta(self):
+        self.assertFalse(t.sopii({"otsikko": "Python dev", "sijainti": "Austin, US"}, ["python"], self.P))
+
+
 class LukuTest(unittest.TestCase):
     def test_lahteet(self):
         self.assertEqual(len(t.lue_greenhouse("g", GH)), 2)
