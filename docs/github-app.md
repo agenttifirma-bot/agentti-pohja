@@ -17,7 +17,7 @@ PAT:ia ei kayteta muualla (grep: ei `secrets.*PAT`-viittauksia Actionseissa).
 ## 2. Oikeudet minimiin
 Kaksi asennusta, koska fork on botti-tilin ja PR:n kohde Tonyn:
 - **Asennus A (botti-tili agenttifirma-bot, valitut repot = forkit):** Contents: write (push, merge-upstream), Metadata: read. Ei Workflows, ei Pull requests.
-- **Asennus B (Tonyn tili, valitut repot = REPOT-lista: agentti-pohja, mcp-model-router, ai-pr-reviewer-action, llm-stopcheck, ideapankki, evalkit, kauppatiimi):** Pull requests: write, Metadata: read. EI Contents-oikeutta, joten botti ei voi kirjoittaa Tonyn repoihin (nykyinen "ei oikeuksia" -periaate sailyy).
+- **Asennus B (Tonyn tili, valitut repot = REPOT-lista: agentti-pohja, mcp-model-router, ai-pr-reviewer-action, llm-stopcheck, ideapankki, evalkit, kauppatiimi, mcp-doctor, llm-cassette):** Pull requests: write, Metadata: read. EI Contents-oikeutta, joten botti ei voi kirjoittaa Tonyn repoihin (nykyinen "ei oikeuksia" -periaate sailyy).
 - Koodi pyytaa tokenin lisaksi rajattuna: `repositories:[yksi repo]` + vain roolin oikeus.
 - Avoin tarkistus (vaihe 2): riittaako pelkka pull_requests:write PR:n avaamiseen julkisesta forkista; jos ei, selvita pienin lisaoikeus ennen kuin laajennat mitaan.
 
