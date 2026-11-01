@@ -21,6 +21,10 @@ from pathlib import Path
 TEHTAVA_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-[a-z0-9-]{1,60}\.md$")
 TEHTAVA_MAX_TAVUA = 20000
 TULOS_MAX_TAVUA = 60000
+# Tyhja suunnittelukierros (0 tehtavaa) toistui 1.11. noin 10 min valein ja lisasi tonylle.md:hen lahes saman kohdan
+# kymmenia kertoja. Tauko: tyhjan kierroksen jalkeen uutta suunnittelua ei ajeta ennen kuin tauko on kulunut tai uusi tulos on tullut.
+SUUNNITTELU_TAUKO_S = 3 * 3600
+SUUNNITTELU_TILA = "suunnittelu-tila.json"
 OLETUS_AIKARAJA_S = 45 * 60
 OLETUS_MAX_KIERROKSET = 60
 JONO = "claude-jono"
@@ -192,7 +196,11 @@ def kirjoita_tulos(repo, nimi, ok, teksti, nyt=None):
     nyt = nyt or datetime.now().astimezone()
     polku = Path(repo) / JONO / "tulokset" / nimi
     polku.parent.mkdir(parents=True, exist_ok=True)
-    runko = teksti.encode("utf-8")[:TULOS_MAX_TAVUA].decode("utf-8", "ignore")
+    tavut = teksti.encode("utf-8")
+    runko = tavut[:TULOS_MAX_TAVUA].decode("utf-8", "ignore")
+    if len(tavut) > TULOS_MAX_TAVUA:   # 1.11.: M02-lahde katkesi kesken sanan ilman merkintaa
+        runko += (f"\n\n[AJURI: raportti katkaistu {TULOS_MAX_TAVUA} tavuun, alkuperainen {len(tavut)} tavua. "
+                  "Loppu puuttuu tasta tiedostosta.]")
     polku.write_text(f"# Tulos: {nimi}\n\n- Tila: {'VALMIS' if ok else 'EPAONNISTUI'}\n- Aika: {nyt.isoformat(timespec='minutes')}\n\n{runko}\n",
                      encoding="utf-8")
     return polku
@@ -272,6 +280,29 @@ def jasenna_suunnitelma(teksti):
     return {"tehtavat": ok, "tonylle": tonylle[:3000]}
 
 
+def tulosten_maara(repo):
+    hak = Path(repo) / JONO / "tulokset"
+    return sum(1 for _ in hak.glob("*.md")) if hak.is_dir() else 0
+
+
+def suunnittelu_tauolla(tyohak, repo, nyt, tauko_s):
+    """True, jos edellinen suunnittelu ei tuottanut tehtavia, tauko ei ole kulunut eika uusia tuloksia ole tullut."""
+    try:
+        d = json.loads((Path(tyohak) / SUUNNITTELU_TILA).read_text(encoding="utf-8"))
+        aika, tehtavia, tuloksia = float(d["aika"]), int(d["tehtavia"]), int(d["tuloksia"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return tehtavia == 0 and 0 <= nyt.timestamp() - aika < tauko_s and tuloksia == tulosten_maara(repo)
+
+
+def kirjaa_suunnittelu(tyohak, repo, nyt, tehtavia):
+    try:
+        (Path(tyohak) / SUUNNITTELU_TILA).write_text(
+            json.dumps({"aika": nyt.timestamp(), "tehtavia": tehtavia, "tuloksia": tulosten_maara(repo)}), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
     """Jono tyhja: Claude ehdottaa jatkotehtavat. Ajuri nimeaa, rajaa (AUTO_MAX_PAIVA, AUTO_PER_AJO) ja committaa ne."""
     nyt = nyt or datetime.now().astimezone()
@@ -279,6 +310,8 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
     tilaa = min(AUTO_PER_AJO, AUTO_MAX_PAIVA - auto_tanaan(repo, pvm))
     if tilaa <= 0:
         return "jono tyhja (itsesuunnittelun paivaraja taynna)"
+    if suunnittelu_tauolla(tyohak, repo, nyt, int(env.get("CLAUDEJONO_SUUNNITTELU_TAUKO_S", SUUNNITTELU_TAUKO_S))):
+        return "jono tyhja (suunnittelu tauolla: edellinen kierros ei tuottanut tehtavia eika uusia tuloksia ole)"
     kehote = (KEHOTE.read_text(encoding="utf-8") + "\n\n" + SUUNNITTELU.read_text(encoding="utf-8")
               + f"\n\nEhdota enintaan {tilaa} tehtavaa.\n")
     kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak)
@@ -287,9 +320,11 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
                     timeout=int(env.get("CLAUDEJONO_AIKARAJA_S", OLETUS_AIKARAJA_S)), env=alaenv, check=False)
         ok, teksti = tulkitse(r.stdout, r.returncode)
     except subprocess.TimeoutExpired:
+        kirjaa_suunnittelu(tyohak, repo, nyt, 0)
         return "jono tyhja (suunnittelu: aikakatkaisu)"
     suunn = jasenna_suunnitelma(teksti) if ok else None
     if suunn is None:
+        kirjaa_suunnittelu(tyohak, repo, nyt, 0)
         return "jono tyhja (suunnittelu ei tuottanut kelvollista JSONia)"
     polut = []
     nro = seuraava_numero(repo, pvm)
@@ -307,6 +342,7 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
         vanha = tp.read_text(encoding="utf-8") if tp.exists() else "# Tonyn paatettavat\n"
         tp.write_text(vanha.rstrip() + f"\n\n## {nyt.isoformat(timespec='minutes')} (CT115)\n{suunn['tonylle'].strip()}\n", encoding="utf-8")
         polut.append(tp)
+    kirjaa_suunnittelu(tyohak, repo, nyt, len([p for p in polut if p.name != TONYLLE]))
     if not polut:
         return "jono tyhja (ei uusia tehtavia)"
     julkaise(repo, polut, f"claude-jono: itsesuunnittelu {len([p for p in polut if p.name != TONYLLE])} tehtavaa")
