@@ -37,14 +37,35 @@ def laskosta(teksti):
     return t
 
 
+def _sana_re(sana):
+    """Hakusana kokonaisena sanana (sanaraja kuten \\b, mutta toimii myos 'c++'-tyyppisilla hakusanoilla) ja re.escape:lla:
+    'intern' ei tasmaa sanaan 'international'."""
+    return re.compile(r"(?<!\w)" + re.escape(laskosta(sana)) + r"(?!\w)")
+
+
+# Euroopan ulkopuoliset alueet: remote + jokin nama -> hylataan (Tonin paatos 1.11.2026).
+EI_EUROOPPA = ("united states", "usa", "us", "u.s.", "u.s.a.", "north america", "america", "americas", "latam",
+               "latin america", "canada", "mexico", "brazil", "apac", "asia", "india", "australia", "new zealand",
+               "japan", "singapore", "china", "israel")
+EI_EUROOPPA_RE = [re.compile(r"(?<![\w.])" + re.escape(a) + r"(?![\w])") for a in EI_EUROOPPA]
+
+
+def _remote_ei_euroopassa(sij):
+    """Sijainti (laskostettu) sisaltaa remote-sanan JA Euroopan ulkopuolisen alueen."""
+    return bool(_sana_re("remote").search(sij)) and any(r.search(sij) for r in EI_EUROOPPA_RE)
+
+
 def sopii(ilmoitus, hakusanat, paikat=()):
-    """Otsikko/tiimi tasmaa vahintaan yhteen hakusanaan; jos paikat annettu, myos sijainti tasmaa yhteen."""
+    """Otsikko/tiimi tasmaa vahintaan yhteen hakusanaan (kokonainen sana); jos paikat annettu, myos sijainti tasmaa
+    yhteen. Sijainti, jossa on remote mutta myos Euroopan ulkopuolinen alue (esim. 'Remote - US'), hylataan."""
     teksti = laskosta(ilmoitus.get("otsikko", "") + " " + ilmoitus.get("tiimi", ""))
-    if not any(laskosta(h) in teksti for h in hakusanat):
+    if not any(_sana_re(h).search(teksti) for h in hakusanat):
         return False
     if paikat:
         sij = laskosta(ilmoitus.get("sijainti", ""))
-        return any(laskosta(p) in sij for p in paikat)
+        if _remote_ei_euroopassa(sij):
+            return False
+        return any(_sana_re(p).search(sij) for p in paikat)
     return True
 
 
