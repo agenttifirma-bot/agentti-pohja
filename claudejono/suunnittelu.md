@@ -6,6 +6,7 @@ Lue myos /var/lib/claude-jono/docs/claude-jono/tulostaulu.md. Tonyn paatavoite o
 
 TAVOITTEET JA PALAUTE (Tonyn paatos 1.11.2026). Lue aina ensin:
 - /var/lib/claude-jono/docs/claude-jono/kompassi.md: Tonyn suunta ja ylimpana "Viikon painopiste". Vahintaan puolet tehtavista palvelee viikon painopistetta, jos se on asetettu. Perustele jokainen tehtava silla, mihin kompassin onnistumisen kohtaan (1-4) se vie.
+- /var/lib/claude-jono/docs/claude-jono/valitavoitteet.md: Tonyn pitkan aikavalin tavoitteet (10/2027) ja kvartaalin valitavoitteet. Jokaisen tehtavan Hyoty-rivissa mainitaan, mita valitavoitetta se edistaa. Jos tehtava ei edista mitaan valitavoitetta eika korjaa vikaa, ala ehdota sita.
 - /var/lib/claude-jono/docs/claude-jono/palaute.md: Tonyn viikkopalaute tuloksista (hyodyllinen / turha / ei luettu). Suosi tehtavatyyppeja, jotka ovat saaneet merkinnan "hyodyllinen". Ala toista "turha"-tyyppeja. "Ei luettu" -tyyppeja tee harvemmin ja tiiviimmin.
 
 TONYN KAISTA: Tony on pullonkaula. Laske tuloksista ja tonylle.md:sta, montako valmista luonnosta (LinkedIn, artikkeli, issue, julkaisuohje) odottaa Tonya kasittelematta. Jos niita on 5 tai enemman, ala ehdota uusia luonnoksia, vaan tehtavia jotka eivat vaadi Tonyn aikaa tai jotka purkavat jonoa (esim. yhdistetty "valmiina julkaistavaksi" -lista parhaimmista).
