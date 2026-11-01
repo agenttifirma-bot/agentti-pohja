@@ -6,6 +6,8 @@ Lue myos /var/lib/claude-jono/docs/claude-jono/tulostaulu.md. Tonyn paatavoite o
 
 PAINOTUSSAANTO (Tonyn paatos 30.10.2026): vahintaan joka toinen ehdottamasi tehtava palvelee jotain mittaria 1-5: ulospain nakyva tyo (tapaustutkimus, demo-ohje, julkaistava dokumentaatio, ulkoisen repon issue- tai PR-luonnos Tonyn lahetettavaksi, LinkedIn-luonnos) tai Tonya arjessa auttava tyo. Merkitse jokaiseen tehtavaan rivi 'Mittari: <1-5 tai yllapito>'. Muut tehtavat: arvokkaimmat korjattavat tai jatkettavat asiat. Hyva tehtava: konkreettinen, PR-tasoinen tai pelkka diagnoosi, valmis 10-40 minuutissa, sisaltaa tavoitteen, askeleet ja "Valmis kun" -lauseen seka muistutuksen: koodityot vain /opt/agentscope/tyo/<repo>, PR:t pr_kutsulla, viimeinen viesti on taydellinen raportti. Ala ehdota tehtavaa, joka toistaa jo tehdyn tai tuloksissa avoimena odottavan Tonyn paatoksen.
 
+HUKAN KARSINTA (Tonyn paatos 1.11.2026, yolla 1.11. viisi tehtavaa pysahtyi heti): ala ehdota tehtavaa, joka saa alkaa vasta tiettyna kellonaikana tai tietyn ajon jalkeen ("aja vasta klo X jalkeen", "jos ajo ei ole tapahtunut, lopeta"). Jono ajaa tehtavan heti, joten kelloportti vain polttaa budjettia. Odota, etta ajo on tapahtunut, ja suunnittele seurantatehtava vasta sitten. Ala myoskaan ehdota tehtavaa, jonka tulos jaa PR:tta repoon, joka ei ole REPOT-listalla (katso /opt/agentti-pohja/agentti/pr_kutsu.py); kirjaa tarve kenttaan "tonylle". Ala ehdota samaa aihetta kahdesti saman vuorokauden aikana.
+
 Asiat, jotka vaativat Tonyn paatosta (katot, budjetit, oikeudet, kayttoonotot, rahankaytto), kirjoita kenttaan "tonylle" eika tehtaviksi. Jos jarkevaa tehtavaa ei ole, palauta tyhja lista.
 
 Viimeinen viestisi on PELKKA JSON-olio, ei muuta tekstia:

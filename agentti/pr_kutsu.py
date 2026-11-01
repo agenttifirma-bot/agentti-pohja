@@ -35,7 +35,7 @@ from . import github_app
 
 OMISTAJA = "tonyweckstrom1987"
 OLETUS_BOTTI = "agenttifirma-bot"
-REPOT = ("agentti-pohja", "mcp-model-router", "ai-pr-reviewer-action", "llm-stopcheck", "ideapankki", "evalkit", "kauppatiimi")
+REPOT = ("agentti-pohja", "mcp-model-router", "ai-pr-reviewer-action", "llm-stopcheck", "ideapankki", "evalkit", "kauppatiimi", "mcp-doctor", "llm-cassette")
 HAARA_RE = re.compile(r"^yo/[a-z0-9][a-z0-9._-]{0,59}$")
 BOTTI_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 TUNNUS_RE = re.compile(r"^(github_pat_|ghp_|ghs_)[A-Za-z0-9_]{20,}$")      # ghs_ = GitHub Appin asennustunnus (1 h)

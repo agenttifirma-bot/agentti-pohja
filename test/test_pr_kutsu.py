@@ -384,7 +384,7 @@ class RajatutPolutTest(unittest.TestCase):
 
 class RepolistaTesti(unittest.TestCase):
     def test_sallitut_repot_tarkasti(self):
-        self.assertEqual(set(pk.REPOT), {"agentti-pohja", "mcp-model-router", "ai-pr-reviewer-action", "llm-stopcheck", "ideapankki", "evalkit", "kauppatiimi"})
+        self.assertEqual(set(pk.REPOT), {"agentti-pohja", "mcp-model-router", "ai-pr-reviewer-action", "llm-stopcheck", "ideapankki", "evalkit", "kauppatiimi", "mcp-doctor", "llm-cassette"})
 
     def test_tuntematon_repo_hylataan(self):
         with self.assertRaises(pk.PrVirhe):
