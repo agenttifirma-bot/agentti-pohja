@@ -316,7 +316,7 @@ class Itsesuunnittelu(Pohja):
 
 class TulosKatkaisu(Pohja):
     def test_ylipitka_raportti_merkitaan_katkaistuksi(self):
-        p = ajuri.kirjoita_tulos(self.repo, "2026-10-30-01-a.md", True, "ä" * ajuri.TULOS_MAX_TAVUA)
+        p = ajuri.kirjoita_tulos(self.repo, "2026-10-30-01-a.md", True, "\u00e4" * ajuri.TULOS_MAX_TAVUA)
         t = p.read_text(encoding="utf-8")
         self.assertIn("raportti katkaistu", t)
         self.assertIn(str(2 * ajuri.TULOS_MAX_TAVUA), t)
