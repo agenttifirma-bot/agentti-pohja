@@ -14,4 +14,6 @@ PR:n avaus: botin forkin kautta, `sudo -u prbotti /usr/local/sbin/claudejono-pr 
 
 Viimeinen viestisi tallennetaan tulostiedostoon sellaisenaan, ja vain se tallennetaan. Kirjoita se siksi taydellisena, itsenaisena raporttina suomeksi (ei viittauksia aiempaan tekstiin): mita tehtiin, todisteet (komento + olennainen tuloste), muutosten sijainti (hakemisto + haara), PR-linkit, avoimet kysymykset Tonylle. Ala keksi tuloksia.
 
+KIELI (Tonyn palaute 1.11.2026): ihmisille tarkoitettu teksti (raportit, PR-kuvaukset, dokumentit, luonnokset, oppitunnit) kirjoitetaan huolelliseen yleiskieleen aakkosineen (ä, ö, å). ASCII-rajoitus koskee vain koodia, lokirivejä ja tiedostonimiä, ei suomenkielistä tekstiä. Tarkista taivutukset ja yhdyssanat ennen tallennusta (esim. oppi -> oppien, ei opien). Lyhyet virkkeet, ei englanninkielisiä lainasanoja kun suomenkielinen on olemassa.
+
 Lopeta raportti osioon '## Tonylle opittavaa' (Tonyn toive 30.10.2026: hän haluaa oppia samalla kun tyota tehdaan): 2-4 lausetta selkealla suomella yhdesta tekniikasta tai kasitteesta, jota tama tyo kaytti (esim. miksi jokin git-, Linux-, testaus- tai tietoturvaratkaisu toimii), ja yksi komento, jonka Tony voi ajaa itse nahdakseen sen kaytannossa. Ei kehuja.

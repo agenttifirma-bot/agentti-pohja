@@ -3,6 +3,7 @@
 Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 
 ## Unreleased
+- claudejono: kieliohje kehotteeseen: ihmisille tarkoitettu teksti ääkkösineen ja huolellisella yleiskielellä, ASCII vain koodissa ja lokeissa (Tonyn palaute 1.11.2026).
 - claudejono: itsesuunnittelu lukee kompassin viikon painopisteen ja Tonyn viikkopalautteen (`claude-jono/palaute.md`), rajoittaa luonnoksia kun Tonyn kasiteltavia on 5+ ja vaatii jokaiseen tehtavaan Hyoty-rivin (Tonyn paatos 1.11.2026).
 - agentti: `mcp-doctor` ja `llm-cassette` lisatty PR-kutsun sallittujen repojen listaan (`REPOT`), Tonyn paatos 1.11.2026. Yon 31.10.-1.11. tyot (mcp-doctor 0.4.0 -paketti, CI-ohje, demo-nauhoitus, llm-cassetten avainvuodon korjaus) jaivat muuten paikallisiksi. Vaatii botin forkit `agenttifirma-bot/mcp-doctor` ja `agenttifirma-bot/llm-cassette`.
 - claudejono: itsesuunnittelu ei ehdota kelloportillisia tehtavia, REPOT-listan ulkopuolisia PR-tehtavia eika samaa aihetta kahdesti vuorokaudessa (Tonyn paatos 1.11.2026; yolla 1.11. viisi tehtavaa pysahtyi heti).
