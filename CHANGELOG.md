@@ -3,7 +3,7 @@
 Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 
 ## Unreleased
-- docs: `docs/gitea.md` (Gitea-peilit, yksityisen työn siirto, act_runner, varmuuskopio ja levytila-arvio) ja `tools/gitea_peilit.py` (kuiva-ajo oletuksena, token vain ympäristöstä). +6 testiä.
+- docs: `docs/gitea.md` (Gitea-peilit, yksityisen työn siirto, act_runner, varmuuskopio ja levytila-arvio) ; peiliskripti odottaa Tonyn käsin tuomaa haaraa (`tools/` on suojattu polku).
 - claudejono: itsesuunnittelun tauko. Tyhjän kierroksen (0 tehtävää, virheellinen JSON tai aikakatkaisu) jälkeen uutta suunnittelua ei ajeta 3 tuntiin (`CLAUDEJONO_SUUNNITTELU_TAUKO_S`), ellei uusi tulos ole tullut. 1.11. tyhjä kierros toistui noin 10 minuutin välein ja lisäsi `tonylle.md`:hen lähes saman kohdan kymmeniä kertoja (ja kulutti tilauksen kiintiötä). Tila tiedostossa `<työhakemisto>/suunnittelu-tila.json`. +7 testiä.
 - claudejono: yli 60 000 tavun raportti merkitään katkaistuksi (alkuperäinen koko näkyy). 1.11. koulumatka-äänikirjan M02-lähde katkesi kesken sanan ilman merkintää. +2 testiä.
 - claudejono: itsesuunnittelu lukee myos `valitavoitteet.md`:n (unelmat -> kvartaalin valitavoitteet), Tonyn paatos 1.11.2026.

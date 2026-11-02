@@ -17,7 +17,7 @@ Tila 2.11.2026. Tämä on ohje Tonylle. Dokumentti ja skripti on kirjoitettu CT1
 
 ## a) Pull-peilit kaikista julkisista repoista
 
-Skripti `tools/gitea_peilit.py` (vain vakiokirjasto):
+Skripti `tools/gitea_peilit.py` (vain vakiokirjasto). Huom: `tools/` on PR-kutsun suojattu polku, joten agentti ei voinut lisätä skriptiä tähän PR:ään. Se on valmiina ja testattuna haarassa `yo/gitea-peilit-skripti` hakemistossa `/opt/agentscope/tyo/agentti-pohja`. Tony tuo sen käsin (`git cherry-pick`) tai hyväksyy toisen paikan. Skripti:
 
 1. Listaa käyttäjän `tonyweckstrom1987` julkiset repot GitHubin rajapinnasta. Tunnusta ei tarvita. Forkit jätetään pois, ellei anna valitsinta `--forkit`.
 2. Tarkistaa, onko repo jo Giteassa, ja ohittaa sen. Skriptin voi siis ajaa uudelleen.
@@ -35,7 +35,7 @@ Yksityiset repot (esimerkiksi docs-repo) vaativat GitHub-tokenin, jonka Gitea ta
 
 ### Tonyn ajo-ohje (7 komentoa)
 
-Aja koneella, jolla on yhteys Giteaan (Tailscale päällä) ja tämä repo kloonattuna:
+Aja koneella, jolla on yhteys Giteaan (Tailscale päällä) ja tämä repo kloonattuna (skriptin haara yllä):
 
 ```
 pct exec 113 -- gitea --version                      # 1. isännällä: versio talteen
