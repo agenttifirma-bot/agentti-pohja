@@ -32,8 +32,8 @@ def haku(vastaukset):
 
 
 TERVE = {"/forks": [{"owner": BOTTI}, {"owner": VIERAS}],
-         "/issues": [{"user": VIERAS}, {"user": TONY}, {"user": VIERAS, "pull_request": {}}, {"user": DEPENDABOT, "pull_request": {}},
-                     {"user": BOTTI, "pull_request": {}}],
+         "/issues": [{"user": VIERAS, "number": 1}, {"user": TONY, "number": 2}, {"user": VIERAS, "pull_request": {}, "number": 3},
+                     {"user": DEPENDABOT, "pull_request": {}, "number": 4}, {"user": BOTTI, "pull_request": {}, "number": 5}],
          "downloads/point": {"downloads": 42},
          "/repos/tonyweckstrom1987/": {"stargazers_count": 3}}  # viimeisena: vain repon oma osoite tasmaa tahan
 
@@ -49,7 +49,7 @@ class UlkoinenTesti(unittest.TestCase):
 class ReponLuvutTesti(unittest.TestCase):
     def test_botin_forkki_eika_oma_issue_kasvata_lukuja(self):
         luvut, virheet = k.repo_luvut("mcp-doctor", haku(TERVE))
-        self.assertEqual(luvut, {"tahdet": 3, "forkit": 1, "issuet": 1, "prt": 1})
+        self.assertEqual(luvut, {"tahdet": 3, "forkit": 1, "issuet": 1, "prt": 1, "numerot": {"issuet": [1], "prt": [3]}})
         self.assertEqual(virheet, [])
 
     def test_yksi_epaonnistunut_haku_on_kysymysmerkki_ei_nolla_eika_vie_muita(self):
@@ -127,6 +127,112 @@ class MuotoileTesti(unittest.TestCase):
         self.assertIn("| a | 9 (+5) | 2 | ? | 0 | 0 |", teksti)
         self.assertIn("muutos mittaukseen 2026-11-01", teksti)
         self.assertIn("- a forkit: URLError", teksti)
+
+
+def issuet(*rivit):
+    """TERVE-aineisto, jossa /issues-lista on annettu: rivit (numero, kayttaja, onko_pr)."""
+    v = dict(TERVE)
+    v["/issues"] = [dict({"user": u, "number": n}, **({"pull_request": {}} if pr else {})) for n, u, pr in rivit]
+    return v
+
+
+class HalytysTesti(unittest.TestCase):
+    def ajo(self, argv, hae, tanaan, lahetetyt, tulos="lahetetty"):
+        def laheta(tila, otsikko, teksti=""):
+            lahetetyt.append((tila, otsikko, teksti))
+            return tulos
+        ulos = io.StringIO()
+        with contextlib.redirect_stdout(ulos):
+            koodi = k.main(argv, hae=hae, tanaan=tanaan, laheta=laheta)
+        return koodi, ulos.getvalue()
+
+    def test_ensimmainen_ajo_ilman_tilaa_kirjaa_lahtotason_eika_halyta(self):
+        with tempfile.TemporaryDirectory() as d:
+            polku = os.path.join(d, "k.json")
+            lahetetyt = []
+            self.ajo(["--tila", polku, "--halyta"], haku(issuet((7, VIERAS, False))), "2026-11-02", lahetetyt)
+            self.assertEqual(lahetetyt, [])
+            self.assertEqual(lue(polku)["2026-11-02"]["evalkit"]["numerot"], {"issuet": [7], "prt": []})
+
+    def test_uusi_ulkopuolinen_issue_ja_pr_halyttavat_kerran_ja_sama_ei_toisella_ajolla(self):
+        with tempfile.TemporaryDirectory() as d:
+            polku = os.path.join(d, "k.json")
+            lahetetyt = []
+            self.ajo(["--tila", polku, "--halyta"], haku(issuet((7, VIERAS, False))), "2026-11-02", lahetetyt)
+            uusi = haku(issuet((9, VIERAS, True), (8, VIERAS, False), (7, VIERAS, False)))
+            self.ajo(["--tila", polku, "--halyta"], uusi, "2026-11-03", lahetetyt)
+            self.assertEqual(len(lahetetyt), 1)
+            tila, otsikko, teksti = lahetetyt[0]
+            self.assertEqual(tila, "paatos")
+            self.assertIn("evalkit issue #8 https://github.com/tonyweckstrom1987/evalkit/issues/8", teksti)
+            self.assertIn("evalkit PR #9 https://github.com/tonyweckstrom1987/evalkit/pull/9", teksti)
+            self.assertNotIn("#7", teksti)
+            # Sama haku toisella ajolla (myos samana paivana): ei uutta halytysta.
+            self.ajo(["--tila", polku, "--halyta"], uusi, "2026-11-03", lahetetyt)
+            self.ajo(["--tila", polku, "--halyta"], uusi, "2026-11-04", lahetetyt)
+            self.assertEqual(len(lahetetyt), 1)
+
+    def test_oma_tunnus_ja_botti_eivat_halyta(self):
+        with tempfile.TemporaryDirectory() as d:
+            polku = os.path.join(d, "k.json")
+            lahetetyt = []
+            self.ajo(["--tila", polku, "--halyta"], haku(issuet()), "2026-11-02", lahetetyt)
+            v = issuet((1, TONY, False), (2, BOTTI, True), (3, DEPENDABOT, True), (4, {"login": "x", "type": "Bot"}, False))
+            self.ajo(["--tila", polku, "--halyta"], v, "2026-11-03", lahetetyt)
+            self.assertEqual(lahetetyt, [])
+
+    def test_kaatunut_haku_ei_halyta_eika_tyhjenna_tilaa(self):
+        with tempfile.TemporaryDirectory() as d:
+            polku = os.path.join(d, "k.json")
+            lahetetyt = []
+            self.ajo(["--tila", polku, "--halyta"], haku(issuet((7, VIERAS, False))), "2026-11-02", lahetetyt)
+            kaatunut = issuet((7, VIERAS, False))
+            kaatunut["/issues"] = urllib.error.URLError("x")
+            self.ajo(["--tila", polku, "--halyta"], kaatunut, "2026-11-03", lahetetyt)
+            self.assertEqual(lahetetyt, [])
+            self.assertEqual(lue(polku)["2026-11-03"]["evalkit"]["numerot"], {"issuet": [7], "prt": []})
+            # Haku palaa: 7 ei ole uusi, 8 on.
+            self.ajo(["--tila", polku, "--halyta"], haku(issuet((8, VIERAS, False), (7, VIERAS, False))), "2026-11-04", lahetetyt)
+            self.assertEqual(len(lahetetyt), 1)
+            self.assertIn("#8", lahetetyt[0][2])
+            self.assertNotIn("#7", lahetetyt[0][2])
+
+    def test_kaatunut_haku_ensimmaisella_ajolla_ei_ole_lahtotaso(self):
+        self.assertEqual(k.uudet_ulkoiset({}, {"r": {"issuet": "?", "prt": "?"}}), [])
+        self.assertEqual(k.uudet_ulkoiset({"r": {"issuet": [1], "prt": []}}, {"r": {"issuet": "?", "prt": "?"}}), [])
+
+    def test_ilmoitus_joka_ei_lahde_toistuu_seuraavalla_ajolla(self):
+        with tempfile.TemporaryDirectory() as d:
+            polku = os.path.join(d, "k.json")
+            lahetetyt = []
+            self.ajo(["--tila", polku, "--halyta"], haku(issuet()), "2026-11-02", lahetetyt)
+            uusi = haku(issuet((5, VIERAS, False)))
+            self.ajo(["--tila", polku, "--halyta"], uusi, "2026-11-03", lahetetyt, tulos="raja")
+            self.ajo(["--tila", polku, "--halyta"], uusi, "2026-11-04", lahetetyt)
+            self.assertEqual(len(lahetetyt), 2)
+
+    def test_kuiva_ei_laheta_eika_kirjoita(self):
+        with tempfile.TemporaryDirectory() as d:
+            polku = os.path.join(d, "k.json")
+            lahetetyt = []
+            self.ajo(["--tila", polku, "--halyta"], haku(issuet()), "2026-11-02", lahetetyt)
+            ennen = lue(polku)
+            _, teksti = self.ajo(["--tila", polku, "--halyta", "--kuiva"], haku(issuet((5, VIERAS, False))), "2026-11-03", lahetetyt)
+            self.assertEqual(lahetetyt, [])
+            self.assertIn("evalkit issue #5", teksti)
+            self.assertEqual(lue(polku), ennen)
+
+    def test_halyta_vaatii_tilan_ja_kuiva_halytyksen(self):
+        for argv in (["--halyta", "--ei-tilaa"], ["--kuiva"]):
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                k.main(argv, hae=haku({}))
+
+    def test_viesti_rajataan(self):
+        uudet = [("evalkit", "issue", n) for n in range(1, 40)]
+        otsikko, teksti = k.halytysviesti(uudet)
+        self.assertIn("39 uutta", otsikko)
+        self.assertIn("ja 29 muuta", teksti)
+        self.assertLessEqual(len(teksti), 1200)
 
 
 class MainTesti(unittest.TestCase):

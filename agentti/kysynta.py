@@ -5,10 +5,15 @@ ulkoisia lukuja (botin oma forkki ei ole kysyntaa). Epaonnistunut haku on "?", e
 nayttaa silta, ettei kukaan kayta. Yhteydenotot Tony kertoo itse, niita ei lueta mistaan.
 
 Kaytto:
-    python3 -m agentti.kysynta [--tila polku | --ei-tilaa]
+    python3 -m agentti.kysynta [--tila polku | --ei-tilaa] [--halyta [--kuiva]]
 Tulostaa markdown-taulukon. Paivan luvut tallentuvat tilatiedostoon (oletus TILA_OLETUS, --tila vaihtaa, --ei-tilaa jattaa
 tallentamatta) ja taulukko nayttaa muutoksen edelliseen eri paivan mittaukseen. Tahdet ovat repon stargazers_count eli
 kokonaismaara (omat mukana); forkit, issuet ja PR:t ovat ulkoisia.
+--halyta: tilaan tallennetaan ulkoisten issueiden ja PR:ien numerot, ja uudet (edellisen onnistuneen haun jalkeen ilmestyneet)
+ilmoitetaan agentti.ilmoita-moduulilla. Ensimmainen ajo ilman tilaa kirjaa lahtotason eika halyta. Epaonnistunut haku ei ole
+uusi eika tyhjenna tilaa. Jos ilmoitus ei lahde, uudet jaavat nakematta ja halytys toistuu seuraavalla ajolla. --kuiva tulostaa
+halytyksen lahettamatta eika kirjoita tilaa. Haku nakee uusimmat SIVUKOKO issuea/PR:aa; harvempi ajo kuin kerran paivassa
+voi ohittaa tulvan alle jaaneet.
 Vain luku, ei tunnuksia, vain stdlib. GitHubin kirjautumaton raja on 60 pyyntoa tunnissa; yksi ajo kuluttaa enintaan
 3 pyyntoa repoa kohden (+1 npm), joten aja kerran paivassa tai harvemmin. Virheista nakyy vain tyypin nimi ja HTTP-tila."""
 import argparse
@@ -86,11 +91,12 @@ def repo_luvut(repo, hae=hae_json):
         # GitHubin issues-rajapinta palauttaa myos PR:t; ne erottaa pull_request-kentasta.
         rivit = hae("%s/issues?state=all&per_page=%d" % (perus, SIVUKOKO))
         taysi = len(rivit) >= SIVUKOKO
-        issuet = [r.get("user") for r in rivit if "pull_request" not in r]
-        prt = [r.get("user") for r in rivit if "pull_request" in r]
-        for avain, lista in (("issuet", issuet), ("prt", prt)):
-            maara = sum(1 for k in lista if ulkoinen(k))
-            luvut[avain] = "%d+" % maara if taysi else maara
+        numerot = {}
+        for avain, onko_pr in (("issuet", False), ("prt", True)):
+            ulk = [r for r in rivit if ("pull_request" in r) == onko_pr and ulkoinen(r.get("user"))]
+            luvut[avain] = "%d+" % len(ulk) if taysi else len(ulk)
+            numerot[avain] = sorted(r["number"] for r in ulk if type(r.get("number")) is int)
+        luvut["numerot"] = numerot  # vain onnistuneesta haustasta: puuttuva avain tarkoittaa "ei tietoa", ei "ei mitaan"
     except Exception as e:
         virheet.append("issuet: " + _virhe(e))
     return luvut, virheet
@@ -145,6 +151,47 @@ def muotoile(luvut, virheet, edellinen=None, edellinen_pvm=None):
     return "\n".join(rivit) + "\n"
 
 
+def viimeiset_numerot(tila):
+    """Repoittain viimeisin tunnettu {issuet: [...], prt: [...]} koko historiasta (myos tanaan tallennettu)."""
+    tulos = {}
+    for pvm in sorted(tila):
+        rivit = tila[pvm] if isinstance(tila[pvm], dict) else {}
+        for repo, luvut in rivit.items():
+            n = luvut.get("numerot") if isinstance(luvut, dict) else None
+            if isinstance(n, dict):
+                tulos[repo] = n
+    return tulos
+
+
+def _numerolista(n, laji):
+    lista = n.get(laji) if isinstance(n, dict) else None
+    return lista if isinstance(lista, list) else None
+
+
+def uudet_ulkoiset(edellinen, luvut):
+    """Vertaa tilaan tallennettuja numeroita uuteen hakuun. Palauttaa jarjestetyn listan (repo, laji, numero), laji "issue" tai "pr".
+    Repo, jolla ei ole aiempaa tallennettua numerolistaa (ensimmainen ajo, aiempi haku epaonnistui) kirjataan lahtotasoksi eika halyta.
+    Epaonnistunut haku (ei "numerot"-avainta) ei tuota mitaan."""
+    uudet = []
+    for repo in sorted(luvut):
+        nyt = luvut[repo].get("numerot")
+        for avain, laji in (("issuet", "issue"), ("prt", "pr")):
+            vanha, uusi = _numerolista((edellinen or {}).get(repo), avain), _numerolista(nyt, avain)
+            if vanha is None or uusi is None:
+                continue
+            uudet += [(repo, laji, n) for n in uusi if n not in vanha]
+    return uudet
+
+
+def halytysviesti(uudet, enint=10):
+    """(otsikko, teksti) ilmoitukselle. Vain repo, laji ja numero seka niista johdettu osoite: otsikoita ja kirjoittajien tekstia ei kopioida."""
+    rivit = ["%s %s #%d https://github.com/%s/%s/%s/%d" % (r, "issue" if l == "issue" else "PR", n, OMISTAJA, r,
+                                                          "issues" if l == "issue" else "pull", n) for r, l, n in uudet[:enint]]
+    if len(uudet) > enint:
+        rivit.append("... ja %d muuta" % (len(uudet) - enint))
+    return "Ulkopuolinen avasi %d uutta issuea tai PR:aa" % len(uudet), "\n".join(rivit)
+
+
 def lue_tila(polku):
     try:
         data = json.loads(Path(polku).read_text(encoding="utf-8"))
@@ -172,19 +219,46 @@ def kirjoita_tila(polku, tila, pvm, luvut):
         raise
 
 
-def main(argv=None, hae=hae_json, tanaan=None):
+def main(argv=None, hae=hae_json, tanaan=None, laheta=None):
     ap = argparse.ArgumentParser(prog="agentti.kysynta")
     ap.add_argument("--tila", default=TILA_OLETUS, help="JSON-historia, johon paivan luvut tallennetaan (oletus %s)" % TILA_OLETUS)
     ap.add_argument("--ei-tilaa", action="store_true", help="ala lue tai kirjoita tilaa")
+    ap.add_argument("--halyta", action="store_true", help="ilmoita uudet ulkopuoliset issuet ja PR:t (agentti.ilmoita); vaatii tilan")
+    ap.add_argument("--kuiva", action="store_true", help="vain --halyta: tulosta halytys, ala laheta ala kirjoita tilaa")
     a = ap.parse_args(argv)
+    if a.halyta and a.ei_tilaa:
+        ap.error("--halyta tarvitsee tilan (ei yhdessa --ei-tilaa kanssa)")
+    if a.kuiva and not a.halyta:
+        ap.error("--kuiva kuuluu --halyta-lipun kanssa")
     pvm = tanaan or time.strftime("%Y-%m-%d")
     luvut, virheet = mittaa(hae=hae)
     tila = {} if a.ei_tilaa else lue_tila(a.tila)
     aiemmat = sorted(p for p in tila if p < pvm)
     edellinen_pvm = aiemmat[-1] if aiemmat else None
     print(muotoile(luvut, virheet, tila.get(edellinen_pvm), edellinen_pvm), end="")
-    if not a.ei_tilaa:
-        kirjoita_tila(a.tila, tila, pvm, luvut)
+    tallenna = dict(luvut)
+    if a.halyta:
+        edellinen = viimeiset_numerot(tila)
+        uudet = uudet_ulkoiset(edellinen, luvut)
+        if uudet:
+            otsikko, teksti = halytysviesti(uudet)
+            if a.kuiva:
+                print("\n## Halytys (kuiva-ajo, ei lahetetty)\n%s\n%s" % (otsikko, teksti))
+            else:
+                if laheta is None:
+                    from .ilmoita import ilmoita as laheta
+                tulos = laheta("paatos", otsikko, teksti)
+                print("\nHalytys: %d uutta, ilmoitus %s" % (len(uudet), tulos))
+                if tulos != "lahetetty":
+                    # Ei kirjata nahdyksi: seuraava ajo yrittaa uudelleen.
+                    for repo in {r for r, _, _ in uudet}:
+                        tallenna[repo] = {a_: b for a_, b in luvut[repo].items() if a_ != "numerot"}
+        # Epaonnistunut tai poisjaanyt haku ei tyhjenna tilaa: edellinen tunnettu numerolista siirtyy tanaan tallennettavaan.
+        for repo in tallenna:
+            if "numerot" not in tallenna[repo] and repo in edellinen:
+                tallenna[repo] = dict(tallenna[repo], numerot=edellinen[repo])
+    if not a.ei_tilaa and not a.kuiva:
+        kirjoita_tila(a.tila, tila, pvm, tallenna)
     # Kaikkien hakujen epaonnistuminen on verkko- tai rajaongelma, ei tyhja tulos: exit 1 nakyy valvonnassa.
     tunnetut = any(v not in ("?", "-") for rivi in luvut.values() for v in rivi.values())
     return 0 if tunnetut else 1
