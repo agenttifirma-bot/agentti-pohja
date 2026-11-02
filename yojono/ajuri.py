@@ -339,11 +339,27 @@ def raportin_lisatiedot(tyyppi, md_polku):
     return ""
 
 
-def laheta_telegram(teksti, env=None):
-    """Lahettaa yhteenvedon, jos YOJONO_TELEGRAM_TOKEN ja YOJONO_TELEGRAM_CHAT on asetettu. Virhe ei kaada ajoa."""
+ILMOITUKSET_ENV = "CLAUDEJONO_ILMOITUKSET"
+HETI_ALUT = ("HALYTYS", "PAATOS")
+
+
+def ilmoitus_heti(teksti, env):
+    """Ilmoitusten rajaus (aamukooste). Oletus 'heti' = nykyinen kayttaytyminen: kaikki viestit lahtevat heti.
+    'kooste': heti lahtevat vain viestit, jotka alkavat sanalla HALYTYS tai PAATOS; muut jaavat aamukoosteeseen.
+    Tuntematon arvo on 'heti' (rajaus ei saa vahingossa vaientaa halytyksia)."""
+    if env.get(ILMOITUKSET_ENV, "heti") != "kooste":
+        return True
+    return str(teksti).lstrip().upper().startswith(HETI_ALUT)
+
+
+def laheta_telegram(teksti, env=None, pakota=False):
+    """Lahettaa yhteenvedon, jos YOJONO_TELEGRAM_TOKEN ja YOJONO_TELEGRAM_CHAT on asetettu. Virhe ei kaada ajoa.
+    Palauttaa False myos, kun viesti jaa pois koosteeseen (ks. ilmoitus_heti). `pakota` ohittaa rajauksen (aamukooste itse)."""
     env = os.environ if env is None else env
     token, chat = env.get("YOJONO_TELEGRAM_TOKEN"), env.get("YOJONO_TELEGRAM_CHAT")
     if not token or not chat:
+        return False
+    if not pakota and not ilmoitus_heti(teksti, env):
         return False
     data = json.dumps({"chat_id": chat, "text": teksti[:TELEGRAM_MAX]}).encode()
     pyynto = urllib.request.Request(
