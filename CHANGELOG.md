@@ -3,6 +3,7 @@
 Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 
 ## Unreleased
+- agentti: kysyntämittari `python3 -m agentti.kysynta [--tila polku]`: npm-lataukset sekä GitHubin tähdet, forkit, issuet ja PR:t repoittain (välitavoite 5, Tonyn päätös 2.11.2026). Omat tunnukset ja botit eivät kasvata ulkoisia lukuja, epäonnistunut haku on "?" eikä 0, täysi sivu on alaraja ("100+"), ja --tila näyttää muutoksen edelliseen mittauspäivään. Vain luku, ei tunnuksia, ei ajastinta. +14 testiä.
 - claudejono: raportin loppuun 'Tonylle opittavaa' -osio (yksi käsite + komento kokeiltavaksi), Tonyn toive 30.10.2026.
 - claudejono: itsesuunnittelu painottaa tulostaulun mittareita (Tonyn päätös 30.10.2026): vähintään joka toinen tehtävä ulospäin näkyvää tai Tonya henkilökohtaisesti auttavaa työtä; jokaisessa tehtävässä Mittari-rivi.
 - claudejono: itsesuunnittelun vuorokausiraja 6 -> 30 tehtävää (Tonyn päätös 30.10.2026); 2 / ajo ennallaan.
