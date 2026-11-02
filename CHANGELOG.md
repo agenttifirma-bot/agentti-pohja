@@ -3,6 +3,7 @@
 Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 
 ## Unreleased
+- hiekkalaatikko: MCP-tarkastuksen pystytysohje (`hiekkalaatikko/mcp-tarkastus.md`, 8 komentoa), erän ajoskripti `mcp_era.py` (kloonaa listan repot, ajaa `mcp-doctor --json`, kerää yhteen JSON-tiedostoon, kuiva-ajo ja tarkistus), kontin asennusskripti `mcp-asenna.sh` ja 22 testiä. Mitään ei ole ajettu isännällä. Vaatii PR #136:n (hiekkalaatikko).
 - claudejono: itsesuunnittelun tauko. Tyhjän kierroksen (0 tehtävää, virheellinen JSON tai aikakatkaisu) jälkeen uutta suunnittelua ei ajeta 3 tuntiin (`CLAUDEJONO_SUUNNITTELU_TAUKO_S`), ellei uusi tulos ole tullut. 1.11. tyhjä kierros toistui noin 10 minuutin välein ja lisäsi `tonylle.md`:hen lähes saman kohdan kymmeniä kertoja (ja kulutti tilauksen kiintiötä). Tila tiedostossa `<työhakemisto>/suunnittelu-tila.json`. +7 testiä.
 - claudejono: yli 60 000 tavun raportti merkitään katkaistuksi (alkuperäinen koko näkyy). 1.11. koulumatka-äänikirjan M02-lähde katkesi kesken sanan ilman merkintää. +2 testiä.
 - claudejono: itsesuunnittelu lukee myos `valitavoitteet.md`:n (unelmat -> kvartaalin valitavoitteet), Tonyn paatos 1.11.2026.
