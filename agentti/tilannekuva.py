@@ -16,9 +16,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .pr_kutsu import REPOT
+from .yksikot import suodata_kohina
 
 OMISTAJA = "tonyweckstrom1987"
 RAJA_RIVEJA = 400
+KAUPPA_HAKEMISTO = "/var/lib/claude-jono/kauppa"
+KAUPPA_MAX_IKA_H = 26
 MERGATUT_PAIVIA = 7
 MERGATUT_MAX_RIVEJA = 40
 MERGATUT_OTSIKKO_MAX = 80
@@ -162,6 +165,36 @@ def kulut_osio(perus, portti_tila):
     return "\n".join(rivit)
 
 
+def kauppa_osio(hakemisto=None, nyt=None):
+    """Kauppadatan kopion tuoreus (PAIVITETTY-tiedoston aikaleima). Hakemisto ymparistomuuttujasta KAUPPA_HAKEMISTO.
+    Hakemiston puuttuessa ei halytysta; tiedoston puuttuessa, lukukelvottomalla tai yli KAUPPA_MAX_IKA_H vanhalla
+    aikaleimalla tulee VAROITUS-rivi. Vain luku."""
+    hakemisto = Path(hakemisto or os.environ.get("KAUPPA_HAKEMISTO", KAUPPA_HAKEMISTO))
+    rivit = ["# Kauppadata"]
+    if not hakemisto.is_dir():
+        rivit.append("(ei kauppadataa talla koneella)")
+        return "\n".join(rivit)
+    nyt = nyt or datetime.now(timezone.utc)
+    try:
+        teksti = (hakemisto / "PAIVITETTY").read_text(encoding="utf-8").strip()
+    except (OSError, ValueError) as e:
+        rivit.append("VAROITUS: kauppadatan PAIVITETTY-tiedostoa ei voi lukea (%s)" % type(e).__name__)
+        return "\n".join(rivit)
+    try:
+        aika = datetime.fromisoformat(teksti.replace("Z", "+00:00"))
+        if aika.tzinfo is None:
+            aika = aika.replace(tzinfo=timezone.utc)
+    except ValueError:
+        rivit.append("VAROITUS: kauppadatan PAIVITETTY-aikaleima on lukukelvoton")
+        return "\n".join(rivit)
+    ika_h = (nyt - aika).total_seconds() / 3600
+    if ika_h > KAUPPA_MAX_IKA_H:
+        rivit.append("VAROITUS: kauppadatan kopio on vanhentunut: paivitetty %s, ika %.1f h (raja %d h)" % (teksti, ika_h, KAUPPA_MAX_IKA_H))
+    else:
+        rivit.append("kauppadata tuore: paivitetty %s, ika %.1f h" % (teksti, ika_h))
+    return "\n".join(rivit)
+
+
 def _komento(*args):
     try:
         r = subprocess.run(list(args), capture_output=True, text=True, timeout=15, check=False)
@@ -181,7 +214,7 @@ def palvelin_osio():
     except OSError:
         rivit.append("(muisti/kuorma ei saatavilla)")
     rivit.append("\n## Epaonnistuneet palvelut (systemctl --failed)")
-    rivit.append(_komento("systemctl", "list-units", "--failed", "--no-legend", "--no-pager") or "(ei yhtaan)")
+    rivit.append(suodata_kohina(_komento("systemctl", "list-units", "--failed", "--no-legend", "--no-pager")) or "(ei yhtaan)")
     rivit.append("\n## Ajastimet")
     rivit.append(_komento("systemctl", "list-timers", "--no-pager", "--no-legend")[:1500])
     rivit.append("\n## Versiot")
@@ -210,6 +243,7 @@ def keraa_kaikki(kohde, perus="/var/lib/yojono", portti_tila="/var/lib/agentti/p
         "yojono.md": lambda: yojono_osio(perus),
         "kulut.md": lambda: kulut_osio(perus, portti_tila),
         "palvelin.md": palvelin_osio,
+        "kauppa.md": kauppa_osio,
         "isanta.md": lambda: isanta_osio(hae_isanta),
     }
     nimet = []
