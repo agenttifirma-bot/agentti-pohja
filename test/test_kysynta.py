@@ -31,10 +31,11 @@ def haku(vastaukset):
     return hae
 
 
-TERVE = {"/stargazers": [TONY, VIERAS], "/forks": [{"owner": BOTTI}, {"owner": VIERAS}],
+TERVE = {"/forks": [{"owner": BOTTI}, {"owner": VIERAS}],
          "/issues": [{"user": VIERAS}, {"user": TONY}, {"user": VIERAS, "pull_request": {}}, {"user": DEPENDABOT, "pull_request": {}},
                      {"user": BOTTI, "pull_request": {}}],
-         "downloads/point": {"downloads": 42}}
+         "downloads/point": {"downloads": 42},
+         "/repos/tonyweckstrom1987/": {"stargazers_count": 3}}  # viimeisena: vain repon oma osoite tasmaa tahan
 
 
 class UlkoinenTesti(unittest.TestCase):
@@ -46,9 +47,9 @@ class UlkoinenTesti(unittest.TestCase):
 
 
 class ReponLuvutTesti(unittest.TestCase):
-    def test_botin_forkki_ja_oma_tahti_eivat_kasvata_lukuja(self):
+    def test_botin_forkki_eika_oma_issue_kasvata_lukuja(self):
         luvut, virheet = k.repo_luvut("mcp-doctor", haku(TERVE))
-        self.assertEqual(luvut, {"tahdet": 1, "forkit": 1, "issuet": 1, "prt": 1})
+        self.assertEqual(luvut, {"tahdet": 3, "forkit": 1, "issuet": 1, "prt": 1})
         self.assertEqual(virheet, [])
 
     def test_yksi_epaonnistunut_haku_on_kysymysmerkki_ei_nolla_eika_vie_muita(self):
@@ -56,18 +57,45 @@ class ReponLuvutTesti(unittest.TestCase):
         vastaukset["/forks"] = urllib.error.URLError("salainen-osoite")
         luvut, virheet = k.repo_luvut("r", haku(vastaukset))
         self.assertEqual(luvut["forkit"], "?")
-        self.assertEqual(luvut["tahdet"], 1)
+        self.assertEqual(luvut["tahdet"], 3)
         self.assertEqual(virheet, ["forkit: URLError"])
         self.assertNotIn("salainen-osoite", virheet[0])
 
     def test_taysi_sivu_on_alaraja(self):
         vastaukset = dict(TERVE)
-        vastaukset["/stargazers"] = [VIERAS] * k.SIVUKOKO
         vastaukset["/issues"] = [{"user": VIERAS}] * k.SIVUKOKO
         luvut, _ = k.repo_luvut("r", haku(vastaukset))
-        self.assertEqual(luvut["tahdet"], "%d+" % k.SIVUKOKO)
         self.assertEqual(luvut["issuet"], "%d+" % k.SIVUKOKO)
         self.assertEqual(luvut["prt"], "0+")
+
+
+class HttpVirheTesti(unittest.TestCase):
+    def http(self, koodi):
+        return urllib.error.HTTPError("https://api.github.com/salainen", koodi, "viesti-joka-ei-nay", {}, io.BytesIO(b"vastauksen-sisalto"))
+
+    def test_401_kirjataan_tilan_kanssa_ilman_poikkeusta_ja_ilman_sisaltoa(self):
+        vastaukset = dict(TERVE)
+        vastaukset["/repos/tonyweckstrom1987/"] = self.http(401)
+        luvut, virheet = k.repo_luvut("r", haku(vastaukset))
+        self.assertEqual(luvut["tahdet"], "?")
+        self.assertEqual(luvut["forkit"], 1)
+        self.assertEqual(virheet, ["tahdet: HTTPError 401"])
+        self.assertNotIn("salainen", virheet[0])
+        self.assertNotIn("sisalto", virheet[0])
+
+    def test_muut_tilat_ja_npm(self):
+        self.assertEqual(k._virhe(self.http(403)), "HTTPError 403")
+        self.assertEqual(k._virhe(self.http(404)), "HTTPError 404")
+        self.assertEqual(k._virhe(TimeoutError()), "TimeoutError")
+        self.assertEqual(k.npm_viikko("p", haku({"point": self.http(404)})), ("?", "npm: HTTPError 404"))
+
+    def test_viallinen_tahtikentta_on_kysymysmerkki(self):
+        for paha in ({}, {"stargazers_count": True}, {"stargazers_count": "3"}):
+            vastaukset = dict(TERVE)
+            vastaukset["/repos/tonyweckstrom1987/"] = paha
+            luvut, virheet = k.repo_luvut("r", haku(vastaukset))
+            self.assertEqual(luvut["tahdet"], "?")
+            self.assertEqual(virheet, ["tahdet: ValueError"])
 
 
 class NpmTesti(unittest.TestCase):
@@ -146,20 +174,29 @@ class MainTesti(unittest.TestCase):
                 self.assertEqual(k.lue_tila(polku), {})
 
     def test_kaikki_haut_epaonnistuvat_exit_1_eika_nollia(self):
-        koodi, teksti = self.ajo([], haku({}), "2026-11-02")
+        koodi, teksti = self.ajo(["--ei-tilaa"], haku({}), "2026-11-02")
         self.assertEqual(koodi, 1)
         self.assertIn("| mcp-doctor | ? | ? | ? | ? | ? |", teksti)
         self.assertIn("| llm-stopcheck | - | ? | ? | ? | ? |", teksti)
 
-    def test_ilman_tilaa_ei_kirjoiteta(self):
+    def test_ei_tilaa_ei_kirjoita(self):
         with tempfile.TemporaryDirectory() as d:
-            nyt = os.getcwd()
-            os.chdir(d)
-            try:
-                self.ajo([], haku(TERVE), "2026-11-02")
-                self.assertEqual(os.listdir(d), [])
-            finally:
-                os.chdir(nyt)
+            polku = os.path.join(d, "k.json")
+            self.ajo(["--tila", polku, "--ei-tilaa"], haku(TERVE), "2026-11-02")
+            self.assertEqual(os.listdir(d), [])
+
+    def test_tyhja_tila_ensimmainen_ajo_tallentaa_lahtotason_ilman_muutoksia(self):
+        with tempfile.TemporaryDirectory() as d:
+            polku = os.path.join(d, "uusi-hakemisto", "k.json")
+            koodi, teksti = self.ajo(["--tila", polku], haku(TERVE), "2026-11-02")
+            self.assertEqual(koodi, 0)
+            self.assertNotIn("muutos mittaukseen", teksti)
+            self.assertIn("| mcp-doctor | 42 | 3 | 1 | 1 | 1 |", teksti)
+            self.assertEqual(lue(polku)["2026-11-02"]["mcp-doctor"]["tahdet"], 3)
+
+    def test_oletuspolku_on_kirjoitettavassa_hakemistossa(self):
+        self.assertTrue(k.TILA_OLETUS.startswith("/opt/agentscope/tyo/"))
+        self.assertNotIn("/var/lib/claude-jono", k.TILA_OLETUS)
 
 
 if __name__ == "__main__":

@@ -5,21 +5,25 @@ ulkoisia lukuja (botin oma forkki ei ole kysyntaa). Epaonnistunut haku on "?", e
 nayttaa silta, ettei kukaan kayta. Yhteydenotot Tony kertoo itse, niita ei lueta mistaan.
 
 Kaytto:
-    python3 -m agentti.kysynta [--tila /var/lib/agentti/kysynta.json]
-Tulostaa markdown-taulukon. --tila tallentaa paivan luvut ja nayttaa muutoksen edelliseen eri paivan mittaukseen.
+    python3 -m agentti.kysynta [--tila polku | --ei-tilaa]
+Tulostaa markdown-taulukon. Paivan luvut tallentuvat tilatiedostoon (oletus TILA_OLETUS, --tila vaihtaa, --ei-tilaa jattaa
+tallentamatta) ja taulukko nayttaa muutoksen edelliseen eri paivan mittaukseen. Tahdet ovat repon stargazers_count eli
+kokonaismaara (omat mukana); forkit, issuet ja PR:t ovat ulkoisia.
 Vain luku, ei tunnuksia, vain stdlib. GitHubin kirjautumaton raja on 60 pyyntoa tunnissa; yksi ajo kuluttaa enintaan
-4 pyyntoa repoa kohden, joten aja kerran paivassa tai harvemmin. Virheista nakyy vain tyypin nimi."""
+3 pyyntoa repoa kohden (+1 npm), joten aja kerran paivassa tai harvemmin. Virheista nakyy vain tyypin nimi ja HTTP-tila."""
 import argparse
 import json
 import os
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 from .pr_kutsu import REPOT
 
+TILA_OLETUS = "/opt/agentscope/tyo/kysynta-tila/kysynta.json"  # claudejono saa kirjoittaa tanne; /var/lib/claude-jono ei
 OMISTAJA = "tonyweckstrom1987"
 OMAT_TUNNUKSET = {OMISTAJA, "agenttifirma-bot"}
 NPM_PAKETIT = {
@@ -39,6 +43,12 @@ def hae_json(osoite):
     pyynto = urllib.request.Request(osoite, headers={"Accept": "application/json", "User-Agent": UA})
     with urllib.request.urlopen(pyynto, timeout=AIKAKATKAISU) as v:
         return json.loads(v.read().decode("utf-8"))
+
+
+def _virhe(e):
+    """Virheen tyyppi ja mahdollinen HTTP-tila (esim. "HTTPError 401"). Vastauksen sisaltoa tai osoitetta ei oteta mukaan."""
+    koodi = getattr(e, "code", None) if isinstance(e, urllib.error.HTTPError) else None
+    return type(e).__name__ + (" %d" % koodi if isinstance(koodi, int) else "")
 
 
 def ulkoinen(kayttaja):
@@ -61,13 +71,17 @@ def repo_luvut(repo, hae=hae_json):
     luvut = {"tahdet": "?", "forkit": "?", "issuet": "?", "prt": "?"}
     virheet = []
     try:
-        luvut["tahdet"] = _laske_ulkoiset(hae("%s/stargazers?per_page=%d" % (perus, SIVUKOKO)))
+        # Repon oma stargazers_count-kentta: stargazers-osoite vaatii kirjautumisen (401). Luku on kokonaismaara, omat tahdet mukana.
+        maara = hae(perus).get("stargazers_count")
+        if isinstance(maara, bool) or not isinstance(maara, int):
+            raise ValueError("ei lukua")
+        luvut["tahdet"] = maara
     except Exception as e:
-        virheet.append("tahdet: " + type(e).__name__)
+        virheet.append("tahdet: " + _virhe(e))
     try:
         luvut["forkit"] = _laske_ulkoiset([f.get("owner") for f in hae("%s/forks?per_page=%d" % (perus, SIVUKOKO))])
     except Exception as e:
-        virheet.append("forkit: " + type(e).__name__)
+        virheet.append("forkit: " + _virhe(e))
     try:
         # GitHubin issues-rajapinta palauttaa myos PR:t; ne erottaa pull_request-kentasta.
         rivit = hae("%s/issues?state=all&per_page=%d" % (perus, SIVUKOKO))
@@ -78,7 +92,7 @@ def repo_luvut(repo, hae=hae_json):
             maara = sum(1 for k in lista if ulkoinen(k))
             luvut[avain] = "%d+" % maara if taysi else maara
     except Exception as e:
-        virheet.append("issuet: " + type(e).__name__)
+        virheet.append("issuet: " + _virhe(e))
     return luvut, virheet
 
 
@@ -93,7 +107,7 @@ def npm_viikko(paketti, hae=hae_json):
             return "?", "npm: ei lukua"
         return luku, None
     except Exception as e:
-        return "?", "npm: " + type(e).__name__
+        return "?", "npm: " + _virhe(e)
 
 
 def mittaa(repot=REPOT, hae=hae_json):
@@ -160,15 +174,16 @@ def kirjoita_tila(polku, tila, pvm, luvut):
 
 def main(argv=None, hae=hae_json, tanaan=None):
     ap = argparse.ArgumentParser(prog="agentti.kysynta")
-    ap.add_argument("--tila", help="JSON-historia, johon paivan luvut tallennetaan")
+    ap.add_argument("--tila", default=TILA_OLETUS, help="JSON-historia, johon paivan luvut tallennetaan (oletus %s)" % TILA_OLETUS)
+    ap.add_argument("--ei-tilaa", action="store_true", help="ala lue tai kirjoita tilaa")
     a = ap.parse_args(argv)
     pvm = tanaan or time.strftime("%Y-%m-%d")
     luvut, virheet = mittaa(hae=hae)
-    tila = lue_tila(a.tila) if a.tila else {}
+    tila = {} if a.ei_tilaa else lue_tila(a.tila)
     aiemmat = sorted(p for p in tila if p < pvm)
     edellinen_pvm = aiemmat[-1] if aiemmat else None
     print(muotoile(luvut, virheet, tila.get(edellinen_pvm), edellinen_pvm), end="")
-    if a.tila:
+    if not a.ei_tilaa:
         kirjoita_tila(a.tila, tila, pvm, luvut)
     # Kaikkien hakujen epaonnistuminen on verkko- tai rajaongelma, ei tyhja tulos: exit 1 nakyy valvonnassa.
     tunnetut = any(v not in ("?", "-") for rivi in luvut.values() for v in rivi.values())
