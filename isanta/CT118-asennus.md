@@ -80,7 +80,7 @@ grep -c 'snapshot-kutsu.py 118' /root/.ssh/authorized_keys
 
 ## 5. Isannan host-avain CT118:lle (ei luottamusta ensikayttoon)
 ```
-awk '{print "192.168.1.114 "$1" "$2}' /etc/ssh/ssh_host_ed25519_key.pub > /tmp/known_hosts.118
+awk '{print "<isanta-lan> "$1" "$2}' /etc/ssh/ssh_host_ed25519_key.pub > /tmp/known_hosts.118
 ```
 ```
 pct push 118 /tmp/known_hosts.118 /etc/infra-automaatio/known_hosts --perms 640
@@ -95,11 +95,11 @@ rm /tmp/known_hosts.118
 ## 6. Testi (kayttajana infra, ei root)
 Sallittu: omat snapshotit.
 ```
-pct exec 118 -- runuser -u infra -- ssh -F /dev/null -i /etc/infra-automaatio/snapshot_key -o BatchMode=yes -o IdentitiesOnly=yes -o UserKnownHostsFile=/etc/infra-automaatio/known_hosts -o StrictHostKeyChecking=yes root@192.168.1.114 listaa
+pct exec 118 -- runuser -u infra -- ssh -F /dev/null -i /etc/infra-automaatio/snapshot_key -o BatchMode=yes -o IdentitiesOnly=yes -o UserKnownHostsFile=/etc/infra-automaatio/known_hosts -o StrictHostKeyChecking=yes root@<isanta-lan> listaa
 ```
 Pitaa nayttaa `{"ok": true, "snapshotit": [...]}` (CT118:n snapshotit). Kielletty: `tila` (odotettu `"ok": false`).
 ```
-pct exec 118 -- runuser -u infra -- ssh -F /dev/null -i /etc/infra-automaatio/snapshot_key -o BatchMode=yes -o IdentitiesOnly=yes -o UserKnownHostsFile=/etc/infra-automaatio/known_hosts -o StrictHostKeyChecking=yes root@192.168.1.114 tila
+pct exec 118 -- runuser -u infra -- ssh -F /dev/null -i /etc/infra-automaatio/snapshot_key -o BatchMode=yes -o IdentitiesOnly=yes -o UserKnownHostsFile=/etc/infra-automaatio/known_hosts -o StrictHostKeyChecking=yes root@<isanta-lan> tila
 ```
 Loki:
 ```

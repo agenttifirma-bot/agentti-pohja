@@ -39,9 +39,21 @@ SALLITUT = {
 }
 
 
+# Hiekkalaatikon oma eristetty silta (vmbr2, 10.98.0.0/24) maaritellaan tassa repossa: sita ei reititeta
+# minnekaan eika se ole kotiverkon osoite, joten sen osoitteet sallitaan hiekkalaatikon tiedostoissa.
+HIEKKA_RE = re.compile(r"^10\.98\.0\.%s$" % OCTET)
+
+
+def hiekkalaatikon(polku):
+    suht = os.path.relpath(polku, JUURI) if polku else ""
+    return suht.startswith("hiekkalaatikko" + os.sep) or os.path.basename(polku) == "test_hiekkalaatikko.py"
+
+
 def osoitteet(teksti, polku=""):
     sallitut = SALLITUT.get(os.path.basename(polku), set())
-    loydot = [m.group(0) for m in SISAVERKKO_RE.finditer(teksti) if m.group(0) not in sallitut]
+    hiekka = hiekkalaatikon(polku)
+    loydot = [m.group(0) for m in SISAVERKKO_RE.finditer(teksti)
+              if m.group(0) not in sallitut and not (hiekka and HIEKKA_RE.match(m.group(0)))]
     return loydot + [m.group(0) for m in TSNET_RE.finditer(teksti)]
 
 

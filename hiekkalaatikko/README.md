@@ -103,7 +103,7 @@ aja-kokeilu.sh --kokeilu vertailu-01 --adapteri litellm --malli qwen-coder
 
 ## Tonin kayttoonotto (numeroitu, jokaiselle tarkistus)
 
-Tehdaan isannalla (`ssh root@100.87.110.22`). Ennen isoja muutoksia snapshot-kaytanto on voimassa; tama kokonaisuus ei kuitenkaan muuta olemassa olevia kontteja.
+Tehdaan isannalla (`ssh root@<isanta-tailscale>`). Ennen isoja muutoksia snapshot-kaytanto on voimassa; tama kokonaisuus ei kuitenkaan muuta olemassa olevia kontteja.
 
 1. **Hae PR ja tarkista, ettei skripteissa ole mitaan odottamatonta.**
    `git -C /opt/agentti-pohja log --oneline -3 && bash -n hiekkalaatikko/*.sh && echo syntaksi-ok`
@@ -113,7 +113,7 @@ Tehdaan isannalla (`ssh root@100.87.110.22`). Ennen isoja muutoksia snapshot-kay
 3. **Lataa Debian-pohja ja valitse tallennustila.** `pveam update && pveam available | grep debian-12` ja `pveam download local <tiedosto>`; `pvesm status` (valitse thin-pool, jossa on yli 40 Gt vapaata).
    Tarkistus: `pveam list local | grep debian-12`.
 4. **Kuiva-ajo luo-pohjalle.**
-   `HL_TALLENNUS=konttilevy HL_DEBIAN_POHJA=local:vztmpl/<tiedosto> HL_PROXY_LAN_IP=192.168.1.<vapaa>/24 HL_PROXY_LAN_GW=192.168.1.1 ./hiekkalaatikko/luo-pohja.sh --kuiva`
+   `HL_TALLENNUS=konttilevy HL_DEBIAN_POHJA=local:vztmpl/<tiedosto> HL_PROXY_LAN_IP=<vapaa-lan-osoite>/24 HL_PROXY_LAN_GW=<lan-yhdyskaytava> ./hiekkalaatikko/luo-pohja.sh --kuiva`
    Tarkistus: tuloste on luettavissa, siina ei ole yhtaan komentoa muuhun kuin ID:hin 9000/9001 ja siltaan vmbr2; mitaan ei ajettu (`pct list` ennallaan).
 5. **Paata Proxmox-palomuurista** (valinnainen kerros 3). `pve-firewall status`. Jos `disabled`, ala kytke sita paalle tama takia ilman erillista harkintaa; kerrokset 1 ja 2 toimivat ilman.
 6. **Ota snapshotit tai varmuuskopio tarvittaessa.** Tama ei muuta olemassa olevia kontteja, mutta silta-asetus (`/etc/network/interfaces.d/hiekkalaatikko`) ja `ifup vmbr2` koskevat isannan verkkoa: tarkista ensin `cat /etc/network/interfaces | grep source` (pitaa lukea `interfaces.d`). Tarkistus: `ip -br addr > /root/ennen-vmbr2.txt`.
@@ -125,7 +125,7 @@ Tehdaan isannalla (`ssh root@100.87.110.22`). Ennen isoja muutoksia snapshot-kay
 9. **Ensimmainen oikea ajo testiadapterilla (ei kuluta mitaan).**
    `./hiekkalaatikko/aja-kokeilu.sh --kokeilu turva-01 --adapteri kuiva`
    Tarkistus: `cat /var/lib/hiekkalaatikko/kokeilut.jsonl`, `pct list | awk '$1>=9100'` (tyhja, klooni tuhottu), `python3 hiekkalaatikko/hl.py taulu /var/lib/hiekkalaatikko/kokeilut.jsonl`.
-10. **Verkkokoe kloonin sisalta** (`--sailyta`): `./hiekkalaatikko/aja-kokeilu.sh --sailyta --kokeilu turva-01 --adapteri kuiva`, sitten `pct start 9100 && pct exec 9100 -- bash -c 'curl -sS -m 8 -o /dev/null -w "%{http_code}\n" https://github.com; curl -sS -m 8 -o /dev/null https://example.com; curl -sS -m 5 --noproxy "*" http://192.168.1.116:4000 || echo estetty'`. Odotus: github 200, example.com estetty (403), suora LAN-yhteys estetty. Tuhoa lopuksi: `pct stop 9100; pct destroy 9100 --purge 1; rm /etc/pve/firewall/9100.fw`.
+10. **Verkkokoe kloonin sisalta** (`--sailyta`): `./hiekkalaatikko/aja-kokeilu.sh --sailyta --kokeilu turva-01 --adapteri kuiva`, sitten `pct start 9100 && pct exec 9100 -- bash -c 'curl -sS -m 8 -o /dev/null -w "%{http_code}\n" https://github.com; curl -sS -m 8 -o /dev/null https://example.com; curl -sS -m 5 --noproxy "*" http://<litellm-lan-osoite>:4000 || echo estetty'`. Odotus: github 200, example.com estetty (403), suora LAN-yhteys estetty. Tuhoa lopuksi: `pct stop 9100; pct destroy 9100 --purge 1; rm /etc/pve/firewall/9100.fw`.
 11. **LiteLLM-ajo:** aseta `HL_LLM_URL` ja `LITELLM_API_KEY` ymparistoon itse (esim. `read -rs LITELLM_API_KEY; export LITELLM_API_KEY`; avainta ei kirjoiteta tiedostoon eika tulosteta), sitten `./hiekkalaatikko/aja-kokeilu.sh --kokeilu vertailu-01 --adapteri litellm --malli deepseek-flash`. Tarkistus: rivi `kokeilut.jsonl`:ssa, `kustannus_usd` ei ole `null`.
 12. **Vasta sitten** `turva-01` ja `kauppa-01` LiteLLM-adapterilla.
 
