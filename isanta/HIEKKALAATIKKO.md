@@ -1,6 +1,6 @@
 # Kauppatiimin hiekkalaatikko (CT121)
 
-Paperikauppakopio vapaaseen kokeiluun (doc 68 osa 1). Isannan komennot ajaa Tony (root, `ssh root@<isanta-tailscale>`); mitaan avainta tai salaisuutta ei kirjoiteta tahan eika liiteta keskusteluun. **Tuotantoon (CT119) ei kosketa**: ainoa lukukosketus on markkinadatan kopiointi (vaihe 8).
+Paperikauppakopio vapaaseen kokeiluun (doc 68 osa 1). Isannan komennot ajaa Tony (root, `ssh root@100.87.110.22`); mitaan avainta tai salaisuutta ei kirjoiteta tahan eika liiteta keskusteluun. **Tuotantoon (CT119) ei kosketa**: ainoa lukukosketus on markkinadatan kopiointi (vaihe 8).
 
 ## Mita rakennetaan
 
@@ -8,7 +8,7 @@ Paperikauppakopio vapaaseen kokeiluun (doc 68 osa 1). Isannan komennot ajaa Tony
 |---|---|
 | Kontti | CT121 `kauppa-sandbox` (CT120 on jo `searxng`) |
 | Pohja | CT119:n snapshot `pre-kauppatiimi-c9d0331c-1631`, **taysi** kopio (`--full 1`) tallennustilaan `konttilevy` |
-| Verkko | vain `vmbr1` (eristetty silta, ei fyysisia portteja), `<hiekkalaatikko-ip>/24`, **ei gatewayta**; ulos vain proxyn `sandbox-proxy` (CT211, `<valipalvelin-ip>:3128`) kautta |
+| Verkko | vain `vmbr1` (eristetty silta, ei fyysisia portteja), `10.99.0.3/24`, **ei gatewayta**; ulos vain proxyn `sandbox-proxy` (CT211, `10.99.0.2:3128`) kautta |
 | Sallitut osoitteet | proxyn `allowed`-lista: nykyiset (`.github.com`, `.githubusercontent.com`, `.npmjs.org`, `pypi.org`, `files.pythonhosted.org`, `.debian.org`, `.nodejs.org`) + `.openrouter.ai`. Binancea ja Telegramia **ei** sallita |
 | Koodi | `github.com/agenttifirma-bot/kauppa-sandbox` (julkinen, ei fork: ei PR-reittia tuotantoon) |
 | Data | markkinadata (julkista hintadataa) kopioidaan kasin CT119:sta; salkut ja lokit alkavat tyhjasta |
@@ -35,7 +35,7 @@ pct set 121 --onboot 0
 ## 2. Verkko vain vmbr1:lle (ENNEN ensimmaista kaynnistysta)
 
 ```
-pct set 121 --net0 name=eth0,bridge=vmbr1,ip=<hiekkalaatikko-ip>/24,firewall=0
+pct set 121 --net0 name=eth0,bridge=vmbr1,ip=10.99.0.3/24,firewall=0
 grep -E "^(net|mp[0-9]|lxc\.|dev[0-9]|hostname)" /etc/pve/lxc/121.conf
 ```
 
@@ -66,7 +66,7 @@ pct unmount 121
 
 ## 4. Proxyn allowlist (CT211): lisaa OpenRouter
 
-Muutos koskee kaikkia `<eristetty-aliverkko>`-asiakkaita; nyt niita ei ole muita kuin CT121.
+Muutos koskee kaikkia `10.99.0.0/24`-asiakkaita; nyt niita ei ole muita kuin CT121.
 
 ```
 pct exec 211 -- cp -p /etc/squid/squid.conf /etc/squid/squid.conf.ennen-openrouter
@@ -82,7 +82,7 @@ pct exec 211 -- systemctl reload squid
 
 ```
 pct start 121
-pct exec 121 -- sh -c 'mkdir -p /etc/systemd/system.conf.d && printf "[Manager]\nDefaultEnvironment=\"HTTPS_PROXY=http://<valipalvelin-ip>:3128\" \"HTTP_PROXY=http://<valipalvelin-ip>:3128\" \"NO_PROXY=127.0.0.1,localhost\"\n" > /etc/systemd/system.conf.d/proxy.conf && systemctl daemon-reexec'
+pct exec 121 -- sh -c 'mkdir -p /etc/systemd/system.conf.d && printf "[Manager]\nDefaultEnvironment=\"HTTPS_PROXY=http://10.99.0.2:3128\" \"HTTP_PROXY=http://10.99.0.2:3128\" \"NO_PROXY=127.0.0.1,localhost\"\n" > /etc/systemd/system.conf.d/proxy.conf && systemctl daemon-reexec'
 pct exec 121 -- systemctl list-timers --all | grep -c kauppa
 ```
 
@@ -94,7 +94,7 @@ Viimeisen rivin pitaa tulostaa `0` (yksikaan kauppa-ajastin ei ole aktiivinen).
 pct exec 121 -- python3 - <<'EOF'
 import urllib.request as u
 def kokeile(nimi, url, proxy=True):
-    h = u.ProxyHandler({"https": "http://<valipalvelin-ip>:3128"} if proxy else {})
+    h = u.ProxyHandler({"https": "http://10.99.0.2:3128"} if proxy else {})
     try:
         r = u.build_opener(h).open(url, timeout=8)
         print(nimi, "->", r.status)
@@ -114,7 +114,7 @@ Hyvaksyntaehto: ensimmainen onnistuu; `example.com`, `binance` ja suora yhteys e
 
 ```
 pct exec 121 -- git --version
-pct exec 121 -- sh -c 'mv /srv/kauppa/k1 /srv/kauppa/k1.alkup && runuser -u kauppa -- env HTTPS_PROXY=http://<valipalvelin-ip>:3128 git clone https://github.com/agenttifirma-bot/kauppa-sandbox.git /srv/kauppa/k1'
+pct exec 121 -- sh -c 'mv /srv/kauppa/k1 /srv/kauppa/k1.alkup && runuser -u kauppa -- env HTTPS_PROXY=http://10.99.0.2:3128 git clone https://github.com/agenttifirma-bot/kauppa-sandbox.git /srv/kauppa/k1'
 pct exec 121 -- runuser -u kauppa -- git -C /srv/kauppa/k1 log --oneline -1
 ```
 
