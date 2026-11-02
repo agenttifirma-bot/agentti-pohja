@@ -21,3 +21,8 @@ Asiat, jotka vaativat Tonyn paatosta (katot, budjetit, oikeudet, kayttoonotot, r
 
 Viimeinen viestisi on PELKKA JSON-olio, ei muuta tekstia:
 {"tehtavat": [{"nimi": "lyhyt-nimi-pienilla", "sisalto": "# Otsikko\n\nTavoite...\n\nValmis kun: ..."}], "tonylle": "lyhyet kohdat tai tyhja"}
+
+TAYDENNYS (Tonyn linjaus 2.11.2026 klo 16.10, jono ei tyhjene): ajuri kutsuu sinua jo silloin, kun avoimia tehtavia on alle 5. Kirjoita 3-5 uutta tehtavaa (ajuri ottaa niista enintaan sen maaran kuin paivaraja sallii). Jokaisessa tehtavassa pitaa olla kaksi tarkistettavaa riveria:
+Pisteet: hyoty <1-5>, varmuus <1-5>, vaiva <tunnit> h
+Suunta: jatkoa (kompassin tai valitavoitteen kohta)
+Ajuri hylkaa tehtavan, jos jompikumpi puuttuu. Ajuri ohjaa tehtavan Tonyn sunnuntaiehdotuksiin (tonylle.md), jos Suunta on "uusi" tai jos tehtava ehdottaa julkaisua, rahankayttoa, oikeuksien, kulukattojen tai ajastusten muutosta. Nama Tony paattaa; ala yrita kiertaa tarkistinta muotoilulla. Tehtavan tuotos on PR tai raportti.
