@@ -69,6 +69,41 @@ def seuraava_tehtava(repo):
     return None
 
 
+TODENNUS_ALKAA = "2026-11-02"   # Todennus-rivi vaaditaan taman paivan ja sen jalkeen alkaviin tehtaviin
+_RIVI = r"(?im)^[\s>*#_-]*"
+VAADITUT_RIVIT = (
+    ("Hyoty-rivi", re.compile(_RIVI + r"hy[o\u00f6]ty\b[*_]*\s*:")),
+    ("Valmis kun -lause", re.compile(_RIVI + r"valmis kun\b")),
+)
+PISTEET_RE = re.compile(_RIVI + r"pisteet\b[*_]*\s*:(?=.*hy[o\u00f6]ty)(?=.*varmuus)(?=.*vaiva)")
+MITTARI_RE = re.compile(_RIVI + r"mittari\b[*_]*\s*:")
+TODENNUS_RE = re.compile(_RIVI + r"todennus\b[*_]*\s*:")
+KELLOPORTTI_RE = re.compile(r"(?i)\b(vasta\s+klo|aja\s+vasta)\b")
+
+
+def tarkista_tehtava(nimi, teksti):
+    """Palauttaa lista puutteista (tyhja = kelvollinen). Ei kutsu mallia."""
+    puutteet = [kuvaus for kuvaus, re_ in VAADITUT_RIVIT if not re_.search(teksti)]
+    if not (PISTEET_RE.search(teksti) or MITTARI_RE.search(teksti)):
+        puutteet.append("Pisteet-rivi (hyoty, varmuus, vaiva) tai Mittari-rivi")
+    if nimi[:10] >= TODENNUS_ALKAA and not TODENNUS_RE.search(teksti):
+        puutteet.append("Todennus-rivi")
+    m = KELLOPORTTI_RE.search(teksti)
+    if m:
+        puutteet.append(f"kelloportti ({m.group(0).lower()!r}); jono ajaa tehtavan heti")
+    return puutteet
+
+
+def kirjoita_hylkays(repo, nimi, puutteet, nyt=None):
+    nyt = nyt or datetime.now().astimezone()
+    polku = Path(repo) / JONO / "tulokset" / nimi
+    polku.parent.mkdir(parents=True, exist_ok=True)
+    syyt = "\n".join(f"- {p}" for p in puutteet)
+    polku.write_text(f"# Tulos: {nimi}\n\n- Tila: HYLATTY\n- Aika: {nyt.isoformat(timespec='minutes')}\n\n"
+                     f"Tehtavaa ei ajettu. Syy:\n{syyt}\n", encoding="utf-8")
+    return polku
+
+
 def lue_opit(repo):
     """opit.md:n sisalto kehotteeseen, rajattuna kokoon. Puuttuva tiedosto = ei opittua."""
     p = Path(repo) / OPIT
@@ -356,10 +391,19 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None):
     env = dict(os.environ if env is None else env)
     git(repo, "pull", "-q", "--rebase", "origin", "main")
     t = seuraava_tehtava(repo)
+    hylatyt = []
+    while t is not None:
+        puutteet = tarkista_tehtava(t.name, t.read_text(encoding="utf-8", errors="replace"))
+        if not puutteet:
+            break
+        polku = kirjoita_hylkays(repo, t.name, puutteet)
+        julkaise(repo, polku, f"claude-jono: {t.name} HYLATTY")
+        hylatyt.append(f"claude-jono: {t.name} HYLATTY ({'; '.join(puutteet)})")
+        t = seuraava_tehtava(repo)
     if t is None:
-        if env.get("CLAUDEJONO_ITSESUUNNITTELU", "1") == "1":
+        if env.get("CLAUDEJONO_ITSESUUNNITTELU", "1") == "1" and not hylatyt:
             return suunnittele(repo, tyohak, env, suorita, laheta)
-        return "jono tyhja"
+        return "\n".join(hylatyt) or "jono tyhja"
     (Path(tyohak) / "tyo").mkdir(parents=True, exist_ok=True)
     kehote = rakenna_kehote(t, opit=lue_opit(repo))
     kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak)
@@ -378,7 +422,7 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None):
     viesti = f"claude-jono: {t.name} {'VALMIS' if ok else 'EPAONNISTUI'}" + ("" if pushattu else " (push epaonnistui)")
     if laheta:
         laheta(viesti + "\n" + teksti[:1500])
-    return viesti
+    return "\n".join(hylatyt + [viesti])
 
 
 def main(argv=None):

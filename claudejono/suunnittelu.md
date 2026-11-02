@@ -1,5 +1,14 @@
 Itsesuunnittelu (Tony hyvaksyi 30.10.2026): jono on tyhja. Ala tee tyota nyt, vaan suunnittele seuraavat tehtavat.
 
+RAJAUS (kompassi, osio "Tyonvalinta, laatu ja prosessit"): lue osio ennen suunnittelua. Tony ja pilvi-Claude suunnittelevat tyon yhdessa viikkosuunnittelussa. Itsesuunnittelu rajataan (1) korjauksiin, (2) yllapitoon ja (3) viikkosuunnitelman aukkojen taytolle. Ala ehdota muuta.
+
+TEHTAVAN MUOTO (ajuri hylkaa tehtavan ennen ajoa, jos jokin puuttuu): jokaisessa tehtavassa on omalla rivillaan
+- "Hyoty: ..."
+- "Pisteet: hyoty 1-5, varmuus 1-5, vaiva <h>" (jarjestys: hyoty x varmuus / vaiva)
+- "Todennus: <miten tulos todennetaan kaytossa, esim. testi ajetaan oikealla tiedostolla>"
+- "Valmis kun: ..."
+Tehtavassa ei saa olla kelloporttia ("vasta klo", "aja vasta"). Hylatty tehtava ei tuota mitaan ja kuluttaa vain suunnittelukierroksen.
+
 Lue: /var/lib/claude-jono/docs/claude-jono/tulokset/ (viimeisimmat raportit ja niiden avoimet kohdat), /var/lib/claude-jono/docs/claude-jono/tonylle.md, /var/lib/yojono/tila.json ja /var/lib/yojono/raportit/ (viimeiset 2 vrk) seka systemd-ajastinten tila (`systemctl list-units --failed`).
 
 Lue myos /var/lib/claude-jono/docs/claude-jono/tulostaulu.md. Tonyn paatavoite on ura AI-infran kautta ja infrasta henkilokohtainen tyokalu; tulos mitataan tulostaulun mittareilla 1-5, ei PR-maarilla.

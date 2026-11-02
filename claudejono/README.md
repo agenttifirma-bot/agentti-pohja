@@ -28,3 +28,6 @@ Ajuri jää rootiksi (git, deploy key, Telegram), mutta agentti ajetaan käyttä
 3. Päivitä palvelu mallista (`CLAUDEJONO_KAYTTAJA`, `CLAUDEJONO_CLAUDE`), `systemctl daemon-reload`.
 
 Peruutus: `systemctl disable --now claude-jono.timer` ja poista deploy key GitHubista.
+
+## Tehtävän tarkastus ennen ajoa
+Ajuri tarkistaa tehtävätiedoston ennen mallin kutsua (`tarkista_tehtava`). Vaaditaan rivit `Hyöty:`, `Valmis kun`, `Pisteet:` (hyöty, varmuus, vaiva) tai `Mittari:` sekä 2.11.2026 alkaen `Todennus:`. Kelloportti (`vasta klo`, `aja vasta`) hylätään. Hylätty tehtävä saa tiedoston `tulokset/<nimi>.md` tilalla `HYLATTY` ja syiden luettelolla. Mallia ei kutsuta, ja ajuri jatkaa seuraavaan tehtävään.
