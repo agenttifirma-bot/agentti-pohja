@@ -41,7 +41,7 @@ Tavoite: kaatuneet palvelut, levytila, varmuuskopioiden tuoreus ja tietoturvapä
 5. **Hälytys.** Virheet ja taso C -hälytykset menevät Telegramiin. Muu kulkee aamukoosteessa (kompassi: Telegramiin vain hälytykset).
 6. **Snapshot ensin (B).** Jos snapshotin otto epäonnistuu tai thin pool on yli 80 %, toimenpidettä ei tehdä.
 
-Vaiheessa 1 ei muuteta oikeuksia, sudoersia, ssh-avaimia eikä kulukattoja. Niihin tarvittavat muutokset kirjoitetaan jälkeenpäin Tonille ohjeeksi ohjeeksi (docs/talonmies-asennus.md; isanta/-hakemisto on PR-työkalun suojaama).
+Vaiheessa 1 ei muuteta oikeuksia, sudoersia, ssh-avaimia eikä kulukattoja. Niihin tarvittavat muutokset kirjoitetaan jälkeenpäin Tonille ohjeeksi (docs/talonmies-asennus.md; isanta/-hakemisto on PR-työkalun suojaama).
 
 ## Vastuun kasvatus
 1. **Vaihe 1 (2–4 viikkoa): pelkkä ehdotustila.** Ajo kerran päivässä. Tony vastaa ehdotuksiin `kylla` tai `ei`.
