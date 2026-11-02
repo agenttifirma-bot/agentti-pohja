@@ -150,7 +150,7 @@ class MainTesti(unittest.TestCase):
             vastaukset["downloads/point"] = {"downloads": 51}
             _, teksti = self.ajo(["--tila", polku], haku(vastaukset), "2026-11-08")
             self.assertIn("51 (+9)", teksti)
-            self.assertEqual(lue(polku)["2026-11-08"]["mcp-doctor"]["npm_viikko"], 51)
+            self.assertEqual(lue(polku)["2026-11-08"]["evalkit"]["npm_viikko"], 51)
             self.assertEqual([n for n in os.listdir(os.path.dirname(polku)) if n.startswith(".")], [])
 
     def test_historia_karsitaan(self):
@@ -176,7 +176,7 @@ class MainTesti(unittest.TestCase):
     def test_kaikki_haut_epaonnistuvat_exit_1_eika_nollia(self):
         koodi, teksti = self.ajo(["--ei-tilaa"], haku({}), "2026-11-02")
         self.assertEqual(koodi, 1)
-        self.assertIn("| mcp-doctor | ? | ? | ? | ? | ? |", teksti)
+        self.assertIn("| evalkit | ? | ? | ? | ? | ? |", teksti)
         self.assertIn("| llm-stopcheck | - | ? | ? | ? | ? |", teksti)
 
     def test_ei_tilaa_ei_kirjoita(self):
@@ -191,8 +191,8 @@ class MainTesti(unittest.TestCase):
             koodi, teksti = self.ajo(["--tila", polku], haku(TERVE), "2026-11-02")
             self.assertEqual(koodi, 0)
             self.assertNotIn("muutos mittaukseen", teksti)
-            self.assertIn("| mcp-doctor | 42 | 3 | 1 | 1 | 1 |", teksti)
-            self.assertEqual(lue(polku)["2026-11-02"]["mcp-doctor"]["tahdet"], 3)
+            self.assertIn("| evalkit | 42 | 3 | 1 | 1 | 1 |", teksti)
+            self.assertEqual(lue(polku)["2026-11-02"]["evalkit"]["tahdet"], 3)
 
     def test_oletuspolku_on_kirjoitettavassa_hakemistossa(self):
         self.assertTrue(k.TILA_OLETUS.startswith("/opt/agentscope/tyo/"))
