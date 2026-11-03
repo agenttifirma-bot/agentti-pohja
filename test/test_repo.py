@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,41 @@ SUOJAT = [
     "MemoryDenyWriteExecute=true", "CapabilityBoundingSet=", "ProtectKernelTunables=true",
     "ProtectKernelModules=true", "ProtectControlGroups=true",
 ]
+
+# Vuotovahti: yksityiset ja Tailscale-osoitteet seka .ts.net-nimet. Tailnetin nimea ei kirjoiteta tahan.
+OCTET = r"(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])"
+SISAVERKKO_RE = re.compile(
+    r"(?<![0-9.])(?:"
+    r"100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])"        # 100.64.0.0/10
+    r"|192\.168"                                              # 192.168.0.0/16
+    r"|10\.%(o)s"                                             # 10.0.0.0/8
+    r"|172\.(?:1[6-9]|2[0-9]|3[01])"                          # 172.16.0.0/12
+    r")\.%(o)s\.%(o)s(?![0-9])" % {"o": OCTET})
+TSNET_RE = re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.ts\.net\b", re.IGNORECASE)
+# Sallitut poikkeukset: testien keksityt osoitteet (tiedosto -> sallitut osoitteet).
+# 127.0.0.1 ja 0.0.0.0 eivat kuulu kiellettyihin alueisiin, joten ne eivat tarvitse poikkeusta.
+SALLITUT = {
+    "test_portti_tyokalut.py": {"192.168.7.7", "10.0.0.5", "100.101.102.103", "100.127.255.255"},
+    "test_repo.py": set(),
+}
+
+
+# Hiekkalaatikon oma eristetty silta (vmbr2, 10.98.0.0/24) maaritellaan tassa repossa: sita ei reititeta
+# minnekaan eika se ole kotiverkon osoite, joten sen osoitteet sallitaan hiekkalaatikon tiedostoissa.
+HIEKKA_RE = re.compile(r"^10\.98\.0\.%s$" % OCTET)
+
+
+def hiekkalaatikon(polku):
+    suht = os.path.relpath(polku, JUURI) if polku else ""
+    return suht.startswith("hiekkalaatikko" + os.sep) or os.path.basename(polku) == "test_hiekkalaatikko.py"
+
+
+def osoitteet(teksti, polku=""):
+    sallitut = SALLITUT.get(os.path.basename(polku), set())
+    hiekka = hiekkalaatikon(polku)
+    loydot = [m.group(0) for m in SISAVERKKO_RE.finditer(teksti)
+              if m.group(0) not in sallitut and not (hiekka and HIEKKA_RE.match(m.group(0)))]
+    return loydot + [m.group(0) for m in TSNET_RE.finditer(teksti)]
 
 
 def tiedostot(paate):
@@ -59,8 +95,8 @@ class RakenneTesti(unittest.TestCase):
             self.assertIn(rivi, teksti)
 
     def test_ei_salaisuuksia_repossa(self):
-        # karkea tarkistus: ei avainmaisia merkkijonoja eika oikeita osoitteita
-        epailyttavat = ("sk-or-", "sk-ant-", "api.telegram.org/bot1", "BEGIN PRIVATE KEY", "100.64.", "tail956680")
+        # karkea tarkistus: ei avainmaisia merkkijonoja eika infran osoitteita
+        epailyttavat = ("sk-or-", "sk-ant-", "api.telegram.org/bot1", "BEGIN PRIVATE KEY")
         for paate in (".py", ".md", ".mall", ".yml"):
             for polku in tiedostot(paate):
                 if polku == os.path.abspath(__file__):
@@ -69,6 +105,22 @@ class RakenneTesti(unittest.TestCase):
                     teksti = f.read()
                 for e in epailyttavat:
                     self.assertNotIn(e, teksti, "%s sisaltaa %s" % (polku, e))
+                self.assertEqual(osoitteet(teksti, polku), [], "%s sisaltaa sisaverkon osoitteen tai .ts.net-nimen" % polku)
+
+
+class VuotovahtiTesti(unittest.TestCase):
+    def test_kielletyt_alueet_loytyvat(self):
+        for o in ("100.64.0.1", "100.127.255.254", "100.87.1.2", "192.168.0.1", "10.1.2.3", "172.16.0.1", "172.31.255.1"):
+            self.assertEqual(osoitteet("ssh root@" + o), [o], o)
+        self.assertEqual(osoitteet("host.ZZZ.ts.net"), ["host.ZZZ.ts.net"])
+
+    def test_sallitut_ja_ulkopuoliset(self):
+        for o in ("127.0.0.1", "0.0.0.0", "100.63.255.255", "100.128.0.1", "172.15.0.1", "172.32.0.1", "8.8.8.8", "1.100.64.1.2x"):
+            self.assertEqual(osoitteet(o), [], o)
+
+    def test_testien_keksityt_osoitteet_vain_nimetyssa_tiedostossa(self):
+        self.assertEqual(osoitteet("192.168.7.7", "test_portti_tyokalut.py"), [])
+        self.assertEqual(osoitteet("192.168.7.7", "muu.py"), ["192.168.7.7"])
 
 
 class LuoTesti(unittest.TestCase):
