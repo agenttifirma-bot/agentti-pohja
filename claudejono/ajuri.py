@@ -49,6 +49,17 @@ OPIT_KIELTOLISTA = re.compile(
 OPIT_JULKAISU_SALLITTU = False
 
 
+# Tulosportti (virheiden ehkaisy): raportti ilman "Todennettu kaytossa: miten" -rivia ei ole VALMIS vaan KESKEN.
+TODENNETTU_RE = re.compile(r"^[ \t>*_-]*Todennettu k(?:\u00e4|a)yt(?:\u00f6|o)ss(?:\u00e4|a)[ \t]*:(?:\*\*|__)?[ \t]*(\S.*)$",
+                           re.IGNORECASE | re.MULTILINE)
+TODENNETTU_TYHJA_RE = re.compile(r"^[\s\-\u2013\u2014.:*_]*(?:tbd|todo|n/?a|ei mit(?:\u00e4|a)(?:\u00e4|a)n|ei ole)?[\s\-\u2013\u2014.:*_]*$", re.IGNORECASE)
+
+
+def on_todennettu(teksti):
+    """True, jos raportissa on rivi 'Todennettu kaytossa:' jolla on muu arvo kuin tyhja tai viiva."""
+    return any(not TODENNETTU_TYHJA_RE.match(m.group(1)) for m in TODENNETTU_RE.finditer(teksti or ""))
+
+
 class JonoVirhe(RuntimeError):
     pass
 
@@ -192,7 +203,7 @@ def tulkitse(stdout, koodi):
     return ok, teksti
 
 
-def kirjoita_tulos(repo, nimi, ok, teksti, nyt=None):
+def kirjoita_tulos(repo, nimi, ok, teksti, nyt=None, tila=None):
     nyt = nyt or datetime.now().astimezone()
     polku = Path(repo) / JONO / "tulokset" / nimi
     polku.parent.mkdir(parents=True, exist_ok=True)
@@ -201,7 +212,7 @@ def kirjoita_tulos(repo, nimi, ok, teksti, nyt=None):
     if len(tavut) > TULOS_MAX_TAVUA:   # 1.11.: M02-lahde katkesi kesken sanan ilman merkintaa
         runko += (f"\n\n[AJURI: raportti katkaistu {TULOS_MAX_TAVUA} tavuun, alkuperainen {len(tavut)} tavua. "
                   "Loppu puuttuu tasta tiedostosta.]")
-    polku.write_text(f"# Tulos: {nimi}\n\n- Tila: {'VALMIS' if ok else 'EPAONNISTUI'}\n- Aika: {nyt.isoformat(timespec='minutes')}\n\n{runko}\n",
+    polku.write_text(f"# Tulos: {nimi}\n\n- Tila: {tila or ('VALMIS' if ok else 'EPAONNISTUI')}\n- Aika: {nyt.isoformat(timespec='minutes')}\n\n{runko}\n",
                      encoding="utf-8")
     return polku
 
@@ -369,13 +380,14 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None):
         ok, teksti = tulkitse(r.stdout, r.returncode)
     except subprocess.TimeoutExpired:
         ok, teksti = False, "aikakatkaisu"
-    polku = kirjoita_tulos(repo, t.name, ok, teksti)
+    tila = "KESKEN" if ok and not on_todennettu(teksti) else ("VALMIS" if ok else "EPAONNISTUI")
+    polku = kirjoita_tulos(repo, t.name, ok, teksti, tila=tila)
     pushattu = julkaise(repo, polku)
-    if ok:
+    if tila == "VALMIS":
         uudet, _ = suodata_opit(poimi_uusi_oppi(teksti))
         if uudet:
             julkaise_opit(repo, paivita_opit(lue_opit(repo), uudet))
-    viesti = f"claude-jono: {t.name} {'VALMIS' if ok else 'EPAONNISTUI'}" + ("" if pushattu else " (push epaonnistui)")
+    viesti = f"claude-jono: {t.name} {tila}" + ("" if pushattu else " (push epaonnistui)")
     if laheta:
         laheta(viesti + "\n" + teksti[:1500])
     return viesti
