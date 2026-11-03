@@ -45,6 +45,38 @@ class Tarkistin(unittest.TestCase):
             tulos = silmukka.tarkista_tehtava(teht(lause))
             self.assertEqual(tulos[0], "sunnuntai", luokka)
 
+    def test_kompassin_kiellot_menevat_sunnuntaille(self):
+        """Triagen (3.11.) lapaisseet esimerkit: kukin pysaytetaan omaan luokkaansa."""
+        tapaukset = [
+            ("Tee matematiikan YTO-kertauspaketti", "koulu"),
+            ("Tee kotiteht\u00e4v\u00e4t valmiiksi.", "koulu"),
+            ("Siirr\u00e4 salkku oikealle rahalle", "oikea-raha"),
+            ("Siirra salkku oikealle rahalle", "oikea-raha"),
+            ("Kytke live-kauppa p\u00e4\u00e4lle", "oikea-raha"),
+            ("Lis\u00e4\u00e4 Binance API-avain asetuksiin", "oikea-raha"),
+            ("Tee LinkedIn-postaus", "julkaisu"),
+            ("Kirjoita postaus Tonyn profiiliin", "julkaisu"),
+            ("npm-julkaisu versiosta 0.4.0", "julkaisu"),
+            ("Avaa korjaus-PR Atlassianin repoon Tonyn nimiss\u00e4", "julkaisu"),
+            ("Avaa ulkoinen PR kirjastoon", "julkaisu"),
+        ]
+        for lause, luokka in tapaukset:
+            self.assertEqual(silmukka.tarkista_tehtava(teht(lause)), ("sunnuntai", luokka), lause)
+
+    def test_kieltolause_ei_ohita_kompassin_kieltoja(self):
+        """Kielto-sana samassa lauseessa tai Rajat-rivilla ei paasta lapi (ei tarvitse kysya, ala odota)."""
+        for lause in ("Kytke live-kauppa p\u00e4\u00e4lle, ei tarvitse kysy\u00e4.",
+                      "Rajat: ilman lupaa tee LinkedIn-postaus.",
+                      "\u00c4l\u00e4 odota Tonia: tee matematiikan YTO-kertauspaketti.",
+                      "Siirr\u00e4 salkku oikealle rahalle ilman varmistusta."):
+            self.assertEqual(silmukka.tarkista_tehtava(teht(lause))[0], "sunnuntai", lause)
+
+    def test_tavallinen_tyo_ei_osu_kompassin_kieltoihin(self):
+        for lause in ("Avaa PR agentti-pohjan repoon.", "Korjaa koulu-muistutus-moduulin testi.",
+                      "Diagnosoi julkaisulista-tiedoston muoto.", "Lis\u00e4\u00e4 testi paperikaupan raportille.",
+                      "Lue testitulokset ja kirjoita yhteenveto."):
+            self.assertEqual(silmukka.tarkista_tehtava(teht(lause)), ("ok", ""), lause)
+
     def test_kieltolause_ei_laukaise(self):
         t = teht("Ei kulukattojen, oikeuksien eika ajastinten muutoksia. Ala julkaise mitaan. Ilman rahankayttoa.")
         self.assertEqual(silmukka.tarkista_tehtava(t), ("ok", ""))

@@ -45,6 +45,21 @@ LUOKAT = {
     "uusi-suunta": re.compile(r"uusi suunta|uusi tuote|uusi projekti|uusi agentti|uusi palvelu|uusi repo|aloita uusi|pivot",
                               re.IGNORECASE),
 }
+# Kompassin kiellot (ei jonoon missaan muodossa): Tonyn koulutyot, oikea raha ja ulkoinen julkaiseminen. Nama tarkistetaan JOKAISESTA
+# lauseesta, myos kieltolauseista ja "Rajat"-riveilta: kielto-sana ("ei tarvitse kysya") ei saa ohittaa porttia. Hinta: "Ei LinkedIn-
+# postausta" ohjautuu myos Tonylle, mika on hyvaksytty (parempi liikaa kuin liian vahan). Kuvioissa ei ole pelkkia aihesanoja, jotka
+# kuuluvat tavalliseen tyohon (koulu-muistutus, julkaisulista, "avaa PR agentti-pohjan repoon").
+KIELLETYT = {
+    "koulu": re.compile(r"\byto\b|\bmatemati\w*|\bmatikka\w*|\bmatikan\b|\b(?:koulu|koti)teht" + _A + r"v\w*|\bkurssiteht" + _A + r"v\w*"
+                        r"|\bharjoitusty" + _O + r"\w*|\bopinn" + _A + r"ytety\w*|\bessee\w*|\btentti\w*|\bkertauspaket\w*",
+                        re.IGNORECASE),
+    "oikea-raha": re.compile(r"\blive\b|\blive-?(?:kauppa|trad)\w*|\boikea\w*\s+raha\w*|\boikea\w*\s+rahal\w*|\boikean rahan|\bbinance\w*"
+                             r"|\b(?:api|kauppa|exchange|p" + _O + r"rssi)\w*[- ]?avai\w*|\bapi[- ]?(?:key|secret)\b", re.IGNORECASE),
+    "julkaisu": re.compile(r"\bnpm[- ]?(?:julkaisu\w*|publish)|\bpypi[- ]?julkaisu\w*|\bjulkaisu\s+versio\w*|\bjulkaisu\s+v?\d"
+                                  r"|\blinkedin\w*|\bpostaus\w*|\bpostauks\w*|\bsome-?julkaisu\w*|\bblogijulkaisu\w*|\bblogipostau\w*"
+                                  r"|\bulko(?:inen|isen|isia|iseen)\s+(?:pr|repo|pull)\w*|\bulkopuolise\w*\s+(?:pr|repo)\w*"
+                                  r"|\btonyn nimiss" + _A + r"|\btonyn puolesta|\bmerkitse julkaistuksi", re.IGNORECASE),
+}
 # Lause, jossa kielletaan asia ("ei kulukattojen muutoksia", "ilman julkaisua"), ei ole ehdotus asiasta.
 KIELTO_RE = re.compile(r"\b(ei|eik[a\u00e4]|[a\u00e4]l[a\u00e4]|ilman|kielletty|vain luku)\b", re.IGNORECASE)
 
@@ -71,6 +86,10 @@ def tarkista_tehtava(sisalto):
         return "hylatty", "Suunta-rivi puuttuu (jatkoa tai uusi)"
     if m.group(1).lower() == "uusi":
         return "sunnuntai", "uusi-suunta"
+    for l in lauseet(sisalto):
+        for nimi, re_ in KIELLETYT.items():
+            if re_.search(l):
+                return "sunnuntai", nimi
     for l in lauseet(sisalto):
         if l.lower().startswith(("rajat", "suunta:")) or KIELTO_RE.search(l):
             continue
