@@ -23,6 +23,8 @@ from . import ajuri, kaistamittaus, vaiteportti
 TZ = ZoneInfo("Europe/Helsinki")
 OLETUS_REPO = "/var/lib/claude-jono/docs"
 OLETUS_YOJONO = "/var/lib/yojono"
+TALONMIES_TILA = "/var/lib/yojono/talonmies"      # ymparisto TALONMIES_TILA ylikattaa
+DIGITONY_TILA = "/var/lib/yojono/digitony"        # ymparisto DIGITONY_TILA ylikattaa
 DOCS_URL = "https://github.com/tonyweckstrom1987/agenttifirma-docs/blob/main/claude-jono"
 IKKUNA_H = 24
 RIVI_MAX = 300
@@ -159,7 +161,15 @@ def keraa(repo, perus, nyt, hae=None, yksikot=None):
         kaistat = kaistamittaus.rivi(Path(repo).parent, nyt, perus)
     except Exception:
         kaistat = None
-    return {"nyt": nyt, "kaistat": kaistat, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku),
+    huolto = {}
+    for avain, moduuli, ymp, oletus in (("talonmies", "talonmies_toimi", "TALONMIES_TILA", TALONMIES_TILA),
+                                        ("digitony", "digitony_paatos", "DIGITONY_TILA", DIGITONY_TILA)):
+        try:   # huoltorivit ovat lisatietoa: puuttuva tila tai rikkinainen loki ei kaada koostetta
+            import importlib
+            huolto[avain] = importlib.import_module("agentti." + moduuli).aamurivi(os.environ.get(ymp, oletus), nyt)
+        except Exception:
+            huolto[avain] = None
+    return {"huolto": huolto, "nyt": nyt, "kaistat": kaistat, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku),
             "pr": pr_ryhmat, "pr_virheita": virheet, "yojono": yojono_tila(perus, nyt),
             "yksikot": (yksikot or rikkinaiset_yksikot)(), "vaiteportti": vaiteportti.puutteet(repo)}
 
@@ -183,6 +193,8 @@ def rivit(t):
         osat.append(f"y\u00f6jono {yj['valmis']} valmis")
     if t.get("kaistat"):
         osat.append(t["kaistat"])
+    if (t.get("huolto") or {}).get("talonmies"):
+        osat.append(t["huolto"]["talonmies"])
     tehty = "Tehty: " + "; ".join(osat) + "."
 
     tarvitaan_osat = []
@@ -234,6 +246,8 @@ def linkit(t):
         ulos.append(f"(+{len(t['pr']['tony']) - MAX_MERGELINKKEJA} muuta mergattavaa: aja python3 -m agentti.aamupaketti)")
     if t["tonylle"]:
         ulos.append(f"tonylle.md: {DOCS_URL}/tonylle.md")
+    if (t.get("huolto") or {}).get("digitony"):
+        ulos.append(t["huolto"]["digitony"])
     ulos.append(f"Tulokset: {DOCS_URL}/tulokset")
     return ulos
 

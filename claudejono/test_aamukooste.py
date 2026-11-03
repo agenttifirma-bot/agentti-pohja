@@ -76,6 +76,33 @@ class Kooste(Pohja):
         self.assertIn("https://github.com/tonyweckstrom1987/agentti-pohja/pull/9", linkit)
         self.assertIn("tonylle.md", linkit)
 
+    def test_huoltorivit_talonmies_tehtyyn_ja_digitony_linkkeihin(self):
+        from agentti import digitony_paatos, talonmies_toimi
+        from datetime import timezone
+        talonmies_tila, digitony_tila = tempfile.mkdtemp(), tempfile.mkdtemp()
+        talonmies_toimi.kirjaa(talonmies_tila, NYT.astimezone(timezone.utc), "kaatunut-palvelu", "foo.service", "ok")
+        digitony_paatos.kysy(digitony_tila, "Kuka valitsee viikon painopisteen: itsesuunnittelu vai yhteissuunnittelu?",
+                             ["itsesuunnittelu", "yhteissuunnittelu"],
+                             [{"id": "a", "paiva": "2026-10-01", "kysymys": "Kuka valitsee viikon painopisteen?", "luokka": "ty\u00f6nvalinta",
+                               "vaihtoehdot": ["itsesuunnittelu", "yhteissuunnittelu"], "valittu": "yhteissuunnittelu"},
+                              {"id": "b", "paiva": "2026-10-02", "kysymys": "Kuka valitsee painopisteen viikolle?", "luokka": "ty\u00f6nvalinta",
+                               "vaihtoehdot": ["itsesuunnittelu", "yhteissuunnittelu"], "valittu": "yhteissuunnittelu"}],
+                             nyt=NYT.astimezone(timezone.utc))
+        with mock.patch.dict(os.environ, {"TALONMIES_TILA": talonmies_tila, "DIGITONY_TILA": digitony_tila}):
+            t = self.keraa()
+        teksti = aamukooste.muotoile(t)
+        rivit, linkit = teksti.split("\n\nLinkit:\n")
+        self.assertEqual(len(rivit.splitlines()), 5)
+        self.assertIn("Talonmies: kaatunut-palvelu foo.service: ok", rivit.splitlines()[0])
+        self.assertIn("Digi-Tony p\u00e4\u00e4tti:", linkit)
+        self.assertIn("kumoa: python3 -m agentti.digitony_paatos kumoa", linkit)
+
+    def test_ilman_huoltotilaa_ei_riveja(self):
+        with mock.patch.dict(os.environ, {"TALONMIES_TILA": "/ei/ole", "DIGITONY_TILA": "/ei/ole"}):
+            teksti = aamukooste.muotoile(self.keraa())
+        self.assertNotIn("Talonmies:", teksti)
+        self.assertNotIn("Digi-Tony", teksti)
+
     def test_ikkuna_rajaa_vanhat_pois(self):
         t = self.keraa()
         self.assertEqual(sorted(r["nimi"][:13] for r in t["tulokset"]), ["2026-11-02-01", "2026-11-02-02"])

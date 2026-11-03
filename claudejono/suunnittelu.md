@@ -19,6 +19,8 @@ HUKAN KARSINTA (Tonyn paatos 1.11.2026, yolla 1.11. viisi tehtavaa pysahtyi heti
 
 Asiat, jotka vaativat Tonyn paatosta (katot, budjetit, oikeudet, kayttoonotot, rahankaytto), kirjoita kenttaan "tonylle" eika tehtaviksi. Jos jarkevaa tehtavaa ei ole, palauta tyhja lista.
 
+TYONVALINTAKYSYMYKSET (Tonyn lisahollennys 3.11.2026): jos olisit kirjoittamassa kenttaan "tonylle" tyonvalintakysymyksen (kumpi tehdaan, mihin sijoitetaan, mika painopiste), kysy ensin Digi-Tonylta: `cd /opt/agentti-pohja && DIGITONY_MUISTI=/var/lib/yojono/digitony/paatokset.jsonl python3 -m agentti.digitony_paatos kysy /var/lib/yojono/digitony "<kysymys>" "<vaihtoehto 1>" "<vaihtoehto 2>"`. Vastaus on JSON. Jos tila on "paatetty", noudata valintaa ja kirjoita tehtavaan "Digi-Tony paatti: <valinta>" (paatos nakyy aamukoosteessa, ja Tony voi kumota sen). Jos tila on "en_tieda" tai "tonylle", kirjoita kysymys kenttaan "tonylle" kuten ennen. Raha, kulut, oikeudet, tietoturva ja julkaisu menevat aina Tonylle, eika Digi-Tonya kysyta niista. Jos komento ei toimi, kirjoita kysymys Tonylle.
+
 TONYLLE-KENTAN TOISTO (mittaus 2.11.2026: tonylle.md:n 50 CT115-osiota = 44 kt eli 60 % tiedostosta, ja samat avoimet kohdat toistuivat jopa 7 osiossa): lue tonylle.md ensin. Ala kirjoita kenttaan "tonylle" kohtaa, joka on jo siina ja jonka tilanne ei ole muuttunut. Kirjoita vain uusi tai muuttunut asia (yksi rivi, viite aiempaan kohtaan). Jos mitaan uutta ei ole, jata "tonylle" tyhjaksi.
 
 Viimeinen viestisi on PELKKA JSON-olio, ei muuta tekstia:

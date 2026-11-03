@@ -2,7 +2,7 @@
 
 Tavoite: kaatuneet palvelut, levytila, varmuuskopioiden tuoreus ja tietoturvapäivitykset eivät vie Tonyn aikaa, mutta mistään ei voi syntyä peruuttamatonta vahinkoa. Tony 2.11.2026: "Sitähän mä juuri haluan, mutta niin että se ei ole mulle vahingollista."
 
-**Tila nyt: vaihe 1, vain ehdotustila.** Koodi (`agentti/talonmies.py`) lukee tilan ja kirjoittaa ehdotuksia. Se ei tee yhtään muutosta.
+**Tila nyt: vaihe 1 (ehdotustila) on käytössä; vaiheen 2 ja 3 toteutus on valmis, mutta pois päältä.** `agentti/talonmies.py` lukee tilan ja kirjoittaa ehdotuksia eikä tee muutoksia. `agentti/talonmies_toimi.py` toteuttaa A-tason (palvelun uudelleenkäynnistys, väliaikaistiedostojen ja lokien siivous) ja B-tason (tietoturvapäivitys snapshotin, terveystarkistuksen ja peruutuksen kanssa) kapean apuskriptin kautta (`isanta/talonmies_toimi_sudo.py`). Toimenpide on päällä vasta, kun Tony kirjaa sen tiedostoon `sallitut.txt` (apuskripti ja asennusohje `isanta/TALONMIES-AB-asennus.md` toimitetaan erikseen, koska `isanta/` on suojattu polku). Aamukooste näyttää toimet.
 
 ## Tasot
 
