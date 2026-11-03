@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Ajetaan KONTIN SISALLA (pct exec <ID> -- bash /root/mcp-asenna.sh), ei isannalla eika CT115:lla.
+# Ajetaan KONTIN SISALLA (pct exec <ID> -- bash /root/mcp-asenna.sh), ei isannalla eika agenttikontissa.
+# Ymparisto: MCP_ERA_ESTETYT = valilyonnilla erotetut osoitteet (LAN, Tailscale), joiden pitaa olla estettyja; ne annetaan ajettaessa,
+# eika niita kirjoiteta repoon (julkinen). Esim: MCP_ERA_ESTETYT="http://<lan-palvelu>:<portti> http://<tailscale-osoite>:<portti>"
 # Asentaa Noden (nodejs.org, SHA256-tarkistus), mcp-doctorin (npm) ja kayttajan mcp. Lopuksi verkkokokeet.
 set -euo pipefail
-PROXY="${MCP_ERA_PROXY:-http://10.98.0.2:3128}"
+PROXY="${MCP_ERA_PROXY:?aseta MCP_ERA_PROXY (hiekkalaatikon proxy, http://<osoite>:3128)}"
+ESTETYT="${MCP_ERA_ESTETYT:?aseta MCP_ERA_ESTETYT (valilyonnilla erotetut LAN- ja Tailscale-osoitteet, joiden pitaa olla estettyja)}"
 NODE_VERSIO="${NODE_VERSIO:-v22.12.0}"
 DOCTOR_VERSIO="${DOCTOR_VERSIO:-latest}"
 export http_proxy="$PROXY" https_proxy="$PROXY" HTTP_PROXY="$PROXY" HTTPS_PROXY="$PROXY"
@@ -38,7 +41,7 @@ code="$(curl -sS -m 15 -o /dev/null -w '%{http_code}' https://registry.npmjs.org
 case "$code" in 2*|3*|4*) echo "ok: npm-rekisteri vastaa ($code)" ;; *) echo "VIRHE: npm-rekisteri '$code'"; exit 1 ;; esac
 koe_ei "example.com proxyn kautta" curl -fsS -m 10 -o /dev/null https://example.com
 koe_ei "suora yhteys 1.1.1.1" curl -fsS -m 6 --noproxy '*' -o /dev/null http://1.1.1.1
-koe_ei "LAN (LiteLLM .116)" curl -fsS -m 6 --noproxy '*' -o /dev/null http://192.168.1.116:4000
-koe_ei "LAN (holvi .121)" curl -fsS -m 6 --noproxy '*' -o /dev/null http://192.168.1.121:8700
-koe_ei "Tailscale (isanta)" curl -fsS -m 6 --noproxy '*' -o /dev/null http://100.87.110.22:8006
+for osoite in $ESTETYT; do
+  koe_ei "sisaverkko ($osoite)" curl -fsS -m 6 --noproxy '*' -o /dev/null "$osoite"
+done
 echo "asennus-ok"

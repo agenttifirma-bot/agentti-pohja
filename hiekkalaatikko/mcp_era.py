@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """MCP-tarkastuksen erajo: kloonaa repolistan, ajaa mcp-doctor --json jokaiselle ja keraa tulokset yhteen JSON-tiedostoon.
 
-AJETAAN VAIN HIEKKALAATIKKOKONTISSA (ks. mcp-tarkastus.md), ei koskaan CT115:lla eika isannalla.
+AJETAAN VAIN HIEKKALAATIKKOKONTISSA (ks. mcp-tarkastus.md), ei koskaan agenttikontissa eika isannalla.
 Vain stdlib. Alikomennot ajetaan puhtaalla ymparistolla (ei isannan ymparistomuuttujia, ei salaisuuksia).
 
   mcp_era.py aja --lista LISTA --ulos TULOS.json [--tyo HAKEMISTO] [--kuiva]
-  mcp_era.py tarkista TULOS.json        # validoi tulostiedoston ennen siirtoa CT115:lle
+  mcp_era.py tarkista TULOS.json        # validoi tulostiedoston ennen siirtoa agenttikontille
 
 Listaformaatti (yksi repo per rivi, # aloittaa kommentin):
   https://github.com/omistaja/repo
@@ -25,7 +25,8 @@ from datetime import datetime, timezone
 
 SKEEMA = 1
 REPO_RE = re.compile(r"^https://github\.com/([A-Za-z0-9][A-Za-z0-9._-]{0,99})/([A-Za-z0-9][A-Za-z0-9._-]{0,99})$")
-OLETUS_PROXY = "http://10.98.0.2:3128"
+# Hiekkalaatikon proxyn osoite annetaan ymparistomuuttujalla (ei kirjoiteta julkiseen repoon): MCP_ERA_PROXY=http://<osoite>:3128
+OLETUS_PROXY = os.environ.get("MCP_ERA_PROXY", "")
 # Kovat ylarajat: argumentit saavat vain pienentaa.
 REPO_AIKARAJA_MAX = 900
 ERA_AIKARAJA_MAX = 3300
@@ -222,6 +223,8 @@ def aja_era(lista_teksti, ulos_polku, tyo, kuiva=False, repo_aikaraja=300, era_a
         raise Virhe("lista on tyhja")
     if len(rivit) > REPOJA_MAX:
         raise Virhe("liikaa repoja (%d > %d)" % (len(rivit), REPOJA_MAX))
+    if not kuiva and not proxy:
+        raise Virhe("proxy puuttuu (aseta MCP_ERA_PROXY tai --proxy)")
     tulos = {"skeema": SKEEMA, "alkoi": nyt(), "kuiva": bool(kuiva), "repo_aikaraja_s": repo_aikaraja,
              "era_aikaraja_s": era_aikaraja, "repot": []}
     env = puhdas_ymparisto(koti or tyo, proxy)
@@ -292,7 +295,7 @@ def main(argv=None):
     a.add_argument("--kuiva", action="store_true")
     a.add_argument("--repo-aikaraja", type=int, default=300)
     a.add_argument("--era-aikaraja", type=int, default=3000)
-    a.add_argument("--proxy", default=os.environ.get("MCP_ERA_PROXY", OLETUS_PROXY))
+    a.add_argument("--proxy", default=OLETUS_PROXY)
     t = alik.add_parser("tarkista")
     t.add_argument("tiedosto")
     arg = ap.parse_args(argv)

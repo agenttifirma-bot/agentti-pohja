@@ -97,7 +97,12 @@ class EraTesti(unittest.TestCase):
         self.tyo = os.path.join(self.tmp, "tyo")
 
     def aja(self, lista, ajaja, **kw):
+        kw.setdefault("proxy", "http://proxy.example:3128")
         return me.aja_era(lista, self.ulos, self.tyo, ajaja=ajaja, **kw)
+
+    def test_proxy_puuttuu_ei_ajeta(self):
+        with self.assertRaises(me.Virhe):
+            self.aja("https://github.com/a/b\n", ValeAjaja(), proxy="")
 
     def test_kuiva_ajo_ei_kutsu_mitaan_eika_luo_tyohakemistoa(self):
         aj = ValeAjaja()
@@ -138,10 +143,10 @@ class EraTesti(unittest.TestCase):
         os.environ["LITELLM_API_KEY"] = "ei-pida-vuotaa"
         self.addCleanup(os.environ.pop, "LITELLM_API_KEY", None)
         aj = ValeAjaja()
-        self.aja("https://github.com/a/b\n", aj)
+        self.aja("https://github.com/a/b\n", aj, proxy="http://proxy.example:3128")
         for _, _, env, _ in aj.kutsut:
             self.assertNotIn("LITELLM_API_KEY", env)
-            self.assertEqual(env["HTTPS_PROXY"], me.OLETUS_PROXY)
+            self.assertEqual(env["HTTPS_PROXY"], "http://proxy.example:3128")
             self.assertFalse([k for k in env if "KEY" in k or "TOKEN" in k or "SECRET" in k])
 
     def test_vaihevirheet_saavat_oman_tilansa(self):
@@ -259,8 +264,13 @@ class AsennusSkriptiTesti(unittest.TestCase):
 
     def test_verkkokokeet_kattavat_lan_ja_tailscale(self):
         s = (HL / "mcp-asenna.sh").read_text()
-        for osa in ("192.168.1.116", "192.168.1.121", "100.87.110.22", "1.1.1.1", "sha256sum -c"):
+        for osa in ("MCP_ERA_ESTETYT", "MCP_ERA_PROXY", "--noproxy", "1.1.1.1", "sha256sum -c"):
             self.assertIn(osa, s)
+
+    def test_asennus_ei_sisalla_sisaverkon_osoitteita(self):
+        """Julkinen repo: LAN- ja Tailscale-osoitteet annetaan ymparistomuuttujalla, ei kirjoiteta tiedostoon."""
+        s = (HL / "mcp-asenna.sh").read_text()
+        self.assertNotRegex(s, r"192\.168\.|(?<![0-9.])100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|CT1[0-9][0-9]")
 
 
 if __name__ == "__main__":
