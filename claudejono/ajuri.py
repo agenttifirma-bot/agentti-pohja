@@ -138,7 +138,7 @@ def git_lukko(tila):
 
 
 def varaus_vanhenee_s(env):
-    """Varaus vanhenee vasta, kun Clauden aikaraja + marginaali on ylitetty: eheasti kaynnissa oleva ajo ei menetä varaustaan."""
+    """Varaus vanhenee vasta, kun Clauden aikaraja + marginaali on ylitetty: eheasti kaynnissa oleva ajo ei meneta varaustaan."""
     try:
         return int(env.get("CLAUDEJONO_VARAUS_S") or int(env.get("CLAUDEJONO_AIKARAJA_S", OLETUS_AIKARAJA_S)) + VARAUS_MARGINAALI_S)
     except (TypeError, ValueError):

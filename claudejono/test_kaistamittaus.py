@@ -1,3 +1,4 @@
+import os
 import json
 import tempfile
 import unittest
@@ -41,6 +42,7 @@ class Mittaus(unittest.TestCase):
         self.assertEqual((d["load1"], d["muisti_vapaa_mb"], d["swap_kaytossa_mb"], d["varaukset"]), (0.5, 4000, 12, 0))
         self.assertEqual(r, d)
 
+    @unittest.skipUnless(os.path.exists("/proc/meminfo"), "vaatii Linuxin /proc-tiedostot")
     def test_nayte_oikealla_proc_lahteella(self):
         r = km.nayte(self.tila)
         self.assertIsInstance(r["load1"], float)
