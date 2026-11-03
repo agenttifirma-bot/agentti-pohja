@@ -1,3 +1,5 @@
+import subprocess
+import json
 """Tehtavan `Kaista: N` -kiinnitys: jasennys, valinta ja kilpa-ajo oikeilla prosesseilla (kaistat 1-3)."""
 import multiprocessing
 import tempfile
@@ -75,12 +77,19 @@ class Valinta(Pohja):
         t = self.teht(1, kaista=3)
         self.assertEqual(self.valitse(1, kaistoja=2), t)
 
-    def test_aja_ei_suunnittele_kun_toisen_kaistan_tehtava_odottaa(self):
-        self.teht(1, kaista=2)
-        v = ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_KAISTOJA": "3", "CLAUDEJONO_ITSESUUNNITTELU": "1"},
-                      suorita=lambda *a, **k: self.fail("ei saa ajaa"), kaista=1)
-        self.assertTrue(v.startswith("jono tyhja"), v)
-        self.assertEqual(ajuri.aktiiviset_varaukset(self.tmp), [])
+    def test_aja_ei_ota_toisen_kaistan_tehtavaa_vaan_suunnittelee_ennakoiden(self):
+        # Ennakoiva suunnittelu (#175): vapaa kaista suunnittelee, vaikka toisen kaistan kiinnittama tehtava odottaa,
+        # kun avoimia on alle 2 x kaistat. Kiinnitettyyn tehtavaan se ei koske.
+        t = self.teht(1, kaista=2)
+        kutsut = []
+
+        def suorita(kom, **k):
+            kutsut.append(kom)
+            self.assertNotIn("TEHTAVA-" + t, " ".join(map(str, kom)))
+            return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": '{"tehtavat": [], "tonylle": ""}'}), "")
+        ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_KAISTOJA": "3", "CLAUDEJONO_ITSESUUNNITTELU": "1"}, suorita=suorita, kaista=1)
+        self.assertEqual(len(kutsut), 1)   # yksi suunnittelukutsu, ei tehtavan ajoa
+        self.assertFalse((self.repo / ajuri.JONO / "tulokset" / t).exists())
 
     def test_kilpa_ajo_kolme_kaistaa_kiinnitetyt_ja_vapaat(self):
         kiinnitys = {1: 3, 3: 2, 5: 3, 7: 1, 8: 2}
