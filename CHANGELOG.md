@@ -3,6 +3,7 @@
 Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 
 ## Unreleased
+- claudejono: tehtävän `Kaista: N` -rivi kiinnittää tehtävän kaistalle N. Muut kaistat ohittavat sen, ja kaista N ottaa ensin omat kiinnitetyt, sitten vapaat (Tonyn päätös 3.11.2026: yksi kaista agenttialustalle). Rivi, jota ei voi toteuttaa (puuttuva kaista), tulkitaan vapaaksi. Kattoihin ja ajastimiin ei kosketa. +10 testiä (jäsennys, valinta, kilpa-ajo kolmella kaistalla oikeilla prosesseilla).
 - hiekkalaatikko: `terveystarkastus.py` muuttaa mcp-doctorin `health-check`-issuet mcp_era-listaksi ja englanninkielisiksi vastausluonnoksiksi (vain GET julkiseen API:in, mitään ei lähetetä; vieraan koodin ajo vain kun `MCP_HIEKKALAATIKKO=1`). +19 testiä.
 - claudejono: itsesuunnittelun tauko. Tyhjän kierroksen (0 tehtävää, virheellinen JSON tai aikakatkaisu) jälkeen uutta suunnittelua ei ajeta 3 tuntiin (`CLAUDEJONO_SUUNNITTELU_TAUKO_S`), ellei uusi tulos ole tullut. 1.11. tyhjä kierros toistui noin 10 minuutin välein ja lisäsi `tonylle.md`:hen lähes saman kohdan kymmeniä kertoja (ja kulutti tilauksen kiintiötä). Tila tiedostossa `<työhakemisto>/suunnittelu-tila.json`. +7 testiä.
 - claudejono: yli 60 000 tavun raportti merkitään katkaistuksi (alkuperäinen koko näkyy). 1.11. koulumatka-äänikirjan M02-lähde katkesi kesken sanan ilman merkintää. +2 testiä.
