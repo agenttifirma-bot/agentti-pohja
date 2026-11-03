@@ -78,8 +78,11 @@ def raja_sallii(tila_polku, nyt=None):
 
 
 def ilmoita(tila, otsikko, teksti="", env_polku=None, tila_polku=None, hae=None, nyt=None):
-    """Palauttaa 'lahetetty' | 'raja' | 'ei_tunnuksia' | 'epaonnistui'."""
+    """Palauttaa 'lahetetty' | 'raja' | 'ei_tunnuksia' | 'epaonnistui' | 'kooste'.
+    'kooste': CLAUDEJONO_ILMOITUKSET=kooste ja tila 'valmis' -> viesti jaa aamukoosteeseen (virhe ja paatos lahtevat heti)."""
     viesti = muodosta(tila, otsikko, teksti)
+    if tila == "valmis" and os.environ.get("CLAUDEJONO_ILMOITUKSET", "heti") == "kooste":
+        return "kooste"
     tunnukset = lue_tunnukset(env_polku or os.environ.get("ILMOITA_TUNNUKSET", OLETUS_TUNNUKSET))
     env = {"TELEGRAM_BOT_TOKEN": tunnukset.get("YOJONO_TELEGRAM_TOKEN"),
            "TELEGRAM_CHAT_ID": tunnukset.get("YOJONO_TELEGRAM_CHAT")}
@@ -101,7 +104,7 @@ def main(argv=None):
         print("ilmoita: %s" % e, file=sys.stderr)
         return 2
     print("ilmoitus: %s" % tulos)
-    return 0 if tulos == "lahetetty" else 1
+    return 0 if tulos in ("lahetetty", "kooste") else 1
 
 
 if __name__ == "__main__":
