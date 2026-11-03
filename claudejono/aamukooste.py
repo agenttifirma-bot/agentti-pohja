@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import ajuri
+from . import ajuri, kaistamittaus
 
 TZ = ZoneInfo("Europe/Helsinki")
 OLETUS_REPO = "/var/lib/claude-jono/docs"
@@ -155,7 +155,11 @@ def keraa(repo, perus, nyt, hae=None, yksikot=None):
     except Exception as virhe:   # GitHub-haku ei saa kaataa koostetta
         print(f"aamukooste: PR-haku epaonnistui ({type(virhe).__name__})", file=sys.stderr)
         pr_ryhmat = None
-    return {"nyt": nyt, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku),
+    try:   # kaistakoe: yksi osa Tehty-riville; puuttuva tai rikkinainen loki ei kaada koostetta
+        kaistat = kaistamittaus.rivi(Path(repo).parent, nyt, perus)
+    except Exception:
+        kaistat = None
+    return {"nyt": nyt, "kaistat": kaistat, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku),
             "pr": pr_ryhmat, "pr_virheita": virheet, "yojono": yojono_tila(perus, nyt),
             "yksikot": (yksikot or rikkinaiset_yksikot)()}
 
@@ -177,6 +181,8 @@ def rivit(t):
         osat.append("PR:t " + nayta)
     if yj:
         osat.append(f"y\u00f6jono {yj['valmis']} valmis")
+    if t.get("kaistat"):
+        osat.append(t["kaistat"])
     tehty = "Tehty: " + "; ".join(osat) + "."
 
     tarvitaan_osat = []
