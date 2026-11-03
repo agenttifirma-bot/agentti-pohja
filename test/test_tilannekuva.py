@@ -145,7 +145,7 @@ class OsioTesti(unittest.TestCase):
     def test_keraa_kaikki_kirjoittaa_tiedostot(self):
         kohde = Path(tempfile.mkdtemp()) / "kuva"
         nimet = tk.keraa_kaikki(kohde, self.t, None, hae_tekoinen, lambda: "kontti 111 running")
-        self.assertEqual(sorted(nimet), ["github.md", "isanta.md", "kulut.md", "palvelin.md", "yojono.md"])
+        self.assertEqual(sorted(nimet), ["github.md", "isanta.md", "kauppa.md", "kulut.md", "palvelin.md", "yojono.md"])
         self.assertIn("kontti 111 running", (kohde / "isanta.md").read_text())
         for n in nimet:
             self.assertTrue((kohde / n).read_text())
@@ -408,6 +408,44 @@ class KeraaJaMainTesti(unittest.TestCase):
         with mock.patch.object(sys, "argv", ["x", "kohde"]):
             koodi, _, _, k = self.ajaa(None)
         self.assertEqual((koodi, k.call_args[0][0]), (0, "kohde"))
+
+
+class KauppaOsioTesti(unittest.TestCase):
+    NYT = datetime(2026, 11, 2, 12, 0, tzinfo=timezone.utc)
+
+    def hae(self, sisalto):
+        with tempfile.TemporaryDirectory() as d:
+            if sisalto is not None:
+                (Path(d) / "PAIVITETTY").write_text(sisalto, encoding="utf-8")
+            return tk.kauppa_osio(d, self.NYT)
+
+    def test_tuore(self):
+        ulos = self.hae("2026-11-02T10:00:00+00:00\n")
+        self.assertNotIn("VAROITUS", ulos)
+        self.assertIn("tuore", ulos)
+
+    def test_vanha_nayttaa_ajan(self):
+        ulos = self.hae("2026-11-01T06:17:00+00:00\n")
+        self.assertIn("VAROITUS", ulos)
+        self.assertIn("2026-11-01T06:17:00+00:00", ulos)
+        self.assertIn("29.7 h", ulos)
+
+    def test_tiedosto_puuttuu(self):
+        self.assertIn("VAROITUS", self.hae(None))
+
+    def test_hakemisto_puuttuu_ei_halytysta(self):
+        with tempfile.TemporaryDirectory() as d:
+            ulos = tk.kauppa_osio(Path(d) / "ei-ole", self.NYT)
+        self.assertNotIn("VAROITUS", ulos)
+
+    def test_lukukelvoton_aikaleima(self):
+        ulos = self.hae("eilen aamulla")
+        self.assertIn("VAROITUS", ulos)
+        self.assertIn("lukukelvoton", ulos)
+
+    def test_ymparistomuuttuja(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"KAUPPA_HAKEMISTO": d}):
+            self.assertIn("VAROITUS", tk.kauppa_osio(nyt=self.NYT))
 
 
 if __name__ == "__main__":
