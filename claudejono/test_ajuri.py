@@ -7,6 +7,8 @@ from pathlib import Path
 
 from claudejono import ajuri
 
+OK_TEHTAVA = "# A\n\nPisteet: hyoty 4, varmuus 4, vaiva 1 h\nSuunta: jatkoa (kompassi 1)\n"
+
 
 KELVOLLINEN = (
     "# Tehtava\n\nHyoty: Tony lukee aamulla.\nPisteet: hyoty 4, varmuus 4, vaiva 1 h\n"
@@ -109,6 +111,23 @@ class Tarkastus(unittest.TestCase):
         for lause in ("Aja vasta klo 8.", "tee vasta klo 22", "AJA VASTA ajon jalkeen"):
             self.assertTrue(any("kelloportti" in x for x in self.puutteet(KELVOLLINEN + lause)), lause)
 
+    def test_pelkka_maininta_ei_ole_kelloportti(self):
+        """Regressio: "vasta klo" sellaisenaan hylkasi kaikki tekstit, myos selostukset ja saantolainaukset."""
+        for lause in ("Tulos valmistuu vasta klo 8, joten lue se aamulla.",
+                      "Ala ehdota tehtavaa, jossa lukee 'vasta klo X'.",
+                      "Raportti on luettavissa vasta klo 9 jalkeen."):
+            self.assertEqual(self.puutteet(KELVOLLINEN + lause), [], lause)
+
+    def test_kelloportti_lauseen_alussa_hylataan(self):
+        for lause in ("Vasta klo 8 jalkeen.", "Tama on tarkea. Vasta klo 22."):
+            self.assertTrue(any("kelloportti" in x for x in self.puutteet(KELVOLLINEN + lause)), lause)
+
+    def test_suunnittelu_ei_rajaa_pelkkiin_korjauksiin(self):
+        """Kompassin 2.11. klo 16.10 linjaus: itsesuunnittelu ei rajaudu vain korjauksiin."""
+        teksti = (Path(ajuri.__file__).parent / "suunnittelu.md").read_text(encoding="utf-8")
+        self.assertNotIn("rajataan (1) korjauksiin", teksti)
+        self.assertNotIn("Ala ehdota muuta", teksti)
+
     def test_sana_vastaus_ei_ole_kelloportti(self):
         self.assertEqual(self.puutteet(KELVOLLINEN + "Kirjoita vastaus.\n"), [])
 
@@ -145,7 +164,7 @@ class Ajo(Pohja):
     def test_ajo_pushaa_vain_tuloksen(self):
         self.lisaa_tehtava("2026-10-30-01-a.md")
         f, kutsut = self.suorita({"subtype": "success", "result": "raportti"})
-        viesti = ajuri.aja(self.repo, self.tmp, env={"YOJONO_TELEGRAM_TOKEN": "salainen"}, suorita=f)
+        viesti = ajuri.aja(self.repo, self.tmp, env={"YOJONO_TELEGRAM_TOKEN": "salainen", "CLAUDEJONO_ITSESUUNNITTELU": "0"}, suorita=f)
         self.assertIn("VALMIS", viesti)
         self.assertNotIn("YOJONO_TELEGRAM_TOKEN", kutsut[0][1]["env"])
         tarkistus = self.tmp / "tarkistus"
@@ -159,7 +178,7 @@ class Ajo(Pohja):
         self.lisaa_tehtava("2026-11-02-01-a.md", "# Tee jotain\n")
         self.lisaa_tehtava("2026-11-02-02-b.md")
         f, kutsut = self.suorita({"subtype": "success", "result": "raportti"})
-        viesti = ajuri.aja(self.repo, self.tmp, env={}, suorita=f)
+        viesti = ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_ITSESUUNNITTELU": "0"}, suorita=f)
         self.assertIn("2026-11-02-01-a.md HYLATTY", viesti)
         self.assertIn("2026-11-02-02-b.md VALMIS", viesti)
         self.assertEqual(len(kutsut), 1)   # malli ajettiin vain kelvolliselle
@@ -172,7 +191,7 @@ class Ajo(Pohja):
     def test_vain_hylatty_jono_ei_kaynnista_itsesuunnittelua(self):
         self.lisaa_tehtava("2026-11-02-01-a.md", "Aja vasta klo 8.\n")
         f, kutsut = self.suorita({"subtype": "success", "result": "x"})
-        viesti = ajuri.aja(self.repo, self.tmp, env={}, suorita=f)
+        viesti = ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_ITSESUUNNITTELU": "0"}, suorita=f)
         self.assertIn("HYLATTY", viesti)
         self.assertEqual(kutsut, [])
         self.assertIsNone(ajuri.seuraava_tehtava(self.repo))
@@ -278,10 +297,10 @@ class Itsesuunnittelu(Pohja):
         (self.repo / ajuri.JONO / "tulokset" / "2026-10-30-01-a.md").write_text("ok")
         git(self.repo, "add", "-A"); git(self.repo, "commit", "-q", "-m", "t"); git(self.repo, "push", "-q", "origin", "main")
         vastaus = json.dumps({"tehtavat": [
-            {"nimi": "korjaa-x", "sisalto": "# X\n\nValmis kun: x"},
+            {"nimi": "korjaa-x", "sisalto": OK_TEHTAVA},
             {"nimi": "HUONO NIMI", "sisalto": "y"},
-            {"nimi": "toinen", "sisalto": "# Y"},
-            {"nimi": "kolmas", "sisalto": "# Z"}], "tonylle": "Nosta katto?"})
+            {"nimi": "toinen", "sisalto": OK_TEHTAVA},
+            {"nimi": "kolmas", "sisalto": OK_TEHTAVA}], "tonylle": "Nosta katto?"})
         v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli("Tassa:\n" + vastaus), nyt=self.nyt())
         self.assertIn("itsesuunnittelu", v)
         tied = self.origin_tiedostot()
@@ -357,7 +376,7 @@ class Itsesuunnittelu(Pohja):
 
     def test_tehtavia_tuottanut_kierros_ei_aloita_taukoa(self):
         kutsut = []
-        f = self.malli(json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A"}], "tonylle": ""}), kutsut)
+        f = self.malli(json.dumps({"tehtavat": [{"nimi": "a", "sisalto": OK_TEHTAVA}], "tonylle": ""}), kutsut)
         ajuri.suunnittele(self.repo, self.tmp, {}, f, nyt=self.nyt())
         ajuri.suunnittele(self.repo, self.tmp, {}, f, nyt=self.nyt())
         self.assertEqual(len(kutsut), 2)
@@ -424,7 +443,7 @@ class TonylleKirjoitus(Pohja):
         self.assertFalse((self.repo / ajuri.JONO / ajuri.TONYLLE).exists())
 
     def test_tonylle_ja_tehtava_samassa_commitissa(self):
-        vastaus = json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A"}], "tonylle": "kysymys"})
+        vastaus = json.dumps({"tehtavat": [{"nimi": "a", "sisalto": OK_TEHTAVA}], "tonylle": "kysymys"})
         v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli(vastaus), nyt=self.nyt())
         self.assertEqual(v, "claude-jono: itsesuunnittelu -> 2026-10-30-01-auto-a.md, tonylle.md")
         self.assertEqual(self.origin_tiedostot(), ["claude-jono/tehtavat/2026-10-30-01-auto-a.md", "claude-jono/tonylle.md"])
@@ -437,7 +456,7 @@ class TonylleKirjoitus(Pohja):
 
     def test_nimi_rivinvaihdolla_ei_luo_tiedostoa(self):
         # AUTO_NIMI_RE:n $ hyvaksyy loppuun rivinvaihdon; kelvollinen_nimi() torjuu sen silti ennen kirjoitusta.
-        vastaus = json.dumps({"tehtavat": [{"nimi": "abc\n", "sisalto": "# A"}], "tonylle": ""})
+        vastaus = json.dumps({"tehtavat": [{"nimi": "abc\n", "sisalto": OK_TEHTAVA}], "tonylle": ""})
         v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli(vastaus), nyt=self.nyt())
         self.assertEqual(v, "jono tyhja (ei uusia tehtavia)")
         teht = self.repo / ajuri.JONO / "tehtavat"
@@ -544,14 +563,14 @@ class JulkaisuPushVirhe(Pohja):
         def f(kom, **kw):
             return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": "r"}), "")
         lahetetyt = []
-        viesti = ajuri.aja(self.repo, self.tmp, env={}, suorita=f, laheta=lahetetyt.append)
+        viesti = ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_ITSESUUNNITTELU": "0"}, suorita=f, laheta=lahetetyt.append)
         self.assertEqual(viesti, "claude-jono: 2026-10-30-01-a.md VALMIS (push epaonnistui)")
         self.assertIn("push epaonnistui", lahetetyt[0])
 
     def test_suunnittele_pushin_epaonnistuessa_ei_kaadu(self):
         # Nykytoiminta: julkaise()n paluuarvoa ei lueta, joten viesti ei kerro epaonnistumisesta (ks. PR:n kuvaus).
         self.hylkaa_pushit()
-        vastaus = json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A"}], "tonylle": ""})
+        vastaus = json.dumps({"tehtavat": [{"nimi": "a", "sisalto": OK_TEHTAVA}], "tonylle": ""})
 
         def f(kom, **kw):
             return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": vastaus}), "")

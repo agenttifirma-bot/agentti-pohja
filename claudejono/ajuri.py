@@ -18,6 +18,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from claudejono import silmukka
+
 TEHTAVA_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-[a-z0-9-]{1,60}\.md$")
 TEHTAVA_MAX_TAVUA = 20000
 TULOS_MAX_TAVUA = 60000
@@ -78,7 +80,11 @@ VAADITUT_RIVIT = (
 PISTEET_RE = re.compile(_RIVI + r"pisteet\b[*_]*\s*:(?=.*hy[o\u00f6]ty)(?=.*varmuus)(?=.*vaiva)")
 MITTARI_RE = re.compile(_RIVI + r"mittari\b[*_]*\s*:")
 TODENNUS_RE = re.compile(_RIVI + r"todennus\b[*_]*\s*:")
-KELLOPORTTI_RE = re.compile(r"(?i)\b(vasta\s+klo|aja\s+vasta)\b")
+# Kelloportti = kasky odottaa ("aja vasta ...", "tee vasta klo 22") tai lause, joka alkaa "vasta klo <aika>". Pelkka maininta
+# ("tulos valmistuu vasta klo 8", lainaus saannosta) ei ole portti eika saa hylata tehtavaa.
+KELLOPORTTI_RE = re.compile(
+    r"(?i)\b(?:aja|ajetaan|tee|tehd[a\u00e4][a\u00e4]n|suorita|aloita|k[a\u00e4]ynnist[a\u00e4]|odota)\s+vasta\b[^.!?\n]{0,40}"
+    r"|(?:^|[.!?\n]\s*)vasta\s+(?:klo|kello)\s*\d[^.!?\n]{0,30}")
 
 
 def tarkista_tehtava(nimi, teksti):
@@ -90,7 +96,7 @@ def tarkista_tehtava(nimi, teksti):
         puutteet.append("Todennus-rivi")
     m = KELLOPORTTI_RE.search(teksti)
     if m:
-        puutteet.append(f"kelloportti ({m.group(0).lower()!r}); jono ajaa tehtavan heti")
+        puutteet.append(f"kelloportti ({m.group(0).strip().lower()[:40]!r}); jono ajaa tehtavan heti")
     return puutteet
 
 
@@ -194,13 +200,13 @@ def claude_komento(kehote, env):
 RUNUSER = "/usr/sbin/runuser"
 
 
-def lapsen_ajo(kehote, env, tyohak):
+def lapsen_ajo(kehote, env, tyohak, lisaliput=()):
     """(komento, ymparisto, cwd) Claude-lapsiprosessille.
 
     Jos CLAUDEJONO_KAYTTAJA on asetettu (Tonyn paatos 30.10.2026), ajuri jaa rootiksi (git, deploy key, Telegram), mutta agentti
     ajetaan tavallisena kayttajana runuserilla: se ei nae deploy keyta, botin tunnusta, yojonon kattoja eika salaisuuksia, eika
     saa rootin ymparistoa. Ilman muuttujaa toiminta on ennallaan."""
-    kom = claude_komento(kehote, env)
+    kom = claude_komento(kehote, env) + list(lisaliput)
     kayttaja = env.get("CLAUDEJONO_KAYTTAJA", "")
     if not kayttaja:
         alaenv = {k: v for k, v in env.items() if not k.startswith(("YOJONO_TELEGRAM_", "CLAUDEJONO_GIT", "GIT_SSH"))}
@@ -342,6 +348,9 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
     """Jono tyhja: Claude ehdottaa jatkotehtavat. Ajuri nimeaa, rajaa (AUTO_MAX_PAIVA, AUTO_PER_AJO) ja committaa ne."""
     nyt = nyt or datetime.now().astimezone()
     pvm = nyt.date().isoformat()
+    pysaytys = silmukka.pysaytetty(tyohak)
+    if pysaytys:
+        return f"itsesuunnittelu pysaytetty (laatuotos): {pysaytys}"
     tilaa = min(AUTO_PER_AJO, AUTO_MAX_PAIVA - auto_tanaan(repo, pvm))
     if tilaa <= 0:
         return "jono tyhja (itsesuunnittelun paivaraja taynna)"
@@ -363,7 +372,11 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
         return "jono tyhja (suunnittelu ei tuottanut kelvollista JSONia)"
     polut = []
     nro = seuraava_numero(repo, pvm)
-    for t in suunn["tehtavat"][:tilaa]:
+    # Porttitarkistin (Tonyn linjaus 2.11.): julkaisu, raha, oikeudet, katot, ajastukset ja uusi suunta Tonylle, ei jonoon.
+    hyvaksytyt, sunnuntai, _hylatyt = silmukka.suodata(suunn["tehtavat"])
+    if sunnuntai:
+        suunn["tonylle"] = (suunn["tonylle"].strip() + "\n" + silmukka.sunnuntairivit(sunnuntai)).strip()
+    for t in hyvaksytyt[:tilaa]:
         p = Path(repo) / JONO / "tehtavat" / f"{pvm}-{nro:02d}-auto-{t['nimi']}.md"
         if not kelvollinen_nimi(p.name):
             continue
@@ -387,9 +400,37 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
     return viesti
 
 
+def luo_toistuvat(repo, tyohak, nyt=None):
+    """Toistuvat tehtavat (esim. viikoittainen optimointikierros, toisto 7 pv) pohjista claudejono/toistuvat/.
+    Ajuri nimeaa ne `<pvm>-NN-auto-<nimi>.md` (sallittu polku) ja laskee ne itse keksittyjen paivarajaan (AUTO_MAX_PAIVA).
+    Ei luoda, jos laatuotos on pysayttanyt silmukan, edellinen kierros on ajamatta tai paivaraja on taynna."""
+    nyt = nyt or datetime.now().astimezone()
+    if silmukka.pysaytetty(tyohak):
+        return []
+    pvm = nyt.date().isoformat()
+    polut = []
+    for nimi in silmukka.toistuvat_erapaivalla(repo, nyt):
+        if auto_tanaan(repo, pvm) + len(polut) >= AUTO_MAX_PAIVA:
+            break
+        p = Path(repo) / JONO / "tehtavat" / f"{pvm}-{seuraava_numero(repo, pvm) + len(polut):02d}-auto-{nimi}.md"
+        if not kelvollinen_nimi(p.name):
+            continue
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("<!-- Toistuva tehtava (claudejono/toistuvat/" + nimi + ".md), toisto "
+                     + str(silmukka.TOISTUVAT[nimi]) + " pv -->\n" + silmukka.toistuvan_sisalto(nimi).rstrip() + "\n",
+                     encoding="utf-8")
+        polut.append(p)
+    if polut:
+        julkaise(repo, polut, "claude-jono: toistuva tehtava " + ", ".join(p.name for p in polut))
+    return polut
+
+
 def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None):
     env = dict(os.environ if env is None else env)
     git(repo, "pull", "-q", "--rebase", "origin", "main")
+    itse = env.get("CLAUDEJONO_ITSESUUNNITTELU", "1") == "1"
+    if itse:
+        luo_toistuvat(repo, tyohak)
     t = seuraava_tehtava(repo)
     hylatyt = []
     while t is not None:
@@ -400,10 +441,17 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None):
         julkaise(repo, polku, f"claude-jono: {t.name} HYLATTY")
         hylatyt.append(f"claude-jono: {t.name} HYLATTY ({'; '.join(puutteet)})")
         t = seuraava_tehtava(repo)
+    taydennys = ""
     if t is None:
-        if env.get("CLAUDEJONO_ITSESUUNNITTELU", "1") == "1" and not hylatyt:
+        if itse and not hylatyt:
             return suunnittele(repo, tyohak, env, suorita, laheta)
         return "\n".join(hylatyt) or "jono tyhja"
+    if itse and silmukka.avoimia(repo) < silmukka.AVOIMIA_ALARAJA:
+        # Jono ei tyhjene: taydennetaan jo ennen kuin se on tyhja. Tehtava ajetaan silti, vaikka taydennys epaonnistuisi.
+        try:
+            taydennys = " | taydennys: " + suunnittele(repo, tyohak, env, suorita, laheta)
+        except Exception as virhe:
+            taydennys = f" | taydennys epaonnistui: {type(virhe).__name__}"
     (Path(tyohak) / "tyo").mkdir(parents=True, exist_ok=True)
     kehote = rakenna_kehote(t, opit=lue_opit(repo))
     kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak)
@@ -419,7 +467,8 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None):
         uudet, _ = suodata_opit(poimi_uusi_oppi(teksti))
         if uudet:
             julkaise_opit(repo, paivita_opit(lue_opit(repo), uudet))
-    viesti = f"claude-jono: {t.name} {'VALMIS' if ok else 'EPAONNISTUI'}" + ("" if pushattu else " (push epaonnistui)")
+    viesti = (f"claude-jono: {t.name} {'VALMIS' if ok else 'EPAONNISTUI'}" + ("" if pushattu else " (push epaonnistui)")
+              + taydennys)
     if laheta:
         laheta(viesti + "\n" + teksti[:1500])
     return "\n".join(hylatyt + [viesti])

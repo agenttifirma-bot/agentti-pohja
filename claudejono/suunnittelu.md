@@ -1,6 +1,6 @@
 Itsesuunnittelu (Tony hyvaksyi 30.10.2026): jono on tyhja. Ala tee tyota nyt, vaan suunnittele seuraavat tehtavat.
 
-RAJAUS (kompassi, osio "Tyonvalinta, laatu ja prosessit"): lue osio ennen suunnittelua. Tony ja pilvi-Claude suunnittelevat tyon yhdessa viikkosuunnittelussa. Itsesuunnittelu rajataan (1) korjauksiin, (2) yllapitoon ja (3) viikkosuunnitelman aukkojen taytolle. Ala ehdota muuta.
+RAJAUS (kompassi, osio "Tyonvalinta, laatu ja prosessit"): lue osio ennen suunnittelua. Tony ja pilvi-Claude suunnittelevat tyon yhdessa viikkosuunnittelussa.
 
 TEHTAVAN MUOTO (ajuri hylkaa tehtavan ennen ajoa, jos jokin puuttuu): jokaisessa tehtavassa on omalla rivillaan
 - "Hyoty: ..."
@@ -28,5 +28,12 @@ HUKAN KARSINTA (Tonyn paatos 1.11.2026, yolla 1.11. viisi tehtavaa pysahtyi heti
 
 Asiat, jotka vaativat Tonyn paatosta (katot, budjetit, oikeudet, kayttoonotot, rahankaytto), kirjoita kenttaan "tonylle" eika tehtaviksi. Jos jarkevaa tehtavaa ei ole, palauta tyhja lista.
 
+TONYLLE-KENTAN TOISTO (mittaus 2.11.2026: tonylle.md:n 50 CT115-osiota = 44 kt eli 60 % tiedostosta, ja samat avoimet kohdat toistuivat jopa 7 osiossa): lue tonylle.md ensin. Ala kirjoita kenttaan "tonylle" kohtaa, joka on jo siina ja jonka tilanne ei ole muuttunut. Kirjoita vain uusi tai muuttunut asia (yksi rivi, viite aiempaan kohtaan). Jos mitaan uutta ei ole, jata "tonylle" tyhjaksi.
+
 Viimeinen viestisi on PELKKA JSON-olio, ei muuta tekstia:
 {"tehtavat": [{"nimi": "lyhyt-nimi-pienilla", "sisalto": "# Otsikko\n\nTavoite...\n\nValmis kun: ..."}], "tonylle": "lyhyet kohdat tai tyhja"}
+
+TAYDENNYS (Tonyn linjaus 2.11.2026 klo 16.10, jono ei tyhjene): ajuri kutsuu sinua jo silloin, kun avoimia tehtavia on alle 5. Kirjoita 3-5 uutta tehtavaa (ajuri ottaa niista enintaan sen maaran kuin paivaraja sallii). Jokaisessa tehtavassa pitaa olla kaksi tarkistettavaa riveria:
+Pisteet: hyoty <1-5>, varmuus <1-5>, vaiva <tunnit> h
+Suunta: jatkoa (kompassin tai valitavoitteen kohta)
+Ajuri hylkaa tehtavan, jos jompikumpi puuttuu. Ajuri ohjaa tehtavan Tonyn sunnuntaiehdotuksiin (tonylle.md), jos Suunta on "uusi" tai jos tehtava ehdottaa julkaisua, rahankayttoa, oikeuksien, kulukattojen tai ajastusten muutosta. Nama Tony paattaa; ala yrita kiertaa tarkistinta muotoilulla. Tehtavan tuotos on PR tai raportti.
