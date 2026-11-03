@@ -191,6 +191,56 @@ class Ajo(Pohja):
         self.assertIn("testit punaisella", rap)
         self.assertEqual(self.kutsut(), "")
 
+    def _lahde_muutos(self, *args, tiedostot=None):
+        r = self.lahde / REPO
+        for polku, teksti in (tiedostot or {}).items():
+            kirjoita(r / polku, teksti)
+        git(r, *args)
+
+    def test_vihrea_nayttaa_testien_maaran(self):
+        self.agentti_skripti('printf "import unittest\\nclass B(unittest.TestCase):\\n    def test_b(self):\\n        self.assertEqual(1, 1)\\n" > test/test_b.py')
+        self.pr_kutsu()
+        r = self.aja(REPO, "1.00", "testit")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("vihrea, 2 testia", self.raportti("testit"))
+
+    def test_nolla_testia_kloonista_ei_ole_vihrea(self):
+        # repossa ei ole yhtaan testia; agentin lisaama liite ei ole testi
+        self._lahde_muutos("rm", "-q", "-r", "test", "-f")
+        self._lahde_muutos("commit", "-q", "-m", "ei testeja")
+        self.agentti_skripti('mkdir -p test && echo x > test/liite.txt')
+        self.pr_kutsu()
+        r = self.aja(REPO, "1.00", "testit")
+        self.assertEqual(r.returncode, 1)
+        rap = self.raportti("testit")
+        self.assertIn("punainen (ei testeja kloonista)", rap)
+        self.assertNotIn("vihrea", rap)
+        self.assertEqual(self.kutsut(), "")
+
+    def test_kloonin_ulkopuolelta_ladattu_testi_ei_ole_vihrea(self):
+        ulko = Path(self.tmp.name) / "ulko"
+        kirjoita(ulko / "ulkoinen_testi.py", "import unittest\nclass Ulk(unittest.TestCase):\n    def test_u(self):\n        pass\n")
+        self._lahde_muutos("add", "-A", tiedostot={"test/test_c.py": f"import sys\nsys.path.append({str(ulko)!r})\nfrom ulkoinen_testi import Ulk\n"})
+        self._lahde_muutos("commit", "-q", "-m", "ulkoinen")
+        self.agentti_skripti('echo x > test/liite.txt')
+        self.pr_kutsu()
+        r = self.aja(REPO, "1.00", "testit")
+        self.assertEqual(r.returncode, 1)
+        rap = self.raportti("testit")
+        self.assertIn("punainen", rap)
+        self.assertNotIn("vihrea", rap)
+        self.assertEqual(self.kutsut(), "")
+
+    def test_ajurin_pythonpath_ei_vie_kloonin_test_pakettia(self):
+        # PYTHONPATH:ssa on `test`-paketti, jonka testi epaonnistuu: sita ei saa ladata, kloonin oma sarja ajetaan
+        kirjoita(Path(self.tmp.name) / "vaara" / "test" / "__init__.py", "")
+        kirjoita(Path(self.tmp.name) / "vaara" / "test" / "test_a.py", "import unittest\nclass V(unittest.TestCase):\n    def test_v(self):\n        self.fail()\n")
+        self.agentti_skripti('echo x > test/liite.txt')
+        self.pr_kutsu()
+        r = self.aja(REPO, "1.00", "testit", PYTHONPATH=str(Path(self.tmp.name) / "vaara"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("vihrea, 1 testia", self.raportti("testit"))
+
     def test_vihrea_testilisays_avaa_pr(self):
         self.agentti_skripti('printf "import unittest\\nclass B(unittest.TestCase):\\n    def test_b(self):\\n        self.assertEqual(1, 1)\\n" > test/test_b.py')
         self.pr_kutsu()

@@ -11,7 +11,7 @@ sallii vain 'repo <url> [ref]' ja 'luonnos' (tar.gz stdinista).
 CLI: python -m agentti.sandbox_kutsu git <git-repo> [ref]
 
 Asetukset ymparistomuuttujilla:
-  SANDBOX_HOST (oletus 192.168.1.114), SANDBOX_KEY (oletus /root/.ssh/sandbox_key),
+  SANDBOX_HOST (pakollinen, ei oletusta), SANDBOX_KEY (oletus /root/.ssh/sandbox_key),
   SANDBOX_USER (oletus root), SANDBOX_KNOWN_HOSTS (valinnainen tiedosto).
 Ei salaisuuksia: avaintiedoston polku vain, sisaltoa ei lueta.
 """
@@ -36,7 +36,9 @@ class SandboxVirhe(Exception):
 
 def _ssh_perus():
     avain = os.environ.get("SANDBOX_KEY", "/root/.ssh/sandbox_key")
-    isanta = os.environ.get("SANDBOX_HOST", "192.168.1.114")
+    isanta = os.environ.get("SANDBOX_HOST")
+    if not isanta:
+        raise SandboxVirhe("ymparistomuuttuja SANDBOX_HOST puuttuu (isannan osoite, ei oletusta)")
     kayttaja = os.environ.get("SANDBOX_USER", "root")
     komento = ["ssh", "-i", avain, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
                "-o", "IdentitiesOnly=yes"]

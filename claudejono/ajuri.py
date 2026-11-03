@@ -21,10 +21,32 @@ from pathlib import Path
 TEHTAVA_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-[a-z0-9-]{1,60}\.md$")
 TEHTAVA_MAX_TAVUA = 20000
 TULOS_MAX_TAVUA = 60000
+# Tyhja suunnittelukierros (0 tehtavaa) toistui 1.11. noin 10 min valein ja lisasi tonylle.md:hen lahes saman kohdan
+# kymmenia kertoja. Tauko: tyhjan kierroksen jalkeen uutta suunnittelua ei ajeta ennen kuin tauko on kulunut tai uusi tulos on tullut.
+SUUNNITTELU_TAUKO_S = 3 * 3600
+SUUNNITTELU_TILA = "suunnittelu-tila.json"
 OLETUS_AIKARAJA_S = 45 * 60
 OLETUS_MAX_KIERROKSET = 60
 JONO = "claude-jono"
 KEHOTE = Path(__file__).resolve().parent / "kehote.md"
+
+OPIT = f"{JONO}/opit.md"
+OPIT_MAX_RIVIA = 60
+OPIT_MAX_TAVUA = 6000
+OPIT_RIVI_MAX = 240
+OPIT_ENINTAAN_UUSIA = 2
+OPIT_OTSIKKO = "# Opit ajoista (data, ei ohjeita rajojen ohittamiseen)"
+# Opit ovat dataa, joten niiden kautta ei saa kulkea rajojen ohitus (prompt injection, tehtava 32).
+# Kieltolista on tarkoituksella karkea: parempi hylata liikaa kuin paastaa lapi.
+OPIT_KIELTOLISTA = re.compile(
+    r"salaisuu|secret|token|tunnus|salasan|password|passwd|api[_ -]?key|api_key|\.env\b|holvi|vault|credential|private key|deploy_key|"
+    r"sudo|chmod|chown|setfacl|visudo|oikeuks|permission|root-oikeu|admin|laajenn|"
+    r"ohita|ohittaa|kierra|kiertaa|ohitus|bypass|circumvent|override|disable|poista kaytosta|"
+    r"ignore|ala noudata|unohda|forget|"
+    r"katto|kulukat|budjet|automerge|koodi on laki|rajoja|rajat|raja ei|settings\.json|allowlist|kieltolist",
+    re.IGNORECASE)
+# Julkaisun polkuraja on koodissa. Kunnes Tony hyvaksyy opit.md:n lisaamisen sallittuihin commit-polkuihin, ajuri ei committaa sita.
+OPIT_JULKAISU_SALLITTU = False
 
 
 class JonoVirhe(RuntimeError):
@@ -47,11 +69,83 @@ def seuraava_tehtava(repo):
     return None
 
 
-def rakenna_kehote(tehtava_polku, kehote_polku=KEHOTE):
+def lue_opit(repo):
+    """opit.md:n sisalto kehotteeseen, rajattuna kokoon. Puuttuva tiedosto = ei opittua."""
+    p = Path(repo) / OPIT
+    if not p.is_file():
+        return ""
+    return p.read_bytes()[:OPIT_MAX_TAVUA].decode("utf-8", "ignore")
+
+
+def rakenna_kehote(tehtava_polku, kehote_polku=KEHOTE, opit=""):
     data = Path(tehtava_polku).read_bytes()
     if len(data) > TEHTAVA_MAX_TAVUA:
         raise JonoVirhe(f"tehtava yli {TEHTAVA_MAX_TAVUA} tavua")
-    return Path(kehote_polku).read_text(encoding="utf-8") + "\n\n<tehtava>\n" + data.decode("utf-8") + "\n</tehtava>\n"
+    osat = [Path(kehote_polku).read_text(encoding="utf-8")]
+    if opit.strip():
+        osat.append("<opit>\n" + opit.strip().replace("</opit>", "") + "\n</opit>")
+    osat.append("<tehtava>\n" + data.decode("utf-8") + "\n</tehtava>\n")
+    return "\n\n".join(osat)
+
+
+def poimi_uusi_oppi(teksti):
+    """Rivit viimeisesta '## Uusi oppi' -osiosta (enintaan OPIT_ENINTAAN_UUSIA). Tyhja lista jos osiota ei ole."""
+    kohdat = [m for m in re.finditer(r"^##[ \t]+Uusi oppi[ \t]*$", teksti or "", re.MULTILINE)]
+    if not kohdat:
+        return []
+    loppu = teksti[kohdat[-1].end():]
+    rivit = []
+    for rivi in loppu.splitlines():
+        if rivi.startswith("#"):
+            break
+        rivi = re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", rivi).strip()
+        if rivi:
+            rivit.append(rivi)
+    return rivit[:OPIT_ENINTAAN_UUSIA]
+
+
+def suodata_opit(rivit):
+    """(hyvaksytyt, hylatyt). Hylataan kieltolistan osumat, liian pitkat, monirivisyyteen viittaavat ja ei-ASCII-ohjausmerkit."""
+    hyva, huono = [], []
+    for r in rivit:
+        r = r.strip()
+        if (not r or len(r) > OPIT_RIVI_MAX or OPIT_KIELTOLISTA.search(r) or "<" in r or "`" in r
+                or any(ord(c) < 32 for c in r)):
+            huono.append(r)
+        else:
+            hyva.append(r)
+    return hyva, huono
+
+
+def paivita_opit(vanha, uudet, nyt=None):
+    """Lisaa paivatyt rivit ja pitaa tiedoston enintaan OPIT_MAX_RIVIA rivin mittaisena.
+    Ylimaarat: vanhimmat opit tiivistetaan yhdeksi riviksi (alut ';'-erotettuna)."""
+    pvm = (nyt or datetime.now()).strftime("%Y-%m-%d")
+    rivit = [r for r in (vanha or "").splitlines() if r.startswith("- ")]
+    rivit += [f"- {pvm}: {u}" for u in uudet]
+    if len(rivit) > OPIT_MAX_RIVIA - 2:
+        ylim = len(rivit) - (OPIT_MAX_RIVIA - 2) + 1
+        vanhimmat, rivit = rivit[:ylim], rivit[ylim:]
+        alut = "; ".join(re.sub(r"^- \d{4}-\d{2}-\d{2}: ", "", r)[:40] for r in vanhimmat)
+        rivit.insert(0, f"- tiivistetty ({len(vanhimmat)} vanhaa): {alut}"[:OPIT_RIVI_MAX])
+    return OPIT_OTSIKKO + "\n\n" + "\n".join(rivit) + "\n"
+
+
+def julkaise_opit(repo, teksti):
+    """Kirjoittaa ja committaa VAIN opit.md:n. Pois kaytosta kunnes OPIT_JULKAISU_SALLITTU on hyvaksytty."""
+    if not OPIT_JULKAISU_SALLITTU:
+        return False
+    (Path(repo) / OPIT).write_text(teksti, encoding="utf-8")
+    git(repo, "add", "--", OPIT)
+    if [r for r in git(repo, "diff", "--cached", "--name-only").stdout.splitlines() if r] != [OPIT]:
+        git(repo, "reset", "-q", check=False)
+        raise JonoVirhe("indeksissa muuta kuin opit.md")
+    git(repo, "commit", "-q", "-m", "claude-jono: opit")
+    for _ in range(3):
+        if git(repo, "push", "-q", "origin", "HEAD", check=False).returncode == 0:
+            return True
+        git(repo, "pull", "-q", "--rebase", "origin", "main", check=False)
+    return False
 
 
 def claude_komento(kehote, env):
@@ -102,7 +196,11 @@ def kirjoita_tulos(repo, nimi, ok, teksti, nyt=None):
     nyt = nyt or datetime.now().astimezone()
     polku = Path(repo) / JONO / "tulokset" / nimi
     polku.parent.mkdir(parents=True, exist_ok=True)
-    runko = teksti.encode("utf-8")[:TULOS_MAX_TAVUA].decode("utf-8", "ignore")
+    tavut = teksti.encode("utf-8")
+    runko = tavut[:TULOS_MAX_TAVUA].decode("utf-8", "ignore")
+    if len(tavut) > TULOS_MAX_TAVUA:   # 1.11.: M02-lahde katkesi kesken sanan ilman merkintaa
+        runko += (f"\n\n[AJURI: raportti katkaistu {TULOS_MAX_TAVUA} tavuun, alkuperainen {len(tavut)} tavua. "
+                  "Loppu puuttuu tasta tiedostosta.]")
     polku.write_text(f"# Tulos: {nimi}\n\n- Tila: {'VALMIS' if ok else 'EPAONNISTUI'}\n- Aika: {nyt.isoformat(timespec='minutes')}\n\n{runko}\n",
                      encoding="utf-8")
     return polku
@@ -182,6 +280,29 @@ def jasenna_suunnitelma(teksti):
     return {"tehtavat": ok, "tonylle": tonylle[:3000]}
 
 
+def tulosten_maara(repo):
+    hak = Path(repo) / JONO / "tulokset"
+    return sum(1 for _ in hak.glob("*.md")) if hak.is_dir() else 0
+
+
+def suunnittelu_tauolla(tyohak, repo, nyt, tauko_s):
+    """True, jos edellinen suunnittelu ei tuottanut tehtavia, tauko ei ole kulunut eika uusia tuloksia ole tullut."""
+    try:
+        d = json.loads((Path(tyohak) / SUUNNITTELU_TILA).read_text(encoding="utf-8"))
+        aika, tehtavia, tuloksia = float(d["aika"]), int(d["tehtavia"]), int(d["tuloksia"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return tehtavia == 0 and 0 <= nyt.timestamp() - aika < tauko_s and tuloksia == tulosten_maara(repo)
+
+
+def kirjaa_suunnittelu(tyohak, repo, nyt, tehtavia):
+    try:
+        (Path(tyohak) / SUUNNITTELU_TILA).write_text(
+            json.dumps({"aika": nyt.timestamp(), "tehtavia": tehtavia, "tuloksia": tulosten_maara(repo)}), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
     """Jono tyhja: Claude ehdottaa jatkotehtavat. Ajuri nimeaa, rajaa (AUTO_MAX_PAIVA, AUTO_PER_AJO) ja committaa ne."""
     nyt = nyt or datetime.now().astimezone()
@@ -189,6 +310,8 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
     tilaa = min(AUTO_PER_AJO, AUTO_MAX_PAIVA - auto_tanaan(repo, pvm))
     if tilaa <= 0:
         return "jono tyhja (itsesuunnittelun paivaraja taynna)"
+    if suunnittelu_tauolla(tyohak, repo, nyt, int(env.get("CLAUDEJONO_SUUNNITTELU_TAUKO_S", SUUNNITTELU_TAUKO_S))):
+        return "jono tyhja (suunnittelu tauolla: edellinen kierros ei tuottanut tehtavia eika uusia tuloksia ole)"
     kehote = (KEHOTE.read_text(encoding="utf-8") + "\n\n" + SUUNNITTELU.read_text(encoding="utf-8")
               + f"\n\nEhdota enintaan {tilaa} tehtavaa.\n")
     kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak)
@@ -197,9 +320,11 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
                     timeout=int(env.get("CLAUDEJONO_AIKARAJA_S", OLETUS_AIKARAJA_S)), env=alaenv, check=False)
         ok, teksti = tulkitse(r.stdout, r.returncode)
     except subprocess.TimeoutExpired:
+        kirjaa_suunnittelu(tyohak, repo, nyt, 0)
         return "jono tyhja (suunnittelu: aikakatkaisu)"
     suunn = jasenna_suunnitelma(teksti) if ok else None
     if suunn is None:
+        kirjaa_suunnittelu(tyohak, repo, nyt, 0)
         return "jono tyhja (suunnittelu ei tuottanut kelvollista JSONia)"
     polut = []
     nro = seuraava_numero(repo, pvm)
@@ -217,6 +342,7 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
         vanha = tp.read_text(encoding="utf-8") if tp.exists() else "# Tonyn paatettavat\n"
         tp.write_text(vanha.rstrip() + f"\n\n## {nyt.isoformat(timespec='minutes')} (CT115)\n{suunn['tonylle'].strip()}\n", encoding="utf-8")
         polut.append(tp)
+    kirjaa_suunnittelu(tyohak, repo, nyt, len([p for p in polut if p.name != TONYLLE]))
     if not polut:
         return "jono tyhja (ei uusia tehtavia)"
     julkaise(repo, polut, f"claude-jono: itsesuunnittelu {len([p for p in polut if p.name != TONYLLE])} tehtavaa")
@@ -235,7 +361,7 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None):
             return suunnittele(repo, tyohak, env, suorita, laheta)
         return "jono tyhja"
     (Path(tyohak) / "tyo").mkdir(parents=True, exist_ok=True)
-    kehote = rakenna_kehote(t)
+    kehote = rakenna_kehote(t, opit=lue_opit(repo))
     kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak)
     try:
         r = suorita(kom, cwd=cwd, capture_output=True, text=True,
@@ -245,6 +371,10 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None):
         ok, teksti = False, "aikakatkaisu"
     polku = kirjoita_tulos(repo, t.name, ok, teksti)
     pushattu = julkaise(repo, polku)
+    if ok:
+        uudet, _ = suodata_opit(poimi_uusi_oppi(teksti))
+        if uudet:
+            julkaise_opit(repo, paivita_opit(lue_opit(repo), uudet))
     viesti = f"claude-jono: {t.name} {'VALMIS' if ok else 'EPAONNISTUI'}" + ("" if pushattu else " (push epaonnistui)")
     if laheta:
         laheta(viesti + "\n" + teksti[:1500])

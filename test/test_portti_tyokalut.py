@@ -196,7 +196,7 @@ class VerkkoTesti(unittest.TestCase):
         return lambda host, port, proto=0: [(2, 1, 6, "", (osoite, port))]
 
     def test_sisaverkko_estetaan(self):
-        for ip in ("127.0.0.1", "192.168.1.126", "10.0.0.5", "169.254.169.254", "100.87.110.22", "::1", "::ffff:127.0.0.1"):
+        for ip in ("127.0.0.1", "192.168.7.7", "10.0.0.5", "169.254.169.254", "100.101.102.103", "::1", "::ffff:127.0.0.1"):
             with self.assertRaises(pt.TyokaluVirhe, msg=ip):
                 pt.tarkista_url("http://esim.test/", self.resolve(ip))
 
@@ -208,10 +208,10 @@ class VerkkoTesti(unittest.TestCase):
 
     def test_uudelleenohjaus_sisaverkkoon_estetaan(self):
         def avaa(req, timeout=0):
-            raise urllib.error.HTTPError(req.full_url, 302, "x", {"Location": "http://192.168.1.126/"}, io.BytesIO())
+            raise urllib.error.HTTPError(req.full_url, 302, "x", {"Location": "http://192.168.7.7/"}, io.BytesIO())
 
         def resolve(host, port, proto=0):
-            return [(2, 1, 6, "", ("192.168.1.126" if host == "192.168.1.126" else "93.184.216.34", port))]
+            return [(2, 1, 6, "", ("192.168.7.7" if host == "192.168.7.7" else "93.184.216.34", port))]
         with self.assertRaises(pt.TyokaluVirhe):
             pt.hae_sivu("http://julkinen.test/", avaa=avaa, resolve=resolve)
 
