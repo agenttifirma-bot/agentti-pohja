@@ -28,8 +28,8 @@ Peruutus: `systemctl disable --now tilasivu.timer`.
 ## Nakyminen puhelimella (ehdotus, ei toteutettu)
 Ei julkista internetia. Sivulla ei ole salaisuuksia (siivous `tilannekuva.SALAISUUDET`), mutta PR-otsikot, tehtavien nimet ja kulut ovat yksityista.
 1. Suositus: `tila.md` yksityiseen GitHub-repoon (esim. `agenttifirma-tila`, oma deploy-avain) ja luku GitHub-sovelluksella. Toimii missa tahansa, ei uutta verkkopalvelua. Kirjoitus vain kun tila tai punaiset muuttuvat tai tunnin valein, jottei commit-historia tayty (ei toteutettu).
-2. Tailscale: CT115:ssa ei nyt ole Tailscalea (vain LAN 192.168.1.120). Jos Tony asentaa sen: `python3 -m http.server 8810 --directory /var/lib/tilasivu --bind <tailscale-ip>` omana palveluna. Verkko- ja Tailscale-muutokset ovat Tonyn paatos.
-3. Vain LAN: sama kuin 2, mutta sidottu 192.168.1.120:een; toimii vain kotiverkossa.
+2. Tailscale: CT115:ssa ei nyt ole Tailscalea (vain LAN <LAN-osoite>). Jos Tony asentaa sen: `python3 -m http.server 8810 --directory /var/lib/tilasivu --bind <tailscale-ip>` omana palveluna. Verkko- ja Tailscale-muutokset ovat Tonyn paatos.
+3. Vain LAN: sama kuin 2, mutta sidottu <LAN-osoite>:een; toimii vain kotiverkossa.
 Generaattorin oma kuolema nakyy vain vanhenevana sivuna (banneri punaistuu); Telegramia se ei laheta. Taydentava vahti: Uptime Kuma push-monitori (CT114), jota ajastettu ajo pingaa.
 
 ## Yksikkomallit (kopioi kasin; systemd/-polku on pr_kutsun suojaama)
