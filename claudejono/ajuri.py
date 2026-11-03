@@ -18,6 +18,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from . import kulutus, varaus
+from . import malli as mm
+
 TEHTAVA_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-[a-z0-9-]{1,60}\.md$")
 TEHTAVA_MAX_TAVUA = 20000
 TULOS_MAX_TAVUA = 60000
@@ -57,14 +60,15 @@ def kelvollinen_nimi(nimi):
     return bool(TEHTAVA_RE.match(nimi))
 
 
-def seuraava_tehtava(repo):
-    """Vanhin (nimen mukaan) kelvollinen tehtava, jolla ei ole tulosta. None jos jono on tyhja."""
+def seuraava_tehtava(repo, kelpaa=None):
+    """Vanhin (nimen mukaan) kelvollinen tehtava, jolla ei ole tulosta. None jos jono on tyhja.
+    `kelpaa(polku)` voi ohittaa tehtavia (esim. Claude-tehtavat, kun Clauden kaytto on pysaytetty)."""
     teht = Path(repo) / JONO / "tehtavat"
     tul = Path(repo) / JONO / "tulokset"
     if not teht.is_dir():
         return None
     for p in sorted(teht.iterdir()):
-        if p.is_file() and kelvollinen_nimi(p.name) and not (tul / p.name).exists():
+        if p.is_file() and kelvollinen_nimi(p.name) and not (tul / p.name).exists() and (kelpaa is None or kelpaa(p)):
             return p
     return None
 
@@ -148,9 +152,11 @@ def julkaise_opit(repo, teksti):
     return False
 
 
-def claude_komento(kehote, env):
+def claude_komento(kehote, env, malli=None):
     kom = [env.get("CLAUDEJONO_CLAUDE", "claude"), "-p", kehote, "--output-format", "json",
            "--max-turns", str(int(env.get("CLAUDEJONO_MAX_KIERROKSET", OLETUS_MAX_KIERROKSET)))]
+    if malli in mm.CLAUDE_MALLIT:
+        kom += ["--model", malli]
     if env.get("CLAUDEJONO_LUPATILA"):
         kom += ["--permission-mode", env["CLAUDEJONO_LUPATILA"]]
     return kom
@@ -159,13 +165,13 @@ def claude_komento(kehote, env):
 RUNUSER = "/usr/sbin/runuser"
 
 
-def lapsen_ajo(kehote, env, tyohak):
+def lapsen_ajo(kehote, env, tyohak, malli=None):
     """(komento, ymparisto, cwd) Claude-lapsiprosessille.
 
     Jos CLAUDEJONO_KAYTTAJA on asetettu (Tonyn paatos 30.10.2026), ajuri jaa rootiksi (git, deploy key, Telegram), mutta agentti
     ajetaan tavallisena kayttajana runuserilla: se ei nae deploy keyta, botin tunnusta, yojonon kattoja eika salaisuuksia, eika
     saa rootin ymparistoa. Ilman muuttujaa toiminta on ennallaan."""
-    kom = claude_komento(kehote, env)
+    kom = claude_komento(kehote, env, malli)
     kayttaja = env.get("CLAUDEJONO_KAYTTAJA", "")
     if not kayttaja:
         alaenv = {k: v for k, v in env.items() if not k.startswith(("YOJONO_TELEGRAM_", "CLAUDEJONO_GIT", "GIT_SSH"))}
@@ -192,7 +198,7 @@ def tulkitse(stdout, koodi):
     return ok, teksti
 
 
-def kirjoita_tulos(repo, nimi, ok, teksti, nyt=None):
+def kirjoita_tulos(repo, nimi, ok, teksti, nyt=None, malli=None, huomautus=""):
     nyt = nyt or datetime.now().astimezone()
     polku = Path(repo) / JONO / "tulokset" / nimi
     polku.parent.mkdir(parents=True, exist_ok=True)
@@ -201,8 +207,10 @@ def kirjoita_tulos(repo, nimi, ok, teksti, nyt=None):
     if len(tavut) > TULOS_MAX_TAVUA:   # 1.11.: M02-lahde katkesi kesken sanan ilman merkintaa
         runko += (f"\n\n[AJURI: raportti katkaistu {TULOS_MAX_TAVUA} tavuun, alkuperainen {len(tavut)} tavua. "
                   "Loppu puuttuu tasta tiedostosta.]")
-    polku.write_text(f"# Tulos: {nimi}\n\n- Tila: {'VALMIS' if ok else 'EPAONNISTUI'}\n- Aika: {nyt.isoformat(timespec='minutes')}\n\n{runko}\n",
-                     encoding="utf-8")
+    # Malli kirjataan tulokseen, jotta laatu (virheprosentti) voidaan laskea malleittain
+    malli_rivi = (f"- Malli: {malli}\n" + (f"- Huomautus: {huomautus}\n" if huomautus else "")) if malli else ""
+    polku.write_text(f"# Tulos: {nimi}\n\n- Tila: {'VALMIS' if ok else 'EPAONNISTUI'}\n- Aika: {nyt.isoformat(timespec='minutes')}\n"
+                     f"{malli_rivi}\n{runko}\n", encoding="utf-8")
     return polku
 
 
@@ -303,6 +311,40 @@ def kirjaa_suunnittelu(tyohak, repo, nyt, tehtavia):
         pass
 
 
+def _json(stdout):
+    try:
+        d = json.loads(stdout)
+    except (ValueError, TypeError):
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def _kaista(env):
+    try:
+        return max(1, int(env.get("CLAUDEJONO_KAISTA", "1")))
+    except ValueError:
+        return 1
+
+
+def aja_claude(kom, alaenv, cwd, suorita, env, tila, tehtava, malli, nyt):
+    """Ajaa claude-lapsen, kirjaa kulutusrivin ja tunnistaa kayttorajavirheen. Palauttaa (ok, teksti, raja_osui)."""
+    alku = time.monotonic()
+    d = None
+    try:
+        r = suorita(kom, cwd=cwd, capture_output=True, text=True,
+                    timeout=int(env.get("CLAUDEJONO_AIKARAJA_S", OLETUS_AIKARAJA_S)), env=alaenv, check=False)
+        ok, teksti = tulkitse(r.stdout, r.returncode)
+        d = _json(r.stdout)
+        raja = varaus.on_rate_limit(d, r.stdout, getattr(r, "stderr", ""))
+    except subprocess.TimeoutExpired:
+        ok, teksti, raja = False, "aikakatkaisu", False
+    if raja:
+        ok = False
+        varaus.aseta_rate_limit(tila, nyt.timestamp(), int(env.get("CLAUDEJONO_RATE_LIMIT_TAUKO_S", varaus.RATE_LIMIT_TAUKO_S)))
+    kulutus.kirjaa(tila, kulutus.rivi_claude(tehtava, malli, d, time.monotonic() - alku, ok, nyt, rate_limit=raja))
+    return ok, teksti, raja
+
+
 def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
     """Jono tyhja: Claude ehdottaa jatkotehtavat. Ajuri nimeaa, rajaa (AUTO_MAX_PAIVA, AUTO_PER_AJO) ja committaa ne."""
     nyt = nyt or datetime.now().astimezone()
@@ -314,12 +356,12 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
         return "jono tyhja (suunnittelu tauolla: edellinen kierros ei tuottanut tehtavia eika uusia tuloksia ole)"
     kehote = (KEHOTE.read_text(encoding="utf-8") + "\n\n" + SUUNNITTELU.read_text(encoding="utf-8")
               + f"\n\nEhdota enintaan {tilaa} tehtavaa.\n")
-    kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak)
-    try:
-        r = suorita(kom, cwd=cwd, capture_output=True, text=True,
-                    timeout=int(env.get("CLAUDEJONO_AIKARAJA_S", OLETUS_AIKARAJA_S)), env=alaenv, check=False)
-        ok, teksti = tulkitse(r.stdout, r.returncode)
-    except subprocess.TimeoutExpired:
+    kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak, mm.ITSESUUNNITTELUN_MALLI)
+    ok, teksti, raja = aja_claude(kom, alaenv, cwd, suorita, env, Path(repo).parent, "itsesuunnittelu", mm.ITSESUUNNITTELUN_MALLI, nyt)
+    if raja:
+        varaus.ilmoita_tason_muutos(Path(repo).parent, "rate_limit", "Clauden kayttoraja tuli vastaan itsesuunnittelussa", laheta)
+        return "jono tyhja (suunnittelu: Clauden kayttoraja)"
+    if teksti == "aikakatkaisu" and not ok:
         kirjaa_suunnittelu(tyohak, repo, nyt, 0)
         return "jono tyhja (suunnittelu: aikakatkaisu)"
     suunn = jasenna_suunnitelma(teksti) if ok else None
@@ -352,24 +394,44 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
     return viesti
 
 
-def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None):
+OPENROUTER_ESIPUHE = ("Olet Tonyn agenttifirman apuri. Sinulla ei ole tyokaluja: tee tehtava pelkasta alla olevasta tekstista ja "
+                      "vastaa suomeksi taydellisena, itsenaisena raporttina. Jos tieto ei riita, sano 'data ei riita'.")
+
+
+def lue_tehtava(p):
+    return Path(p).read_bytes().decode("utf-8", "replace")
+
+
+def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, nyt=None):
     env = dict(os.environ if env is None else env)
+    nyt = nyt or datetime.now().astimezone()
     git(repo, "pull", "-q", "--rebase", "origin", "main")
-    t = seuraava_tehtava(repo)
+    tila = Path(repo).parent
+    saa, taso, syy = varaus.lupa(tila, env, nyt, _kaista(env))
+    varaus.ilmoita_tason_muutos(tila, taso, syy, laheta)
+
+    def kelpaa(p):   # Clauden pysaytys ei koske OpenRouter-tehtavia
+        return saa or mm.valitse(p.name, lue_tehtava(p)).reitti != "claude"
+
+    t = seuraava_tehtava(repo, kelpaa)
     if t is None:
+        if not saa:
+            return f"jono odottaa: {syy}"
         if env.get("CLAUDEJONO_ITSESUUNNITTELU", "1") == "1":
-            return suunnittele(repo, tyohak, env, suorita, laheta)
+            return suunnittele(repo, tyohak, env, suorita, laheta, nyt)
         return "jono tyhja"
     (Path(tyohak) / "tyo").mkdir(parents=True, exist_ok=True)
-    kehote = rakenna_kehote(t, opit=lue_opit(repo))
-    kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak)
-    try:
-        r = suorita(kom, cwd=cwd, capture_output=True, text=True,
-                    timeout=int(env.get("CLAUDEJONO_AIKARAJA_S", OLETUS_AIKARAJA_S)), env=alaenv, check=False)
-        ok, teksti = tulkitse(r.stdout, r.returncode)
-    except subprocess.TimeoutExpired:
-        ok, teksti = False, "aikakatkaisu"
-    polku = kirjoita_tulos(repo, t.name, ok, teksti)
+    valinta = mm.valitse(t.name, lue_tehtava(t))
+    if valinta.reitti == "openrouter":
+        ok, teksti = aja_openrouter(t, valinta, env, tila, nyt)
+    else:
+        kehote = rakenna_kehote(t, opit=lue_opit(repo))
+        kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak, valinta.malli)
+        ok, teksti, raja = aja_claude(kom, alaenv, cwd, suorita, env, tila, t.name, valinta.malli, nyt)
+        if raja:   # ei tulosta: tehtava jaa jonoon, eika sita yriteta ennen taukoa (ei silmukkaa)
+            varaus.ilmoita_tason_muutos(tila, "rate_limit", "Clauden kayttoraja tuli vastaan ajossa " + t.name, laheta)
+            return f"claude-jono: {t.name} jai odottamaan (Clauden kayttoraja)"
+    polku = kirjoita_tulos(repo, t.name, ok, teksti, nyt, malli=mm.nimi(valinta), huomautus=valinta.huomautus)
     pushattu = julkaise(repo, polku)
     if ok:
         uudet, _ = suodata_opit(poimi_uusi_oppi(teksti))
@@ -379,6 +441,24 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None):
     if laheta:
         laheta(viesti + "\n" + teksti[:1500])
     return viesti
+
+
+def aja_openrouter(t, valinta, env, tila, nyt, hae=None):
+    """OpenRouter-reitti: yksi LiteLLM-kutsu, ei tyokaluja. Palauttaa (ok, teksti); virheesta vain koodi."""
+    alku = time.monotonic()
+    data = Path(t).read_bytes()
+    tulos = None
+    if len(data) > TEHTAVA_MAX_TAVUA:
+        ok, teksti = False, f"tehtava yli {TEHTAVA_MAX_TAVUA} tavua"
+    else:
+        try:
+            tulos = mm.openrouter_kutsu(valinta.malli, OPENROUTER_ESIPUHE + "\n\n<tehtava>\n" + data.decode("utf-8", "replace")
+                                        + "\n</tehtava>\n", env, hae)
+            ok, teksti = True, tulos["teksti"]
+        except mm.OpenRouterVirhe as virhe:
+            ok, teksti = False, f"openrouter-virhe: {virhe.koodi}"
+    kulutus.kirjaa(tila, kulutus.rivi_openrouter(t.name, valinta.malli, tulos, time.monotonic() - alku, ok, nyt))
+    return ok, teksti
 
 
 def main(argv=None):

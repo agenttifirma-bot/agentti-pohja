@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import ajuri
+from . import ajuri, kulutus, varaus
 
 TZ = ZoneInfo("Europe/Helsinki")
 OLETUS_REPO = "/var/lib/claude-jono/docs"
@@ -125,7 +125,7 @@ def rikkinaiset_yksikot(suorita=subprocess.run):
     return [rivi.split()[0] for rivi in r.stdout.splitlines() if rivi.strip()]
 
 
-def keraa(repo, perus, nyt, hae=None, yksikot=None):
+def keraa(repo, perus, nyt, hae=None, yksikot=None, litellm=False):
     """Kokoaa kooste-aineiston. `hae` = GitHub-haku (testeissa tekaistu), `yksikot` = failed-yksikoiden lahde."""
     from agentti import aamupaketti
     alku = nyt - timedelta(hours=IKKUNA_H)
@@ -157,7 +157,24 @@ def keraa(repo, perus, nyt, hae=None, yksikot=None):
         pr_ryhmat = None
     return {"nyt": nyt, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku),
             "pr": pr_ryhmat, "pr_virheita": virheet, "yojono": yojono_tila(perus, nyt),
-            "yksikot": (yksikot or rikkinaiset_yksikot)()}
+            "yksikot": (yksikot or rikkinaiset_yksikot)(), "kulutusosa": kulutusosa(Path(repo).parent, nyt, litellm)}
+
+
+def kulutusosa(tila, nyt, litellm=None, env=None):
+    """Mallikohtainen kulutus (eilen + viikon kertyma), OpenRouter-kulut LiteLLM:sta ja Tonyn varaus. Ei kaada koostetta.
+    Nama tulevat viiden rivin ja linkkien jalkeen omana osionaan, koska kulutuksen pitaa nakya malleittain."""
+    env = os.environ if env is None else env
+    try:
+        osat = [kulutus.kulutusrivi(kulutus.koonti(kulutus.lue(tila), nyt))]
+        if litellm is not False:
+            osat.append(kulutus.litellmrivi(kulutus.litellm_kulut(env, nyt, litellm)))
+        osat.append(varaus.varausrivi(tila, env, nyt))
+        kysymys = varaus.kalibrointikysymys(tila, nyt)
+        if kysymys:
+            osat.append("Kysymys: " + kysymys + ".")
+        return osat
+    except Exception as virhe:   # mittarin virhe ei saa estaa aamukoostetta
+        return [f"Mallikulutus: ei saatu luettua ({type(virhe).__name__})."]
 
 
 def _lyhenna(teksti, raja=RIVI_MAX):
@@ -231,7 +248,9 @@ def linkit(t):
 
 
 def muotoile(t):
-    return "\n".join(rivit(t)) + "\n\nLinkit:\n" + "\n".join(linkit(t))
+    osa = t.get("kulutusosa") or []
+    # viiden rivin ja linkkien rakenne pysyy ennallaan; mallikulutus tulee omana osionaan perassa
+    return "\n".join(rivit(t)) + "\n\nLinkit:\n" + "\n".join(linkit(t)) + ("\n\nKulutus ja varaus:\n" + "\n".join(osa) if osa else "")
 
 
 def main(argv=None):
@@ -244,7 +263,7 @@ def main(argv=None):
     nyt = datetime.fromisoformat(a.nyt) if a.nyt else datetime.now(TZ)
     if nyt.tzinfo is None:
         nyt = nyt.replace(tzinfo=TZ)
-    teksti = muotoile(keraa(a.repo, a.yojono, nyt))
+    teksti = muotoile(keraa(a.repo, a.yojono, nyt, litellm=None))
     print(teksti)
     if a.laheta:
         from yojono.ajuri import laheta_telegram
