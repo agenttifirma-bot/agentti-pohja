@@ -1,0 +1,15 @@
+# Mallitiedosto: ei asenna mitaan. Asennus README.md:n osion "Rinnakkaiset kaistat" mukaan.
+[Unit]
+Description=Claude-jono: kaistakokeen kuormanayte (load, muisti)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/agentti-pohja
+Environment=CLAUDEJONO_TILA=/var/lib/claude-jono
+ExecStart=/usr/bin/python3 -B -m claudejono.kaistamittaus nayte
+TimeoutStartSec=60
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/claude-jono
+ProtectHome=true
+NoNewPrivileges=true

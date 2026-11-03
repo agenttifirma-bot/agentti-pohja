@@ -8,13 +8,17 @@ Raja (koodissa, ei vain kehotteessa): tehtava saa avata PR:n, mutta ei mergea, e
 Kehote kertoo rajan agentille; CT115:n .claude/settings.json estaa salaisuustiedostot; ajuri rajaa commitin polun.
 """
 import argparse
+import contextlib
 import fcntl
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import threading
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -30,6 +34,17 @@ SUUNNITTELU_TILA = "suunnittelu-tila.json"
 OLETUS_AIKARAJA_S = 45 * 60
 OLETUS_MAX_KIERROKSET = 60
 JONO = "claude-jono"
+
+# Rinnakkaiset kaistat (tehtava 2026-11-03: aloitus 2, valmius 3). Kaistojen maara tulee yhdesta asetuksesta
+# CLAUDEJONO_KAISTOJA (oletus 1 = vanha toiminta); KAISTOJA_MAX on kova ylaraja koodissa (koodi on laki).
+KAISTOJA_MAX = 3
+VARAUS_HAK = "varattu"
+SUUNNITTELU_VARAUS = "_suunnittelu"   # ei kelpaa tehtavan nimeksi (TEHTAVA_RE), joten ei voi osua tehtavaan
+GIT_LUKKO = "git-lukko"
+VARAUS_LUKKO = "varaus-lukko"
+LUKKO_ODOTUS_S = 600
+VARAUS_MARGINAALI_S = 15 * 60
+KAISTALOKI = "kaistaloki.jsonl"
 KEHOTE = Path(__file__).resolve().parent / "kehote.md"
 
 OPIT = f"{JONO}/opit.md"
@@ -71,6 +86,146 @@ def seuraava_tehtava(repo):
     return None
 
 
+def kaistojen_maara(env):
+    """Kaistojen lukumaara yhdesta asetuksesta CLAUDEJONO_KAISTOJA, rajattuna valille 1..KAISTOJA_MAX. Virheellinen -> 1."""
+    try:
+        n = int(env.get("CLAUDEJONO_KAISTOJA", "1"))
+    except (TypeError, ValueError):
+        return 1
+    return max(1, min(KAISTOJA_MAX, n))
+
+
+def tarkista_kaista(kaista, env):
+    if not isinstance(kaista, int) or not 1 <= kaista <= kaistojen_maara(env):
+        raise JonoVirhe(f"kaista {kaista} ei kelpaa (sallittu 1..{kaistojen_maara(env)}, asetus CLAUDEJONO_KAISTOJA)")
+    return kaista
+
+
+_PAIKALLINEN = threading.local()
+
+
+@contextlib.contextmanager
+def lukko(polku, odotus_s=LUKKO_ODOTUS_S):
+    """Odottava flock-lukko. Uudelleenkaytettava saman saikeen sisalla (sisakkainen kutsu ei jumita). Antaa odotusajan sekunteina."""
+    avoimet = _PAIKALLINEN.__dict__.setdefault("avoimet", {})
+    avain = str(polku)
+    if avain in avoimet:
+        avoimet[avain] += 1
+        try:
+            yield 0.0
+        finally:
+            avoimet[avain] -= 1
+        return
+    Path(polku).parent.mkdir(parents=True, exist_ok=True)
+    alku = time.monotonic()
+    with open(polku, "a") as f:
+        while True:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() - alku > odotus_s:
+                    raise JonoVirhe(f"lukkoa ei saatu {odotus_s} s kuluessa: {Path(polku).name}")
+                time.sleep(0.05)
+        avoimet[avain] = 1
+        try:
+            yield time.monotonic() - alku
+        finally:
+            del avoimet[avain]
+
+
+def git_lukko(tila):
+    """Yhteinen lyhyt lukko kaikille docs-kloonin git-toimille (pull, add, commit, push). Claude-ajon ajaksi sita EI pideta."""
+    return lukko(Path(tila) / GIT_LUKKO)
+
+
+def varaus_vanhenee_s(env):
+    """Varaus vanhenee vasta, kun Clauden aikaraja + marginaali on ylitetty: eheasti kaynnissa oleva ajo ei meneta varaustaan."""
+    try:
+        return int(env.get("CLAUDEJONO_VARAUS_S") or int(env.get("CLAUDEJONO_AIKARAJA_S", OLETUS_AIKARAJA_S)) + VARAUS_MARGINAALI_S)
+    except (TypeError, ValueError):
+        return OLETUS_AIKARAJA_S + VARAUS_MARGINAALI_S
+
+
+def _pid_elossa(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:     # PermissionError: prosessi on olemassa
+        return True
+    return True
+
+
+def _varaus_elossa(polku, nyt, vanhenee_s):
+    try:
+        mtime = polku.stat().st_mtime
+    except FileNotFoundError:
+        return False
+    if nyt - mtime > vanhenee_s:
+        return False
+    try:
+        pid = json.loads(polku.read_text(encoding="utf-8")).get("pid")
+    except (OSError, ValueError, AttributeError):
+        return True     # juuri luotu, sisaltoa ei viela kirjoitettu
+    return not (isinstance(pid, int) and not _pid_elossa(pid))
+
+
+def varaa(tila, nimi, kaista, nyt=None, vanhenee_s=OLETUS_AIKARAJA_S + VARAUS_MARGINAALI_S):
+    """Atominen varaus: tiedosto varattu/<nimi> luodaan O_EXCL:lla. True = varaus saatiin, False = toinen kaista omistaa sen.
+    Vanhentunut (aikaraja tai kuollut prosessi) varaus otetaan yli. Koko toimi on oman lukkonsa sisalla, jotta kaksi ylitystyontoa ei poista toistensa varauksia."""
+    nyt = time.time() if nyt is None else nyt
+    polku = Path(tila) / VARAUS_HAK / nimi
+    with lukko(Path(tila) / VARAUS_LUKKO):
+        polku.parent.mkdir(parents=True, exist_ok=True)
+        if polku.exists():
+            if _varaus_elossa(polku, nyt, vanhenee_s):
+                return False
+            polku.unlink(missing_ok=True)
+        try:
+            fd = os.open(polku, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            return False
+        with os.fdopen(fd, "w") as f:
+            json.dump({"kaista": kaista, "pid": os.getpid(), "aika": nyt, "avain": uuid.uuid4().hex}, f)
+        return True
+
+
+def vapauta(tila, nimi, kaista):
+    """Vapauttaa vain oman varauksen (kaista + pid tasmaa). Jos varaus ehti vanhentua ja siirtyi toiselle, sita ei kosketa."""
+    polku = Path(tila) / VARAUS_HAK / nimi
+    with lukko(Path(tila) / VARAUS_LUKKO):
+        try:
+            d = json.loads(polku.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        if d.get("kaista") != kaista or d.get("pid") != os.getpid():
+            return False
+        polku.unlink(missing_ok=True)
+        return True
+
+
+def aktiiviset_varaukset(tila, nyt=None, vanhenee_s=OLETUS_AIKARAJA_S + VARAUS_MARGINAALI_S):
+    nyt = time.time() if nyt is None else nyt
+    hak = Path(tila) / VARAUS_HAK
+    if not hak.is_dir():
+        return []
+    return sorted(p.name for p in hak.iterdir() if p.is_file() and _varaus_elossa(p, nyt, vanhenee_s))
+
+
+def varaa_seuraava(repo, tila, kaista, nyt=None, vanhenee_s=OLETUS_AIKARAJA_S + VARAUS_MARGINAALI_S):
+    """Vanhin kelvollinen tehtava ilman tulosta ja ilman toisen kaistan varausta; varaa sen. None jos ei ole."""
+    teht = Path(repo) / JONO / "tehtavat"
+    tul = Path(repo) / JONO / "tulokset"
+    if not teht.is_dir():
+        return None
+    for p in sorted(teht.iterdir()):
+        if p.is_file() and kelvollinen_nimi(p.name) and not (tul / p.name).exists():
+            if varaa(tila, p.name, kaista, nyt, vanhenee_s):
+                return p
+    return None
+
+
 def lue_opit(repo):
     """opit.md:n sisalto kehotteeseen, rajattuna kokoon. Puuttuva tiedosto = ei opittua."""
     p = Path(repo) / OPIT
@@ -79,11 +234,24 @@ def lue_opit(repo):
     return p.read_bytes()[:OPIT_MAX_TAVUA].decode("utf-8", "ignore")
 
 
-def rakenna_kehote(tehtava_polku, kehote_polku=KEHOTE, opit=""):
+def kaistahuomautus(kaista):
+    """Kaistalla 2..3 agentti tyoskentelee omassa alihakemistossaan, jotta kaksi ajoa ei kayta samaa kloonia.
+    Polku pysyy /opt/agentscope/tyo:n alla, joten PR-tyokalun polkuraja ei muutu."""
+    if kaista <= 1:
+        return ""
+    h = f"/opt/agentscope/tyo/k{kaista}"
+    return (f"Rinnakkaiskaista {kaista}: toinen ajo voi olla kaynnissa samaan aikaan. Tee kloonit hakemistoon {h}/<repo> "
+            f"(tama korvaa ylla olevan /opt/agentscope/tyo/<repo>), PR-kutsun hakemisto on {h}/<repo> ja kuvaustiedosto {h}/<kuvaus>.md. "
+            "Ala koske muiden kaistojen hakemistoihin (/opt/agentscope/tyo/k*/ ja suoraan /opt/agentscope/tyo/<repo>).")
+
+
+def rakenna_kehote(tehtava_polku, kehote_polku=KEHOTE, opit="", kaista=1):
     data = Path(tehtava_polku).read_bytes()
     if len(data) > TEHTAVA_MAX_TAVUA:
         raise JonoVirhe(f"tehtava yli {TEHTAVA_MAX_TAVUA} tavua")
     osat = [Path(kehote_polku).read_text(encoding="utf-8")]
+    if kaistahuomautus(kaista):
+        osat.append(kaistahuomautus(kaista))
     if opit.strip():
         osat.append("<opit>\n" + opit.strip().replace("</opit>", "") + "\n</opit>")
     osat.append("<tehtava>\n" + data.decode("utf-8") + "\n</tehtava>\n")
@@ -137,17 +305,14 @@ def julkaise_opit(repo, teksti):
     """Kirjoittaa ja committaa VAIN opit.md:n. Pois kaytosta kunnes OPIT_JULKAISU_SALLITTU on hyvaksytty."""
     if not OPIT_JULKAISU_SALLITTU:
         return False
-    (Path(repo) / OPIT).write_text(teksti, encoding="utf-8")
-    git(repo, "add", "--", OPIT)
-    if [r for r in git(repo, "diff", "--cached", "--name-only").stdout.splitlines() if r] != [OPIT]:
-        git(repo, "reset", "-q", check=False)
-        raise JonoVirhe("indeksissa muuta kuin opit.md")
-    git(repo, "commit", "-q", "-m", "claude-jono: opit")
-    for _ in range(3):
-        if git(repo, "push", "-q", "origin", "HEAD", check=False).returncode == 0:
-            return True
-        git(repo, "pull", "-q", "--rebase", "origin", "main", check=False)
-    return False
+    with git_lukko(Path(repo).parent):
+        (Path(repo) / OPIT).write_text(teksti, encoding="utf-8")
+        git(repo, "add", "--", OPIT)
+        if [r for r in git(repo, "diff", "--cached", "--name-only").stdout.splitlines() if r] != [OPIT]:
+            git(repo, "reset", "-q", check=False)
+            raise JonoVirhe("indeksissa muuta kuin opit.md")
+        git(repo, "commit", "-q", "-m", "claude-jono: opit")
+        return _tyonna(repo)
 
 
 def claude_komento(kehote, env):
@@ -161,7 +326,12 @@ def claude_komento(kehote, env):
 RUNUSER = "/usr/sbin/runuser"
 
 
-def lapsen_ajo(kehote, env, tyohak, lisaliput=()):
+def kaistan_tyohak(tyohak, kaista=1):
+    """Kaista 1: <tyohak>/tyo (vanha). Kaista 2..3: <tyohak>/tyo/k<N>, oma klooni-alue; sama /opt/agentscope/tyo -juuri kuin PR-tyokalulla."""
+    return Path(tyohak) / "tyo" / (f"k{kaista}" if kaista > 1 else "")
+
+
+def lapsen_ajo(kehote, env, tyohak, kaista=1, lisaliput=()):
     """(komento, ymparisto, cwd) Claude-lapsiprosessille.
 
     Jos CLAUDEJONO_KAYTTAJA on asetettu (Tonyn paatos 30.10.2026), ajuri jaa rootiksi (git, deploy key, Telegram), mutta agentti
@@ -171,14 +341,27 @@ def lapsen_ajo(kehote, env, tyohak, lisaliput=()):
     kayttaja = env.get("CLAUDEJONO_KAYTTAJA", "")
     if not kayttaja:
         alaenv = {k: v for k, v in env.items() if not k.startswith(("YOJONO_TELEGRAM_", "CLAUDEJONO_GIT", "GIT_SSH"))}
-        return kom, alaenv, str(tyohak)
+        return kom, alaenv, str(tyohak if kaista <= 1 else kaistan_tyohak(tyohak, kaista))
     if not re.match(r"^[a-z_][a-z0-9_-]{0,31}$", kayttaja) or kayttaja == "root":
         raise JonoVirhe("CLAUDEJONO_KAYTTAJA ei kelpaa")
     koti = env.get("CLAUDEJONO_KOTI", f"/var/lib/{kayttaja}")
     alaenv = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": koti, "USER": kayttaja, "LOGNAME": kayttaja,
               "LANG": env.get("LANG", "C.UTF-8")}
     # Absoluuttinen polku: Popen etsii komennon lapsen PATHista, jossa ei ole /usr/sbin:ia (vika 30.10.2026).
-    return [RUNUSER, "-u", kayttaja, "--", *kom], alaenv, str(Path(tyohak) / "tyo")
+    return [RUNUSER, "-u", kayttaja, "--", *kom], alaenv, str(kaistan_tyohak(tyohak, kaista))
+
+
+def luo_kaistan_tyohak(tyohak, kaista, env):
+    """Luo tyohakemiston (kaista 1: <tyohak>/tyo). Kaistojen 2..3 alihakemisto annetaan agenttikayttajalle, jotta se voi kirjoittaa siihen."""
+    h = kaistan_tyohak(tyohak, kaista)
+    h.mkdir(parents=True, exist_ok=True)
+    kayttaja = env.get("CLAUDEJONO_KAYTTAJA", "")
+    if kaista > 1 and kayttaja:
+        try:
+            shutil.chown(h, user=kayttaja)
+        except (OSError, LookupError):
+            pass
+    return h
 
 
 def tulkitse(stdout, koodi):
@@ -232,25 +415,33 @@ def sallittu_polku(suht):
     return suht == f"{JONO}/{TONYLLE}"
 
 
+def _tyonna(repo):
+    """Push, ja torman (toinen kirjoittaja ehti ensin) jalkeen pull --rebase + uusinta. Rebase-konflikti perutaan, ettei klooni jaa kesken."""
+    for _ in range(3):
+        if git(repo, "push", "-q", "origin", "HEAD", check=False).returncode == 0:
+            return True
+        if git(repo, "pull", "-q", "--rebase", "origin", "main", check=False).returncode != 0:
+            git(repo, "rebase", "--abort", check=False)
+    return False
+
+
 def julkaise(repo, polut, viesti=None):
-    """Committaa ja pushaa VAIN annetut sallitut polut. Jos indeksissa on jotain muuta, ei tehda mitaan."""
+    """Committaa ja pushaa VAIN annetut sallitut polut. Jos indeksissa on jotain muuta, ei tehda mitaan.
+    Koko vaihe tehdaan yhteisen git-lukon sisalla, jotta rinnakkaiset kaistat eivat kayta indeksia yhta aikaa."""
     if not isinstance(polut, (list, tuple)):
         polut = [polut]
     suhteet = [str(Path(p).relative_to(repo)) for p in polut]
     for suht in suhteet:
         if not sallittu_polku(suht):
             raise JonoVirhe(f"polkua ei saa committaa: {suht}")
-    git(repo, "add", "--", *suhteet)
-    staged = sorted(r for r in git(repo, "diff", "--cached", "--name-only").stdout.splitlines() if r)
-    if not staged or not set(staged) <= set(suhteet):
-        git(repo, "reset", "-q", check=False)
-        raise JonoVirhe(f"indeksissa muuta kuin sallitut polut: {staged[:5]}")
-    git(repo, "commit", "-q", "-m", viesti or f"claude-jono: tulos {Path(polut[0]).name}")
-    for _ in range(3):
-        if git(repo, "push", "-q", "origin", "HEAD", check=False).returncode == 0:
-            return True
-        git(repo, "pull", "-q", "--rebase", "origin", "main", check=False)
-    return False
+    with git_lukko(Path(repo).parent):
+        git(repo, "add", "--", *suhteet)
+        staged = sorted(r for r in git(repo, "diff", "--cached", "--name-only").stdout.splitlines() if r)
+        if not staged or not set(staged) <= set(suhteet):
+            git(repo, "reset", "-q", check=False)
+            raise JonoVirhe(f"indeksissa muuta kuin sallitut polut: {staged[:5]}")
+        git(repo, "commit", "-q", "-m", viesti or f"claude-jono: tulos {Path(polut[0]).name}")
+        return _tyonna(repo)
 
 
 def auto_tanaan(repo, pvm):
@@ -305,7 +496,42 @@ def kirjaa_suunnittelu(tyohak, repo, nyt, tehtavia):
         pass
 
 
-def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
+RAJA_RE = re.compile(r"usage limit|limit reached|rate.?limit|too many requests|\b429\b|overloaded|quota|hit your limit", re.IGNORECASE)
+
+
+def mittarit(stdout):
+    """Claude-ajon luvut tulosteesta (arvio tilauksen kulutuksesta): kierrokset ja API-kustannuksen arvo. Lukukelvoton -> tyhja."""
+    try:
+        d = json.loads(stdout)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(d, dict):
+        return {}
+    ulos = {}
+    for avain, nimi in (("num_turns", "kierrokset"), ("total_cost_usd", "arvo_usd"), ("duration_api_ms", "api_ms")):
+        if isinstance(d.get(avain), (int, float)) and not isinstance(d.get(avain), bool):
+            ulos[nimi] = d[avain]
+    return ulos
+
+
+def kirjaa_kaistaloki(tila, kaista, laji, nimi, ok, kesto_s, teksti="", stdout="", pushattu=None, lukko_odotus_s=0.0, nyt=None):
+    """Yksi JSON-rivi per ajo (kaistakoe, doc 71 / 2026-11-03). Rajaan osuminen on arvaus: tekstista haetaan tunnetut ilmaukset.
+    Kirjausvirhe ei saa kaataa ajoa."""
+    nyt = nyt or datetime.now().astimezone()
+    rivi = {"aika": nyt.isoformat(timespec="seconds"), "kaista": kaista, "laji": laji, "tehtava": nimi, "ok": bool(ok),
+            "kesto_s": round(kesto_s, 1), "raja": bool(not ok and RAJA_RE.search(teksti or "")),
+            "lukko_odotus_s": round(lukko_odotus_s, 2), **mittarit(stdout)}
+    if pushattu is not None:
+        rivi["push"] = bool(pushattu)
+    try:
+        fd = os.open(Path(tila) / KAISTALOKI, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(rivi) + "\n")
+    except OSError:
+        pass
+
+
+def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None, kaista=1):
     """Jono tyhja: Claude ehdottaa jatkotehtavat. Ajuri nimeaa, rajaa (AUTO_MAX_PAIVA, AUTO_PER_AJO) ja committaa ne."""
     nyt = nyt or datetime.now().astimezone()
     pvm = nyt.date().isoformat()
@@ -319,7 +545,8 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
         return "jono tyhja (suunnittelu tauolla: edellinen kierros ei tuottanut tehtavia eika uusia tuloksia ole)"
     kehote = (KEHOTE.read_text(encoding="utf-8") + "\n\n" + SUUNNITTELU.read_text(encoding="utf-8")
               + f"\n\nEhdota enintaan {tilaa} tehtavaa.\n")
-    kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak)
+    luo_kaistan_tyohak(tyohak, kaista, env)
+    kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak, kaista)
     try:
         r = suorita(kom, cwd=cwd, capture_output=True, text=True,
                     timeout=int(env.get("CLAUDEJONO_AIKARAJA_S", OLETUS_AIKARAJA_S)), env=alaenv, check=False)
@@ -331,30 +558,31 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None):
     if suunn is None:
         kirjaa_suunnittelu(tyohak, repo, nyt, 0)
         return "jono tyhja (suunnittelu ei tuottanut kelvollista JSONia)"
-    polut = []
-    nro = seuraava_numero(repo, pvm)
-    # Porttitarkistin (Tonyn linjaus 2.11.): julkaisu, raha, oikeudet, katot, ajastukset ja uusi suunta Tonylle, ei jonoon.
-    hyvaksytyt, sunnuntai, _hylatyt = silmukka.suodata(suunn["tehtavat"])
-    if sunnuntai:
-        suunn["tonylle"] = (suunn["tonylle"].strip() + "\n" + silmukka.sunnuntairivit(sunnuntai)).strip()
-    for t in hyvaksytyt[:tilaa]:
-        p = Path(repo) / JONO / "tehtavat" / f"{pvm}-{nro:02d}-auto-{t['nimi']}.md"
-        if not kelvollinen_nimi(p.name):
-            continue
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("<!-- CT115:n Claude kirjoitti itse (itsesuunnittelu) -->\n" + t["sisalto"].rstrip() + "\n", encoding="utf-8")
-        polut.append(p)
-        nro += 1
-    if suunn["tonylle"].strip():
-        tp = Path(repo) / JONO / TONYLLE
-        tp.parent.mkdir(parents=True, exist_ok=True)
-        vanha = tp.read_text(encoding="utf-8") if tp.exists() else "# Tonyn paatettavat\n"
-        tp.write_text(vanha.rstrip() + f"\n\n## {nyt.isoformat(timespec='minutes')} (CT115)\n{suunn['tonylle'].strip()}\n", encoding="utf-8")
-        polut.append(tp)
-    kirjaa_suunnittelu(tyohak, repo, nyt, len([p for p in polut if p.name != TONYLLE]))
-    if not polut:
-        return "jono tyhja (ei uusia tehtavia)"
-    julkaise(repo, polut, f"claude-jono: itsesuunnittelu {len([p for p in polut if p.name != TONYLLE])} tehtavaa")
+    with git_lukko(Path(repo).parent):   # kirjoitukset ja julkaisu yhden lukon sisalla: toisen kaistan pull --rebase ei nae puolivalmista tyopuuta
+        polut = []
+        nro = seuraava_numero(repo, pvm)
+        # Porttitarkistin (Tonyn linjaus 2.11.): julkaisu, raha, oikeudet, katot, ajastukset ja uusi suunta Tonylle, ei jonoon.
+        hyvaksytyt, sunnuntai, _hylatyt = silmukka.suodata(suunn["tehtavat"])
+        if sunnuntai:
+            suunn["tonylle"] = (suunn["tonylle"].strip() + "\n" + silmukka.sunnuntairivit(sunnuntai)).strip()
+        for t in hyvaksytyt[:tilaa]:
+            p = Path(repo) / JONO / "tehtavat" / f"{pvm}-{nro:02d}-auto-{t['nimi']}.md"
+            if not kelvollinen_nimi(p.name):
+                continue
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("<!-- CT115:n Claude kirjoitti itse (itsesuunnittelu) -->\n" + t["sisalto"].rstrip() + "\n", encoding="utf-8")
+            polut.append(p)
+            nro += 1
+        if suunn["tonylle"].strip():
+            tp = Path(repo) / JONO / TONYLLE
+            tp.parent.mkdir(parents=True, exist_ok=True)
+            vanha = tp.read_text(encoding="utf-8") if tp.exists() else "# Tonyn paatettavat\n"
+            tp.write_text(vanha.rstrip() + f"\n\n## {nyt.isoformat(timespec='minutes')} (CT115)\n{suunn['tonylle'].strip()}\n", encoding="utf-8")
+            polut.append(tp)
+        kirjaa_suunnittelu(tyohak, repo, nyt, len([p for p in polut if p.name != TONYLLE]))
+        if not polut:
+            return "jono tyhja (ei uusia tehtavia)"
+        julkaise(repo, polut, f"claude-jono: itsesuunnittelu {len([p for p in polut if p.name != TONYLLE])} tehtavaa")
     viesti = "claude-jono: itsesuunnittelu -> " + ", ".join(p.name for p in polut)
     if laheta:
         laheta(viesti)
@@ -386,41 +614,69 @@ def luo_toistuvat(repo, tyohak, nyt=None):
     return polut
 
 
-def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None):
+def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1):
     env = dict(os.environ if env is None else env)
-    git(repo, "pull", "-q", "--rebase", "origin", "main")
-    itse = env.get("CLAUDEJONO_ITSESUUNNITTELU", "1") == "1"
-    if itse:
-        luo_toistuvat(repo, tyohak)
-    t = seuraava_tehtava(repo)
-    taydennys = ""
-    if t is None:
-        if itse:
-            return suunnittele(repo, tyohak, env, suorita, laheta)
-        return "jono tyhja"
-    if itse and silmukka.avoimia(repo) < silmukka.AVOIMIA_ALARAJA:
-        # Jono ei tyhjene: taydennetaan jo ennen kuin se on tyhja. Tehtava ajetaan silti, vaikka taydennys epaonnistuisi.
+    kaista = tarkista_kaista(kaista, env) if kaista != 1 else 1
+    tila = Path(repo).parent
+    vanhenee = varaus_vanhenee_s(env)
+    leima = f" [kaista {kaista}]" if kaista > 1 else ""
+    # Valinta + varaus yhden lyhyen git-lukon sisalla: pull, tulosten tarkistus ja atominen varaus eivat lomitu toisen kaistan kanssa.
+    with git_lukko(tila) as odotus:
+        git(repo, "pull", "-q", "--rebase", "origin", "main")
+        if env.get("CLAUDEJONO_ITSESUUNNITTELU", "1") == "1":
+            luo_toistuvat(repo, tyohak)
+        t = varaa_seuraava(repo, tila, kaista, vanhenee_s=vanhenee)
+        suunnittelu = False
+        if t is None:
+            if env.get("CLAUDEJONO_ITSESUUNNITTELU", "1") != "1":
+                return "jono tyhja"
+            muut = aktiiviset_varaukset(tila, vanhenee_s=vanhenee)
+            if muut:   # toinen kaista tyoskentelee viela: jono ei ole oikeasti tyhja, joten itsesuunnittelun rajat pysyvat ennallaan
+                return "jono tyhja (toinen kaista on viela toissa tai suunnittelee)"
+            suunnittelu = varaa(tila, SUUNNITTELU_VARAUS, kaista, vanhenee_s=vanhenee)
+            if not suunnittelu:
+                return "jono tyhja (toinen kaista suunnittelee)"
+    alku = time.monotonic()
+    if suunnittelu:
         try:
-            taydennys = " | taydennys: " + suunnittele(repo, tyohak, env, suorita, laheta)
-        except Exception as virhe:
-            taydennys = f" | taydennys epaonnistui: {type(virhe).__name__}"
-    (Path(tyohak) / "tyo").mkdir(parents=True, exist_ok=True)
-    kehote = rakenna_kehote(t, opit=lue_opit(repo))
-    kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak)
+            viesti = suunnittele(repo, tyohak, env, suorita, laheta, kaista=kaista)
+        finally:
+            vapauta(tila, SUUNNITTELU_VARAUS, kaista)
+        kirjaa_kaistaloki(tila, kaista, "suunnittelu", "", True, time.monotonic() - alku, lukko_odotus_s=odotus)
+        return viesti
+    taydennys = ""
     try:
-        r = suorita(kom, cwd=cwd, capture_output=True, text=True,
-                    timeout=int(env.get("CLAUDEJONO_AIKARAJA_S", OLETUS_AIKARAJA_S)), env=alaenv, check=False)
-        ok, teksti = tulkitse(r.stdout, r.returncode)
-    except subprocess.TimeoutExpired:
-        ok, teksti = False, "aikakatkaisu"
-    polku = kirjoita_tulos(repo, t.name, ok, teksti)
-    pushattu = julkaise(repo, polku)
-    if ok:
-        uudet, _ = suodata_opit(poimi_uusi_oppi(teksti))
-        if uudet:
-            julkaise_opit(repo, paivita_opit(lue_opit(repo), uudet))
-    viesti = (f"claude-jono: {t.name} {'VALMIS' if ok else 'EPAONNISTUI'}" + ("" if pushattu else " (push epaonnistui)")
-              + taydennys)
+        if env.get("CLAUDEJONO_ITSESUUNNITTELU", "1") == "1" and silmukka.avoimia(repo) < silmukka.AVOIMIA_ALARAJA:
+            # Jono ei tyhjene: taydennetaan jo ennen kuin se on tyhja. Tehtava ajetaan silti, vaikka taydennys epaonnistuisi.
+            if varaa(tila, SUUNNITTELU_VARAUS, kaista, vanhenee_s=vanhenee):
+                try:
+                    taydennys = " | taydennys: " + suunnittele(repo, tyohak, env, suorita, laheta, kaista=kaista)
+                except Exception as virhe:
+                    taydennys = f" | taydennys epaonnistui: {type(virhe).__name__}"
+                finally:
+                    vapauta(tila, SUUNNITTELU_VARAUS, kaista)
+        luo_kaistan_tyohak(tyohak, kaista, env)
+        kehote = rakenna_kehote(t, opit=lue_opit(repo), kaista=kaista)
+        kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak, kaista)
+        r = None
+        try:
+            r = suorita(kom, cwd=cwd, capture_output=True, text=True,
+                        timeout=int(env.get("CLAUDEJONO_AIKARAJA_S", OLETUS_AIKARAJA_S)), env=alaenv, check=False)
+            ok, teksti = tulkitse(r.stdout, r.returncode)
+        except subprocess.TimeoutExpired:
+            ok, teksti = False, "aikakatkaisu"
+        kesto = time.monotonic() - alku
+        with git_lukko(tila) as odotus2:
+            polku = kirjoita_tulos(repo, t.name, ok, teksti)
+            pushattu = julkaise(repo, polku)
+            if ok:
+                uudet, _ = suodata_opit(poimi_uusi_oppi(teksti))
+                if uudet:
+                    julkaise_opit(repo, paivita_opit(lue_opit(repo), uudet))
+        kirjaa_kaistaloki(tila, kaista, "tehtava", t.name, ok, kesto, teksti, getattr(r, "stdout", "") or "", pushattu, odotus + odotus2)
+    finally:
+        vapauta(tila, t.name, kaista)   # varaus vapautuu tuloksen kirjauksen jalkeen tai virheessa; muuten se vanhenee aikarajalla
+    viesti = f"claude-jono: {t.name} {'VALMIS' if ok else 'EPAONNISTUI'}{leima}" + ("" if pushattu else " (push epaonnistui)") + taydennys
     if laheta:
         laheta(viesti + "\n" + teksti[:1500])
     return viesti
@@ -429,6 +685,7 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None):
 def main(argv=None):
     p = argparse.ArgumentParser(description="Clauden tehtavajono (GitHub)")
     p.add_argument("komento", choices=["ajo", "seuraava"])
+    p.add_argument("--kaista", type=int, default=1, help="rinnakkaiskaista 1..CLAUDEJONO_KAISTOJA (oletus 1, enintaan %d)" % KAISTOJA_MAX)
     a = p.parse_args(argv)
     repo = Path(os.environ.get("CLAUDEJONO_REPO", "/var/lib/claude-jono/docs"))
     tyohak = Path(os.environ.get("CLAUDEJONO_TYOHAK", "/opt/agentscope"))
@@ -441,18 +698,23 @@ def main(argv=None):
         t = seuraava_tehtava(repo)
         print(t.name if t else "jono tyhja")
         return 0
-    with open(repo.parent / "lukko", "w") as lukko:
+    try:
+        tarkista_kaista(a.kaista, os.environ)
+    except JonoVirhe as virhe:
+        print(f"claude-jono virhe: {virhe}", file=sys.stderr)
+        return 2
+    with open(repo.parent / f"lukko-{a.kaista}", "w") as kaistalukko:   # yksi ajo per kaista; kaistojen valinta on varauksilla
         try:
-            fcntl.flock(lukko, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(kaistalukko, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            print("toinen ajo kaynnissa")
+            print(f"toinen ajo kaynnissa (kaista {a.kaista})")
             return 0
         try:
             from yojono.ajuri import laheta_telegram
         except Exception:
             laheta_telegram = None
         try:
-            print(aja(repo, tyohak, laheta=laheta_telegram))
+            print(aja(repo, tyohak, laheta=laheta_telegram, kaista=a.kaista))
         except Exception as virhe:  # kaikki kaatumiset halytetaan (vika 30.10.: FileNotFoundError jai hiljaiseksi 20 h)
             kuvaus = f"{type(virhe).__name__}: {str(virhe)[:200]}"
             print(f"claude-jono virhe: {kuvaus}", file=sys.stderr)
