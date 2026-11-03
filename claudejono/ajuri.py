@@ -42,6 +42,7 @@ GIT_LUKKO = "git-lukko"
 VARAUS_LUKKO = "varaus-lukko"
 LUKKO_ODOTUS_S = 600
 VARAUS_MARGINAALI_S = 15 * 60
+AVOIMIA_PER_KAISTA = 2   # suunnittelu kaynnistyy, kun varaamattomia avoimia tehtavia < 2 x kaistat
 KAISTALOKI = "kaistaloki.jsonl"
 KEHOTE = Path(__file__).resolve().parent / "kehote.md"
 
@@ -201,6 +202,23 @@ def vapauta(tila, nimi, kaista):
             return False
         polku.unlink(missing_ok=True)
         return True
+
+
+def avoimet_tehtavat(repo, tila, nyt=None, vanhenee_s=OLETUS_AIKARAJA_S + VARAUS_MARGINAALI_S):
+    """Avointen tehtavien maara: kelvollinen, ei tulosta eika toisen kaistan varausta."""
+    teht = Path(repo) / JONO / "tehtavat"
+    tul = Path(repo) / JONO / "tulokset"
+    if not teht.is_dir():
+        return 0
+    varatut = set(aktiiviset_varaukset(tila, nyt, vanhenee_s))
+    return sum(1 for p in teht.iterdir()
+               if p.is_file() and kelvollinen_nimi(p.name) and not (tul / p.name).exists() and p.name not in varatut)
+
+
+def suunnittelu_tarpeen(repo, tila, env, nyt=None, vanhenee_s=OLETUS_AIKARAJA_S + VARAUS_MARGINAALI_S):
+    """Ennakoiva suunnittelu: sallittu, kun varaamattomia avoimia tehtavia on alle AVOIMIA_PER_KAISTA x kaistat.
+    Muiden kaistojen tyo ei esta suunnittelua; yksi suunnittelija kerrallaan varmistetaan varauksella SUUNNITTELU_VARAUS."""
+    return avoimet_tehtavat(repo, tila, nyt, vanhenee_s) < AVOIMIA_PER_KAISTA * kaistojen_maara(env)
 
 
 def aktiiviset_varaukset(tila, nyt=None, vanhenee_s=OLETUS_AIKARAJA_S + VARAUS_MARGINAALI_S):
@@ -529,6 +547,50 @@ def kirjaa_kaistaloki(tila, kaista, laji, nimi, ok, kesto_s, teksti="", stdout="
         pass
 
 
+PORTTI = None   # valinnainen porttitarkistin: callable(sisalto) -> None (ok) tai kieltoperuste (str). Asetetaan kun tarkistin on paaosassa.
+
+
+def _normalisoi(teksti):
+    return " ".join(re.sub(r"<!--.*?-->", "", teksti, flags=re.S).lower().split())
+
+
+def tehtavan_slug(tiedostonimi):
+    """'2026-11-03-02-auto-nimi.md' -> 'nimi' (paivays, numero ja auto-etuliite pois)."""
+    nimi = re.sub(r"^\d{4}-\d{2}-\d{2}-\d{2}-", "", tiedostonimi[:-3] if tiedostonimi.endswith(".md") else tiedostonimi)
+    return nimi[5:] if nimi.startswith("auto-") else nimi
+
+
+def suodata_uudet(repo, ehdotukset, portti=None):
+    """Hylkaa ehdotukset, jotka ovat jo jonossa tai tehty (sama nimi tai sama sisalto) tai joita porttitarkistin kieltaa.
+    Palauttaa (hyvaksytyt, hylatyt: [(nimi, syy)]). Vertailu kattaa kaikki tehtavat/-tiedostot (myos tehdyt) seka saman erran ehdotukset."""
+    teht = Path(repo) / JONO / "tehtavat"
+    nimet, sisallot = set(), set()
+    if teht.is_dir():
+        for p in teht.iterdir():
+            if p.is_file() and kelvollinen_nimi(p.name):
+                nimet.add(tehtavan_slug(p.name))
+                try:
+                    sisallot.add(_normalisoi(p.read_text(encoding="utf-8")))
+                except (OSError, UnicodeDecodeError):
+                    pass
+    ok, hylatyt = [], []
+    for t in ehdotukset:
+        slug, sis = t["nimi"], _normalisoi(t["sisalto"])
+        if slug in nimet:
+            hylatyt.append((slug, "nimi on jo jonossa tai tehty"))
+        elif sis in sisallot:
+            hylatyt.append((slug, "sama sisalto on jo jonossa tai tehty"))
+        else:
+            syy = portti(t["sisalto"]) if portti else None
+            if syy:
+                hylatyt.append((slug, f"porttitarkistin: {syy}"))
+                continue
+            ok.append(t)
+            nimet.add(slug)
+            sisallot.add(sis)
+    return ok, hylatyt
+
+
 def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None, kaista=1):
     """Jono tyhja: Claude ehdottaa jatkotehtavat. Ajuri nimeaa, rajaa (AUTO_MAX_PAIVA, AUTO_PER_AJO) ja committaa ne."""
     nyt = nyt or datetime.now().astimezone()
@@ -555,8 +617,10 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None, kaista=1):
         return "jono tyhja (suunnittelu ei tuottanut kelvollista JSONia)"
     with git_lukko(Path(repo).parent):   # kirjoitukset ja julkaisu yhden lukon sisalla: toisen kaistan pull --rebase ei nae puolivalmista tyopuuta
         polut = []
+        git(repo, "pull", "-q", "--rebase", "origin", "main", check=False)   # nae muiden samaan aikaan lisaamat tehtavat ennen vertailua
         nro = seuraava_numero(repo, pvm)
-        for t in suunn["tehtavat"][:tilaa]:
+        uudet, _hylatyt = suodata_uudet(repo, suunn["tehtavat"], PORTTI)
+        for t in uudet[:tilaa]:
             p = Path(repo) / JONO / "tehtavat" / f"{pvm}-{nro:02d}-auto-{t['nimi']}.md"
             if not kelvollinen_nimi(p.name):
                 continue
@@ -594,9 +658,10 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1):
         if t is None:
             if env.get("CLAUDEJONO_ITSESUUNNITTELU", "1") != "1":
                 return "jono tyhja"
-            muut = aktiiviset_varaukset(tila, vanhenee_s=vanhenee)
-            if muut:   # toinen kaista tyoskentelee viela: jono ei ole oikeasti tyhja, joten itsesuunnittelun rajat pysyvat ennallaan
-                return "jono tyhja (toinen kaista on viela toissa tai suunnittelee)"
+            # Vapaa kaista suunnittelee, vaikka muut kaistat ovat toissa (muuten 2. ja 3. kaista jaavat tyhjaksi).
+            # Paivakatto, ajokohtainen raja ja tauko pysyvat suunnittele()-funktiossa; yksi suunnittelija varauksella.
+            if not suunnittelu_tarpeen(repo, tila, env, vanhenee_s=vanhenee):
+                return "jono riittaa (avoimia tehtavia yli 2 x kaistat)"
             suunnittelu = varaa(tila, SUUNNITTELU_VARAUS, kaista, vanhenee_s=vanhenee)
             if not suunnittelu:
                 return "jono tyhja (toinen kaista suunnittelee)"
