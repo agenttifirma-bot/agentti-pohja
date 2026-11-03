@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import ajuri, kaistamittaus
+from . import ajuri, kaistamittaus, kulutus, vaiteportti, varaus
 
 TZ = ZoneInfo("Europe/Helsinki")
 OLETUS_REPO = "/var/lib/claude-jono/docs"
@@ -26,6 +26,7 @@ OLETUS_YOJONO = "/var/lib/yojono"
 DOCS_URL = "https://github.com/tonyweckstrom1987/agenttifirma-docs/blob/main/claude-jono"
 IKKUNA_H = 24
 RIVI_MAX = 300
+KULU_RIVI_MAX = 700   # kulutusrivi (mallit + viikko + Tonyn varaus) on pidempi kuin muut rivit
 MAX_MERGELINKKEJA = 4
 BUDJETTI_HALYTYS = 0.8   # nayttorajaus: kuukausikulu >= 80 % katosta nostetaan halytyksiin (ei muuta kattoa)
 
@@ -159,9 +160,16 @@ def keraa(repo, perus, nyt, hae=None, yksikot=None):
         kaistat = kaistamittaus.rivi(Path(repo).parent, nyt, perus)
     except Exception:
         kaistat = None
-    return {"nyt": nyt, "kaistat": kaistat, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku),
+    kulutus_teksti = varaus_rivi = varaus_kysymys = None
+    try:   # mallikohtainen kulutus ja Tonyn varaus; puuttuva loki ei kaada koostetta
+        tila = Path(repo).parent
+        kulutus_teksti = kulutus.kulutusrivi(tila, nyt)
+        varaus_rivi, varaus_kysymys = varaus.aamukooste_osa(tila, os.environ, nyt)
+    except Exception:
+        pass
+    return {"nyt": nyt, "kaistat": kaistat, "kulutus": kulutus_teksti, "varaus": varaus_rivi, "varaus_kysymys": varaus_kysymys, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku),
             "pr": pr_ryhmat, "pr_virheita": virheet, "yojono": yojono_tila(perus, nyt),
-            "yksikot": (yksikot or rikkinaiset_yksikot)()}
+            "yksikot": (yksikot or rikkinaiset_yksikot)(), "vaiteportti": vaiteportti.puutteet(repo)}
 
 
 def _lyhenna(teksti, raja=RIVI_MAX):
@@ -170,12 +178,12 @@ def _lyhenna(teksti, raja=RIVI_MAX):
 
 def rivit(t):
     """Viisi rivi\u00e4 (tehty, tarvitaan, opittu, h\u00e4lytykset, kulut) tiedoista."""
-    nimet = {"VALMIS": 0, "EPAONNISTUI": 0, "HYLATTY": 0}
+    nimet = {"VALMIS": 0, "KESKEN": 0, "EPAONNISTUI": 0, "HYLATTY": 0}
     for r in t["tulokset"]:
         if r["tila"] in nimet:
             nimet[r["tila"]] += 1
     yj = t["yojono"]
-    osat = [f"{len(t['tulokset'])} jonotulosta ({nimet['VALMIS']} valmis, {nimet['EPAONNISTUI']} ep\u00e4onnistui, {nimet['HYLATTY']} hyl\u00e4tty)"]
+    osat = [f"{len(t['tulokset'])} jonotulosta ({nimet['VALMIS']} valmis, {str(nimet['KESKEN']) + ' kesken, ' if nimet['KESKEN'] else ''}{nimet['EPAONNISTUI']} ep\u00e4onnistui, {nimet['HYLATTY']} hyl\u00e4tty)"]
     if t["uudet_prt"]:
         nayta = ", ".join(t["uudet_prt"][:4]) + (f" (+{len(t['uudet_prt']) - 4})" if len(t["uudet_prt"]) > 4 else "")
         osat.append("PR:t " + nayta)
@@ -197,6 +205,8 @@ def rivit(t):
             tarvitaan_osat.append(f"{len(t['pr']['automerge'])} hoituu automergell\u00e4")
     if t["tonylle"]:
         tarvitaan_osat.append(f"{len(t['tonylle'])} uutta kohtaa tonylle.md:ss\u00e4")
+    if t.get("varaus_kysymys"):
+        tarvitaan_osat.append(t["varaus_kysymys"])
     tarvitaan = "Tarvitaan sinulta: " + ", ".join(tarvitaan_osat) + "."
 
     opittu = "Opittu: " + ("; ".join(o.rstrip(".") for o in t["opit"][:2]) if t["opit"] else "ei uusia oppeja viime vuorokaudessa") + "."
@@ -206,6 +216,8 @@ def rivit(t):
         halytykset.append("systemd-tilaa ei saatu")
     elif t["yksikot"]:
         halytykset.append("failed: " + ", ".join(t["yksikot"][:3]) + (f" (+{len(t['yksikot']) - 3})" if len(t["yksikot"]) > 3 else ""))
+    if t.get("vaiteportti"):
+        halytykset.append("v\u00e4iteportti: " + ", ".join(t["vaiteportti"][:3]) + " valmis ilman .tarkastus.md-tiedostoa")
     if nimet["EPAONNISTUI"]:
         halytykset.append(f"{nimet['EPAONNISTUI']} jonoteht\u00e4v\u00e4\u00e4 ep\u00e4onnistui")
     if yj and yj["epaonnistui"]:
@@ -221,7 +233,8 @@ def rivit(t):
         kulut = f"Kulut: y\u00f6jono t\u00e4n\u00e4\u00e4n {paiva} USD, kuukausi {kk} USD."
     else:
         kulut = "Kulut: y\u00f6jonon tilaa ei saatu luettua."
-    return [_lyhenna(r) for r in (tehty, tarvitaan, opittu, hal, kulut)]
+    kulut = " ".join(x.rstrip(".") + "." for x in (kulut, t.get("kulutus"), t.get("varaus")) if x)
+    return [_lyhenna(r, KULU_RIVI_MAX if r is kulut else RIVI_MAX) for r in (tehty, tarvitaan, opittu, hal, kulut)]
 
 
 def linkit(t):

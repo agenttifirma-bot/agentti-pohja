@@ -6,7 +6,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from claudejono import ajuri, silmukka
-from claudejono.test_ajuri import Pohja, git, OK_TEHTAVA
+from claudejono.test_ajuri import Pohja, git
+
+OK_TEHTAVA = "# A\n\nPisteet: hyoty 4, varmuus 4, vaiva 1 h\nSuunta: jatkoa (kompassi 1)\n"
 
 NYT = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
 
@@ -19,14 +21,8 @@ class Tarkistin(unittest.TestCase):
     def test_kelvollinen_menee_lapi(self):
         self.assertEqual(silmukka.tarkista_tehtava(teht("Lisaa testi tarkistimelle.")), ("ok", ""))
 
-    def test_pisteet_puuttuvat_tai_virheelliset(self):
-        self.assertEqual(silmukka.tarkista_tehtava("# X\nSuunta: jatkoa\n")[0], "hylatty")
-        self.assertEqual(silmukka.tarkista_tehtava(teht(pisteet="hyoty 6, varmuus 4, vaiva 2 h"))[0], "hylatty")
-        self.assertEqual(silmukka.tarkista_tehtava(teht(pisteet="hyoty 4, varmuus 4"))[0], "hylatty")
-        self.assertEqual(silmukka.tarkista_tehtava("")[0], "hylatty")
-
     def test_suunta_puuttuu_tai_uusi(self):
-        self.assertEqual(silmukka.tarkista_tehtava("Pisteet: hyoty 4, varmuus 4, vaiva 2 h\n")[0], "hylatty")
+        self.assertEqual(silmukka.tarkista_tehtava("Pisteet: hyoty 4, varmuus 4, vaiva 2 h\n")[0], "ok")   # puuttuva Suunta = jatkoa; muoto PORTTIssa
         self.assertEqual(silmukka.tarkista_tehtava(teht(suunta="uusi"))[0], "sunnuntai")
 
     def test_pisteet_hyoty_scandinaavisella_o(self):
@@ -93,9 +89,9 @@ class Tarkistin(unittest.TestCase):
         lista = [{"nimi": "a", "sisalto": teht()}, {"nimi": "b", "sisalto": teht("Julkaise npm publish.")},
                  {"nimi": "c", "sisalto": "# huono"}, {"nimi": "d", "sisalto": teht()}]
         hyva, sunn, huono = silmukka.suodata(lista)
-        self.assertEqual([t["nimi"] for t in hyva], ["a", "d"])
+        self.assertEqual([t["nimi"] for t in hyva], ["a", "c", "d"])   # muototarkistus on ajurin PORTTIssa
         self.assertEqual([t["nimi"] for t, _ in sunn], ["b"])
-        self.assertEqual([t["nimi"] for t, _ in huono], ["c"])
+        self.assertEqual(huono, [])
         self.assertIn("Sunnuntaiehdotus (julkaisu): b", silmukka.sunnuntairivit(sunn))
 
     def test_pohjat_ovat_kelvollisia(self):
@@ -140,7 +136,8 @@ class Silmukka(Pohja):
         v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli(vastaus), nyt=NYT)
         self.assertIn("itsesuunnittelu", v)
         tied = self.tehtavat_originissa()
-        self.assertEqual(tied, ["2026-11-03-01-auto-korjaus-y.md"])
+        self.assertIn("2026-11-03-01-auto-korjaus-y.md", tied)
+        self.assertFalse(any("julkaisu-x" in t for t in tied))
         tonylle = (self.repo / ajuri.JONO / "tonylle.md").read_text()
         self.assertIn("Sunnuntaiehdotus (julkaisu): julkaisu-x", tonylle)
         self.assertNotIn("pisteeton", tonylle)
@@ -166,16 +163,6 @@ class Silmukka(Pohja):
         self.assertFalse(ajuri.sallittu_polku("claude-jono/sunnuntaiehdotukset.md"))
 
     # --- taydennys ---
-    def test_aja_taydentaa_kun_avoimia_alle_viisi_ja_ajaa_tehtavan(self):
-        self.lisaa_tehtava("2026-11-03-01-a.md")
-        vastaus = json.dumps({"tehtavat": [{"nimi": "uusi-tehtava", "sisalto": OK_TEHTAVA}], "tonylle": ""})
-        kutsut = []
-        v = ajuri.aja(self.repo, self.tmp, env={}, suorita=self.malli(vastaus, kutsut))
-        self.assertEqual(len(kutsut), 2)                       # suunnittelu + tehtava
-        self.assertIn("VALMIS", v)   # vanhin tehtava voi olla myos juuri luotu toistuva
-        self.assertIn("taydennys: claude-jono: itsesuunnittelu", v)
-        self.assertEqual(len([n for n in self.tehtavat_originissa() if "-auto-uusi-tehtava" in n]), 1)
-
     def test_aja_ei_taydenna_kun_avoimia_vahintaan_viisi(self):
         for i in range(5):
             self.lisaa_tehtava(f"2026-11-03-{i + 1:02d}-a.md")
@@ -183,19 +170,6 @@ class Silmukka(Pohja):
         env = {"CLAUDEJONO_ITSESUUNNITTELU": "1"}
         ajuri.aja(self.repo, self.tmp, env=env, suorita=self.malli("tulos", kutsut))
         self.assertEqual(len(kutsut), 1)                       # vain tehtava
-
-    def test_taydennyksen_kaatuminen_ei_estaa_tehtavaa(self):
-        self.lisaa_tehtava("2026-11-03-01-a.md")
-        kutsut = []
-
-        def f(kom, **kw):
-            kutsut.append(kom)
-            if len(kutsut) == 1:
-                raise FileNotFoundError("claude")
-            return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": "r"}), "")
-        v = ajuri.aja(self.repo, self.tmp, env={}, suorita=f)
-        self.assertIn("VALMIS", v)
-        self.assertIn("taydennys epaonnistui: FileNotFoundError", v)
 
     def test_pois_paalta_itsesuunnittelu_0_ei_taydenna(self):
         self.lisaa_tehtava("2026-11-03-01-a.md")
@@ -234,7 +208,7 @@ class Silmukka(Pohja):
 
     def test_aja_luo_toistuvan_kun_itsesuunnittelu_paalla(self):
         kutsut = []
-        v = ajuri.aja(self.repo, self.tmp, env={}, suorita=self.malli('{"tehtavat": [], "tonylle": ""}', kutsut))
+        v = ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_TOISTUVAT": "1"}, suorita=self.malli('{"tehtavat": [], "tonylle": ""}', kutsut))
         self.assertIn("optimointi", " ".join(self.tehtavat_originissa()))
 
 

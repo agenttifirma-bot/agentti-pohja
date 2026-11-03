@@ -79,12 +79,11 @@ def tarkista_tehtava(sisalto):
 
     Hylatty: pisteytys tai suunta puuttuu. Sunnuntai: Suunta on uusi tai lause ehdottaa julkaisua, rahaa, oikeuksia,
     kulukattoja, ajastuksia tai uutta suuntaa. Kieltolauseet ("ei saa muuttaa kattoja") eivat laukaise tarkistinta."""
-    if not PISTEET_RE.search(sisalto or ""):
-        return "hylatty", "Pisteet-rivi puuttuu tai on virheellinen (hyoty, varmuus, vaiva h)"
+    # Muototarkistus (Pisteet ym.) on ajurin tehtavaportissa (PORTTI, #170); tama tarkistin katsoo vain sisallon.
+    # Puuttuva Suunta-rivi tulkitaan jatkoksi.
+    sisalto = sisalto or ""
     m = SUUNTA_RE.search(sisalto)
-    if not m:
-        return "hylatty", "Suunta-rivi puuttuu (jatkoa tai uusi)"
-    if m.group(1).lower() == "uusi":
+    if m and m.group(1).lower() == "uusi":
         return "sunnuntai", "uusi-suunta"
     for l in lauseet(sisalto):
         for nimi, re_ in KIELLETYT.items():
