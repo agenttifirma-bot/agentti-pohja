@@ -3,6 +3,14 @@
 Muoto perustuu [Keep a Changelogiin](https://keepachangelog.com/fi/1.0.0/).
 
 ## Unreleased
+- hiekkalaatikko: `terveystarkastus.py` muuttaa mcp-doctorin `health-check`-issuet mcp_era-listaksi ja englanninkielisiksi vastausluonnoksiksi (vain GET julkiseen API:in, mitään ei lähetetä; vieraan koodin ajo vain kun `MCP_HIEKKALAATIKKO=1`). +19 testiä.
+- claudejono: itsesuunnittelun tauko. Tyhjän kierroksen (0 tehtävää, virheellinen JSON tai aikakatkaisu) jälkeen uutta suunnittelua ei ajeta 3 tuntiin (`CLAUDEJONO_SUUNNITTELU_TAUKO_S`), ellei uusi tulos ole tullut. 1.11. tyhjä kierros toistui noin 10 minuutin välein ja lisäsi `tonylle.md`:hen lähes saman kohdan kymmeniä kertoja (ja kulutti tilauksen kiintiötä). Tila tiedostossa `<työhakemisto>/suunnittelu-tila.json`. +7 testiä.
+- claudejono: yli 60 000 tavun raportti merkitään katkaistuksi (alkuperäinen koko näkyy). 1.11. koulumatka-äänikirjan M02-lähde katkesi kesken sanan ilman merkintää. +2 testiä.
+- claudejono: itsesuunnittelu lukee myos `valitavoitteet.md`:n (unelmat -> kvartaalin valitavoitteet), Tonyn paatos 1.11.2026.
+- claudejono: kieliohje kehotteeseen: ihmisille tarkoitettu teksti ääkkösineen ja huolellisella yleiskielellä, ASCII vain koodissa ja lokeissa (Tonyn palaute 1.11.2026).
+- claudejono: itsesuunnittelu lukee kompassin viikon painopisteen ja Tonyn viikkopalautteen (`claude-jono/palaute.md`), rajoittaa luonnoksia kun Tonyn kasiteltavia on 5+ ja vaatii jokaiseen tehtavaan Hyoty-rivin (Tonyn paatos 1.11.2026).
+- agentti: `mcp-doctor` ja `llm-cassette` lisatty PR-kutsun sallittujen repojen listaan (`REPOT`), Tonyn paatos 1.11.2026. Yon 31.10.-1.11. tyot (mcp-doctor 0.4.0 -paketti, CI-ohje, demo-nauhoitus, llm-cassetten avainvuodon korjaus) jaivat muuten paikallisiksi. Vaatii botin forkit `agenttifirma-bot/mcp-doctor` ja `agenttifirma-bot/llm-cassette`.
+- claudejono: itsesuunnittelu ei ehdota kelloportillisia tehtavia, REPOT-listan ulkopuolisia PR-tehtavia eika samaa aihetta kahdesti vuorokaudessa (Tonyn paatos 1.11.2026; yolla 1.11. viisi tehtavaa pysahtyi heti).
 - claudejono: raportin loppuun 'Tonylle opittavaa' -osio (yksi käsite + komento kokeiltavaksi), Tonyn toive 30.10.2026.
 - claudejono: itsesuunnittelu painottaa tulostaulun mittareita (Tonyn päätös 30.10.2026): vähintään joka toinen tehtävä ulospäin näkyvää tai Tonya henkilökohtaisesti auttavaa työtä; jokaisessa tehtävässä Mittari-rivi.
 - claudejono: itsesuunnittelun vuorokausiraja 6 -> 30 tehtävää (Tonyn päätös 30.10.2026); 2 / ajo ennallaan.

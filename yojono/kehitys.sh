@@ -52,6 +52,7 @@ UL="$BASE/raportit/${YOJONO_RAPORTTI:-$PVM-kehitys-$AIHE-$REPO}"
 
 git clone -q --depth 1 "$URL_ETUOSA/$REPO" "$TMP/klooni"
 cd "$TMP/klooni"
+KLOONI=$(pwd -P)
 git checkout -q -b "$HAARA"
 
 # Kulun pienennys (27.10.: noin puolet yon kulusta meni tuloksettomiin ajoihin): jos saman repon + aiheen + teeman viimeinen ajo
@@ -89,9 +90,32 @@ testaa() {
     done
     timeout 600 npm test
   else
-    timeout 600 python3 -B -m unittest discover -s . -t . -p 'test_*.py'
+    # Havainto 1.11. (laatutarkkailu): `test`-paketti voi ratketa ajurin hakemistoon (PYTHONPATH tai tyohakemisto), jolloin
+    # kloonin testit eivat aja ja raportti nayttaa vihreaa vaaran sarjan perusteella. Siksi: ajurin polku pois ymparistosta,
+    # ajo kloonin juuressa ja tarkistus, etta jokainen ladattu testimoduuli sijaitsee kloonin sisalla.
+    ( unset PYTHONPATH PYTHONHOME; cd "$KLOONI" || exit 1
+      timeout 600 python3 -B -c "$PY_TESTAA" )
   fi
 }
+# Python-testien ajaja: discover kuten ennen, mutta kieltaytyy sarjasta, jonka moduuli on kloonin ulkopuolelta.
+PY_TESTAA='import os, sys, unittest
+juuri = os.path.realpath(".")
+suite = unittest.defaultTestLoader.discover(".", pattern="test_*.py", top_level_dir=".")
+def testit(s):
+    for t in s:
+        if isinstance(t, unittest.TestSuite):
+            yield from testit(t)
+        else:
+            yield t
+vaarat = set()
+for t in testit(suite):
+    tiedosto = getattr(sys.modules.get(type(t).__module__), "__file__", None)
+    if tiedosto and not os.path.realpath(tiedosto).startswith(juuri + os.sep):
+        vaarat.add(tiedosto)
+if vaarat:
+    print("VIRHE: testimoduuli kloonin ulkopuolelta: " + ", ".join(sorted(vaarat)))
+    sys.exit(1)
+sys.exit(0 if unittest.TextTestRunner().run(suite).wasSuccessful() else 1)'
 
 case "$AIHE" in
   readme) TEHTAVA='Paranna taman repon README (asennus, kayttoesimerkit, rajoitukset). Jokainen kayttoesimerkki on ajettava ja todettava toimivaksi ennen kuin kirjoitat sen; ala lisaa uusia vaitteita, lukuja tai versioita, joita et ole todennut koodista. Muokkaa vain markdown-tiedostoja.' ;;
@@ -165,7 +189,14 @@ else
     if [ -n "$VAARAT" ]; then
       SYY="muutos aiheen ($AIHE) ulkopuolella:$VAARAT : PR:aa ei avattu"
     elif testaa > "$TMP/testit.log" 2>&1; then
-      TESTIT="vihrea ($(tail -n 3 "$TMP/testit.log" | tr '\n' ' ' | cut -c1-120))"
+      # Python-repoissa "Ran N tests" on pakollinen: nolla testia tai puuttuva rivi ei ole vihrea (npm-repoissa lukumaaraa ei lueta).
+      LKM=$(grep -Eo '^Ran [0-9]+ tests?' "$TMP/testit.log" | tail -n 1 | grep -Eo '[0-9]+' || true)
+      if [ ! -f package.json ] && [ "${LKM:-0}" -eq 0 ]; then
+        TESTIT="punainen (ei testeja kloonista)"
+        SYY="ei testeja kloonista: PR:aa ei avattu"
+      else
+        TESTIT="vihrea${LKM:+, $LKM testia} ($(tail -n 3 "$TMP/testit.log" | tr '\n' ' ' | cut -c1-120))"
+      fi
     else
       TESTIT="punainen ($(tail -n 3 "$TMP/testit.log" | tr '\n' ' ' | cut -c1-120))"
       SYY="testit punaisella agentin muutosten jalkeen: PR:aa ei avattu"
@@ -230,6 +261,6 @@ if [ -n "$PR" ]; then echo "pr: $PR"; fi
 case "$SYY" in
   "pr_kutsu epaonnistui"*|"kuiva-ajo: pr_kutsu tarkista epaonnistui"*) exit 1 ;;
   # Havainto 25.10. (tarkkailija): punaiset testit eivat saa nayttaa onnistumisena ("valmis, ok"); ajuri kirjaa ne epaonnistuneeksi.
-  "testit punaisella"*) exit 1 ;;
+  "testit punaisella"*|"ei testeja kloonista"*) exit 1 ;;
 esac
 exit 0

@@ -5,7 +5,7 @@ Ajetaan CT115:ssa. Isannan /root/snapshot-kutsu.py sallii vain 'tila' (vain luku
   python3 -m agentti.snapshot_kutsu listaa
   python3 -m agentti.snapshot_kutsu ota ennen-halytin
 
-Asetukset: SNAPSHOT_HOST (oletus 192.168.1.114), SNAPSHOT_KEY (oletus /root/.ssh/snapshot_key),
+Asetukset: SNAPSHOT_HOST (pakollinen, ei oletusta), SNAPSHOT_KEY (oletus /root/.ssh/snapshot_key),
 SNAPSHOT_USER (oletus root). Ei salaisuuksia: vain avaintiedoston polku.
 """
 import json
@@ -23,7 +23,9 @@ class SnapshotVirhe(Exception):
 
 def _ssh_perus():
     avain = os.environ.get("SNAPSHOT_KEY", "/root/.ssh/snapshot_key")
-    isanta = os.environ.get("SNAPSHOT_HOST", "192.168.1.114")
+    isanta = os.environ.get("SNAPSHOT_HOST")
+    if not isanta:
+        raise SnapshotVirhe("ymparistomuuttuja SNAPSHOT_HOST puuttuu (isannan osoite, ei oletusta)")
     kayttaja = os.environ.get("SNAPSHOT_USER", "root")
     return ["ssh", "-i", avain, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
             "-o", "IdentitiesOnly=yes", "%s@%s" % (kayttaja, isanta)]

@@ -11,6 +11,13 @@ from unittest import mock
 from agentti import sandbox_kutsu as sk
 
 
+def setUpModule():
+    # isantaa ei ole oletusarvoa: testit antavat keksityn osoitteen
+    patcher = mock.patch.dict(os.environ, {"SANDBOX_HOST": "isanta.example"})
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
+
+
 def vastaus(tulos, koodi=0, virhe=""):
     def feikki(komento, input=None, capture_output=True, timeout=None):
         feikki.kutsut.append((komento, input))
@@ -96,8 +103,15 @@ class SandboxKutsuTesti(unittest.TestCase):
             with self.assertRaises(sk.SandboxVirhe):
                 sk.aja_repo("https://github.com/o/r", aikaraja=1)
 
+    def test_isanta_puuttuu_antaa_selvan_virheen(self):
+        env = {k: v for k, v in os.environ.items() if k != "SANDBOX_HOST"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            with self.assertRaises(sk.SandboxVirhe) as e:
+                sk._ssh_perus()
+        self.assertIn("SANDBOX_HOST", str(e.exception))
+
     def test_known_hosts_ymparistomuuttuja(self):
-        with mock.patch.dict(os.environ, {"SANDBOX_KNOWN_HOSTS": "/etc/agentti/sandbox_kh"}):
+        with mock.patch.dict(os.environ, {"SANDBOX_HOST": "isanta.example", "SANDBOX_KNOWN_HOSTS": "/etc/agentti/sandbox_kh"}):
             k = sk._ssh_perus()
         self.assertIn("UserKnownHostsFile=/etc/agentti/sandbox_kh", k)
         self.assertIn("StrictHostKeyChecking=yes", k)

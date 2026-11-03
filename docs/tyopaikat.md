@@ -36,6 +36,17 @@ Rajoite: ATS-rajapinnat kattavat vain ne yritykset, jotka listaat asetuksiin. Tu
 `hakusanat` ja `paikat` ovat valinnaisia (oletushakusanat koodissa; ilman `paikat`-kenttaa sijaintia ei suodateta).
 Haku kohdistuu otsikkoon ja tiimiin/osastoon, skandit ja isot kirjaimet ei haittaa.
 
+## Suodattimen rajat
+
+- Hakusanat ja paikat tasmaavat kokonaisiin sanoihin (sanaraja), ei alimerkkijonoihin: `intern` ei tasmaa sanaan
+  `international`. Seuraus: `intern` ei tasmaa sanaan `internship` eika `platform` sanaan `platforms`; lisaa tarvittaessa
+  oma hakusana asetuksiin.
+- Remote-rajaus: jos sijainnissa on `remote` ja Euroopan ulkopuolinen alue (United States, US, USA, Canada, Americas,
+  LATAM, APAC, India jne.), ilmoitus hylataan (esim. "Remote - United States"). Pelkka "Remote" tai remote + Europe/EU/
+  EMEA/Finland/Nordics kelpaa. Rajaus koskee vain sijaintia, jossa remote-sana esiintyy ja paikat on annettu.
+- Hylkays on tarkoituksella tiukka: "Helsinki / Remote US" hylataan myos. Sijaintikentan vapaa teksti voi olla muutakin.
+- Lahdelista ei kuulu koodiin vaan asetustiedostoon (ei GitLabia).
+
 ## Kayttoonotto (Tony tekee itse; systemd/ on suojattu polku, siksi mallit ovat tassa)
 
 1. Kokeile kuivana (ei lahetysta, ei kirjausta): `python3 -m agentti.tyopaikat --asetukset tyopaikat.json --tila /tmp/tp.json`

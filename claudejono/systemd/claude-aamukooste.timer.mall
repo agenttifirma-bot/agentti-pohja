@@ -1,0 +1,11 @@
+# Mallitiedosto: ei asenna mitaan.
+[Unit]
+Description=Aamukooste klo 6.30 (Helsingin aika)
+
+[Timer]
+OnCalendar=*-*-* 06:30:00 Europe/Helsinki
+Persistent=false
+Unit=claude-aamukooste.service
+
+[Install]
+WantedBy=timers.target
