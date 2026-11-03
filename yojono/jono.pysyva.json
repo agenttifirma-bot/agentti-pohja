@@ -15,7 +15,7 @@
       "repo": "agenttifirma",
       "budjetti": 1.1,
       "teema": "automaatio",
-      "toisto_pv": 2
+      "toisto_pv": 4
     },
     {
       "id": "tarkkailu-laatu",
@@ -23,7 +23,7 @@
       "repo": "agenttifirma",
       "budjetti": 0.8,
       "teema": "laatu",
-      "toisto_pv": 2
+      "toisto_pv": 4
     },
     {
       "id": "tarkkailu-infra",
@@ -31,7 +31,7 @@
       "repo": "agenttifirma",
       "budjetti": 1.1,
       "teema": "infra",
-      "toisto_pv": 2
+      "toisto_pv": 4
     },
     {
       "id": "tarkkailu-kasvu",
