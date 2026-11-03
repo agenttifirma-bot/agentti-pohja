@@ -18,7 +18,7 @@ CLAUDE_JSON = json.dumps({
     "modelUsage": {"claude-sonnet-5-5": {"inputTokens": 2, "outputTokens": 4, "costUSD": 0.0498512}}})
 
 
-def ajo(kom_lista, teksti="valmis", **lisa):
+def ajo(kom_lista, teksti="valmis\nTodennettu k\u00e4yt\u00f6ss\u00e4: testiajo", **lisa):
     def suorita(kom, **kw):
         kom_lista.append(kom)
         return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": teksti, **lisa}), "")
@@ -142,7 +142,7 @@ class TononVaraus(unittest.TestCase):
         self.assertEqual((a["tila"], a["agentit_pros"], a["kaistoja"]), ("ei_kalibroitu", None, 1))
         rivi, kysymys = varaus.aamukooste_osa(self.tila, {}, self.nyt)
         self.assertIn("ei kalibroitu", rivi)
-        self.assertIn("Tällä viikolla", kysymys)
+        self.assertIn("T\u00e4ll\u00e4 viikolla", kysymys)
 
     def test_kalibrointi_antaa_arvion_ja_hidastaa_ja_pysayttaa(self):
         env = {"CLAUDEJONO_KAISTOJA": "3"}
@@ -256,7 +256,7 @@ class AjuriReitit(Pohja):
             + json.dumps({"aika": (nyt - timedelta(seconds=1)).isoformat(), "pros": 70}) + "\n")
         komennot = []
         v = ajuri.aja(self.repo, self.tmp, env=dict(self.ENV), suorita=ajo(komennot),
-                      litellm=lambda a, t, e: (True, "luokiteltu", {}))
+                      litellm=lambda a, t, e: (True, "luokiteltu\nTodennettu k\u00e4yt\u00f6ss\u00e4: testiajo", {}))
         self.assertEqual(v, "claude-jono: 2026-11-03-02-y.md VALMIS")
         self.assertEqual(komennot, [])
         v = ajuri.aja(self.repo, self.tmp, env=dict(self.ENV), suorita=ajo(komennot))
@@ -315,17 +315,17 @@ class LiteLLM(unittest.TestCase):
         return laheta
 
     def test_onnistunut_kutsu_antaa_luvut_ja_ei_tyokaluja(self):
-        env = {"CLAUDEJONO_LITELLM_KEY": "avain-testi"}
+        env = {"CLAUDEJONO_LITELLM_KEY": "avain-testi", "CLAUDEJONO_LITELLM_URL": "http://litellm.test:4000/v1"}
         ok, teksti, luvut = litellm_ajo.aja("deepseek-flash", "Tiivista", env, self.vastaus())
         self.assertEqual((ok, teksti, luvut), (True, "hei", {"tokenit_in": 11, "tokenit_out": 7, "usd": 0.0003}))
         url, _avain, payload = self.pyynto
-        self.assertEqual(url, "http://192.168.1.116:4000/v1/chat/completions")
+        self.assertEqual(url, "http://litellm.test:4000/v1/chat/completions")
         self.assertEqual(payload["model"], "deepseek-flash")
         self.assertNotIn("tools", payload)
 
     def test_virheet_ovat_tyyppeja_eika_vuoda_avainta(self):
         self.assertEqual(litellm_ajo.aja("a", "t", {})[:2], (False, "litellm_asetus: avainta ei ole asetettu"))
-        env = {"CLAUDEJONO_LITELLM_KEY": "salainen-arvo"}
+        env = {"CLAUDEJONO_LITELLM_KEY": "salainen-arvo", "CLAUDEJONO_LITELLM_URL": "http://litellm.test:4000/v1"}
 
         def http_virhe(*a):
             raise RuntimeError("litellm_http_429")
@@ -350,7 +350,7 @@ class Aamukooste(Pohja):
         self.assertIn("Mallikulutus eilen: ", rivi)
         self.assertIn("sonnet 1 ajoa 1.25 USD", rivi)
         self.assertIn("Tonyn varaus:", rivi)
-        self.assertIn("Tällä viikolla", aamukooste.rivit(t)[1])
+        self.assertIn("T\u00e4ll\u00e4 viikolla", aamukooste.rivit(t)[1])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,4 @@
+# Yksi repo per rivi. Valinnainen komento rivin lopussa; muuten paatellaan package.json:sta (bin, main).
+# Vain https://github.com/omistaja/repo -muoto kelpaa.
+https://github.com/kenazk/gong-mcp
+https://github.com/hemanth/mcp-web-bridge node dist/index.js

@@ -13,6 +13,7 @@ from unittest import mock
 
 from agentti import pr_kutsu as pk
 
+KUV = "Muutos.\n\nTodennettu kaytossa: testattu paikallisesti\n"
 TUNNUS = "github_pat_" + "A1b2C3d4E5" * 4
 
 
@@ -296,7 +297,7 @@ class KokoketjuTest(unittest.TestCase):
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
             return subprocess.run(cmd, **kw)
         with tee_repo({"docs/a.md": "x"}) as hak:
-            osoite = pk.luo_pr("agentti-pohja", hak, "yo/koe", "o", "k", env=self.env, suorita=suorita,
+            osoite = pk.luo_pr("agentti-pohja", hak, "yo/koe", "o", KUV, env=self.env, suorita=suorita,
                                avaa=lambda p, timeout: Vastaus({"html_url": "https://github.com/a/b/pull/1"}))
         self.assertEqual(osoite, "https://github.com/a/b/pull/1")
         self.assertTrue(any("push" in c for c in komennot))
@@ -320,7 +321,7 @@ class KokoketjuTest(unittest.TestCase):
             return Vastaus({"html_url": "https://github.com/a/b/pull/1"})
         self.env["YOJONO_BOT_KAYTTAJA"] = "botti-x"
         with tee_repo({"docs/a.md": "x"}) as hak:
-            pk.luo_pr("agentti-pohja", hak, "yo/koe", "o", "k", env=self.env, suorita=suorita, avaa=avaa)
+            pk.luo_pr("agentti-pohja", hak, "yo/koe", "o", KUV, env=self.env, suorita=suorita, avaa=avaa)
         self.assertEqual(tapahtumat, ["sync", "push", "pr"])
 
     def test_suojattu_polku_ei_paase_pushiin_eika_kuluta_paivarajaa(self):
@@ -331,7 +332,7 @@ class KokoketjuTest(unittest.TestCase):
             return subprocess.run(cmd, **kw)
         with tee_repo({"tools/x.py": "x"}) as hak:
             with self.assertRaises(pk.PrVirhe):
-                pk.luo_pr("agentti-pohja", hak, "yo/koe", "o", "k", env=self.env, suorita=suorita)
+                pk.luo_pr("agentti-pohja", hak, "yo/koe", "o", KUV, env=self.env, suorita=suorita)
         self.assertFalse(any("push" in c for c in komennot))
         self.assertFalse(os.path.exists(self.env["YOJONO_PR_TILA"]))
 
@@ -339,7 +340,7 @@ class KokoketjuTest(unittest.TestCase):
         self.env["YOJONO_BOT_TUNNUS"] = "/ei/ole"
         with tee_repo({"docs/a.md": "x"}) as hak:
             with self.assertRaises(pk.PrVirhe):
-                pk.luo_pr("agentti-pohja", hak, "yo/koe", "o", "k", env=self.env)
+                pk.luo_pr("agentti-pohja", hak, "yo/koe", "o", KUV, env=self.env)
         self.assertFalse(os.path.exists(self.env["YOJONO_PR_TILA"]))
 
 
@@ -956,3 +957,40 @@ class MainTarkkaTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TodennusPortti(unittest.TestCase):
+    """Koodiportti: PR-kuvauksessa pitaa olla 'Todennettu kaytossa: miten'."""
+
+    def hylatty(self, kuvaus):
+        with self.assertRaises(pk.PrVirhe) as ctx:
+            pk.tarkista_todennus(kuvaus)
+        return str(ctx.exception)
+
+    def test_puuttuva_rivi_hylataan(self):
+        self.assertIn("puuttuu", self.hylatty("## Mit\u00e4\n\nMuutos.\n\n## Testit\n42 OK\n"))
+
+    def test_tyhja_ja_viiva_hylataan(self):
+        for arvo in ("", " ", "-", "\u2013", "TBD", "n/a", "ei mit\u00e4\u00e4n"):
+            with self.subTest(arvo=arvo):
+                self.assertIn("tyhja", self.hylatty(f"Muutos\nTodennettu k\u00e4yt\u00f6ss\u00e4: {arvo}\n"))
+
+    def test_rivi_yli_kuvausrajan_ei_laske(self):
+        # runkoon paatyy vain KUVAUS_MAX merkkia; sen jalkeen oleva rivi ei ole PR:ssa
+        self.assertIn("puuttuu", self.hylatty("x" * pk.KUVAUS_MAX + "\nTodennettu kaytossa: kylla\n"))
+
+    def test_oikeat_rivit_menevat_lapi(self):
+        for rivi in ("Todennettu k\u00e4yt\u00f6ss\u00e4: ajettu oikeaa repoa vastaan",
+                     "- **Todennettu k\u00e4yt\u00f6ss\u00e4:** asennettu puhtaaseen kansioon",
+                     "todennettu kaytossa: cron-loki luettu"):
+            with self.subTest(rivi=rivi):
+                pk.tarkista_todennus("Muutos\n\n" + rivi + "\n")
+
+    def test_luo_pr_hylkaa_ennen_pushia_eika_kuluta_paivarajaa(self):
+        with tempfile.TemporaryDirectory() as d:
+            tila = os.path.join(d, "tila.json")
+            suorita = mock.Mock()
+            with self.assertRaises(pk.PrVirhe):
+                pk.luo_pr("agentti-pohja", d, "yo/koe", "o", "Muutos ilman todennusta", env={"YOJONO_PR_TILA": tila}, suorita=suorita)
+            suorita.assert_not_called()
+            self.assertFalse(os.path.exists(tila))
