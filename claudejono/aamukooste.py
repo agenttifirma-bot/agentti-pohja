@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import ajuri, kaistamittaus
+from . import ajuri, kaistamittaus, vaiteportti
 
 TZ = ZoneInfo("Europe/Helsinki")
 OLETUS_REPO = "/var/lib/claude-jono/docs"
@@ -161,7 +161,7 @@ def keraa(repo, perus, nyt, hae=None, yksikot=None):
         kaistat = None
     return {"nyt": nyt, "kaistat": kaistat, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku),
             "pr": pr_ryhmat, "pr_virheita": virheet, "yojono": yojono_tila(perus, nyt),
-            "yksikot": (yksikot or rikkinaiset_yksikot)()}
+            "yksikot": (yksikot or rikkinaiset_yksikot)(), "vaiteportti": vaiteportti.puutteet(repo)}
 
 
 def _lyhenna(teksti, raja=RIVI_MAX):
@@ -170,12 +170,12 @@ def _lyhenna(teksti, raja=RIVI_MAX):
 
 def rivit(t):
     """Viisi rivi\u00e4 (tehty, tarvitaan, opittu, h\u00e4lytykset, kulut) tiedoista."""
-    nimet = {"VALMIS": 0, "EPAONNISTUI": 0, "HYLATTY": 0}
+    nimet = {"VALMIS": 0, "KESKEN": 0, "EPAONNISTUI": 0, "HYLATTY": 0}
     for r in t["tulokset"]:
         if r["tila"] in nimet:
             nimet[r["tila"]] += 1
     yj = t["yojono"]
-    osat = [f"{len(t['tulokset'])} jonotulosta ({nimet['VALMIS']} valmis, {nimet['EPAONNISTUI']} ep\u00e4onnistui, {nimet['HYLATTY']} hyl\u00e4tty)"]
+    osat = [f"{len(t['tulokset'])} jonotulosta ({nimet['VALMIS']} valmis, {str(nimet['KESKEN']) + ' kesken, ' if nimet['KESKEN'] else ''}{nimet['EPAONNISTUI']} ep\u00e4onnistui, {nimet['HYLATTY']} hyl\u00e4tty)"]
     if t["uudet_prt"]:
         nayta = ", ".join(t["uudet_prt"][:4]) + (f" (+{len(t['uudet_prt']) - 4})" if len(t["uudet_prt"]) > 4 else "")
         osat.append("PR:t " + nayta)
@@ -206,6 +206,8 @@ def rivit(t):
         halytykset.append("systemd-tilaa ei saatu")
     elif t["yksikot"]:
         halytykset.append("failed: " + ", ".join(t["yksikot"][:3]) + (f" (+{len(t['yksikot']) - 3})" if len(t["yksikot"]) > 3 else ""))
+    if t.get("vaiteportti"):
+        halytykset.append("v\u00e4iteportti: " + ", ".join(t["vaiteportti"][:3]) + " valmis ilman .tarkastus.md-tiedostoa")
     if nimet["EPAONNISTUI"]:
         halytykset.append(f"{nimet['EPAONNISTUI']} jonoteht\u00e4v\u00e4\u00e4 ep\u00e4onnistui")
     if yj and yj["epaonnistui"]:

@@ -14,7 +14,7 @@ from claudejono import ajuri
 from claudejono.test_ajuri import Pohja, git, git_ulos
 
 
-def malli_vastaus(teksti="raportti", **lisa):
+def malli_vastaus(teksti="raportti\nTodennettu k\u00e4yt\u00f6ss\u00e4: testiajo", **lisa):
     return json.dumps({"subtype": "success", "result": teksti, **lisa})
 
 
@@ -125,7 +125,7 @@ def _kaista_tyontekija(repo, tyohak, kaista, loki, kesto, env):
         _kirjaa(loki, f"alku {nimi} {kaista} {time.time():.4f}")
         time.sleep(kesto)
         _kirjaa(loki, f"loppu {nimi} {kaista} {time.time():.4f}")
-        return subprocess.CompletedProcess(kom, 0, malli_vastaus(f"valmis {nimi}"), "")
+        return subprocess.CompletedProcess(kom, 0, malli_vastaus(f"valmis {nimi}\nTodennettu k\u00e4yt\u00f6ss\u00e4: testiajo"), "")
     while True:
         v = ajuri.aja(repo, tyohak, env=dict(env), suorita=suorita, kaista=kaista)
         if v.startswith("jono tyhja"):
@@ -283,7 +283,7 @@ class Ajo(Pohja):
         def suorita(kom, **kw):
             if sivu:
                 sivu(kom, kw)
-            return subprocess.CompletedProcess(kom, koodi, json.dumps(palaute or {"subtype": "success", "result": "r"}), "")
+            return subprocess.CompletedProcess(kom, koodi, json.dumps(palaute or {"subtype": "success", "result": "r\nTodennettu k\u00e4yt\u00f6ss\u00e4: testiajo"}), "")
         return suorita
 
     def test_push_torma_palautuu_pull_rebasella(self):
@@ -448,7 +448,7 @@ class Ajo(Pohja):
         self.lisaa_tehtava("2026-11-03-02-b.md")
         env = {"CLAUDEJONO_KAISTOJA": "2", "CLAUDEJONO_ITSESUUNNITTELU": "0"}
         ajuri.aja(self.repo, self.tmp, env=env, kaista=1,
-                  suorita=self.f({"subtype": "success", "result": "r", "num_turns": 7, "total_cost_usd": 1.25}))
+                  suorita=self.f({"subtype": "success", "result": "r\nTodennettu k\u00e4yt\u00f6ss\u00e4: testiajo", "num_turns": 7, "total_cost_usd": 1.25}))
         ajuri.aja(self.repo, self.tmp, env=env, kaista=2,
                   suorita=self.f({"subtype": "error_during_execution", "is_error": True, "result": "Claude AI usage limit reached|1762170000"}))
         rivit = [json.loads(r) for r in (self.tmp / ajuri.KAISTALOKI).read_text().splitlines()]

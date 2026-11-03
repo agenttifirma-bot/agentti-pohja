@@ -53,6 +53,11 @@ SUOJATUT_NIMET = ("rajat.py", "config.py")
 REPON_SUOJATUT = {"kauppatiimi": re.compile(
     r"(^|/)(riskivahti\.py|salkku\.py|kirjanpito\.py|asetukset\.py)$|\.(service|timer|db|sqlite3?)$|^data/")}
 SALAINEN_RE = re.compile(r"(\.env|token|secret|api_?key|\.pem|id_ed25519|id_rsa)", re.IGNORECASE)
+# Koodiportti (virheiden ehkaisy, tehtava 2026-11-03-04): PR:n kuvauksessa pitaa olla rivi "Todennettu kaytossa: miten".
+# Tyhja arvo, viiva tai pelkka paikkamerkki ei kelpaa. Tarkistus koskee vain sita osaa, joka oikeasti paatyy PR:n runkoon.
+TODENNETTU_RE = re.compile(r"^[ \t>*_-]*Todennettu k(?:\u00e4|a)yt(?:\u00f6|o)ss(?:\u00e4|a)[ \t]*:(?:\*\*|__)?[ \t]*(.*)$",
+                           re.IGNORECASE | re.MULTILINE)
+TODENNETTU_TYHJA_RE = re.compile(r"^[\s\-\u2013\u2014.:*_]*(?:tbd|todo|n/?a|ei mit(?:\u00e4|a)(?:\u00e4|a)n|ei ole)?[\s\-\u2013\u2014.:*_]*$", re.IGNORECASE)
 ALAKUULO = "\n\n---\nAgentin tekema ehdotus (yojono). Tony katselmoi ja yhdistaa; mitaan ei oteta kayttoon automaattisesti."
 
 
@@ -383,6 +388,16 @@ def olemassa_oleva_pr(repo, haara, botti, tunnus, avaa=urllib.request.urlopen):
     return None
 
 
+def tarkista_todennus(kuvaus):
+    """Nostaa PrVirhe, jos kuvauksesta puuttuu rivi 'Todennettu kaytossa: <miten>' tai arvo on tyhja tai '-'."""
+    runko = str(kuvaus)[:KUVAUS_MAX]
+    arvot = [m.group(1) for m in TODENNETTU_RE.finditer(runko)]
+    if not arvot:
+        raise PrVirhe("kuvauksesta puuttuu rivi 'Todennettu kaytossa: miten' (koodiportti)")
+    if not any(not TODENNETTU_TYHJA_RE.match(a) for a in arvot):
+        raise PrVirhe("rivin 'Todennettu kaytossa:' arvo on tyhja tai '-' (koodiportti)")
+
+
 def avaa_pr(repo, haara, botti, otsikko, kuvaus, tunnus, avaa=urllib.request.urlopen):
     """Avaa PR forkista alkuperaiseen repoon. Palauttaa PR:n osoitteen."""
     runko = {
@@ -416,6 +431,7 @@ def avaa_pr(repo, haara, botti, otsikko, kuvaus, tunnus, avaa=urllib.request.url
 def luo_pr(repo, hakemisto, haara, otsikko, kuvaus, env=None, suorita=subprocess.run, avaa=urllib.request.urlopen):
     """Koko ketju: tarkistukset, paivaraja, push, PR. Palauttaa PR:n osoitteen."""
     env = os.environ if env is None else env
+    tarkista_todennus(kuvaus)                              # ensin: hylkays ei kuluta paivarajaa eika pushaa mitaan
     botti = botti_kayttaja(env)
     tarkista(repo, hakemisto, haara, suorita=suorita)
     with tempfile.TemporaryDirectory() as tmp:
