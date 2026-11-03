@@ -1,0 +1,11 @@
+# Mallitiedosto: ei asenna mitaan.
+[Unit]
+Description=Kaistakokeen kuormanayte 15 min valein
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=false
+Unit=claude-kaistamittaus.service
+
+[Install]
+WantedBy=timers.target

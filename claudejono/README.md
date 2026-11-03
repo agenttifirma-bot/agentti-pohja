@@ -29,6 +29,45 @@ Ajuri jää rootiksi (git, deploy key, Telegram), mutta agentti ajetaan käyttä
 
 Peruutus: `systemctl disable --now claude-jono.timer` ja poista deploy key GitHubista.
 
+## Rinnakkaiset kaistat (Tonyn päätös 3.11.2026: aloitus 2, valmius 3)
+
+Kaksi tehtävää voi olla ajossa yhtä aikaa. Kolmas kaista on tuettu, mutta otetaan käyttöön vasta ensimmäisen viikon mittausten jälkeen.
+
+**Miten se toimii**
+- `python3 -m claudejono ajo --kaista N` (N = 1–3). Oletus on kaista 1. Kaistojen määrä tulee yhdestä asetuksesta `CLAUDEJONO_KAISTOJA` (oletus 1; palvelumallissa 2). Koodin ylärajaa 3 ei voi ohittaa asetuksella, ja kaista asetuksen yli hylätään ennen kuin mitään tehdään.
+- Jokaisella kaistalla on oma lukko `lukko-N` docs-kloonin vanhemmassa hakemistossa: sama kaista ei ala kahdesti. Aiempi yhteinen `lukko` jää pois.
+- **Tehtävän varaus:** ajuri luo tiedoston `varattu/<tehtävä>` (`O_EXCL`) docs-kloonin vanhempaan hakemistoon (ei gitiin). Kilpailijoista vain yksi onnistuu. Varaus vapautuu tuloksen kirjauksen jälkeen tai virheessä. Jos ajuri kuolee kesken, varaus vanhenee, kun Clauden aikaraja (`CLAUDEJONO_AIKARAJA_S`, oletus 45 min) + 15 min on kulunut tai varaajan prosessi ei enää ole olemassa.
+- **Docs-repon kirjoitukset:** kaikki kloonin git-toimet (`pull --rebase`, valinta ja varaus, tuloksen `add`/`commit`/`push`) tehdään yhteisen lyhyen `git-lukon` sisällä. Lukkoa ei pidetä Clauden ajon aikana. Jos push silti törmää (esim. pilvi-Clauden push), ajuri tekee `pull --rebase` ja yrittää uudelleen enintään 3 kertaa; rebase-konflikti perutaan (`rebase --abort`), jotta klooni ei jää kesken.
+- **Itsesuunnittelu:** vain yksi kaista suunnittelee kerrallaan (`varattu/_suunnittelu`), eikä suunnittelua aloiteta, jos toinen kaista on vielä töissä. Päiväkatto (`AUTO_MAX_PAIVA`) ja ajokohtainen raja ennallaan.
+- **Työhakemistot:** kaista 1 käyttää hakemistoa `/opt/agentscope/tyo`, kaista 2 hakemistoa `/opt/agentscope/tyo/k2` ja kaista 3 hakemistoa `/opt/agentscope/tyo/k3`. Ajuri luo hakemiston ja antaa sen agenttikäyttäjälle, ja kehote kertoo agentille oman polun. Polut pysyvät `/opt/agentscope/tyo`:n alla, joten `claudejono-pr`:n polkuraja ei muutu.
+
+**Käyttöönotto (Tony, kerran; ei tehdä automaattisesti)**
+
+Tee tämä, kun mikään ajo ei ole käynnissä (`systemctl is-active claude-jono.service` → `inactive`), koska vanhan ajurin `lukko` ja uuden `lukko-1` eivät tunne toisiaan.
+```
+cd /opt/agentti-pohja && git pull
+cd claudejono/systemd
+cp claude-jono@.service.mall /etc/systemd/system/claude-jono@.service
+cp claude-jono@.timer.mall /etc/systemd/system/claude-jono@.timer
+cp claude-kaistamittaus.service.mall /etc/systemd/system/claude-kaistamittaus.service
+cp claude-kaistamittaus.timer.mall /etc/systemd/system/claude-kaistamittaus.timer
+systemctl daemon-reload
+systemctl disable --now claude-jono.timer
+systemctl enable --now claude-jono@1.timer claude-jono@2.timer claude-kaistamittaus.timer
+systemctl list-timers 'claude-*'
+```
+Kolmas kaista (vasta mittausdatan jälkeen): vaihda `Environment=CLAUDEJONO_KAISTOJA=2` arvoon 3 tiedostossa `/etc/systemd/system/claude-jono@.service`, `systemctl daemon-reload` ja `systemctl enable --now claude-jono@3.timer`.
+Peruutus: `systemctl disable --now claude-jono@2.timer claude-jono@3.timer`; kaista 1 jatkaa yksin. Täysi paluu vanhaan: `systemctl disable --now claude-jono@1.timer` ja `systemctl enable --now claude-jono.timer`.
+
+Muistin lisäys (CT115, `pct set`) tehdään erikseen Tonyn toimesta hostilta; ajuri ei koske siihen. Kaksi rinnakkaista `claude -p` -ajoa kuluttaa muistia ja tilauksen käyttörajaa kaksinkertaisesti, ja mittaus kertoo, kumpi rajoittaa.
+
+**Mittaus (viikko)**
+- Ajuri kirjaa jokaisesta ajosta rivin tiedostoon `kaistaloki.jsonl`: kaista, kesto, onnistuiko, rajaan osuminen (arvaus virheilmoituksen tekstistä), kierrokset, Clauden ilmoittama API-arvo (arvio, ei lasku) ja git-lukon odotus.
+- `claude-kaistamittaus.timer` kirjaa 15 min välein `/proc/loadavg`- ja muistiluvut tiedostoon `kuorma.jsonl`.
+- Raportti: `python3 -m claudejono.kaistamittaus raportti --kirjoita /var/lib/claude-jono/viikko/kaistakoe-2026-11.md` (taulukot kaistoittain ja vuorokausittain, rinnakkaisuus, kuorma, muisti, yöjonon kulut ja ohjeellinen päätelmä). Tiedosto kirjoitetaan docs-kloonin ulkopuolelle samasta syystä kuin viikkoehdotus: ajuri saa committaa vain sallitut polut. Jos raportin haluaa docs-repoon, polkulistan laajennus on Tonyn päätös.
+- Aamukoosteen ensimmäiselle riville tulee kaistaosa (`kaistat k1 5, k2 4, rinnakkain 80 min, rajaosumia 0, …`), kun `kaistaloki.jsonl` on olemassa. Rivejä on edelleen viisi.
+- Tilauksen käyttörajasta ei ole suoraa lukua. Mitataan osumat ja kulutuksen arvio; nolla osumaa ei todista, ettei rajaa lähestytty.
+
 ## Korjaaja: kaatuminen käynnistää diagnoosin (Tonyn toive 31.10.2026)
 
 Valvottu autonomia: agentti **diagnosoi ja ehdottaa, Tony hyväksyy**. Ei uudelleenkäynnistyksiä, ei asetusmuutoksia, ei mergeä.
