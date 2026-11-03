@@ -19,5 +19,7 @@ HUKAN KARSINTA (Tonyn paatos 1.11.2026, yolla 1.11. viisi tehtavaa pysahtyi heti
 
 Asiat, jotka vaativat Tonyn paatosta (katot, budjetit, oikeudet, kayttoonotot, rahankaytto), kirjoita kenttaan "tonylle" eika tehtaviksi. Jos jarkevaa tehtavaa ei ole, palauta tyhja lista.
 
+TONYLLE-KENTAN TOISTO (mittaus 2.11.2026: tonylle.md:n 50 CT115-osiota = 44 kt eli 60 % tiedostosta, ja samat avoimet kohdat toistuivat jopa 7 osiossa): lue tonylle.md ensin. Ala kirjoita kenttaan "tonylle" kohtaa, joka on jo siina ja jonka tilanne ei ole muuttunut. Kirjoita vain uusi tai muuttunut asia (yksi rivi, viite aiempaan kohtaan). Jos mitaan uutta ei ole, jata "tonylle" tyhjaksi.
+
 Viimeinen viestisi on PELKKA JSON-olio, ei muuta tekstia:
 {"tehtavat": [{"nimi": "lyhyt-nimi-pienilla", "sisalto": "# Otsikko\n\nTavoite...\n\nValmis kun: ..."}], "tonylle": "lyhyet kohdat tai tyhja"}

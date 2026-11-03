@@ -8,6 +8,13 @@ import unittest
 from unittest import mock
 
 from agentti import snapshot_kutsu as sk
+
+
+def setUpModule():
+    # isantaa ei ole oletusarvoa: testit antavat keksityn osoitteen
+    patcher = mock.patch.dict(os.environ, {"SNAPSHOT_HOST": "isanta.example"})
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
 from isanta import snapshot_isanta as si
 
 LISTAUS = (
@@ -160,6 +167,13 @@ def vastaus(tulos, koodi=0):
 
 
 class AsiakasTesti(unittest.TestCase):
+    def test_isanta_puuttuu_antaa_selvan_virheen(self):
+        env = {k: v for k, v in os.environ.items() if k != "SNAPSHOT_HOST"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            with self.assertRaises(sk.SnapshotVirhe) as e:
+                sk._ssh_perus()
+        self.assertIn("SNAPSHOT_HOST", str(e.exception))
+
     def test_ota_lahettaa_oikean_komennon(self):
         f = vastaus({"ok": True, "snapshot": "ennen-xy"})
         with mock.patch.object(sk.subprocess, "run", f):

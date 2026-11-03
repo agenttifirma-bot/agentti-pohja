@@ -1,0 +1,1 @@
+- talonmies: ehdotustila (agentti/talonmies.py) lukee systemctl --failed, levyn, varmuuskopioiden iän ja apt-päivitykset ja kirjoittaa ehdotukset raporttiin sekä kirjanpitoon (ehdotukset.jsonl, paatokset.jsonl, mittari). Ei tee muutoksia. Suunnitelma docs/talonmies.md (doc 71).
