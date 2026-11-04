@@ -103,6 +103,28 @@ class ValeTesti(Pohja):
         finally:
             p.kill(); p.wait()
 
+    def test_luettelo_ei_tarvitse_rclonea_eika_tunnuksia(self):
+        r = self.aja("--luettelo", RCLONE="/ei/ole/rclonea")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse(self.valeloki.exists())
+        rivit = r.stdout.splitlines()
+        self.assertIn("OHITETAAN (yli 2 uusinta) vzdump-lxc-110-2026_10_28-02_00_01.tar.zst", rivit)
+        self.assertIn("OHITETAAN (yli 2 uusinta) vzdump-lxc-110-2026_10_28-02_00_01.log", rivit)
+        self.assertTrue(any(x.startswith("KOPIOIDAAN vzdump-lxc-110-2026_10_31-02_00_01.tar.zst (") for x in rivit))
+        self.assertTrue(any(x.startswith("KOPIOIDAAN vzdump-qemu-200-") for x in rivit))
+        self.assertEqual(len([x for x in rivit if x.startswith("KOPIOIDAAN")]), 4)
+        self.assertEqual(len([x for x in rivit if x.startswith("OHITETAAN")]), 3)
+
+    def test_rclone_conf_ryhmaluettava_hylataan(self):
+        conf = Path(self.tmp.name) / "rclone.conf"; conf.write_text("[x]\ntype = local\n")
+        conf.chmod(0o644)
+        r = self.aja(RCLONE_CONFIG=str(conf))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("pitaa olla 600", r.stdout)
+        self.assertFalse(self.valeloki.exists())
+        conf.chmod(0o600)
+        self.assertEqual(self.aja(RCLONE_CONFIG=str(conf)).returncode, 0)
+
     def test_virheellinen_sailyta(self):
         self.assertEqual(self.aja(SAILYTA="0").returncode, 1)
         self.assertEqual(self.aja(SAILYTA="x").returncode, 1)
@@ -152,6 +174,7 @@ class OikeaCryptTesti(Pohja):
             f"[paikallinen]\ntype = local\n\n[drive-crypt]\ntype = crypt\nremote = paikallinen:{levy}\n"
             f"password = {obs('testisalasana-yksi')}\npassword2 = {obs('testisuola-kaksi')}\n"
             "filename_encryption = standard\n")
+        conf.chmod(0o600)
         env = {"RCLONE_CONFIG": str(conf), "RCLONE": shutil.which("rclone"), "REMOTE": "drive-crypt:proxmox"}
         r = self.aja(**env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)

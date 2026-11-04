@@ -4,6 +4,8 @@
 #
 # Kaytto (Proxmox-isannalla, root; cron klo 3.30 vzdumpin jalkeen):
 #     varmuuskopio-drive.sh              ajaa synkronoinnin
+#     varmuuskopio-drive.sh --luettelo   listaa paikalliset tiedostot: kopioidaan / ohitetaan.
+#                                        Ei kayta rclonea eika tunnuksia, toimii ennen asennusta
 #     varmuuskopio-drive.sh --kuiva      rclone --dry-run: ei muuta mitaan, ei pingia
 #     varmuuskopio-drive.sh --palautustesti
 #                                        hakee pienimman uusimman dumpin Drivesta,
@@ -21,6 +23,9 @@
 #   LUKKO         /run/varmuuskopio-drive.lock
 #   KUMA_PUSH_URL (valinnainen)           Uptime Kuma push-osoite ilman kyselyosaa
 #   RCLONE        rclone                  rclone-ohjelma
+# rclone.conf (sisaltaa crypt-avaimen ja Driven luvan) on oltava vain omistajan luettavissa (600).
+# Skripti kieltaytyy ajosta, jos ryhma tai muut voivat lukea sen. Polku: RCLONE_CONFIG tai
+# $HOME/.config/rclone/rclone.conf.
 # =============================================================================
 set -u -o pipefail
 
@@ -29,7 +34,8 @@ case "${1:-}" in
   "") ;;
   --kuiva) TILA=kuiva ;;
   --palautustesti) TILA=palautus ;;
-  *) sed -n '2,12p' "$0"; exit 2 ;;
+  --luettelo) TILA=luettelo ;;
+  *) sed -n '2,14p' "$0"; exit 2 ;;
 esac
 
 ASETUS_TIEDOSTO="${ASETUS_TIEDOSTO:-/etc/varmuuskopio-drive.env}"
@@ -77,7 +83,13 @@ trap 'exit 143' TERM
 
 [[ "$SAILYTA" =~ ^[0-9]+$ ]] && [ "$SAILYTA" -ge 1 ] || { loki "SAILYTA ei kelpaa: $SAILYTA"; exit 1; }
 [[ "$MAX_POISTO" =~ ^[0-9]+$ ]] || { loki "MAX_POISTO ei kelpaa"; exit 1; }
-command -v "$RCLONE" >/dev/null 2>&1 || { loki "rclonea ei loydy"; exit 1; }
+if [ "$TILA" != luettelo ]; then
+  command -v "$RCLONE" >/dev/null 2>&1 || { loki "rclonea ei loydy"; exit 1; }
+  RCONF="${RCLONE_CONFIG:-${HOME:-/root}/.config/rclone/rclone.conf}"
+  if [ -f "$RCONF" ] && [ -n "$(find "$RCONF" -perm /077 2>/dev/null)" ]; then
+    loki "rclone.conf on ryhman tai muiden luettavissa (pitaa olla 600): $RCONF"; exit 1
+  fi
+fi
 command -v flock >/dev/null 2>&1 || { loki "flock puuttuu"; exit 1; }
 [ -d "$DUMP_DIR" ] || { loki "dump-hakemistoa ei ole: $DUMP_DIR"; exit 1; }
 
@@ -98,6 +110,19 @@ PERUSNIMET=$(printf '%s\n' "${TIEDOSTOT[@]:-}" \
 echo "$PERUSNIMET" | sort -k1,1 -k2,2r \
   | awk -v n="$SAILYTA" '{ if ($1 != e) { e=$1; k=0 } k++; if (k>n) print "/" $2 ".*" }' > "$TMP/vanhat.txt"
 VANHOJA=$(wc -l < "$TMP/vanhat.txt")
+
+if [ "$TILA" = luettelo ]; then
+  # Ei rclonea, ei verkkoa, ei tunnuksia: nayttaa vain mita sync kopioisi ja mita ei.
+  while read -r _ pn; do echo "$pn"; done < <(echo "$PERUSNIMET" | sort -k1,1 -k2,2r \
+    | awk -v n="$SAILYTA" '{ if ($1 != e) { e=$1; k=0 } k++; if (k>n) print $1, $2 }') | sort > "$TMP/vanhat-nimet.txt"
+  for f in "${TIEDOSTOT[@]}"; do
+    pn="${f%%.*}"
+    case "$f" in *.tmp|*.partial) echo "OHITETAAN (keskeneraeinen) $f"; continue ;; esac
+    if grep -qxF "$pn" "$TMP/vanhat-nimet.txt"; then echo "OHITETAAN (yli $SAILYTA uusinta) $f"
+    else echo "KOPIOIDAAN $f ($(stat -c %s "$DUMP_DIR/$f") tavua)"; fi
+  done
+  ONNISTUI=1; exit 0
+fi
 
 BASE=("$RCLONE" --bwlimit "$BWLIMIT" --log-file "$LOKI" --log-level NOTICE --stats 0 --retries 3 --low-level-retries 5)
 
