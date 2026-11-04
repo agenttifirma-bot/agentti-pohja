@@ -10,12 +10,15 @@ Kehote kertoo rajan agentille; CT115:n .claude/settings.json estaa salaisuustied
 import argparse
 import contextlib
 import fcntl
+import io
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 import uuid
@@ -35,6 +38,23 @@ SUUNNITTELU_TAUKO_S = 3 * 3600
 SUUNNITTELU_TILA = "suunnittelu-tila.json"
 OLETUS_AIKARAJA_S = 45 * 60
 OLETUS_MAX_KIERROKSET = 60
+# Tonyn paatos 4.11.2026: Opus-tehtaville pidempi raja ja enemman kierroksia (suunnittelija pilkkoo yli 2 h tyot).
+OPUS_AIKARAJA_S = 90 * 60
+OPUS_MAX_KIERROKSET = 120
+
+
+def aikaraja_s(env, malli=None):
+    """Lapsiprosessin aikaraja. Opus: CLAUDEJONO_AIKARAJA_OPUS_S > CLAUDEJONO_AIKARAJA_S > 90 min; muut: CLAUDEJONO_AIKARAJA_S > 45 min."""
+    if malli == "opus":
+        return int(env.get("CLAUDEJONO_AIKARAJA_OPUS_S") or env.get("CLAUDEJONO_AIKARAJA_S") or OPUS_AIKARAJA_S)
+    return int(env.get("CLAUDEJONO_AIKARAJA_S") or OLETUS_AIKARAJA_S)
+
+
+def max_kierrokset(env, malli=None):
+    """Asetettu CLAUDEJONO_MAX_KIERROKSET voittaa (esim. korjaaja); muuten Opus 120, muut 60."""
+    if env.get("CLAUDEJONO_MAX_KIERROKSET"):
+        return int(env["CLAUDEJONO_MAX_KIERROKSET"])
+    return OPUS_MAX_KIERROKSET if malli == "opus" else OLETUS_MAX_KIERROKSET
 JONO = "claude-jono"
 
 # Rinnakkaiset kaistat (tehtava 2026-11-03: aloitus 2, valmius 3). Kaistojen maara tulee yhdesta asetuksesta
@@ -156,7 +176,7 @@ def git_lukko(tila):
 def varaus_vanhenee_s(env):
     """Varaus vanhenee vasta, kun Clauden aikaraja + marginaali on ylitetty: eheasti kaynnissa oleva ajo ei meneta varaustaan."""
     try:
-        return int(env.get("CLAUDEJONO_VARAUS_S") or int(env.get("CLAUDEJONO_AIKARAJA_S", OLETUS_AIKARAJA_S)) + VARAUS_MARGINAALI_S)
+        return int(env.get("CLAUDEJONO_VARAUS_S") or max(aikaraja_s(env), aikaraja_s(env, "opus")) + VARAUS_MARGINAALI_S)
     except (TypeError, ValueError):
         return OLETUS_AIKARAJA_S + VARAUS_MARGINAALI_S
 
@@ -352,7 +372,7 @@ def julkaise_opit(repo, teksti):
 def claude_komento(kehote, env, malli=None):
     """malli = opus | sonnet (claudejono.malli); None = Clauden oma oletus (vanha toiminta)."""
     kom = [env.get("CLAUDEJONO_CLAUDE", "claude"), "-p", kehote, "--output-format", "json",
-           "--max-turns", str(int(env.get("CLAUDEJONO_MAX_KIERROKSET", OLETUS_MAX_KIERROKSET)))]
+           "--max-turns", str(max_kierrokset(env, malli))]
     if malli:
         if malli not in mallit.CLAUDE_MALLIT:
             raise JonoVirhe("claude-malli ei kelpaa")
@@ -445,13 +465,88 @@ SUUNNITTELU = Path(__file__).resolve().parent / "suunnittelu.md"
 
 
 def sallittu_polku(suht):
-    """Ajuri saa committaa vain: tulokset/<nimi>.md, tehtavat/<pvm>-NN-auto-*.md ja tonylle.md."""
+    """Ajuri saa committaa vain: tulokset/<nimi>.md, tehtavat/<pvm>-NN-auto-*.md, tonylle.md ja vapaat docs-polut (vapaa_docs_polku)."""
     osat = suht.split("/")
     if len(osat) == 3 and osat[0] == JONO and osat[1] == "tulokset" and kelvollinen_nimi(osat[2]):
         return True
     if len(osat) == 3 and osat[0] == JONO and osat[1] == "tehtavat" and kelvollinen_nimi(osat[2]) and "-auto-" in osat[2]:
         return True
-    return suht == f"{JONO}/{TONYLLE}"
+    return suht == f"{JONO}/{TONYLLE}" or vapaa_docs_polku(suht)
+
+
+# Docs-repon vapaa kirjoitus (Tonyn paatos 4.11.2026). Agentti kirjoittaa tiedostot kaistan tyohakemiston kansioon docs-ulos/
+# docs-repon polkuineen; ajuri lukee ne agenttikayttajana tar-virtana (root ei seuraa agentin symlinkkeja) ja committaa
+# tuloksen kanssa. Ei: tehtavat/, tulokset/, isanta-kasin/ (Tony ajaa kasin), kompassi.md (Tonyn paatokset), opit.md,
+# juuren tiedostot, piilotiedostot; vain tekstipaatteet ja kokoraja.
+DOCS_ULOS = "docs-ulos"
+DOCS_MAX_TIEDOSTOJA = 20
+DOCS_MAX_TAVUA = 200_000
+DOCS_PAATTEET = (".md", ".txt", ".csv", ".json")
+DOCS_NIMI_RE = re.compile(r"^[A-Za-z0-9_./-]+$")
+
+
+def vapaa_docs_polku(suht):
+    osat = suht.split("/")
+    if len(osat) < 2 or any(o in ("", ".", "..") or o.startswith(".") for o in osat) or not DOCS_NIMI_RE.match(suht):
+        return False
+    if not suht.endswith(DOCS_PAATTEET):
+        return False
+    kielletyt = (f"{JONO}/tehtavat/", f"{JONO}/tulokset/", f"{JONO}/isanta-kasin/", f"{JONO}/korjaukset/", f"{JONO}/kompassi.md",
+                 OPIT, f"{JONO}/sunnuntaiehdotukset.md")
+    return not any(suht == k or suht.startswith(k) for k in kielletyt)
+
+
+def valmistele_docs_ulos(kaista_hak, env):
+    """Tyhja docs-ulos/ ennen ajoa (vanha sisalto pois), agenttikayttajan omistukseen."""
+    ulos = Path(kaista_hak) / DOCS_ULOS
+    shutil.rmtree(ulos, ignore_errors=True)
+    ulos.mkdir(parents=True, exist_ok=True)
+    kayttaja = env.get("CLAUDEJONO_KAYTTAJA", "")
+    if kayttaja:
+        try:
+            shutil.chown(ulos, user=kayttaja)
+        except (OSError, LookupError):
+            pass
+    return ulos
+
+
+def poimi_docs_ulos(kaista_hak, repo, env, suorita=subprocess.run):
+    """Kopioi docs-ulos/:n sallitut tiedostot docs-repoon. Palauttaa kopioidut polut (repossa). Virheet: tyhja lista."""
+    ulos = Path(kaista_hak) / DOCS_ULOS
+    if not ulos.is_dir():
+        return []
+    kom = ["tar", "-C", str(ulos), "-cf", "-", "."]
+    kayttaja = env.get("CLAUDEJONO_KAYTTAJA", "")
+    if kayttaja:
+        kom = [RUNUSER, "-u", kayttaja, "--"] + kom
+    try:
+        r = suorita(kom, capture_output=True, timeout=60, check=False)
+        if r.returncode != 0 or len(r.stdout) > DOCS_MAX_TIEDOSTOJA * DOCS_MAX_TAVUA * 2:
+            return []
+        kopioidut = []
+        with tarfile.open(fileobj=io.BytesIO(r.stdout)) as tf:
+            for m in tf.getmembers():
+                suht = posixpath.normpath(m.name)
+                if not m.isreg() or m.size > DOCS_MAX_TAVUA or not vapaa_docs_polku(suht):
+                    continue
+                data = tf.extractfile(m).read()
+                try:
+                    data.decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
+                kohde = Path(repo) / suht
+                kohde.parent.mkdir(parents=True, exist_ok=True)
+                if kohde.is_symlink():
+                    continue
+                kohde.write_bytes(data)
+                kopioidut.append(kohde)
+                if len(kopioidut) >= DOCS_MAX_TIEDOSTOJA:
+                    break
+        return kopioidut
+    except (OSError, subprocess.SubprocessError, tarfile.TarError):
+        return []
+    finally:
+        shutil.rmtree(ulos, ignore_errors=True)
 
 
 def _tyonna(repo):
@@ -636,7 +731,7 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None, kaista=1):
     alku_s = time.monotonic()
     try:
         r = suorita(kom, cwd=cwd, capture_output=True, text=True,
-                    timeout=int(env.get("CLAUDEJONO_AIKARAJA_S", OLETUS_AIKARAJA_S)), env=alaenv, check=False)
+                    timeout=aikaraja_s(env, sm.nimi), env=alaenv, check=False)
         ok, teksti = tulkitse(r.stdout, r.returncode)
         kulutus.kirjaa(Path(repo).parent, sm.tunniste, "", kaista, "suunnittelu", ok, time.monotonic() - alku_s,
                        kulutus.claude_luvut(getattr(r, "stdout", "") or ""), nyt)
@@ -787,9 +882,10 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
         else:
             kehote = rakenna_kehote(t, opit=lue_opit(repo), kaista=kaista)
             kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak, kaista, m.nimi)
+            valmistele_docs_ulos(cwd, env)
             try:
                 r = suorita(kom, cwd=cwd, capture_output=True, text=True,
-                            timeout=int(env.get("CLAUDEJONO_AIKARAJA_S", OLETUS_AIKARAJA_S)), env=alaenv, check=False)
+                            timeout=aikaraja_s(env, m.nimi), env=alaenv, check=False)
                 ok, teksti = tulkitse(r.stdout, r.returncode)
                 luvut = kulutus.claude_luvut(getattr(r, "stdout", "") or "")
             except subprocess.TimeoutExpired:
@@ -808,7 +904,8 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
             # Todennusportti koskee Claude-reitin tyota (koodi, PR:t); OpenRouter-rutiini (tiivistelmat, luokittelu) ei tuota todennusrivia.
             tila_nimi = "KESKEN" if ok and m.reitti == "claude" and not on_todennettu(teksti) else ("VALMIS" if ok else "EPAONNISTUI")
             polku = kirjoita_tulos(repo, t.name, ok, teksti, tila=tila_nimi, malli=m.tunniste)
-            pushattu = julkaise(repo, polku)
+            docs = poimi_docs_ulos(cwd, repo, env) if m.reitti == "claude" else []
+            pushattu = julkaise(repo, [polku] + docs)
             if tila_nimi == "VALMIS" and m.reitti == "claude":
                 uudet, _ = suodata_opit(poimi_uusi_oppi(teksti))
                 if uudet:

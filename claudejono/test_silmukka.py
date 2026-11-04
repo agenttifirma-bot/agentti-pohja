@@ -214,3 +214,12 @@ class Silmukka(Pohja):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VaivaRajaTesti(unittest.TestCase):
+    def test_yli_kahden_tunnin_tehtava_hylataan(self):
+        perus = "# T\n\nPisteet: hyoty 4, varmuus 4, vaiva %s h\nSuunta: jatkoa (kompassi)\n"
+        self.assertEqual(silmukka.tarkista_tehtava(perus % "3")[0], "hylatty")
+        self.assertEqual(silmukka.tarkista_tehtava(perus % "2,5"), ("hylatty", "vaiva yli 2 h: pilko osiin"))
+        for v in ("2", "1.5", "0,5"):
+            self.assertEqual(silmukka.tarkista_tehtava(perus % v)[0], "ok", v)
