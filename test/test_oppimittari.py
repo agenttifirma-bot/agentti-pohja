@@ -107,7 +107,7 @@ class ViikkoraporttiLiitosTesti(unittest.TestCase):
         self.assertIn("Oppiminen: testirivi.", t)
         self.assertLess(t.index("Oppiminen"), t.index("Vihjeet"))
 
-    def test_ilman_rivi\u00e4_ennallaan(self):
+    def test_ilman_rivia_ennallaan(self):
         self.assertNotIn("Oppiminen", vr.muodosta(self.TIEDOT, {}))
 
     def test_oppimisrivi_lukee_ympariston_polun(self):
