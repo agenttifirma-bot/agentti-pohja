@@ -314,7 +314,7 @@ VAADITUT_RIVIT = (
 )
 PISTEET_RE = re.compile(_RIVI + r"pisteet\b[*_]*\s*:(?=.*hy[o\u00f6]ty)(?=.*varmuus)(?=.*vaiva)")
 MITTARI_RE = re.compile(_RIVI + r"mittari\b[*_]*\s*:")
-TODENNUS_RE = re.compile(_RIVI + r"todennus\b[*_]*\s*:")
+TODENNUS_RE = re.compile(_RIVI + r"todennus\b[*_]*\s*:|(?i:todennettu\s+k[a\u00e4]yt[o\u00f6]ss[a\u00e4]\s*:)")   # oma rivi tai Valmis kun -lauseen "Todennettu kaytossa: miten"
 # Kelloportti = kasky odottaa ("aja vasta ...", "tee vasta klo 22") tai lause, joka alkaa "vasta klo <aika>". Pelkka maininta
 # ("tulos valmistuu vasta klo 8", lainaus saannosta) ei ole portti eika saa hylata tehtavaa.
 KELLOPORTTI_RE = re.compile(

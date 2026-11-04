@@ -131,6 +131,14 @@ class Tarkastus(unittest.TestCase):
         self.assertNotIn("rajataan (1) korjauksiin", teksti)
         self.assertNotIn("Ala ehdota muuta", teksti)
 
+    def test_todennus_riittaa_valmis_kun_lauseessa(self):
+        """Regressio: jonon oikeat tehtavat (4.11.) vaativat todennuksen Valmis kun -lauseessa ("rivi Todennettu kaytossa: miten"),
+        ei omalla Todennus-rivillaan. Ilman tata tarkastus hylkaisi koko jonon."""
+        t = ("Hy\u00f6ty: x\nMittari: 3\n"
+             "Valmis kun: raportissa on taulukko ja rivi \"Todennettu k\u00e4yt\u00f6ss\u00e4: miten\".\n")
+        self.assertEqual(self.puutteet(t, "2026-11-04-29-a.md"), [])
+        self.assertEqual(self.puutteet(t.replace("Todennettu k\u00e4yt\u00f6ss\u00e4", "Jotain"), "2026-11-04-29-a.md"), ["Todennus-rivi"])
+
     def test_taydennysohje_nimeaa_kaikki_vaaditut_rivit(self):
         """Regressio (tarkastajan loydos): TAYDENNYS-osio vaati vain Pisteet- ja Suunta-rivin, mutta ajuri hylkaa myos
         tehtavan, jolta puuttuu Hyoty, Todennus tai Valmis kun. Osion ohjeen mukainen tehtava hylattiin ajon alussa."""
