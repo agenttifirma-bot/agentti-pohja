@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import subprocess
 import tempfile
@@ -612,3 +613,113 @@ class TulosPortti(Pohja):
         self.lisaa_tehtava("2026-11-03-02-b.md")
         f, _ = self.suorita({"subtype": "error", "result": "x"}, koodi=1)
         self.assertIn("EPAONNISTUI", ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_ITSESUUNNITTELU": "0"}, suorita=f))
+
+
+class Valimuistiinpanot(Pohja):
+    """Keskeytynyt ajo ei hukkaa ajattelua (tehtava 2026-11-04): muistiinpanot tulokseen, tila KESKEN."""
+
+    LAPSI = ("import re,sys,time\n"
+             "p=re.findall(r'^Muistiinpanotiedosto: (/\\S+)$', sys.argv[1], re.M)[-1]\n"
+             "open(p,'a',encoding='utf-8').write('havainto: syy on X\\nseuraava askel: korjaa Y\\n')\n"
+             "time.sleep(30)\n")
+
+    def tulos(self, nimi="2026-11-04-01-a.md"):
+        return (self.repo / ajuri.JONO / "tulokset" / nimi).read_text(encoding="utf-8")
+
+    def aikakatkaistu_lapsi(self, kom, **kw):
+        # oikea lapsiprosessi: kirjoittaa muistiinpanon ja jaa uneen, subprocess.run katkaisee sen aikakatkaisulla
+        return subprocess.run([sys.executable, "-c", self.LAPSI, kom[2]], **{**kw, "timeout": 2})
+
+    def test_aikakatkaisu_liittaa_muistiinpanot_ja_merkitsee_kesken(self):
+        self.lisaa_tehtava("2026-11-04-01-a.md")
+        viesti = ajuri.aja(self.repo, self.tmp, env={}, suorita=self.aikakatkaistu_lapsi)
+        self.assertIn("KESKEN", viesti)
+        tulos = self.tulos()
+        self.assertIn("- Tila: KESKEN", tulos)
+        self.assertIn("## V\u00e4limuistiinpanot", tulos)
+        self.assertIn("seuraava askel: korjaa Y", tulos)
+        self.assertIn("aikakatkaisu", tulos)
+        self.assertNotIn("EPAONNISTUI", tulos)
+
+    def test_kehote_kertoo_polun_ja_tiedosto_on_olemassa(self):
+        self.lisaa_tehtava("2026-11-04-01-a.md")
+        kehotteet = []
+
+        def f(kom, **kw):
+            kehotteet.append(kom[2])
+            return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": "x\nTodennettu kaytossa: t"}), "")
+        ajuri.aja(self.repo, self.tmp, env={}, suorita=f)
+        polku = ajuri.muistiinpanopolku(self.tmp, 1, "2026-11-04-01-a.md")
+        self.assertIn(f"Muistiinpanotiedosto: {polku}", kehotteet[0])
+        self.assertTrue(polku.is_file())
+
+    def test_kierrosraja_ja_virhe_ovat_kesken_kun_muistiinpanoja_on(self):
+        self.lisaa_tehtava("2026-11-04-01-a.md")
+
+        def f(kom, **kw):
+            ajuri.muistiinpanopolku(self.tmp, 1, "2026-11-04-01-a.md").write_text("tutkittu A ja B\n", encoding="utf-8")
+            return subprocess.CompletedProcess(kom, 1, json.dumps({"subtype": "error_max_turns", "is_error": True}), "")
+        self.assertIn("KESKEN", ajuri.aja(self.repo, self.tmp, env={}, suorita=f))
+        tulos = self.tulos()
+        self.assertIn("tutkittu A ja B", tulos)
+        self.assertIn("kierrosraja", tulos)
+
+    def test_ilman_muistiinpanoja_epaonnistuminen_pysyy_epaonnistuneena(self):
+        self.lisaa_tehtava("2026-11-04-01-a.md")
+
+        def f(kom, **kw):
+            raise subprocess.TimeoutExpired(kom, 1)
+        self.assertIn("EPAONNISTUI", ajuri.aja(self.repo, self.tmp, env={}, suorita=f))
+        self.assertNotIn("V\u00e4limuistiinpanot", self.tulos())
+
+    def test_valmis_ajo_ei_liita_muistiinpanoja(self):
+        self.lisaa_tehtava("2026-11-04-01-a.md")
+
+        def f(kom, **kw):
+            ajuri.muistiinpanopolku(self.tmp, 1, "2026-11-04-01-a.md").write_text("vanha ajatus\n", encoding="utf-8")
+            return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": "valmis\nTodennettu kaytossa: testi"}), "")
+        self.assertIn("VALMIS", ajuri.aja(self.repo, self.tmp, env={}, suorita=f))
+        self.assertNotIn("vanha ajatus", self.tulos())
+
+    def test_muistiinpanot_rajataan_20_kt_ja_loppupaa_sailyy(self):
+        p = self.tmp / "m.md"
+        p.write_text("a" * 50000 + "LOPPU\n", encoding="utf-8")
+        t = ajuri.lue_muistiinpanot(p)
+        self.assertIn("LOPPU", t)
+        self.assertLessEqual(len(t.encode("utf-8")), ajuri.MUISTIINPANOT_MAX_TAVUA + 200)
+
+    def test_tulos_pysyy_rajassa_ja_muistiinpanot_eivat_katkea(self):
+        pitka = "r" * (ajuri.TULOS_MAX_TAVUA + 5000)
+        teksti = ajuri.liita_muistiinpanot(pitka, "TARKEA LOPPU", "aikakatkaisu")
+        self.assertLessEqual(len(teksti.encode("utf-8")), ajuri.TULOS_MAX_TAVUA)
+        self.assertIn("TARKEA LOPPU", teksti)
+
+    def test_symlinkkia_ei_seurata(self):
+        salainen = self.tmp / "muu.txt"
+        salainen.write_text("ei saa nakya\n")
+        linkki = self.tmp / "linkki.md"
+        linkki.symlink_to(salainen)
+        self.assertEqual(ajuri.lue_muistiinpanot(linkki), "")
+        self.assertEqual(ajuri.lue_muistiinpanot(self.tmp / "puuttuu.md"), "")
+
+    def test_fifo_ei_jumita(self):
+        fifo = self.tmp / "fifo.md"
+        os.mkfifo(fifo)
+        self.assertEqual(ajuri.lue_muistiinpanot(fifo), "")
+
+    def test_jatkotehtava_saa_edellisen_muistiinpanot(self):
+        self.lisaa_tehtava("2026-11-04-01-a.md")
+        ajuri.aja(self.repo, self.tmp, env={}, suorita=self.aikakatkaistu_lapsi)
+        self.lisaa_tehtava("2026-11-04-02-b.md", "Jatka.\n\nJatkaa: 2026-11-04-01-a.md\n")
+        f, _ = Ajo.suorita(self, {"subtype": "success", "result": "x\nTodennettu kaytossa: t"})
+        ajuri.aja(self.repo, self.tmp, env={}, suorita=f)
+        seuraava = ajuri.lue_muistiinpanot(ajuri.muistiinpanopolku(self.tmp, 1, "2026-11-04-02-b.md"))
+        self.assertIn("seuraava askel: korjaa Y", seuraava)
+        self.assertIn("2026-11-04-01-a.md", seuraava)
+
+    def test_jatkaa_hylkaa_vaaran_nimen(self):
+        self.assertEqual(ajuri.edellinen_muistiinpano(self.repo, "Jatkaa: ../../etc/passwd.md"), (None, ""))
+        self.assertEqual(ajuri.edellinen_muistiinpano(self.repo, "ei viitetta"), (None, ""))
+
+    def test_kaistalla_2_muistiinpano_kaistan_hakemistossa(self):
+        self.assertEqual(ajuri.muistiinpanopolku(self.tmp, 2, "x.md"), self.tmp / "tyo" / "k2" / "muistiinpanot" / "x.md")

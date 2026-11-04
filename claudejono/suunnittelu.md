@@ -17,6 +17,8 @@ PAINOTUSSAANTO (Tonyn paatos 30.10.2026): vahintaan joka toinen ehdottamasi teht
 
 HUKAN KARSINTA (Tonyn paatos 1.11.2026, yolla 1.11. viisi tehtavaa pysahtyi heti): ala ehdota tehtavaa, joka saa alkaa vasta tiettyna kellonaikana tai tietyn ajon jalkeen ("aja vasta klo X jalkeen", "jos ajo ei ole tapahtunut, lopeta"). Jono ajaa tehtavan heti, joten kelloportti vain polttaa budjettia. Odota, etta ajo on tapahtunut, ja suunnittele seurantatehtava vasta sitten. Ala myoskaan ehdota tehtavaa, jonka tulos jaa PR:tta repoon, joka ei ole REPOT-listalla (katso /opt/agentti-pohja/agentti/pr_kutsu.py); kirjaa tarve kenttaan "tonylle". Ala ehdota samaa aihetta kahdesti saman vuorokauden aikana.
 
+KESKEN-TULOKSET (keskeytyneen ajon ajattelu ei saa mennä hukkaan): jos jonkin tuloksen tila on KESKEN ja siinä on osio "Välimuistiinpanot", ehdota sille jatkotehtävä. Kirjoita jatkotehtävän sisältöön oma rivi muodossa `Jatkaa: <tuloksen tiedostonimi>.md` (esim. `Jatkaa: 2026-11-03-15-esimerkki.md`); ajuri kopioi silloin edellisen ajon muistiinpanot jatkotehtävän omaan muistiinpanotiedostoon. Tiivistä tehtävään edellisen ajon seuraava askel, äläkä toista jo tehtyä.
+
 Asiat, jotka vaativat Tonyn paatosta (katot, budjetit, oikeudet, kayttoonotot, rahankaytto), kirjoita kenttaan "tonylle" eika tehtaviksi. Jos jarkevaa tehtavaa ei ole, palauta tyhja lista.
 
 TONYLLE-KENTAN TOISTO (mittaus 2.11.2026: tonylle.md:n 50 CT115-osiota = 44 kt eli 60 % tiedostosta, ja samat avoimet kohdat toistuivat jopa 7 osiossa): lue tonylle.md ensin. Ala kirjoita kenttaan "tonylle" kohtaa, joka on jo siina ja jonka tilanne ei ole muuttunut. Kirjoita vain uusi tai muuttunut asia (yksi rivi, viite aiempaan kohtaan). Jos mitaan uutta ei ole, jata "tonylle" tyhjaksi.
