@@ -4,11 +4,14 @@ Miksi fork: botilla ei ole mitaan oikeuksia Tonyn repoihin. Se kirjoittaa vain o
 joten automerge (vain saman repon haarat) ei koske siihen: Tony yhdistaa aina itse.
 
 Turva ("koodi on laki"):
-- repo vain REPOT-listasta (julkiset repot; uuden lisays vaatii koodimuutoksen), haara vain `yo/<nimi>`
+- repo mika tahansa Tonyn oma repo paitsi KIELLETYT_REPOT (Tonyn paatos 4.11.2026: kaikki omat repot; REPOT on mittareiden
+  seurantalista), haara vain `yo/<nimi>`
 - tunnus luetaan tiedostosta (oletus /etc/yojono/github-bot.token), ei koskaan argumenttina, URL:ssa tai tulosteessa;
   git saa sen vain tilapaiselta askpass-skriptilta (0700), joten tunnus ei nay prosessilistassa
 - ei force-pushia (refspec ilman `+`), ei paikallisia koukkuja (core.hooksPath=/dev/null)
-- ei suojattuja polkuja (.github/, tools/, systemd/, isanta/, rajat.py, config.py, salaisuuden nakoiset tiedostot)
+- agentti ei muuta omia suojakaiteitaan (AGENTILTA_KIELLETYT: automerge, PR-tyokalu, oikeudet, salaisuudet); muut polut,
+  myos isanta/, tools/ ja .github/, saa ehdottaa PR:lla (Tonyn paatos 4.11.2026). Rajatut (suojattu()) yhdistaa Tony,
+  muut automerge riippumattoman tarkastajan hyvaksynnalla (tools/automerge.py)
 - enintaan RAJA_PAIVASSA PR-yritysta paivassa; vain stdlib
 - forkin synkkaus (synkkaa_fork): vain kyseisen repon pohjahaara (main; ai-pr-reviewer-action: master), vain fast-forward, ei force-pushia
   (refspec ilman `+`), ei muita haaroja; jos fork-main eroaa ylavirrasta, ei tehda mitaan (fork_ei_ff); sama tunnus kuin PR:ssa, ei uusia oikeuksia
@@ -35,6 +38,8 @@ from . import github_app
 
 OMISTAJA = "tonyweckstrom1987"
 OLETUS_BOTTI = "agenttifirma-bot"
+KIELLETYT_REPOT = ("tonyweckstrom1987.github.io", "agenttifirma-docs")   # julkaisu Tonyn nimissa / Tonyn paatokset
+REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 REPOT = ("agentti-pohja", "mcp-model-router", "ai-pr-reviewer-action", "llm-stopcheck", "ideapankki", "evalkit", "kauppatiimi", "mcp-doctor", "llm-cassette")
 HAARA_RE = re.compile(r"^yo/[a-z0-9][a-z0-9._-]{0,59}$")
 BOTTI_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
@@ -45,20 +50,27 @@ RAJA_PAIVASSA = 100
 MAX_TIEDOSTOJA = 40
 OTSIKKO_MAX = 120
 KUVAUS_MAX = 4000
-SUOJATUT_ALKUOSAT = (".github/", "tools/", "systemd/", "isanta/")
-SUOJATUT_NIMET = ("rajat.py", "config.py")
+# Tonyn yhdistettavat polut (sama luokka kuin tools/automerge.py:n RAJATUT; aamupaketti ja autonomia luokittelevat taman mukaan).
+SUOJATUT_ALKUOSAT = (".github/", "yojono/")
+SUOJATUT_NIMET = ("rajat.py", "config.py", "pr_kutsu.py", "github_app.py", "claudejono-pr", "asenna-kayttaja.sh", "automerge.py",
+                  "varaus.py")
+SUOJATUT_RE = re.compile(r"(^|/)sudoers|nftables|iptables|ufw|palomuuri|firewall")
+# Naita agentti ei saa edes ehdottaa: omat suojakaiteet (agentit eivat muuta omia rajojaan; Claude kirjoittaa, Tony yhdistaa).
+AGENTILTA_KIELLETYT_RE = re.compile(
+    r"^(tools/automerge\.py|\.github/workflows/automerge\.ya?ml|agentti/(pr_kutsu|github_app)\.py|claudejono/claudejono-pr)$|(^|/)sudoers")
 # Repokohtaiset lisasuojaukset (yleisten suojattujen lisaksi). kauppatiimi (Tonyn paatos 31.10.2026, "vapaat kadet paperilla"):
 # agentti saa muuttaa strategiaa, analyysia, testeja ja paperiasetuksia, mutta oikean rahan lukot pysyvat Tonyn kasissa:
 # riskivahti, salkku, kirjanpito, asetusten valitsin (fail closed), palvelu-/ajastintiedostot, data/ ja tietokannat.
 REPON_SUOJATUT = {"kauppatiimi": re.compile(
-    r"(^|/)(riskivahti\.py|salkku\.py|kirjanpito\.py|asetukset\.py)$|\.(service|timer|db|sqlite3?)$|^data/")}
+    r"(^|/)(riskivahti\.py|salkku\.py|kirjanpito\.py|asetukset\.py|rajat\.py|config\.py)$|\.(service|timer|db|sqlite3?)$|^data/")}
 SALAINEN_RE = re.compile(r"(\.env|token|secret|api_?key|\.pem|id_ed25519|id_rsa)", re.IGNORECASE)
 # Koodiportti (virheiden ehkaisy, tehtava 2026-11-03-04): PR:n kuvauksessa pitaa olla rivi "Todennettu kaytossa: miten".
 # Tyhja arvo, viiva tai pelkka paikkamerkki ei kelpaa. Tarkistus koskee vain sita osaa, joka oikeasti paatyy PR:n runkoon.
 TODENNETTU_RE = re.compile(r"^[ \t>*_-]*Todennettu k(?:\u00e4|a)yt(?:\u00f6|o)ss(?:\u00e4|a)[ \t]*:(?:\*\*|__)?[ \t]*(.*)$",
                            re.IGNORECASE | re.MULTILINE)
 TODENNETTU_TYHJA_RE = re.compile(r"^[\s\-\u2013\u2014.:*_]*(?:tbd|todo|n/?a|ei mit(?:\u00e4|a)(?:\u00e4|a)n|ei ole)?[\s\-\u2013\u2014.:*_]*$", re.IGNORECASE)
-ALAKUULO = "\n\n---\nAgentin tekema ehdotus (yojono). Tony katselmoi ja yhdistaa; mitaan ei oteta kayttoon automaattisesti."
+ALAKUULO = ("\n\n---\nAgentin tekema ehdotus. Riippumaton tarkastaja katselmoi; automerge yhdistaa rajattujen ulkopuoliset, "
+            "rajatut (oikeudet, kulukatot, salaisuudet, raha, tyonkulut) yhdistaa Tony.")
 
 
 class PrVirhe(Exception):
@@ -77,16 +89,36 @@ class ForkVirhe(PrVirhe):
         self.koodi, self.viesti = koodi, viesti
 
 
-def suojattu(polku):
-    """Onko tiedostopolku sellainen, jota agentti ei saa muuttaa PR:ssa."""
+def _normalisoi(polku):
     p = posixpath.normpath(polku.strip()).lower()
     while p.startswith("./"):
         p = p[2:]
+    return p
+
+
+def suojattu(polku):
+    """Onko polku rajattu: Tony yhdistaa (oikeudet, kulukatot, palomuuri, salaisuudet, tyonkulut, automerge)."""
+    p = _normalisoi(polku)
     nimi = p.rsplit("/", 1)[-1]
     osat = p.split("/")
     alut = tuple(a.rstrip("/") for a in SUOJATUT_ALKUOSAT)
+    if osat[0] == "yojono" and re.match(r"^test_[a-z0-9_]+\.py$", nimi) and len(osat) == 2:
+        return False                                       # yojonon testit eivat ole kulukattoja (sama kuin automerge)
     return (p.startswith("/") or ".." in osat or osat[0] in alut or ".github" in osat
-            or nimi in SUOJATUT_NIMET or bool(SALAINEN_RE.search(nimi)))
+            or nimi in SUOJATUT_NIMET or bool(SUOJATUT_RE.search(p)) or bool(SALAINEN_RE.search(nimi)))
+
+
+def agentilta_kielletty(polku):
+    """Polku, jota agentti ei saa muuttaa PR:ssa lainkaan (omat suojakaiteet, salaisuudet, polkukikat)."""
+    p = _normalisoi(polku)
+    osat = p.split("/")
+    return (p.startswith("/") or ".." in osat or bool(AGENTILTA_KIELLETYT_RE.search(p))
+            or bool(SALAINEN_RE.search(p.rsplit("/", 1)[-1])))
+
+
+def sallittu_repo(repo):
+    """Kaikki Tonyn omat repot paitsi KIELLETYT_REPOT (fork botin tilille pitaa olla olemassa)."""
+    return isinstance(repo, str) and bool(REPO_RE.match(repo)) and repo not in KIELLETYT_REPOT and ".." not in repo
 
 
 def sallittu_polku(repo, polku):
@@ -158,8 +190,8 @@ def pohja_haara(repo):
 
 def tarkista(repo, hakemisto, haara, pohja=None, suorita=subprocess.run):
     """Paikalliset tarkistukset ilman verkkoa. Palauttaa muutetut tiedostot tai nostaa PrVirhen."""
-    if repo not in REPOT:
-        raise PrVirhe("repo ei ole sallittujen listalla: " + repo)
+    if not sallittu_repo(repo):
+        raise PrVirhe("repo ei ole sallittu: " + str(repo))
     pohja = pohja or pohja_haara(repo)
     if not isinstance(haara, str) or not HAARA_RE.match(haara):
         raise PrVirhe("haaran pitaa olla muotoa yo/<nimi> (pienet kirjaimet, numerot, . _ -)")
@@ -175,9 +207,9 @@ def tarkista(repo, hakemisto, haara, pohja=None, suorita=subprocess.run):
         raise PrVirhe("haarassa ei ole muutoksia pohjaan nahden")
     if len(tiedostot) > MAX_TIEDOSTOJA:
         raise PrVirhe("liikaa tiedostoja (%d > %d)" % (len(tiedostot), MAX_TIEDOSTOJA))
-    huonot = [t for t in tiedostot if suojattu(t)]
+    huonot = [t for t in tiedostot if agentilta_kielletty(t)]
     if huonot:
-        raise PrVirhe("suojattuja polkuja muutettu, tee kasin: " + ", ".join(huonot[:5]))
+        raise PrVirhe("agentin omia suojakaiteita tai salaisuuksia muutettu, kirjaa tarve Tonylle: " + ", ".join(huonot[:5]))
     rajatut = [t for t in tiedostot if not sallittu_polku(repo, t)]
     if rajatut:
         raise PrVirhe("repon %s suojattuja polkuja muutettu (oikean rahan lukot), tee kasin: %s" % (repo, ", ".join(rajatut[:5])))
@@ -311,8 +343,8 @@ def synkkaa_fork(repo, botti, tunnuspolku, suorita=subprocess.run, url=_github_u
     (refspec ilman `+`, ei force-pushia, vain tama yksi haara, botin tunnuksella) -> tarkistus ls-remote:lla. Jos fork-main eroaa ylavirrasta
     (ei fast-forward), ei tehda mitaan (fork_ei_ff). Palauttaa "ajan_tasalla", "kelattu" tai "edella" (fork on vain edella: ei tarvitse tehda mitaan);
     muuten ForkVirhe(koodi). Tunnus luetaan vain pushia varten, eika se nay prosessilistassa, URL:ssa tai viestissa."""
-    if repo not in REPOT:
-        raise ForkVirhe("fork_tarkistus_epaonnistui", "repo ei ole sallittujen listalla: " + repo)
+    if not sallittu_repo(repo):
+        raise ForkVirhe("fork_tarkistus_epaonnistui", "repo ei ole sallittu: " + str(repo))
     haara = pohja_haara(repo)
     ylavirta, fork = url(OMISTAJA, repo), url(botti, repo)
     luku = _luku_ymparisto()
