@@ -12,8 +12,9 @@ import os
 import shutil
 import sys
 import time
+from datetime import datetime, timezone
 
-from . import tapahtumaloki
+from . import oppimittari, tapahtumaloki
 
 TEKSTI_MAX = 1200
 KULUOSUUS_RAJA = 50.0      # %: yksi agentti syo yli puolet kuluista
@@ -22,6 +23,7 @@ HYVAKSYMIS_RAJA = 30.0     # %: hylkaysten maara kasvaa
 MIN_PAATOKSIA = 5
 LEVY_RAJA = 85.0           # % kaytetty
 MUISTI_RAJA = 15.0         # % vapaana
+VIRHELOKI_OLETUS = "/var/lib/claude-jono/docs/claude-jono/virheloki.md"   # ymparistomuuttuja VIRHELOKI ohittaa
 
 
 def _koodit(yht, alku, tulos):
@@ -107,7 +109,7 @@ def vihjeet(tiedot, res):
     return v
 
 
-def muodosta(tiedot, res):
+def muodosta(tiedot, res, oppiminen=None):
     """Raportin teksti (pelkka teksti, enintaan TEKSTI_MAX merkkia)."""
     r = ["Viikkoraportti (%d pv)" % tiedot["paivaa"]]
     if not tiedot["tapahtumia"]:
@@ -132,10 +134,23 @@ def muodosta(tiedot, res):
         osat.append("kuorma %.2f" % res["kuorma_1min"])
     if osat:
         r.append("Resurssit: " + ", ".join(osat) + ".")
+    if oppiminen:      # oppimisen mittari (agentti.oppimittari); rivi ennen vihjeita, ettei TEKSTI_MAX leikkaa sita
+        r.append(oppiminen)
     ehdotukset = vihjeet(tiedot, res)
     r.append("Vihjeet: " + (" ".join(ehdotukset) if ehdotukset else "ei huomautettavaa."))
     teksti = "\n".join(r)
     return teksti[:TEKSTI_MAX]
+
+
+def oppimisrivi(nyt=None):
+    """Oppimisen mittarin rivi virhelokista; puuttuva loki -> None (rivia ei lisata, raportti ei kaadu)."""
+    polku = os.environ.get("VIRHELOKI", VIRHELOKI_OLETUS)
+    try:
+        with open(polku, encoding="utf-8") as f:
+            teksti = f.read()
+    except OSError:
+        return None
+    return oppimittari.rivi(teksti, nyt or datetime.now(timezone.utc).date())
 
 
 def main(argv=None):
@@ -156,7 +171,7 @@ def main(argv=None):
         return 2
     yht = tapahtumaloki.avaa(polku)
     try:
-        print(muodosta(keraa(yht, paivaa), resurssit()))
+        print(muodosta(keraa(yht, paivaa), resurssit(), oppimisrivi()))
     finally:
         yht.close()
     return 0
