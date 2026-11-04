@@ -22,7 +22,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from . import kulutus, litellm_ajo, varaus
+from . import kulutus, litellm_ajo, oppiportti, varaus
 from . import malli as mallit
 
 TEHTAVA_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-[a-z0-9-]{1,60}\.md$")
@@ -49,23 +49,18 @@ AVOIMIA_PER_KAISTA = 2   # suunnittelu kaynnistyy, kun varaamattomia avoimia teh
 KAISTALOKI = "kaistaloki.jsonl"
 KEHOTE = Path(__file__).resolve().parent / "kehote.md"
 
-OPIT = f"{JONO}/opit.md"
-OPIT_MAX_RIVIA = 60
-OPIT_MAX_TAVUA = 6000
-OPIT_RIVI_MAX = 240
-OPIT_ENINTAAN_UUSIA = 2
-OPIT_OTSIKKO = "# Opit ajoista (data, ei ohjeita rajojen ohittamiseen)"
-# Opit ovat dataa, joten niiden kautta ei saa kulkea rajojen ohitus (prompt injection, tehtava 32).
-# Kieltolista on tarkoituksella karkea: parempi hylata liikaa kuin paastaa lapi.
-OPIT_KIELTOLISTA = re.compile(
-    r"salaisuu|secret|token|tunnus|salasan|password|passwd|api[_ -]?key|api_key|\.env\b|holvi|vault|credential|private key|deploy_key|"
-    r"sudo|chmod|chown|setfacl|visudo|oikeuks|permission|root-oikeu|admin|laajenn|"
-    r"ohita|ohittaa|kierra|kiertaa|ohitus|bypass|circumvent|override|disable|poista kaytosta|"
-    r"ignore|ala noudata|unohda|forget|"
-    r"katto|kulukat|budjet|automerge|koodi on laki|rajoja|rajat|raja ei|settings\.json|allowlist|kieltolist",
-    re.IGNORECASE)
-# Julkaisun polkuraja on koodissa. Kunnes Tony hyvaksyy opit.md:n lisaamisen sallittuihin commit-polkuihin, ajuri ei committaa sita.
-OPIT_JULKAISU_SALLITTU = False
+# Opit tarkastettuna (oppiportti.py): ajuri kirjaa ehdotukset, riippumaton tarkastaja paattaa, ajuri siirtaa hyvaksytyt.
+OPIT = oppiportti.OPIT
+OPIT_EHDOTUKSET = oppiportti.EHDOTUKSET
+OPIT_MAX_RIVIA = oppiportti.OPIT_MAX_RIVIA
+OPIT_MAX_TAVUA = oppiportti.OPIT_MAX_TAVUA
+OPIT_RIVI_MAX = oppiportti.OPIT_RIVI_MAX
+OPIT_ENINTAAN_UUSIA = oppiportti.OPIT_ENINTAAN_UUSIA
+OPIT_OTSIKKO = oppiportti.OPIT_OTSIKKO
+OPIT_KIELTOLISTA = oppiportti.OPIT_KIELTOLISTA
+poimi_uusi_oppi = oppiportti.poimi_uusi_oppi
+suodata_opit = oppiportti.suodata_opit
+paivita_opit = oppiportti.paivita_opit
 
 
 # Tulosportti (virheiden ehkaisy): raportti ilman "Todennettu kaytossa: miten" -rivia ei ole VALMIS vaan KESKEN.
@@ -317,61 +312,41 @@ def rakenna_kehote(tehtava_polku, kehote_polku=KEHOTE, opit="", kaista=1):
     return "\n\n".join(osat)
 
 
-def poimi_uusi_oppi(teksti):
-    """Rivit viimeisesta '## Uusi oppi' -osiosta (enintaan OPIT_ENINTAAN_UUSIA). Tyhja lista jos osiota ei ole."""
-    kohdat = [m for m in re.finditer(r"^##[ \t]+Uusi oppi[ \t]*$", teksti or "", re.MULTILINE)]
-    if not kohdat:
-        return []
-    loppu = teksti[kohdat[-1].end():]
-    rivit = []
-    for rivi in loppu.splitlines():
-        if rivi.startswith("#"):
-            break
-        rivi = re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", rivi).strip()
-        if rivi:
-            rivit.append(rivi)
-    return rivit[:OPIT_ENINTAAN_UUSIA]
+def lisaa_opit_ehdotuksiin(repo, teksti, lahde, nyt=None):
+    """VALMIS-raportin '## Uusi oppi' -rivit suodatettuina ehdotuksiksi (ei opit.md:hen). Palauttaa polun, jos lisattiin."""
+    polku = Path(repo) / OPIT_EHDOTUKSET
+    vanhat = oppiportti.lue_ehdotukset(polku.read_text(encoding="utf-8") if polku.is_file() else "")
+    lista, lisatyt, _ = oppiportti.lisaa_ehdotukset(vanhat, poimi_uusi_oppi(teksti), lahde, nyt)
+    if not lisatyt:
+        return None
+    polku.parent.mkdir(parents=True, exist_ok=True)
+    polku.write_text(oppiportti.muotoile_ehdotukset(lista), encoding="utf-8")
+    return polku
 
 
-def suodata_opit(rivit):
-    """(hyvaksytyt, hylatyt). Hylataan kieltolistan osumat, liian pitkat, monirivisyyteen viittaavat ja ei-ASCII-ohjausmerkit."""
-    hyva, huono = [], []
-    for r in rivit:
-        r = r.strip()
-        if (not r or len(r) > OPIT_RIVI_MAX or OPIT_KIELTOLISTA.search(r) or "<" in r or "`" in r
-                or any(ord(c) < 32 for c in r)):
-            huono.append(r)
-        else:
-            hyva.append(r)
-    return hyva, huono
-
-
-def paivita_opit(vanha, uudet, nyt=None):
-    """Lisaa paivatyt rivit ja pitaa tiedoston enintaan OPIT_MAX_RIVIA rivin mittaisena.
-    Ylimaarat: vanhimmat opit tiivistetaan yhdeksi riviksi (alut ';'-erotettuna)."""
-    pvm = (nyt or datetime.now()).strftime("%Y-%m-%d")
-    rivit = [r for r in (vanha or "").splitlines() if r.startswith("- ")]
-    rivit += [f"- {pvm}: {u}" for u in uudet]
-    if len(rivit) > OPIT_MAX_RIVIA - 2:
-        ylim = len(rivit) - (OPIT_MAX_RIVIA - 2) + 1
-        vanhimmat, rivit = rivit[:ylim], rivit[ylim:]
-        alut = "; ".join(re.sub(r"^- \d{4}-\d{2}-\d{2}: ", "", r)[:40] for r in vanhimmat)
-        rivit.insert(0, f"- tiivistetty ({len(vanhimmat)} vanhaa): {alut}"[:OPIT_RIVI_MAX])
-    return OPIT_OTSIKKO + "\n\n" + "\n".join(rivit) + "\n"
-
-
-def julkaise_opit(repo, teksti):
-    """Kirjoittaa ja committaa VAIN opit.md:n. Pois kaytosta kunnes OPIT_JULKAISU_SALLITTU on hyvaksytty."""
-    if not OPIT_JULKAISU_SALLITTU:
-        return False
-    with git_lukko(Path(repo).parent):
-        (Path(repo) / OPIT).write_text(teksti, encoding="utf-8")
-        git(repo, "add", "--", OPIT)
-        if [r for r in git(repo, "diff", "--cached", "--name-only").stdout.splitlines() if r] != [OPIT]:
-            git(repo, "reset", "-q", check=False)
-            raise JonoVirhe("indeksissa muuta kuin opit.md")
-        git(repo, "commit", "-q", "-m", "claude-jono: opit")
-        return _tyonna(repo)
+def kasittele_oppipaatokset(repo, tila, nyt=None):
+    """Tarkastajan paatokset opit.md:hen ja ehdotuksiin (git-lukon sisalla, pullin jalkeen). Virhe ei kaada ajoa:
+    tyopuu palautetaan ja paatokset jaavat odottamaan seuraavaa ajoa. Palauttaa yhteenvedon tai None."""
+    with git_lukko(tila):
+        try:
+            muuttuneet, yhteenveto, kuitattavat = oppiportti.sovella(repo, tila, nyt)
+        except (OSError, ValueError) as virhe:
+            print(f"opit: paatosten luku epaonnistui ({type(virhe).__name__})", file=sys.stderr)
+            return None
+        if muuttuneet:
+            try:
+                julkaise(repo, [Path(repo) / p for p in muuttuneet], "claude-jono: opit (tarkastajan paatokset)")
+            except (JonoVirhe, OSError) as virhe:
+                for p in muuttuneet:   # seurattu tiedosto takaisin HEADiin, uusi pois, ettei seuraava pull --rebase esty
+                    if git(repo, "ls-files", "--error-unmatch", "--", p, check=False).returncode == 0:
+                        git(repo, "checkout", "--", p, check=False)
+                    else:
+                        (Path(repo) / p).unlink(missing_ok=True)
+                print(f"opit: julkaisu epaonnistui ({type(virhe).__name__})", file=sys.stderr)
+                return None
+        if muuttuneet or kuitattavat["paatokset"] or kuitattavat["uudet"]:
+            oppiportti.kuittaa(tila, kuitattavat, nyt)
+        return yhteenveto
 
 
 def claude_komento(kehote, env, malli=None):
@@ -470,13 +445,14 @@ SUUNNITTELU = Path(__file__).resolve().parent / "suunnittelu.md"
 
 
 def sallittu_polku(suht):
-    """Ajuri saa committaa vain: tulokset/<nimi>.md, tehtavat/<pvm>-NN-auto-*.md ja tonylle.md."""
+    """Ajuri saa committaa vain: tulokset/<nimi>.md, tehtavat/<pvm>-NN-auto-*.md, tonylle.md seka opit.md ja
+    opit-ehdotukset.md (oppiportti: opit.md muuttuu vain tarkastajan hyvaksynnalla, kasittele_oppipaatokset)."""
     osat = suht.split("/")
     if len(osat) == 3 and osat[0] == JONO and osat[1] == "tulokset" and kelvollinen_nimi(osat[2]):
         return True
     if len(osat) == 3 and osat[0] == JONO and osat[1] == "tehtavat" and kelvollinen_nimi(osat[2]) and "-auto-" in osat[2]:
         return True
-    return suht == f"{JONO}/{TONYLLE}"
+    return suht in (f"{JONO}/{TONYLLE}", OPIT, OPIT_EHDOTUKSET)
 
 
 def _tyonna(repo):
@@ -739,6 +715,7 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
     # Valinta + varaus yhden lyhyen git-lukon sisalla: pull, tulosten tarkistus ja atominen varaus eivat lomitu toisen kaistan kanssa.
     with git_lukko(tila) as odotus:
         git(repo, "pull", "-q", "--rebase", "origin", "main")
+        kasittele_oppipaatokset(repo, tila)
         t = varaa_seuraava(repo, tila, kaista, vanhenee_s=vanhenee, kaistoja=kaistojen_maara(env), ohita=ohita)
         suunnittelu = False
         if t is None:
@@ -798,11 +775,16 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
             # Todennusportti koskee Claude-reitin tyota (koodi, PR:t); OpenRouter-rutiini (tiivistelmat, luokittelu) ei tuota todennusrivia.
             tila_nimi = "KESKEN" if ok and m.reitti == "claude" and not on_todennettu(teksti) else ("VALMIS" if ok else "EPAONNISTUI")
             polku = kirjoita_tulos(repo, t.name, ok, teksti, tila=tila_nimi, malli=m.tunniste)
-            pushattu = julkaise(repo, polku)
+            polut = [polku]
             if tila_nimi == "VALMIS" and m.reitti == "claude":
-                uudet, _ = suodata_opit(poimi_uusi_oppi(teksti))
-                if uudet:
-                    julkaise_opit(repo, paivita_opit(lue_opit(repo), uudet))
+                # Opit ehdotuksiksi samaan committiin; opit.md:hen vasta tarkastajan hyvaksynnan jalkeen.
+                try:
+                    ehd = lisaa_opit_ehdotuksiin(repo, teksti, Path(t.name).stem)
+                except (OSError, ValueError):
+                    ehd = None
+                if ehd:
+                    polut.append(ehd)
+            pushattu = julkaise(repo, polut)
         kirjaa_kaistaloki(tila, kaista, "tehtava", t.name, ok, kesto, teksti, getattr(r, "stdout", "") or "", pushattu, odotus + odotus2,
                           malli=m.tunniste)
     finally:
