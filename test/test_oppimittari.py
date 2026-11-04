@@ -7,7 +7,7 @@ from unittest import mock
 from agentti import oppimittari as om
 from agentti import viikkoraportti as vr
 
-NYT = date(2030, 6, 15)     # kiinteä "nyt" annetaan parametrina: mittari ei lue kelloa
+NYT = date(2030, 6, 15)     # kiintea "nyt" annetaan parametrina: mittari ei lue kelloa
 
 
 def rivi(ika_pv, syy, tarkastaja=False, tunniste=""):
@@ -21,7 +21,7 @@ def loki(*rivit):
 
 class JasennysTesti(unittest.TestCase):
     def test_syy_ja_luokka(self):
-        mm = om.jasenna(loki(rivi(1, "testi käytti oikeaa kelloa")))
+        mm = om.jasenna(loki(rivi(1, "testi k\u00e4ytti oikeaa kelloa")))
         self.assertEqual(mm[0]["luokka"], "aikapommi")
         self.assertEqual(mm[0]["paiva"], NYT - timedelta(days=1))
 
@@ -33,7 +33,7 @@ class JasennysTesti(unittest.TestCase):
         self.assertIsNone(om.jasenna(loki(rivi(1, "aivan uusi asia")))[0]["luokka"])
 
     def test_otsikkomerkinta_miksi_rivi(self):
-        t = "## 14.6.2030: git stash\n- Mitä: x\n- Miksi: yksi työpuu, kaksi samanaikaista työtä\n- Sääntö: y\n"
+        t = "## 14.6.2030: git stash\n- Mita: x\n- Miksi: yksi tyopuu, kaksi samanaikaista tyota\n- Saanto: y\n"
         mm = om.jasenna(t)
         self.assertEqual(mm[0]["paiva"], date(2030, 6, 14))
         self.assertEqual(mm[0]["luokka"], "ymparisto")
@@ -44,7 +44,7 @@ class JasennysTesti(unittest.TestCase):
 
 class LaskentaTesti(unittest.TestCase):
     def test_toisto_vaatii_aiemman_samaluokkaisen(self):
-        teksti = loki(rivi(20, "kiinteä päivä testissä"), rivi(2, "aikapommi taas"), rivi(1, "ajettiin vain käsin"))
+        teksti = loki(rivi(20, "kiinte\u00e4 p\u00e4iv\u00e4 testiss\u00e4"), rivi(2, "aikapommi taas"), rivi(1, "ajettiin vain k\u00e4sin"))
         v = om.mittari(teksti, NYT)
         self.assertEqual((v["nyt"]["n"], v["nyt"]["toistoja"]), (2, 1))
         self.assertEqual(v["nyt"]["luokat"], {"aikapommi": 1})
@@ -54,7 +54,7 @@ class LaskentaTesti(unittest.TestCase):
         self.assertEqual(v["nyt"]["toistoja"], 0)
 
     def test_edellinen_viikko_ja_suunta_paremmin(self):
-        teksti = loki(rivi(30, "aikapommi"), rivi(12, "aikapommi"), rivi(11, "aikapommi"), rivi(3, "ajettiin vain käsin"), rivi(2, "uusi"))
+        teksti = loki(rivi(30, "aikapommi"), rivi(12, "aikapommi"), rivi(11, "aikapommi"), rivi(3, "ajettiin vain k\u00e4sin"), rivi(2, "uusi"))
         v = om.mittari(teksti, NYT)
         self.assertEqual((v["ed"]["n"], v["ed"]["toistoja"]), (2, 2))
         self.assertEqual((v["nyt"]["n"], v["nyt"]["toistoja"]), (2, 0))
@@ -69,7 +69,7 @@ class LaskentaTesti(unittest.TestCase):
         self.assertIn("data ei riit", om.suunta({"n": 3, "toistoja": 1}, {"n": 0, "toistoja": 0}))
 
     def test_ikkunan_rajat(self):
-        # täsmälleen 7 pv sitten kuuluu edelliseen viikkoon (alku, loppu], tänään nykyiseen
+        # tasmalleen 7 pv sitten kuuluu edelliseen viikkoon (alku, loppu], tanaan nykyiseen
         v = om.mittari(loki(rivi(7, "uusi"), rivi(0, "uusi2")), NYT)
         self.assertEqual((v["ed"]["n"], v["nyt"]["n"]), (1, 1))
 
@@ -107,7 +107,7 @@ class ViikkoraporttiLiitosTesti(unittest.TestCase):
         self.assertIn("Oppiminen: testirivi.", t)
         self.assertLess(t.index("Oppiminen"), t.index("Vihjeet"))
 
-    def test_ilman_riviä_ennallaan(self):
+    def test_ilman_rivi\u00e4_ennallaan(self):
         self.assertNotIn("Oppiminen", vr.muodosta(self.TIEDOT, {}))
 
     def test_oppimisrivi_lukee_ympariston_polun(self):
