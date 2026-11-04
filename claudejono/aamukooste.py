@@ -5,7 +5,7 @@ Lahteet (kaikki vain luku):
   - avoimet PR:t (GitHubin julkinen API, agentti.aamupaketti.keraa; ei tunnuksia)
   - yojonon tila (tila.json, jono.json: kulut ja katot vain luettuna) ja systemd:n failed-yksikot
 
-Kaytto: python3 -m claudejono.aamukooste [--laheta] [--ilta] [--nyt ISO-AIKA] [--repo POLKU] [--yojono POLKU]
+Kaytto: python3 -m claudejono.aamukooste [--laheta] [--nyt ISO-AIKA] [--repo POLKU] [--yojono POLKU]
 Ilman --laheta vain tulostaa (kuiva-ajo). Lahetys kayttaa YOJONO_TELEGRAM_TOKEN ja YOJONO_TELEGRAM_CHAT -ymparistoa.
 Teksti kirjoitetaan Tonylle suomeksi; koodi on ASCII (\\u-merkinnat)."""
 import argparse
@@ -177,6 +177,27 @@ def _lyhenna(teksti, raja=RIVI_MAX):
     return teksti if len(teksti) <= raja else teksti[:raja - 3].rstrip() + "..."
 
 
+def halytysrivi(t):
+    """H\u00e4lytysrivi (sama tavallisessa koosteessa ja koetilassa); tunnistetaan funktiosta, ei rivin j\u00e4rjestysnumerosta."""
+    yj = t["yojono"]
+    epaonnistui = sum(1 for r in t["tulokset"] if r["tila"] == "EPAONNISTUI")
+    halytykset = []
+    if t["yksikot"] is None:
+        halytykset.append("systemd-tilaa ei saatu")
+    elif t["yksikot"]:
+        halytykset.append("failed: " + ", ".join(t["yksikot"][:3]) + (f" (+{len(t['yksikot']) - 3})" if len(t["yksikot"]) > 3 else ""))
+    if t.get("vaiteportti"):
+        halytykset.append("v\u00e4iteportti: " + ", ".join(t["vaiteportti"][:3]) + " valmis ilman .tarkastus.md-tiedostoa")
+    if epaonnistui:
+        halytykset.append(f"{epaonnistui} jonoteht\u00e4v\u00e4\u00e4 ep\u00e4onnistui")
+    if yj and yj["epaonnistui"]:
+        halytykset.append("y\u00f6jono ep\u00e4onnistui: " + ", ".join(yj["epaonnistui"][:3]))
+    if yj and isinstance(yj["kuukausikatto"], (int, float)) and yj["kuukausikatto"] > 0 \
+            and yj["kuukausikulu"] >= BUDJETTI_HALYTYS * yj["kuukausikatto"]:
+        halytykset.append(f"kuukausibudjetista k\u00e4ytetty {round(100 * yj['kuukausikulu'] / yj['kuukausikatto'])} %")
+    return "H\u00e4lytykset: " + ("; ".join(halytykset) if halytykset else "ei") + "."
+
+
 def rivit(t):
     """Viisi rivi\u00e4 (tehty, tarvitaan, opittu, h\u00e4lytykset, kulut) tiedoista."""
     nimet = {"VALMIS": 0, "KESKEN": 0, "EPAONNISTUI": 0, "HYLATTY": 0}
@@ -212,21 +233,7 @@ def rivit(t):
 
     opittu = "Opittu: " + ("; ".join(o.rstrip(".") for o in t["opit"][:2]) if t["opit"] else "ei uusia oppeja viime vuorokaudessa") + "."
 
-    halytykset = []
-    if t["yksikot"] is None:
-        halytykset.append("systemd-tilaa ei saatu")
-    elif t["yksikot"]:
-        halytykset.append("failed: " + ", ".join(t["yksikot"][:3]) + (f" (+{len(t['yksikot']) - 3})" if len(t["yksikot"]) > 3 else ""))
-    if t.get("vaiteportti"):
-        halytykset.append("v\u00e4iteportti: " + ", ".join(t["vaiteportti"][:3]) + " valmis ilman .tarkastus.md-tiedostoa")
-    if nimet["EPAONNISTUI"]:
-        halytykset.append(f"{nimet['EPAONNISTUI']} jonoteht\u00e4v\u00e4\u00e4 ep\u00e4onnistui")
-    if yj and yj["epaonnistui"]:
-        halytykset.append("y\u00f6jono ep\u00e4onnistui: " + ", ".join(yj["epaonnistui"][:3]))
-    if yj and isinstance(yj["kuukausikatto"], (int, float)) and yj["kuukausikatto"] > 0 \
-            and yj["kuukausikulu"] >= BUDJETTI_HALYTYS * yj["kuukausikatto"]:
-        halytykset.append(f"kuukausibudjetista k\u00e4ytetty {round(100 * yj['kuukausikulu'] / yj['kuukausikatto'])} %")
-    hal = "H\u00e4lytykset: " + ("; ".join(halytykset) if halytykset else "ei") + "."
+    hal = halytysrivi(t)
 
     if yj:
         paiva = f"{yj['kulu_tanaan']:.2f}" + (f" / {yj['paivakatto']:.2f}" if isinstance(yj["paivakatto"], (int, float)) else "")
@@ -261,10 +268,8 @@ def koe_jaljella(env, nyt):
     return (koe, n) if 1 <= n <= KOE_IKKUNA_PV else None
 
 
-def _koe_otsikko(koe, n, ilta=False):
+def _koe_otsikko(koe, n):
     paivia = "1 p\u00e4iv\u00e4" if n == 1 else f"{n} p\u00e4iv\u00e4\u00e4"
-    if ilta:
-        return f"Iltaviesti, matematiikan koe {_suomi_pvm(koe)}: {paivia}. Kokeen j\u00e4lkeen -asiat."
     return f"Matematiikan koe {_suomi_pvm(koe)}: {paivia}. Aamu kokeelle."
 
 
@@ -275,41 +280,36 @@ def kiireelliset(t):
 
 def koe_muotoile(t, koe, n):
     """Koeaamun viesti: vain koe-otsikko, halytykset ja kiireelliset paatokset. Halytysrivi on sama kuin tavallisessa koosteessa."""
-    rv = [_koe_otsikko(koe, n), rivit(t)[3]]
+    rv = [_koe_otsikko(koe, n), _lyhenna(halytysrivi(t))]
     kiire = kiireelliset(t)
     if kiire:
         rv.append(_lyhenna("Kiireelliset p\u00e4\u00e4t\u00f6kset: " + "; ".join(kiire[:3]) + "."))
-    rv.append("Muu infra (luonnokset, julkaisut, PR:t): iltaviestiss\u00e4 klo 18, kokeen j\u00e4lkeen.")
+    rv.append("Muu infra (luonnokset, julkaisut, PR:t): viikonlopun listassa, merkint\u00e4 \"kokeen j\u00e4lkeen\".")
     ulos = "\n".join(rv)
     if kiire:
         ulos += f"\n\nLinkit:\ntonylle.md: {DOCS_URL}/tonylle.md"
     return ulos
 
 
-def muotoile(t, env=None, ilta=False):
-    """Normaali kooste; koetilassa (ks. koe_jaljella) aamulla vain halytykset ja kiireelliset, illalla (ilta=True) kaikki muu.
-    Ilta ilman koetilaa -> None (iltaviestia ei lahteta)."""
+def muotoile(t, env=None):
+    """Normaali kooste; koetilassa (ks. koe_jaljella) vain koe-otsikko, halytykset ja kiireelliset."""
     koe = koe_jaljella(os.environ if env is None else env, t["nyt"])
-    normaali = "\n".join(rivit(t)) + "\n\nLinkit:\n" + "\n".join(linkit(t))
-    if ilta:
-        return None if koe is None else _koe_otsikko(*koe, ilta=True) + "\n" + normaali
-    return normaali if koe is None else koe_muotoile(t, *koe)
+    if koe is not None:
+        return koe_muotoile(t, *koe)
+    return "\n".join(rivit(t)) + "\n\nLinkit:\n" + "\n".join(linkit(t))
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(description="Aamukooste Telegramiin (kuiva-ajo ilman --laheta)")
     p.add_argument("--laheta", action="store_true")
     p.add_argument("--nyt", help="ISO-aika (testaus)")
-    p.add_argument("--ilta", action="store_true", help="koetilan iltaviesti (klo 18): kooste kokonaan; ilman koetilaa ei tee mitaan")
     p.add_argument("--repo", default=os.environ.get("CLAUDEJONO_REPO", OLETUS_REPO))
     p.add_argument("--yojono", default=os.environ.get("YOJONO_PERUS", OLETUS_YOJONO))
     a = p.parse_args(argv)
     nyt = datetime.fromisoformat(a.nyt) if a.nyt else datetime.now(TZ)
     if nyt.tzinfo is None:
         nyt = nyt.replace(tzinfo=TZ)
-    teksti = muotoile(keraa(a.repo, a.yojono, nyt), ilta=a.ilta)
-    if teksti is None:   # --ilta koetilan ulkopuolella
-        return 0
+    teksti = muotoile(keraa(a.repo, a.yojono, nyt))
     print(teksti)
     if a.laheta:
         from yojono.ajuri import laheta_telegram
