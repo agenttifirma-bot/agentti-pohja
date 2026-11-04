@@ -44,15 +44,22 @@ class Feikki:
     def __init__(self, prt, tiedostot, kommentit, diff=b"diff --git a/x b/x\n+uusi\n"):
         self.prt, self.tiedostot, self.kommentit, self.diff = prt, tiedostot, kommentit, diff
         self.postit, self.otsakkeet = [], []
+        self.haarat, self.vertailu, self.haaran_prt = [], {}, {}
 
     def __call__(self, req, timeout=None):
         url = req.full_url.replace(tk.API, "")
         self.otsakkeet.append(dict(req.header_items()))
         if req.get_method() == "POST":
             self.postit.append((url, json.loads(req.data.decode())))
-            return Vastaus(b"{}")
+            return Vastaus(json.dumps({"number": 77}).encode() if url.endswith("/pulls") else b"{}")
         if req.get_header("Accept") == "application/vnd.github.diff":
             return Vastaus(self.diff)
+        if "/branches" in url:
+            return Vastaus(json.dumps(self.haarat if "page=1" in url else []).encode())
+        if "/compare/" in url:
+            return Vastaus(json.dumps(self.vertailu.get(url.split("...")[-1], {"ahead_by": 0})).encode())
+        if "head=" in url:
+            return Vastaus(json.dumps(self.haaran_prt.get(url.split("%3A")[-1].split(":")[-1], [])).encode())
         if "/files" in url:
             return Vastaus(json.dumps(self.tiedostot if "page=1" in url else []).encode())
         if "/comments" in url:
@@ -207,7 +214,8 @@ class KierrosTesti(unittest.TestCase):
         def avaa(req, timeout=None):
             raise urllib.error.HTTPError(req.full_url, 502, "x", {}, None)
         tulos = tk.kierros(self.env, "t", suorita=self.suorita(), avaa=avaa)
-        self.assertEqual(tulos, [{"repo": "agentti-pohja", "tulos": "virhe", "syy": "GitHub HTTP 502: /repos/tonyweckstrom1987/agentti-pohja/pulls?state=open&per_page=50"}])
+        self.assertEqual(tulos[-1], {"repo": "agentti-pohja", "tulos": "virhe", "syy": "GitHub HTTP 502: /repos/tonyweckstrom1987/agentti-pohja/pulls?state=open&per_page=50"})
+        self.assertEqual(len(tulos), 2)   # PR-avaajan haaralistaus ja tarkastajan PR-listaus epaonnistuvat kumpikin erikseen
 
     def test_tunnus_vain_otsakkeessa(self):
         api = Feikki([pr_olio()], [tiedosto()], [])
@@ -220,6 +228,48 @@ class KierrosTesti(unittest.TestCase):
         self.assertEqual(tk.seurattavat_repot({}), [r for r in tk.pr_kutsu.REPOT])
 
 
+class PrAvaajaTesti(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.TemporaryDirectory()
+        self.env = dict(ENV, CLAUDEJONO_TILA=self.d.name)
+
+    def tearDown(self):
+        self.d.cleanup()
+
+    def api(self):
+        api = Feikki([], [], [])
+        api.haarat = [{"name": "korjaus/uusi"}, {"name": "korjaus/vanha"}, {"name": "korjaus/yhdistetty"}, {"name": "main"},
+                      {"name": "yo/x"}, {"name": "korjaus/Iso"}]
+        api.vertailu = {"korjaus%2Fuusi": {"ahead_by": 2, "commits": [{"commit": {"message": "eka"}},
+                                                                     {"commit": {"message": "Otsikko <!-- x -->\n\nRunko"}}]},
+                        "korjaus%2Fvanha": {"ahead_by": 1, "commits": [{"commit": {"message": "v"}}]},
+                        "korjaus%2Fyhdistetty": {"ahead_by": 0}}
+        api.haaran_prt = {"korjaus%2Fvanha": [{"number": 5, "state": "closed"}]}
+        return api
+
+    def test_avaa_vain_uuden_korjaushaaran(self):
+        api = self.api()
+        tulos = tk.kierros(self.env, "t", suorita=lambda *a, **k: None, avaa=api)
+        self.assertEqual(tulos, [{"repo": "agentti-pohja", "haara": "korjaus/uusi", "tulos": "avattu", "pr": 77}])
+        url, data = api.postit[0]
+        self.assertEqual(url, "/repos/tonyweckstrom1987/agentti-pohja/pulls")
+        self.assertEqual((data["head"], data["base"], data["title"]), ("korjaus/uusi", "main", "Otsikko  x"))
+        self.assertIn("Runko", data["body"])
+        self.assertNotIn("<!--", data["body"] + data["title"])
+        self.assertEqual(json.loads((Path(self.d.name) / tk.TILA_TIEDOSTO).read_text())["avattu"], 1)
+
+    def test_paivaraja_kuiva_ja_pois_paalta(self):
+        (Path(self.d.name) / tk.TILA_TIEDOSTO).write_text(json.dumps({"pvm": datetime.now().astimezone().date().isoformat(),
+                                                                        "maara": 0, "avattu": tk.AVAA_MAX_PAIVASSA, "per_pr": {}}))
+        api = self.api()
+        self.assertEqual(tk.kierros(self.env, "t", avaa=api)[0]["tulos"], "ohitettu")
+        api = self.api()
+        self.assertEqual(tk.kierros(dict(self.env, CLAUDEJONO_TILA=self.d.name + "/x"), "t", avaa=api, kuiva=True)[0]["tulos"], "avattaisiin")
+        self.assertEqual(api.postit, [])
+        api = self.api()
+        self.assertEqual(tk.kierros(dict(self.env, CLAUDEJONO_PR_AVAAJA="0"), "t", avaa=api), [])
+
+
 class TilaTesti(unittest.TestCase):
     def test_paivan_vaihto_nollaa_maaran_mutta_ei_pr_rajoja(self):
         with tempfile.TemporaryDirectory() as d:
@@ -228,7 +278,7 @@ class TilaTesti(unittest.TestCase):
             tila = tk.lue_tila(p, "2026-11-04")
             self.assertEqual((tila["maara"], tila["per_pr"]), (0, {"a#1": 2}))
             p.write_text("roskaa")
-            self.assertEqual(tk.lue_tila(p, "2026-11-04"), {"pvm": "2026-11-04", "maara": 0, "per_pr": {}})
+            self.assertEqual(tk.lue_tila(p, "2026-11-04"), {"pvm": "2026-11-04", "maara": 0, "avattu": 0, "per_pr": {}})
 
 
 if __name__ == "__main__":

@@ -25,6 +25,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -114,7 +115,7 @@ def lue_tila(polku, pvm):
     if not isinstance(d, dict):
         d = {}
     if d.get("pvm") != pvm:
-        d = {"pvm": pvm, "maara": 0, "per_pr": d.get("per_pr") if isinstance(d.get("per_pr"), dict) else {}}
+        d = {"pvm": pvm, "maara": 0, "avattu": 0, "per_pr": d.get("per_pr") if isinstance(d.get("per_pr"), dict) else {}}
     d.setdefault("maara", 0)
     d.setdefault("per_pr", {})
     return d
@@ -209,6 +210,55 @@ def tarkasta_pr(repo, nro, d, tunnus, env, suorita=subprocess.run, avaa=urllib.r
     return paatos, perustelu, loydokset, luvut, malli
 
 
+# PR-avaaja (Tonyn paatos 4.11.2026): pilvi-Claude ei voi avata PR:ia, joten isanta avaa botin tunnuksella PR:n jokaiselle
+# Tonyn repon haaralle korjaus/<nimi>, jolla ei ole viela PR:aa (ei myoskaan suljettua). Naihin haaroihin voivat pushata vain
+# Tony ja pilvi-Claude (agentit pushaavat vain botin forkkeihin). Sen jalkeen tarkastaja ja automerge hoitavat kuten muutkin.
+AVAA_HAARA_RE = re.compile(r"^korjaus/[a-z0-9][a-z0-9._-]{0,59}$")
+AVAA_MAX_PAIVASSA = 10
+AVAA_RUNKO_MAX = 4000
+
+
+def avaa_puuttuvat(env, tunnus, tila, avaa=urllib.request.urlopen, kuiva=False):
+    """Avaa PR:t korjaus/*-haaroille, joilla ei ole PR:aa. Palauttaa lokirivit. tila: lue_tila()-sanakirja (paivaraja)."""
+    tehty = []
+    for repo in seurattavat_repot(env):
+        try:
+            haarat = hae_sivutettu("%s/repos/%s/%s/branches" % (API, OMISTAJA, repo), tunnus, avaa=avaa)
+        except TarkastajaVirhe as e:
+            tehty.append({"repo": repo, "tulos": "virhe", "syy": str(e)})
+            continue
+        for h in haarat:
+            nimi = (h or {}).get("name") or ""
+            if not AVAA_HAARA_RE.match(nimi):
+                continue
+            try:
+                olemassa = hae_json("%s/repos/%s/%s/pulls?state=all&head=%s:%s" % (API, OMISTAJA, repo, OMISTAJA, urllib.parse.quote(nimi, safe="")),
+                                    tunnus, avaa=avaa)
+                if olemassa:
+                    continue                                           # PR auki, yhdistetty tai Tony sulki sen: ei avata uudelleen
+                pohja = pr_kutsu.pohja_haara(repo)
+                ero = hae_json("%s/repos/%s/%s/compare/%s...%s" % (API, OMISTAJA, repo, pohja, urllib.parse.quote(nimi, safe="")),
+                               tunnus, avaa=avaa)
+                if int(ero.get("ahead_by") or 0) <= 0:
+                    continue
+                if tila.get("avattu", 0) >= AVAA_MAX_PAIVASSA:
+                    tehty.append({"repo": repo, "haara": nimi, "tulos": "ohitettu", "syy": "avausten paivaraja %d" % AVAA_MAX_PAIVASSA})
+                    continue
+                viesti = ((ero.get("commits") or [{}])[-1].get("commit") or {}).get("message") or nimi
+                otsikko, _, runko = viesti.partition("\n")
+                if kuiva:
+                    tehty.append({"repo": repo, "haara": nimi, "tulos": "avattaisiin"})
+                    continue
+                vastaus = json.loads(_pyynto("%s/repos/%s/%s/pulls" % (API, OMISTAJA, repo), tunnus, avaa=avaa, data={
+                    "title": _siivoa(otsikko, 120) or nimi, "head": nimi, "base": pohja,
+                    "body": _siivoa(runko, AVAA_RUNKO_MAX) + "\n\n---\nAvattu automaattisesti (pilvi-Clauden haara). Tarkastaja ja automerge hoitavat; rajatut yhdistaa Tony."}).decode("utf-8") or "{}")
+                tila["avattu"] = tila.get("avattu", 0) + 1
+                tehty.append({"repo": repo, "haara": nimi, "tulos": "avattu", "pr": vastaus.get("number")})
+            except (TarkastajaVirhe, ValueError, AttributeError, TypeError) as e:
+                tehty.append({"repo": repo, "haara": nimi, "tulos": "virhe", "syy": str(e)[:200]})
+    return tehty
+
+
 def kierros(env, tunnus, nyt=None, suorita=subprocess.run, avaa=urllib.request.urlopen, kuiva=False):
     """Yksi kierros kaikkiin seurattaviin repoihin. Palauttaa lokirivit (dict)."""
     nyt = nyt or datetime.now().astimezone()
@@ -217,6 +267,8 @@ def kierros(env, tunnus, nyt=None, suorita=subprocess.run, avaa=urllib.request.u
     tila = lue_tila(tilapolku, nyt.date().isoformat())
     max_pv = int(env.get("CLAUDEJONO_TARKASTUS_MAX_PAIVA", MAX_PAIVASSA))
     tehty, auki = [], set()
+    if env.get("CLAUDEJONO_PR_AVAAJA", "1") == "1":
+        tehty.extend(avaa_puuttuvat(env, tunnus, tila, avaa=avaa, kuiva=kuiva))
     for repo in seurattavat_repot(env):
         try:
             prt = hae_json("%s/repos/%s/%s/pulls?state=open&per_page=50" % (API, OMISTAJA, repo), tunnus, avaa=avaa)
