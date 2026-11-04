@@ -23,6 +23,7 @@ TOISTUVA_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-\d{2}-auto-([a-z0-9-]+)\.md$")
 PISTEET_RE = re.compile(
     r"^[ \t]*Pisteet:[ \t]*hy.ty[ \t]*([1-5])\b.*?varmuus[ \t]*([1-5])\b.*?vaiva[ \t]*(\d+(?:[.,]\d+)?)[ \t]*h",
     re.IGNORECASE | re.MULTILINE)
+MAX_VAIVA_H = 2
 SUUNTA_RE = re.compile(r"^[ \t]*Suunta:[ \t]*(jatkoa|uusi)\b", re.IGNORECASE | re.MULTILINE)
 
 # Karkea toimintosanalista: parempi ohjata Tonylle liikaa kuin paastaa lapi, mutta ei niin tiukka, etta jono tyhjenee.
@@ -82,6 +83,9 @@ def tarkista_tehtava(sisalto):
     # Muototarkistus (Pisteet ym.) on ajurin tehtavaportissa (PORTTI, #170); tama tarkistin katsoo vain sisallon.
     # Puuttuva Suunta-rivi tulkitaan jatkoksi.
     sisalto = sisalto or ""
+    pm = PISTEET_RE.search(sisalto)
+    if pm and float(pm.group(3).replace(",", ".")) > MAX_VAIVA_H:
+        return "hylatty", "vaiva yli %d h: pilko osiin" % MAX_VAIVA_H     # Tonyn paatos 4.11.2026: suunnittelija pilkkoo yli 2 h
     m = SUUNTA_RE.search(sisalto)
     if m and m.group(1).lower() == "uusi":
         return "sunnuntai", "uusi-suunta"
