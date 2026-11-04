@@ -166,7 +166,7 @@ def rakenna(repo, nyt, paatokset_hak=None):
         rivit += [f"- Tavoite {n}: {t[:200]}" for n, t in sorted(aukot.items())]
     if paatokset_hak:
         from . import paatokset
-        rivit += ["", paatokset.mittaririvi(paatokset_hak)]
+        rivit += ["", paatokset.mittaririvi(paatokset_hak), paatokset.osuvuusrivi(paatokset_hak, nyt)]
     rivit += ["", "Pisteytetyn listan j\u00e4lkeen: valitaan ensin suurin pistem\u00e4\u00e4r\u00e4, mutta v\u00e4litavoitteen alle kuulumaton ty\u00f6 j\u00e4\u00e4 pois (kompassi: ei uusia suuntia ilman, ett\u00e4 vanha tuottaa)."]
     return nimi, "\n".join(rivit) + "\n", lista
 

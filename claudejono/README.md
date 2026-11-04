@@ -115,6 +115,8 @@ Kuiva-ajo (ei lähetä): `cd /opt/agentti-pohja && python3 -B -m claudejono.aamu
 
 - Ajo: `python3 -m claudejono.paatokset --ajo` (ilman lippuja vain laskee avoimet kohdat; mallikutsuja enintään 8 / ajo, loput seuraavalla ajolla). Malli: `CLAUDEJONO_PAATOS_MALLI` (esim. `opus`), komento: `CLAUDEJONO_CLAUDE`.
 - Tiedostot: `/var/lib/claude-jono/paatokset/` (`CLAUDEJONO_PAATOKSET`): `paatokset.md` (rivit vain lisätään: PAATOS, VASTAUS, PERUTTU), `lista.json`, `kasitellyt.jsonl`.
+- **Varjotila (oletus, Tonyn päätös 4.11.2026):** asetus `CLAUDEJONO_DIGITONY_TILA` on oletuksena `varjo`. Digi-Tony vain ehdottaa: jokainen kohta menee päivälistalle muodossa "Digi-Tony ehdottaa: X (varmuus n/5, perustelu)", eikä `paatokset.md`:hen kirjoiteta mitään. Tonyn vastaus (`--vastaa 2B`) kirjataan tiedostoon `digitony-vertailu.jsonl` (ehdotus, Tonyn valinta, osuiko; ehdotus on aina vaihtoehto A). Viikkokoosteeseen tulee osuvuusprosentti. Tila `paattaa` (vanha toiminta: varmuus ≥ 4 → `paatokset.md`) on koodissa, mutta sen käyttöönotto on Tonyn päätös. Tuntematon arvo tulkitaan varjoksi.
+- **Esimerkkiaineisto:** `claude-jono/pohdinta-vastaukset.md`:n osio `## P03 Digi-Tony` ja sen jälkeiset osiot (enintään 6000 merkkiä) menevät mallin kehotteeseen esimerkkeinä, datana eikä ohjeina.
 - Peruminen: `python3 -m claudejono.paatokset --peru <8 merkin tunniste>`. Vastaus listaan: `--vastaa 2B`. Telegram-vastausten automaattinen luku on erillinen jatkotehtävä.
 - Mittari: `--mittari` (perutut / tehdyt). Sama rivi tulee viikkoehdotukseen.
 - Ajastusta ei ole asennettu: aja käsin tai lisää ajastin vasta, kun Tony on hyväksynyt sen.

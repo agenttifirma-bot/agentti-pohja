@@ -128,6 +128,7 @@ class Ajo(Pohja):
             if isinstance(v, Exception):
                 raise v
             return v
+        kw.setdefault("tila", "paattaa")    # vanhat testit koskevat paattaa-tilaa; oletus (varjo) testataan luokassa Varjotila
         y = p.aja(self.repo, self.hak, NYT, kysy=kysy, **kw)
         return y, kysytyt
 
@@ -179,7 +180,7 @@ class Ajo(Pohja):
         self.aja([vastaus(varmuus=2)] * 7)
         lista = p.lue_lista(self.hak)
         self.assertEqual((len(lista["kohdat"]), len(lista["jono"])), (5, 2))
-        self.assertEqual(p.lista_tekstina(self.hak).count("\n"), 5)    # otsikko + 5 kohtaa
+        self.assertEqual(p.lista_tekstina(self.hak).count("Digi-Tony ehdottaa") + p.lista_tekstina(self.hak).count("rajattu aihe"), 5)    # 5 kohtaa
 
 
 class Vastaus(Pohja):
@@ -194,16 +195,16 @@ class Vastaus(Pohja):
         self.assertIn("A) J\u00e4t\u00e4; B) Nime\u00e4; C) Lykk\u00e4\u00e4", t)
 
     def test_vastaus_kirjataan_ja_poistuu_listalta(self):
-        tunniste, valittu = p.kirjaa_vastaus(self.hak, "2b", NYT)
+        tunniste, valittu = p.kirjaa_vastaus(self.hak, "2b", NYT, tila="paattaa")
         self.assertEqual(valittu, "Nime\u00e4")
         self.assertEqual(p.lue_paatokset(self.hak)[-1]["tyyppi"], "VASTAUS")
         self.assertNotIn(tunniste, [k["id"] for k in p.lue_lista(self.hak)["kohdat"] if k["id"] not in {r["id"] for r in p.lue_paatokset(self.hak)}])
-        self.assertEqual(p.lista_tekstina(self.hak).count("\n"), 1)
+        self.assertEqual(p.lista_tekstina(self.hak).count("\n"), 2)   # otsikko + 1 kohta + sen ehdotusrivi
 
     def test_virheelliset_vastaukset(self):
         for v in ("", "2", "9A", "1D", "AA", "0A", "1B; rm -rf"):
             with self.assertRaises(p.PaatosVirhe):
-                p.kirjaa_vastaus(self.hak, v, NYT)
+                p.kirjaa_vastaus(self.hak, v, NYT, tila="paattaa")
 
 
 class PeruJaMittari(Pohja):
@@ -255,6 +256,117 @@ class Kooste(Pohja):
         from claudejono import viikkoehdotus
         _, teksti, _ = viikkoehdotus.rakenna(self.repo, NYT, self.hak)
         self.assertIn("Digi-Tonyn p\u00e4\u00e4t\u00f6kset:", teksti)
+
+
+class Varjotila(Pohja):
+    """Oletus: Digi-Tony vain ehdottaa. paatokset.md ei muutu, vertailutiedosto kertyy."""
+
+    def aja(self, vastaukset, **kw):
+        jono = list(vastaukset)
+        return p.aja(self.repo, self.hak, NYT, kysy=lambda k, komp: jono.pop(0), **kw)
+
+    def test_oletus_on_varjo_ja_tuntematon_arvo_varjo(self):
+        self.assertEqual(p.digitony_tila({}), "varjo")
+        self.assertEqual(p.digitony_tila({"CLAUDEJONO_DIGITONY_TILA": "joku"}), "varjo")
+        self.assertEqual(p.digitony_tila({"CLAUDEJONO_DIGITONY_TILA": "paattaa"}), "paattaa")
+
+    def test_varma_kohta_ei_kirjaudu_paatokseksi_vaan_listalle_ehdotuksena(self):
+        y = self.aja([vastaus(), vastaus()], env={})
+        self.assertEqual((y["tila"], y["paatetty"], y["listalle"]), ("varjo", 0, 2))
+        self.assertFalse((self.hak / "paatokset.md").exists())
+        t = p.lista_tekstina(self.hak)
+        self.assertIn("Digi-Tony ehdottaa: J\u00e4tet\u00e4\u00e4n ennalleen. (varmuus 5/5, Kompassi ohjaa.)", t)
+
+    def test_paattaa_tila_toimii_ennallaan(self):
+        y = self.aja([vastaus(), vastaus(varmuus=2)], env={"CLAUDEJONO_DIGITONY_TILA": "paattaa"})
+        self.assertEqual(y["paatetty"], 1)
+        self.assertTrue((self.hak / "paatokset.md").exists())
+
+    def test_rajattu_ei_ehdotusta_varjossakaan(self):
+        self.aja([vastaus(), vastaus()], env={})
+        t = p.lista_tekstina(self.hak)
+        self.assertIn("rajattu aihe: kulukatot", t)      # "nostetaanko p\u00e4iv\u00e4kattoa" -> rajattu
+        self.assertEqual(t.count("Digi-Tony ehdottaa"), 1)
+
+    def test_vastaus_kirjaa_vain_vertailuun_ja_listalta_poistuu(self):
+        self.aja([vastaus(), vastaus()], env={})
+        nro = next(i for i, k in enumerate(p.lue_lista(self.hak)["kohdat"], 1) if k.get("paatos"))
+        id_, _ = p.kirjaa_vastaus(self.hak, "%dA" % nro, NYT, tila="varjo")
+        self.assertFalse((self.hak / "paatokset.md").exists())
+        rivit = p.lue_vertailu(self.hak)
+        self.assertEqual(len(rivit), 1)
+        self.assertEqual((rivit[0]["id"], rivit[0]["tonyn_valinta"], rivit[0]["osui"], rivit[0]["varmuus"]), (id_, "A", True, 5))
+        self.assertNotIn(id_, {k["id"] for k in p.lue_lista(self.hak)["kohdat"] if k["id"] not in p.vastatut_idt(self.hak)})
+
+    def test_osuvuus_laskee_vain_ehdotetut(self):
+        self.aja([vastaus(), vastaus()], env={})
+        kohdat = p.lue_lista(self.hak)["kohdat"]
+        p.kirjaa_vastaus(self.hak, "1B", NYT, tila="varjo")      # kohta 1: ehdotus A, valinta B -> ei osunut tai rajattu
+        p.kirjaa_vastaus(self.hak, "1A", NYT, tila="varjo")
+        o, y = p.osuvuus(self.hak)
+        rivit = p.lue_vertailu(self.hak)
+        self.assertEqual(y, sum(1 for r in rivit if r["osui"] is not None))
+        self.assertEqual(len(kohdat), 2)
+        self.assertIn("osuvuus", p.osuvuusrivi(self.hak, NYT))
+
+    def test_osuvuusrivi_prosentit_ja_viikkoikkuna(self):
+        for i, (valinta, osui, aika) in enumerate((("A", True, "2026-11-04T08:00:00+02:00"), ("B", False, "2026-11-03T08:00:00+02:00"),
+                                                    ("A", True, "2026-10-01T08:00:00+02:00"), ("B", None, "2026-11-04T08:00:00+02:00"))):
+            p._liita(self.hak, p.VERTAILU, json.dumps({"aika": aika, "id": "%08x" % i, "tonyn_valinta": valinta, "osui": osui}) + "\n")
+        self.assertEqual(p.osuvuus(self.hak), (2, 3))
+        self.assertEqual(p.osuvuus(self.hak, NYT, 7), (1, 2))
+        self.assertIn("viikolla 1/2 (50 %)", p.osuvuusrivi(self.hak, NYT))
+        self.assertIn("2/3 (67 %)", p.osuvuusrivi(self.hak, NYT))
+
+    def test_tyhja_osuvuus(self):
+        self.assertIn("ei viel\u00e4 vertailtuja", p.osuvuusrivi(self.hak, NYT))
+
+    def test_viikkoehdotus_saa_osuvuusrivin(self):
+        from claudejono import viikkoehdotus
+        _, teksti, _ = viikkoehdotus.rakenna(self.repo, NYT, self.hak)
+        self.assertIn("Digi-Tonyn osuvuus", teksti)
+
+
+class Esimerkit(Pohja):
+    POHDINTA = ("# Pohdinta\n\n## Muu osio\n- ei mukaan\n\n## P03 Digi-Tony\n- P03-K1: A, ilmoitus ensin.\n\n## P04 Seuraava\n- P04-K1: toinen esimerkki.\n")
+
+    def test_p03_ja_myohemmat_osiot_mukaan_aiemmat_ei(self):
+        (self.repo / "claude-jono" / "pohdinta-vastaukset.md").write_text(self.POHDINTA, encoding="utf-8")
+        e = p.lue_esimerkit(self.repo)
+        self.assertIn("P03-K1", e)
+        self.assertIn("P04-K1", e)
+        self.assertNotIn("ei mukaan", e)
+
+    def test_puuttuva_tiedosto_tai_osio_tyhja(self):
+        self.assertEqual(p.lue_esimerkit(self.repo), "")
+        (self.repo / "claude-jono" / "pohdinta-vastaukset.md").write_text("## Muu\n- x\n", encoding="utf-8")
+        self.assertEqual(p.lue_esimerkit(self.repo), "")
+
+    def test_pituus_rajattu(self):
+        (self.repo / "claude-jono" / "pohdinta-vastaukset.md").write_text("## P03 Digi-Tony\n" + "- rivi\n" * 5000, encoding="utf-8")
+        self.assertLessEqual(len(p.lue_esimerkit(self.repo)), p.ESIMERKKI_MAX)
+
+    def test_esimerkit_menevat_kehotteeseen_ja_ajo_lukee_ne(self):
+        (self.repo / "claude-jono" / "pohdinta-vastaukset.md").write_text(self.POHDINTA, encoding="utf-8")
+        saadut = []
+        orig = p.kysy_malli
+        p.kysy_malli = lambda k, komp, env=None, suorita=None, esimerkit="": (saadut.append(esimerkit), vastaus())[1]
+        try:
+            p.aja(self.repo, self.hak, NYT, enintaan=1)
+        finally:
+            p.kysy_malli = orig
+        self.assertIn("P03-K1: A, ilmoitus ensin.", saadut[0])
+
+    def test_kehotteessa_on_esimerkit_datana(self):
+        kutsut = []
+
+        class R:
+            returncode, stdout = 0, json.dumps({"result": "{}", "subtype": "success"})
+        p.kysy_malli({"teksti": "kohta-x"}, "kompassi-y", {"CLAUDEJONO_CLAUDE": "c"}, esimerkit="esim-z",
+                     suorita=lambda kom, **kw: (kutsut.append(kom), R)[1])
+        kehote = kutsut[0][kutsut[0].index("-p") + 1]
+        self.assertIn("<esimerkit>\nesim-z\n</esimerkit>", kehote)
+        self.assertIn("<kohta>\nkohta-x\n</kohta>", kehote)
 
 
 class Malli(unittest.TestCase):
