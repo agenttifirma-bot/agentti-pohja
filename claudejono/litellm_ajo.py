@@ -1,7 +1,7 @@
 """OpenRouter-reitti: tehtava ajetaan halvalla mallilla LiteLLM:n (OpenAI-yhteensopiva) kautta. Ei tyokaluja, vain tekstivastaus.
 
 Avain tulee ymparistomuuttujasta CLAUDEJONO_LITELLM_KEY (ajurin systemd-EnvironmentFile; ei koskaan agentin ymparistoon, koska
-kutsu tehdaan ajurin prosessissa). Osoite: CLAUDEJONO_LITELLM_URL (oletus LAN-osoite). Virheista palautetaan vain tyyppi ja HTTP-tila.
+kutsu tehdaan ajurin prosessissa). Osoite: CLAUDEJONO_LITELLM_URL (pakollinen, Tony asettaa /etc/claude-jono/litellm.env:iin; ei oletusta, jottei sisaverkon osoite paady julkiseen repoon). Virheista palautetaan vain tyyppi ja HTTP-tila.
 Kulukatot ja budjetit ovat LiteLLM:n omia; tama moduuli ei muuta niita. Uudelleenohjauksia ei seurata.
 """
 import json
@@ -10,7 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-OLETUS_URL = "http://192.168.1.116:4000/v1"
+OLETUS_URL = None   # ei oletusta: osoite tulee ymparistosta (CLAUDEJONO_LITELLM_URL)
 AIKAKATKAISU_S = 300
 MAX_TOKENS = 4000
 JARJESTELMA = ("Olet Tonyn agenttifirman apuri. T\u00e4ll\u00e4 teht\u00e4v\u00e4ll\u00e4 ei ole ty\u00f6kaluja: vastaa pelk\u00e4ll\u00e4 tekstill\u00e4. "
@@ -43,7 +43,7 @@ def _post(url, avain, payload):
 
 
 def avain_asetettu(env):
-    return bool(env.get("CLAUDEJONO_LITELLM_KEY"))
+    return bool(env.get("CLAUDEJONO_LITELLM_KEY")) and bool(env.get("CLAUDEJONO_LITELLM_URL"))
 
 
 def aja(alias, tehtava_teksti, env, laheta_http=None):
@@ -52,6 +52,8 @@ def aja(alias, tehtava_teksti, env, laheta_http=None):
     osoite = env.get("CLAUDEJONO_LITELLM_URL", OLETUS_URL)
     if not avain:
         return False, "litellm_asetus: avainta ei ole asetettu", {}
+    if not osoite:
+        return False, "litellm_asetus: CLAUDEJONO_LITELLM_URL puuttuu", {}
     if urllib.parse.urlparse(osoite).scheme not in ("http", "https"):
         return False, "litellm_asetus: osoite ei kelpaa", {}
     payload = {"model": alias, "max_tokens": MAX_TOKENS, "temperature": 0,

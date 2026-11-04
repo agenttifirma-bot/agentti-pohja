@@ -20,6 +20,7 @@ MAX_TIEDOSTOJA_HAKUUN = 100
 OTSIKKO_MAX = 70
 KRIITTISET_NIMET = ("riskivahti.py", "salkku.py", "kirjanpito.py")
 KRIITTISET_PAATTEET = (".service", ".timer")
+KRIITTISET_ALUT = ("isanta/", "systemd/", "tools/")   # ajetaan isannalla (osin rootina): riski korkea, vaikka automerge saa yhdistaa
 RISKI_RIVEJA_KORKEA = 300
 RISKI_RIVEJA_KESKI = 60
 RISKI_TIEDOSTOJA_KESKI = 5
@@ -33,7 +34,8 @@ def _matala_tiedosto(polku):
 
 def _kriittinen(polku):
     nimi = posixpath.basename(polku.lower())
-    return _kriittinen_polku(polku) or nimi.endswith(KRIITTISET_PAATTEET) or nimi in KRIITTISET_NIMET
+    return (_kriittinen_polku(polku) or nimi.endswith(KRIITTISET_PAATTEET) or nimi in KRIITTISET_NIMET
+            or polku.lower().startswith(KRIITTISET_ALUT))
 
 
 def arvioi_riski(tiedostot):
@@ -73,11 +75,10 @@ def yhteenveto(tiedostot):
             "poistettu": sum(int(t.get("deletions") or 0) for t in tiedostot), "riski": riski, "riskisyy": syy}
 
 
-def _suojattu(polku):
-    """True jos polku kuuluu automergen suojalistalle tai ei ole sallittu (Tony katselmoi)."""
+def _suojattu(polku, repo="agentti-pohja"):
+    """True jos polku on automergen rajattu (Tony yhdistaa; tools/automerge.rajattu)."""
     from tools import automerge
-    ok, _ = automerge.polku_ok(polku)
-    return not ok
+    return automerge.rajattu(repo, polku) is not None
 
 
 def _oletushaku(url):
@@ -128,7 +129,7 @@ def keraa(hae=None):
                 rivi["syy"] = "CI punainen"
                 ryhmat["muut"].append(rivi)
                 continue
-            suojattu = any(_suojattu(n) for t in tiedostot for n in (t.get("filename"), t.get("previous_filename")) if n)
+            suojattu = any(_suojattu(n, repo) for t in tiedostot for n in (t.get("filename"), t.get("previous_filename")) if n)
             if suojattu:
                 rivi.update(yhteenveto(tiedostot))
                 ryhmat["tony"].append(rivi)

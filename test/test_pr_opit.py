@@ -4,7 +4,7 @@ import os
 import tempfile
 import unittest
 import unittest.mock
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from agentti import pr_opit as po
 
@@ -130,7 +130,9 @@ class MainTesti(unittest.TestCase):
         return koodi, ulos.getvalue(), virhe.getvalue()
 
     def test_tulostaa_tai_kirjoittaa(self):
-        hae = feikki({"evalkit": [pr(1, "yojono: testit evalkit")]})
+        # Paivamaarat suhteessa nykyhetkeen: kiintea 2026-10-27 putosi 7 paivan ikkunasta 3.11. (aikapommi).
+        tuore = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        hae = feikki({"evalkit": [pr(1, "yojono: testit evalkit", luotu=tuore, suljettu=tuore)]})
         koodi, ulos, _ = self.aja([], hae)
         self.assertEqual(koodi, 0)
         self.assertIn("yojono: testit evalkit", ulos)

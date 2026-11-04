@@ -14,7 +14,7 @@ from claudejono import ajuri
 from claudejono.test_ajuri import Pohja, git, git_ulos
 
 
-def malli_vastaus(teksti="raportti", **lisa):
+def malli_vastaus(teksti="raportti\nTodennettu k\u00e4yt\u00f6ss\u00e4: testiajo", **lisa):
     return json.dumps({"subtype": "success", "result": teksti, **lisa})
 
 
@@ -125,7 +125,7 @@ def _kaista_tyontekija(repo, tyohak, kaista, loki, kesto, env):
         _kirjaa(loki, f"alku {nimi} {kaista} {time.time():.4f}")
         time.sleep(kesto)
         _kirjaa(loki, f"loppu {nimi} {kaista} {time.time():.4f}")
-        return subprocess.CompletedProcess(kom, 0, malli_vastaus(f"valmis {nimi}"), "")
+        return subprocess.CompletedProcess(kom, 0, malli_vastaus(f"valmis {nimi}\nTodennettu k\u00e4yt\u00f6ss\u00e4: testiajo"), "")
     while True:
         v = ajuri.aja(repo, tyohak, env=dict(env), suorita=suorita, kaista=kaista)
         if v.startswith("jono tyhja"):
@@ -136,6 +136,67 @@ def _kirjaa(polku, rivi):
     fd = os.open(polku, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
     os.write(fd, (rivi + "\n").encode())
     os.close(fd)
+
+
+def _suunnitteleva_kaista(repo, tyohak, kaista, loki, viive, env):
+    """Yksi kaista kerran: tehtava -> pitka ajo; ei tehtavaa -> suunnittelu (vastaus kirjataan lokiin)."""
+    def suorita(kom, **kw):
+        kehote = kom[kom.index("-p") + 1]
+        if "Ehdota enintaan" in kehote:
+            _kirjaa(loki, f"suunnittelu-alku {kaista} {time.time():.4f}")
+            time.sleep(0.5)
+            _kirjaa(loki, f"suunnittelu-loppu {kaista} {time.time():.4f}")
+            return subprocess.CompletedProcess(kom, 0, malli_vastaus(json.dumps(
+                {"tehtavat": [{"nimi": f"uusi-{kaista}", "sisalto": f"# Uusi {kaista}"}], "tonylle": ""})), "")
+        _kirjaa(loki, f"tehtava-alku {kaista} {time.time():.4f}")
+        time.sleep(1.5)
+        _kirjaa(loki, f"tehtava-loppu {kaista} {time.time():.4f}")
+        return subprocess.CompletedProcess(kom, 0, malli_vastaus("valmis"), "")
+    time.sleep(viive)
+    _kirjaa(loki, f"tulos {kaista} " + ajuri.aja(repo, tyohak, env=dict(env), suorita=suorita, kaista=kaista).replace(" ", "_"))
+
+
+class KilpaSuunnittelu(Pohja):
+    def test_kaksi_kaistaa_ajaa_ja_kolmas_suunnittelee_rinnakkain(self):
+        # jonossa kaksi tehtavaa: kaistat 1 ja 2 ottavat ne, kaista 3 (ja 4. yritys) suunnittelee niiden aikana
+        for n in (1, 2):
+            self.lisaa_tehtava(f"2026-11-03-{n:02d}-t.md", f"tee {n}")
+        loki = str(self.tmp / "ajot.log")
+        env = {"CLAUDEJONO_KAISTOJA": "3"}
+        ctx = multiprocessing.get_context("fork")
+        ps = [ctx.Process(target=_suunnitteleva_kaista, args=(self.repo, self.tmp, k, loki, v, env))
+              for k, v in ((1, 0.0), (2, 0.3), (3, 0.9))]
+        [p.start() for p in ps]
+        [p.join(120) for p in ps]
+        self.assertTrue(all(p.exitcode == 0 for p in ps), [p.exitcode for p in ps])
+        rivit = [r.split() for r in Path(loki).read_text().splitlines()]
+        aika = {(r[0], r[1]): float(r[2]) for r in rivit if r[0].endswith(("alku", "loppu"))}
+        self.assertEqual(sorted(r[1] for r in rivit if r[0] == "suunnittelu-alku"), ["3"])
+        # suunnittelu on paallekkain kaistan 1 ja 2 tehtavien kanssa
+        for k in ("1", "2"):
+            self.assertLess(aika[("tehtava-alku", k)], aika[("suunnittelu-loppu", "3")])
+            self.assertGreater(aika[("tehtava-loppu", k)], aika[("suunnittelu-alku", "3")])
+        tarkistus = self.tmp / "tarkistus"
+        subprocess.run(["git", "clone", "-q", str(self.origin), str(tarkistus)], check=True, capture_output=True)
+        self.assertEqual(len(list((tarkistus / ajuri.JONO / "tehtavat").glob("*-auto-uusi-3.md"))), 1)
+        self.assertEqual(sorted(p.name for p in (tarkistus / ajuri.JONO / "tulokset").iterdir()),
+                         ["2026-11-03-01-t.md", "2026-11-03-02-t.md"])
+        subprocess.run(["git", "-C", str(self.origin), "fsck", "--strict"], check=True, capture_output=True)
+        self.assertEqual(ajuri.aktiiviset_varaukset(self.tmp), [])
+
+    def test_kaksi_vapaata_kaistaa_yksi_suunnittelija(self):
+        self.lisaa_tehtava("2026-11-03-01-t.md", "tee 1")
+        loki = str(self.tmp / "ajot.log")
+        env = {"CLAUDEJONO_KAISTOJA": "3"}
+        ctx = multiprocessing.get_context("fork")
+        ps = [ctx.Process(target=_suunnitteleva_kaista, args=(self.repo, self.tmp, k, loki, v, env))
+              for k, v in ((1, 0.0), (2, 0.4), (3, 0.4))]
+        [p.start() for p in ps]
+        [p.join(120) for p in ps]
+        self.assertTrue(all(p.exitcode == 0 for p in ps), [p.exitcode for p in ps])
+        rivit = [r.split() for r in Path(loki).read_text().splitlines()]
+        self.assertEqual(len([r for r in rivit if r[0] == "suunnittelu-alku"]), 1)   # varaus: vain yksi suunnittelija
+        self.assertEqual(len([r for r in rivit if r[0] == "tehtava-alku"]), 1)
 
 
 class KilpaAjo(Pohja):
@@ -222,7 +283,7 @@ class Ajo(Pohja):
         def suorita(kom, **kw):
             if sivu:
                 sivu(kom, kw)
-            return subprocess.CompletedProcess(kom, koodi, json.dumps(palaute or {"subtype": "success", "result": "r"}), "")
+            return subprocess.CompletedProcess(kom, koodi, json.dumps(palaute or {"subtype": "success", "result": "r\nTodennettu k\u00e4yt\u00f6ss\u00e4: testiajo"}), "")
         return suorita
 
     def test_push_torma_palautuu_pull_rebasella(self):
@@ -297,11 +358,76 @@ class Ajo(Pohja):
             ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_KAISTOJA": "1"}, suorita=self.f(), kaista=2)
         self.assertEqual(ajuri.aktiiviset_varaukset(self.tmp), [])
 
-    def test_itsesuunnittelu_odottaa_jos_toinen_kaista_on_toissa(self):
+    def test_vapaa_kaista_suunnittelee_vaikka_toinen_kaista_on_toissa(self):
+        # 3.11. klo 11: kaistat 2 ja 3 jaivat tyhjaksi, koska suunnittelu odotti kaikkien kaistojen vapautumista
+        self.assertTrue(ajuri.varaa(self.tmp, "2026-11-03-01-a.md", 1))
+        vastaus = json.dumps({"tehtavat": [{"nimi": "uusi", "sisalto": "# Uusi"}], "tonylle": ""})
+        v = ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_KAISTOJA": "3"}, kaista=2,
+                      suorita=self.f({"subtype": "success", "result": vastaus}))
+        self.assertIn("itsesuunnittelu", v)
+        self.assertEqual(ajuri.aktiiviset_varaukset(self.tmp), ["2026-11-03-01-a.md"])   # kaistan 1 varaus ei haviaa
+
+    def test_suunnittelu_tarpeen_vain_kun_avoimia_alle_2_x_kaistat(self):
+        env = {"CLAUDEJONO_KAISTOJA": "3"}
+        for i in range(5):
+            self.lisaa_tehtava(f"2026-11-03-0{i + 1}-t{i}.md", f"sisalto {i}")
+        self.assertTrue(ajuri.suunnittelu_tarpeen(self.repo, self.tmp, env))        # 5 < 6
+        self.lisaa_tehtava("2026-11-03-06-t5.md", "sisalto 5")
+        self.assertFalse(ajuri.suunnittelu_tarpeen(self.repo, self.tmp, env))       # 6 ei ole < 6
+        tul = self.repo / ajuri.JONO / "tulokset"
+        tul.mkdir(parents=True)
+        (tul / "2026-11-03-01-t0.md").write_text("tehty")
+        self.assertTrue(ajuri.suunnittelu_tarpeen(self.repo, self.tmp, env))        # tehty ei ole avoin
+        self.assertTrue(ajuri.varaa(self.tmp, "2026-11-03-02-t1.md", 1))
+        self.assertEqual(ajuri.avoimet_tehtavat(self.repo, self.tmp), 4)             # varattu ei ole avoin
+
+    def test_suunnittelu_ei_luo_jonossa_tai_tehtya_tehtavaa(self):
+        self.lisaa_tehtava("2026-11-03-01-auto-sama-nimi.md", "# Eri sisalto")
+        self.lisaa_tehtava("2026-11-02-04-vanha-sisalto.md", "# Tehty\n\nTee   tama.")
+        tul = self.repo / ajuri.JONO / "tulokset"
+        tul.mkdir(parents=True)
+        (tul / "2026-11-03-01-auto-sama-nimi.md").write_text("tehty")
+        (tul / "2026-11-02-04-vanha-sisalto.md").write_text("tehty")
+        vastaus = json.dumps({"tehtavat": [
+            {"nimi": "sama-nimi", "sisalto": "# Muu"},                    # nimi jo tehty
+            {"nimi": "kopio", "sisalto": "<!-- x -->\n# TEHTY tee tama."},  # sisalto sama (tyhjat, kirjainkoko, kommentti ohitetaan)
+            {"nimi": "oikeasti-uusi", "sisalto": "# Uusi"},
+            {"nimi": "oikeasti-uusi", "sisalto": "# Uusi 2"},             # sama nimi samassa erassa
+        ], "tonylle": ""})
+        ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_KAISTOJA": "3"}, kaista=2,
+                  suorita=self.f({"subtype": "success", "result": vastaus}))
+        luodut = sorted(p.name for p in (self.repo / ajuri.JONO / "tehtavat").glob("*-auto-*.md"))
+        # Uuden tehtavan paivamaara on ajopaiva (ei kiinteaa paivaa: 4.11. kiintea 2026-11-03 kaatoi testin, aikapommi).
+        self.assertEqual([n for n in luodut if "kopio" in n], [])
+        self.assertEqual([n for n in luodut if "sama-nimi" in n], ["2026-11-03-01-auto-sama-nimi.md"])
+        uudet = [n for n in luodut if "oikeasti-uusi" in n]
+        self.assertEqual(len(uudet), 1, uudet)
+        self.assertTrue(uudet[0].startswith(datetime.now().astimezone().date().isoformat() + "-"), uudet)
+
+    def test_porttitarkistin_ajetaan_jokaiselle_uudelle_tehtavalle(self):
+        nahdyt = []
+
+        def portti(sisalto):
+            nahdyt.append(sisalto)
+            return "kielletty" if "rahaa" in sisalto else None
+        ok, hyl = ajuri.suodata_uudet(self.repo, [{"nimi": "a", "sisalto": "# a"}, {"nimi": "b", "sisalto": "osta rahaa"},
+                                                  {"nimi": "c", "sisalto": "# c"}], portti)
+        self.assertEqual([t["nimi"] for t in ok], ["a", "c"])
+        self.assertEqual(hyl, [("b", "porttitarkistin: kielletty")])
+        self.assertEqual(len(nahdyt), 3)
+
+    def test_paivakatto_pysyy_kun_toinen_kaista_on_toissa(self):
+        tul = self.repo / ajuri.JONO / "tulokset"
+        tul.mkdir(parents=True)
+        for i in range(ajuri.AUTO_MAX_PAIVA):
+            n = f"{datetime.now().astimezone().date().isoformat()}-{i + 1:02d}-auto-x{i}.md"
+            self.lisaa_tehtava(n, f"s{i}")
+            (tul / n).write_text("tehty")
         self.assertTrue(ajuri.varaa(self.tmp, "2026-11-03-01-a.md", 1))
         kutsut = []
-        v = ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_KAISTOJA": "2"}, suorita=self.f(sivu=lambda k, w: kutsut.append(1)), kaista=2)
-        self.assertIn("toinen kaista", v)
+        v = ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_KAISTOJA": "3"}, kaista=2,
+                      suorita=self.f(sivu=lambda k, w: kutsut.append(1)))
+        self.assertIn("paivaraja", v)
         self.assertEqual(kutsut, [])
 
     def test_vain_yksi_kaista_suunnittelee(self):
@@ -326,7 +452,7 @@ class Ajo(Pohja):
         self.lisaa_tehtava("2026-11-03-02-b.md")
         env = {"CLAUDEJONO_KAISTOJA": "2", "CLAUDEJONO_ITSESUUNNITTELU": "0"}
         ajuri.aja(self.repo, self.tmp, env=env, kaista=1,
-                  suorita=self.f({"subtype": "success", "result": "r", "num_turns": 7, "total_cost_usd": 1.25}))
+                  suorita=self.f({"subtype": "success", "result": "r\nTodennettu k\u00e4yt\u00f6ss\u00e4: testiajo", "num_turns": 7, "total_cost_usd": 1.25}))
         ajuri.aja(self.repo, self.tmp, env=env, kaista=2,
                   suorita=self.f({"subtype": "error_during_execution", "is_error": True, "result": "Claude AI usage limit reached|1762170000"}))
         rivit = [json.loads(r) for r in (self.tmp / ajuri.KAISTALOKI).read_text().splitlines()]

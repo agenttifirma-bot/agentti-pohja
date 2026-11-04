@@ -38,7 +38,8 @@ Kaksi tehtävää voi olla ajossa yhtä aikaa. Kolmas kaista on tuettu, mutta ot
 - Jokaisella kaistalla on oma lukko `lukko-N` docs-kloonin vanhemmassa hakemistossa: sama kaista ei ala kahdesti. Aiempi yhteinen `lukko` jää pois.
 - **Tehtävän varaus:** ajuri luo tiedoston `varattu/<tehtävä>` (`O_EXCL`) docs-kloonin vanhempaan hakemistoon (ei gitiin). Kilpailijoista vain yksi onnistuu. Varaus vapautuu tuloksen kirjauksen jälkeen tai virheessä. Jos ajuri kuolee kesken, varaus vanhenee, kun Clauden aikaraja (`CLAUDEJONO_AIKARAJA_S`, oletus 45 min) + 15 min on kulunut tai varaajan prosessi ei enää ole olemassa.
 - **Docs-repon kirjoitukset:** kaikki kloonin git-toimet (`pull --rebase`, valinta ja varaus, tuloksen `add`/`commit`/`push`) tehdään yhteisen lyhyen `git-lukon` sisällä. Lukkoa ei pidetä Clauden ajon aikana. Jos push silti törmää (esim. pilvi-Clauden push), ajuri tekee `pull --rebase` ja yrittää uudelleen enintään 3 kertaa; rebase-konflikti perutaan (`rebase --abort`), jotta klooni ei jää kesken.
-- **Itsesuunnittelu:** vain yksi kaista suunnittelee kerrallaan (`varattu/_suunnittelu`), eikä suunnittelua aloiteta, jos toinen kaista on vielä töissä. Päiväkatto (`AUTO_MAX_PAIVA`) ja ajokohtainen raja ennallaan.
+- **Kaistakiinnitys (`Kaista: N`):** jos tehtävätiedostossa on rivi `Kaista: N` (rivi alkaa sanalla `Kaista:`, perässä yksi luku 1–3, mitään muuta ei rivillä), tehtävän ottaa vain kaista N. Kaista N ottaa ensin omat kiinnitetyt tehtävänsä (vanhin ensin) ja vasta sitten vapaat. Muut kaistat ohittavat kiinnitetyn tehtävän. Rivi etsitään tiedoston 20 000 ensimmäisestä tavusta, ja ensimmäinen rivi ratkaisee. Puuttuva, virheellinen tai kaistojen määrän (`CLAUDEJONO_KAISTOJA`) ylittävä arvo tulkitaan vapaaksi tehtäväksi, jotta tehtävä ei jää odottamaan kaistaa, jota ei ole käynnissä. Jos jäljellä on vain toisten kaistojen tehtäviä, kaista ei aloita itsesuunnittelua. Kiinnitys ei muuta kaistojen määrää, päiväkattoja eikä ajastimia.
+- **Itsesuunnittelu:** vain yksi kaista suunnittelee kerrallaan (`varattu/_suunnittelu`), ja vapaa kaista suunnittelee, vaikka muut kaistat ovat töissä, kun varaamattomia avoimia tehtäviä on alle 2 × kaistat. Suunnittelu ei luo tehtävää, joka on jo jonossa tai tehty (nimi- ja sisältövertailu). Päiväkatto (`AUTO_MAX_PAIVA`) ja ajokohtainen raja ennallaan.
 - **Työhakemistot:** kaista 1 käyttää hakemistoa `/opt/agentscope/tyo`, kaista 2 hakemistoa `/opt/agentscope/tyo/k2` ja kaista 3 hakemistoa `/opt/agentscope/tyo/k3`. Ajuri luo hakemiston ja antaa sen agenttikäyttäjälle, ja kehote kertoo agentille oman polun. Polut pysyvät `/opt/agentscope/tyo`:n alla, joten `claudejono-pr`:n polkuraja ei muutu.
 
 **Käyttöönotto (Tony, kerran; ei tehdä automaattisesti)**
@@ -78,7 +79,7 @@ Jokainen tehtävä ajetaan halvimmalla mallilla, joka riittää laatuun.
 3. Muuten Sonnet.
 Sallitut mallit ovat koodissa. Tuntematon arvo hylätään ja malli päätellään tyypistä. OpenRouter-aliakset: `deepseek-flash`, `deepseek-pro`, `qwen-coder`. Jonon itsesuunnittelu ajetaan Opuksella.
 
-**Reitit.** Claude-reitti ajaa `claude -p --model opus|sonnet`. OpenRouter-reitti kutsuu LiteLLM:ää ajurin omassa prosessissa (`litellm_ajo.py`), ilman työkaluja: se tuottaa vain tekstiraportin. Avain `CLAUDEJONO_LITELLM_KEY` luetaan ajurin ympäristöstä (Tony kirjoittaa tiedoston `/etc/claude-jono/litellm.env`, ks. palvelumallit), eikä se kulkeudu agentin ympäristöön. Jos avainta ei ole, OpenRouter-tehtävät jäävät jonoon eivätkä estä muita.
+**Reitit.** Claude-reitti ajaa `claude -p --model opus|sonnet`. OpenRouter-reitti kutsuu LiteLLM:ää ajurin omassa prosessissa (`litellm_ajo.py`), ilman työkaluja: se tuottaa vain tekstiraportin. Avain `CLAUDEJONO_LITELLM_KEY` luetaan ajurin ympäristöstä (Tony kirjoittaa tiedoston `/etc/claude-jono/litellm.env`, ks. palvelumallit), eikä se kulkeudu agentin ympäristöön. Samaan tiedostoon tulee myös osoite `CLAUDEJONO_LITELLM_URL=http://<LiteLLM-kontin osoite>:4000/v1` (pakollinen, ei oletusta, jottei sisäverkon osoite päädy repoon). Jos avainta tai osoitetta ei ole, OpenRouter-tehtävät jäävät jonoon eivätkä estä muita.
 
 **Kulutusmittari.** Jokaisesta ajosta tulee rivi tiedostoon `/var/lib/claude-jono/kulutus.jsonl`: malli, tokenit (syöte, tuloste, välimuisti), kesto ja kustannusarvio. Claude-ajoissa kustannus on `total_cost_usd` (API-hintainen arvo; tilauksessa se ei ole lasku). OpenRouter-ajoissa kustannus tulee LiteLLM:n vastausotsakkeesta. Aamukooste näyttää eilisen kulutuksen malleittain ja viikon kertymän.
 
@@ -157,3 +158,39 @@ Ajastus on Helsingin aikaa (`OnCalendar=... Europe/Helsinki`), joten kesäaika e
 - Valinnainen rivi `Laji: arkkitehtuuri|strategia|tavoitteet|muu`. Kauppatiimin kilpailut vain paperistrategioista.
 - Kulukatto: `CLAUDEJONO_KILPAILU_USD_PV` (oletus 1.0) OpenRouter-kuluille vuorokaudessa. Kun katto täyttyy, kilpailu ajetaan vain Clauden malleilla (`opus`, `sonnet`). Muut katot eivät muutu.
 - `viikkokooste()` antaa viime viikon tulokset malleittain aamukoosteeseen.
+
+## Riippumaton tarkastaja ja automerge v2 (Tonyn päätös 4.11.2026)
+
+Kaikki PR:t yhdistyvät ilman Tonya, kun CI on vihreä ja riippumaton tarkastaja on hyväksynyt saman head-commitin. Poikkeus
+on rajatut: oikea raha, salaisuudet, oikeudet ja kulukatot, työnkulut (`.github`), `tools/automerge.py`, palomuuri ja
+julkaisu Tonyn nimissä. Ne yhdistää aina Tony. Säännöt ovat tiedostossa `tools/automerge.py`, ja agentit eivät voi muuttaa
+niitä (`agentti/pr_kutsu.py`, `AGENTILTA_KIELLETYT_RE`).
+
+Ketju:
+1. `claude-tarkastaja.timer` ajaa 10 minuutin välein komennon `python3 -m claudejono.tarkastaja kierros` rootina.
+2. Ohjelma ohittaa PR:t, jotka eivät muutenkaan kelpaa automergeen, joten tarkastusta ei kuluteta niihin.
+3. Malli (oletuksena Opus, tilauksesta) arvioi diffin erillisenä käyttäjänä `tarkastaja` ilman työkaluja.
+4. Ohjelma kirjoittaa PR:ään kommentin, jonka lopussa on merkki `riippumaton-tarkastus v1 sha=... paatos=...`.
+5. Kommentti käynnistää Automerge-työnkulun. Se kytkee auto-mergen vain paatos=HYVAKSYTTY-merkinnälle ja vain samaan commitiin (`--match-head-commit`).
+
+PR-avaaja: sama kierros avaa ensin botin tunnuksella PR:n jokaiselle Tonyn repon haaralle `korjaus/<nimi>`, jolla ei ole vielä PR:ää (ei myöskään suljettua). Näihin haaroihin pushaavat vain Tony ja pilvi-Claude. Enintään 10 avausta vuorokaudessa. Pois päältä: `CLAUDEJONO_PR_AVAAJA=0`.
+
+Rajat: 40 tarkastusta vuorokaudessa, 6 per PR ja diff enintään 150 kt. Isompi diff on Tonylle. Kaikki epäselvä on Tonylle.
+
+Käyttöönotto (Tony, kerran, CT115):
+```
+useradd --system --create-home --home-dir /var/lib/tarkastaja --shell /bin/bash tarkastaja
+runuser -u tarkastaja -- bash -c 'curl -fsSL https://claude.ai/install.sh | bash'
+runuser -u tarkastaja -- /var/lib/tarkastaja/.local/bin/claude
+```
+Viimeinen komento avaa Clauden. Kirjaudu `/login`-komennolla samalla tilillä kuin claudejono ja poistu `/exit`-komennolla. Sen jälkeen:
+```
+cd /opt/agentti-pohja/claudejono/systemd
+cp claude-tarkastaja.service.mall /etc/systemd/system/claude-tarkastaja.service
+cp claude-tarkastaja.timer.mall /etc/systemd/system/claude-tarkastaja.timer
+systemctl daemon-reload
+cd /opt/agentti-pohja && python3 -m claudejono.tarkastaja kierros --kuiva
+systemctl enable --now claude-tarkastaja.timer
+```
+Kuiva-ajo listaa tarkastettavat PR:t ajamatta mallia. Loki on tiedostossa `/var/lib/claude-jono/tarkastukset.jsonl`.
+Peruutus: `systemctl disable --now claude-tarkastaja.timer`. Ilman tarkastajaa mikään ei yhdisty automaattisesti.
