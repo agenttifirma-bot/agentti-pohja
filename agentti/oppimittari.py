@@ -23,7 +23,8 @@ JUURISYYT = (
 TUNNISTE_RE = re.compile(r"\[juurisyy:\s*([a-z0-9_]+)\s*\]")
 RIVI_RE = re.compile(r"^- (\d{4})-(\d{2})-(\d{2})\b(.*)$")
 OTSIKKO_RE = re.compile(r"^##\s+(\d{1,2})\.(\d{1,2})\.(\d{4})\b")
-SYY_RE = re.compile(r"Syy:\s*(.*?)(?:\s*S[a\u00e4]\u00e4nt\u00f6:|$)")
+SYY_RE = re.compile(r"Syy:\s*(.*?)(?:\s*S(?:\u00e4\u00e4|aa)nt[\u00f6o]:|$)")   # \u00e4\u00e4nt\u00f6 tai ASCII-muoto "Saanto:"
+OTSIKKO_MUU_RE = re.compile(r"^##\s")
 MIKSI_RE = re.compile(r"^- (?:Miksi|Syy):\s*(.*)$")
 
 
@@ -40,6 +41,9 @@ def jasenna(teksti):
                 continue
             s = SYY_RE.search(rivi)
             ulos.append(_merkinta(pv, s.group(1) if s else None, rivi))
+            continue
+        if OTSIKKO_MUU_RE.match(rivi) and not OTSIKKO_RE.match(rivi):
+            blokki = None       # p\u00e4iv\u00e4m\u00e4\u00e4r\u00e4t\u00f6n otsikko p\u00e4\u00e4tt\u00e4\u00e4 edellisen blokin
             continue
         h = OTSIKKO_RE.match(rivi)
         if h:
@@ -75,9 +79,9 @@ def _viimeistele(x):
 
 
 def laske(merkinnat, alku, loppu):
-    """Merkinn\u00e4t v\u00e4lill\u00e4 (alku, loppu]; toisto = luokka n\u00e4hty aiemmassa merkinn\u00e4ss\u00e4 (listaj\u00e4rjestys, my\u00f6s ennen ikkunaa)."""
+    """Merkinn\u00e4t v\u00e4lill\u00e4 (alku, loppu]; toisto = luokka n\u00e4hty aiemmassa merkinn\u00e4ss\u00e4 (p\u00e4iv\u00e4m\u00e4\u00e4r\u00e4j\u00e4rjestys, my\u00f6s ennen ikkunaa)."""
     nahty, n, toistot, luokittelematta, tark = set(), 0, {}, 0, 0
-    for m in merkinnat:
+    for m in sorted(merkinnat, key=lambda x: x["paiva"]):     # vakaa j\u00e4rjestys p\u00e4iv\u00e4n mukaan, ei tiedostoj\u00e4rjestys
         ikkunassa = alku < m["paiva"] <= loppu
         if ikkunassa:
             n += 1

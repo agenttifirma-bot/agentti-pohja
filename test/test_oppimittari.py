@@ -42,6 +42,34 @@ class JasennysTesti(unittest.TestCase):
         self.assertTrue(om.jasenna(loki(rivi(1, "x", tarkastaja=True)))[0]["tarkastaja"])
 
 
+class KorjausTesti(unittest.TestCase):
+    """Tarkastajan l\u00f6yd\u00f6kset (PR #198): jokainen n\u00e4ist\u00e4 kaatuu ilman korjausta."""
+
+    def test_ascii_saanto_ei_kuulu_syyhyn(self):
+        t = "- %s: x. Syy: aivan uusi asia. Saanto: tarkista muistista ja oikeaa kelloa." % (NYT - timedelta(days=1))
+        m = om.jasenna(t)[0]
+        self.assertEqual(m["syy"], "aivan uusi asia.")
+        self.assertIsNone(m["luokka"])
+
+    def test_umlaut_saanto_ei_kuulu_syyhyn(self):
+        t = "- %s: x. Syy: aivan uusi asia. S\u00e4\u00e4nt\u00f6: tarkista muistista." % (NYT - timedelta(days=1))
+        m = om.jasenna(t)[0]
+        self.assertEqual(m["syy"], "aivan uusi asia.")
+        self.assertIsNone(m["luokka"])
+
+    def test_toisto_lasketaan_paivan_mukaan_ei_tiedostojarjestyksesta(self):
+        # uudempi merkint\u00e4 on tiedostossa ennen vanhempaa: vanhempi (ikkunan ulkopuolella) on alkuper\u00e4inen, uudempi toisto
+        teksti = loki(rivi(2, "aikapommi"), rivi(20, "aikapommi"))
+        self.assertEqual(om.mittari(teksti, NYT)["nyt"]["toistoja"], 1)
+
+    def test_paivamaaraton_otsikko_katkaisee_blokin(self):
+        t = "## %d.%d.%d: a\n- Mita: x\n## Muuta\n- Miksi: oikeaa kelloa\n" % (14, 6, 2030)
+        mm = om.jasenna(t)
+        self.assertEqual(len(mm), 1)
+        self.assertIsNone(mm[0]["syy"])
+        self.assertIsNone(mm[0]["luokka"])
+
+
 class LaskentaTesti(unittest.TestCase):
     def test_toisto_vaatii_aiemman_samaluokkaisen(self):
         teksti = loki(rivi(20, "kiinte\u00e4 p\u00e4iv\u00e4 testiss\u00e4"), rivi(2, "aikapommi taas"), rivi(1, "ajettiin vain k\u00e4sin"))
@@ -118,7 +146,36 @@ class ViikkoraporttiLiitosTesti(unittest.TestCase):
             with mock.patch.dict(os.environ, {"VIRHELOKI": p}):
                 self.assertIn("Oppiminen:", vr.oppimisrivi(NYT))
             with mock.patch.dict(os.environ, {"VIRHELOKI": os.path.join(d, "puuttuu.md")}):
-                self.assertIsNone(vr.oppimisrivi(NYT))
+                r = vr.oppimisrivi(NYT)
+                self.assertTrue(r.startswith("Oppiminen:"))      # puuttuva loki ei katoa hiljaa
+                self.assertIn("ei l\u00f6ytynyt", r)
+
+    def test_oletuspolut_kokeillaan_jarjestyksessa(self):
+        with tempfile.TemporaryDirectory() as d:
+            toinen = os.path.join(d, "toinen.md")
+            with open(toinen, "w", encoding="utf-8") as f:
+                f.write(loki(rivi(1, "uusi")))
+            env = {k: v for k, v in os.environ.items() if k != "VIRHELOKI"}
+            with mock.patch.dict(os.environ, env, clear=True), \
+                    mock.patch.object(vr, "VIRHELOKI_OLETUKSET", (os.path.join(d, "eka.md"), toinen)):
+                self.assertIn("viikon virhelokimerkinn\u00e4t 1", vr.oppimisrivi(NYT))
+            with mock.patch.dict(os.environ, env, clear=True), \
+                    mock.patch.object(vr, "VIRHELOKI_OLETUKSET", (os.path.join(d, "eka.md"), os.path.join(d, "toka.md"))):
+                self.assertIn("ei l\u00f6ytynyt", vr.oppimisrivi(NYT))
+
+    def test_oletuspolku_on_ct115_n_loki(self):
+        self.assertEqual(vr.VIRHELOKI_OLETUKSET[0], "/var/lib/claude-jono/docs/claude-jono/virheloki.md")
+        self.assertIn("/opt/agenttifirma-docs/claude-jono/virheloki.md", vr.VIRHELOKI_OLETUKSET)
+
+    def test_main_tulostaa_rivin_vaikka_loki_puuttuu(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = os.path.join(d, "t.db")
+            from agentti import tapahtumaloki
+            tapahtumaloki.avaa(db).close()
+            with mock.patch.dict(os.environ, {"TAPAHTUMALOKI": db, "VIRHELOKI": os.path.join(d, "ei.md")}), \
+                    mock.patch("sys.stdout") as ulos:
+                vr.main(["7"])
+            self.assertIn("Oppiminen:", "".join(c.args[0] for c in ulos.write.call_args_list))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,2 @@
+- oppimittari: tarkastajan löydökset korjattu (PR #198). `SYY_RE` tunnistaa myös ASCII-muodon "Saanto:", joten sääntöteksti ei enää vaikuta juurisyyn luokitteluun. Toistot lasketaan päivämäärän mukaan eikä tiedostojärjestyksestä. Päivämäärätön "## "-otsikko päättää edellisen otsikkomerkinnän. +4 testiä.
+- viikkoraportti: virhelokin oletuspolut ovat CT115:n elävä klooni ja varalla `/opt/agenttifirma-docs`; jos lokia ei löydy, raportissa on rivi "Oppiminen: virhelokia ei löytynyt" eikä rivi katoa hiljaa. +3 testiä.

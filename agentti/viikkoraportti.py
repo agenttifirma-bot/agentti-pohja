@@ -23,7 +23,9 @@ HYVAKSYMIS_RAJA = 30.0     # %: hylkaysten maara kasvaa
 MIN_PAATOKSIA = 5
 LEVY_RAJA = 85.0           # % kaytetty
 MUISTI_RAJA = 15.0         # % vapaana
-VIRHELOKI_OLETUS = "/var/lib/claude-jono/docs/claude-jono/virheloki.md"   # ymparistomuuttuja VIRHELOKI ohittaa
+# Viikkoraportti ajetaan CT115:ssa (viikkoraportti.service). Siella elava klooni on ensin, dokumenttikopio varalla.
+# Ymparistomuuttuja VIRHELOKI ohittaa listan.
+VIRHELOKI_OLETUKSET = ("/var/lib/claude-jono/docs/claude-jono/virheloki.md", "/opt/agenttifirma-docs/claude-jono/virheloki.md")
 
 
 def _koodit(yht, alku, tulos):
@@ -143,14 +145,17 @@ def muodosta(tiedot, res, oppiminen=None):
 
 
 def oppimisrivi(nyt=None):
-    """Oppimisen mittarin rivi virhelokista; puuttuva loki -> None (rivia ei lisata, raportti ei kaadu)."""
-    polku = os.environ.get("VIRHELOKI", VIRHELOKI_OLETUS)
-    try:
-        with open(polku, encoding="utf-8") as f:
-            teksti = f.read()
-    except OSError:
-        return None
-    return oppimittari.rivi(teksti, nyt or datetime.now(timezone.utc).date())
+    """Oppimisen mittarin rivi virhelokista. Lokin puuttuminen kerrotaan rivilla, ettei mittari katoa raportista hiljaa."""
+    ymp = os.environ.get("VIRHELOKI")
+    polut = (ymp,) if ymp else VIRHELOKI_OLETUKSET
+    for polku in polut:
+        try:
+            with open(polku, encoding="utf-8") as f:
+                teksti = f.read()
+        except (OSError, ValueError):     # ValueError: ei UTF-8
+            continue
+        return oppimittari.rivi(teksti, nyt or datetime.now(timezone.utc).date())
+    return "Oppiminen: virhelokia ei l\u00f6ytynyt (%d polkua kokeiltu)." % len(polut)
 
 
 def main(argv=None):
