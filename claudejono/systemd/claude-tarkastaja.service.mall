@@ -1,0 +1,22 @@
+# Mallitiedosto: ei asenna mitaan. Asennus README.md:n osion "Riippumaton tarkastaja" mukaan.
+[Unit]
+Description=Claude-jono: riippumaton PR-tarkastaja (automergen ehto)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Root lukee botin tunnuksen ja kirjoittaa kommentin; malli ajetaan erillisena kayttajana tarkastaja ilman tyokaluja.
+# Tarkastajan claude-ohjelma on tarkastajan omassa kotihakemistossa: agentti (claudejono) ei voi muuttaa sita.
+WorkingDirectory=/opt/agentti-pohja
+Environment=CLAUDEJONO_TILA=/var/lib/claude-jono
+Environment=CLAUDEJONO_KAYTTAJA=claudejono
+Environment=CLAUDEJONO_TARKASTAJA_KAYTTAJA=tarkastaja
+Environment=CLAUDEJONO_CLAUDE=/var/lib/tarkastaja/.local/bin/claude
+Environment=CLAUDEJONO_TARKASTAJA_MALLI=opus
+Environment=CLAUDEJONO_TARKASTAJA_TUNNUS=/etc/claudejono-pr/token
+Environment=CLAUDEJONO_TARKASTUS_REPOT=agentti-pohja,mcp-model-router,ai-pr-reviewer-action,mcp-doctor,kauppatiimi,llm-cassette,llm-stopcheck,evalkit,ideapankki
+EnvironmentFile=-/etc/claude-jono/asetukset.env
+ExecStart=/usr/bin/python3 -B -m claudejono.tarkastaja kierros
+TimeoutStartSec=3600
+PrivateTmp=true
