@@ -146,7 +146,7 @@ class ClaudeAjo(unittest.TestCase):
 
 class Tuomio(unittest.TestCase):
     def test_kelvollinen(self):
-        t = kilpailu.lue_tuomio("Tässä:\n" + tuomio_json("B", etiketit=("A", "B")) + "\nloppu", ["A", "B"])
+        t = kilpailu.lue_tuomio("T\u00e4ss\u00e4:\n" + tuomio_json("B", etiketit=("A", "B")) + "\nloppu", ["A", "B"])
         self.assertEqual(t["voittaja"], "B")
         self.assertEqual(t["pisteet"]["B"]["oikeellisuus"], 5)
 
@@ -258,7 +258,7 @@ class Kilpailu(Pohja):
         teksti = kilpailu.muotoile(t)
         for osa in ("Voittaja", "| Malli |", "Tuomarin perustelu", "Muiden vastausten tiivistelm", "Voittajan vastaus"):
             self.assertIn(osa, teksti)
-        self.assertIn("epäonnistui", kilpailu.muotoile({"tila": "epaonnistui", "virhe": "x"}))
+        self.assertIn("ep\u00e4onnistui", kilpailu.muotoile({"tila": "epaonnistui", "virhe": "x"}))
 
 
 class Otos(Pohja):
