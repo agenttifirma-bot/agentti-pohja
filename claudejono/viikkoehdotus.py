@@ -136,7 +136,7 @@ def viikon_nimi(nyt):
     return y, w, f"{y}-{w:02d}"
 
 
-def rakenna(repo, nyt):
+def rakenna(repo, nyt, paatokset_hak=None):
     """(viikon_nimi, markdown, ehdokaslista)."""
     y, w, nimi = viikon_nimi(nyt)
     lista = ehdokkaat(repo, nyt)[:MAX_EHDOTUKSIA]
@@ -164,6 +164,9 @@ def rakenna(repo, nyt):
     if aukot:
         rivit += ["", "## Pisteytett\u00e4v\u00e4t aukot (v\u00e4litavoite ilman pisteytetty\u00e4 ehdotusta)", ""]
         rivit += [f"- Tavoite {n}: {t[:200]}" for n, t in sorted(aukot.items())]
+    if paatokset_hak:
+        from . import paatokset
+        rivit += ["", paatokset.mittaririvi(paatokset_hak)]
     rivit += ["", "Pisteytetyn listan j\u00e4lkeen: valitaan ensin suurin pistem\u00e4\u00e4r\u00e4, mutta v\u00e4litavoitteen alle kuulumaton ty\u00f6 j\u00e4\u00e4 pois (kompassi: ei uusia suuntia ilman, ett\u00e4 vanha tuottaa)."]
     return nimi, "\n".join(rivit) + "\n", lista
 
@@ -178,7 +181,7 @@ def main(argv=None):
     nyt = datetime.fromisoformat(a.nyt) if a.nyt else datetime.now(TZ)
     if nyt.tzinfo is None:
         nyt = nyt.replace(tzinfo=TZ)
-    nimi, teksti, lista = rakenna(a.repo, nyt)
+    nimi, teksti, lista = rakenna(a.repo, nyt, os.environ.get("CLAUDEJONO_PAATOKSET", "/var/lib/claude-jono/paatokset"))
     hak = Path(a.hakemisto)
     hak.mkdir(parents=True, exist_ok=True)
     polku = hak / f"{nimi}-ehdotus.md"

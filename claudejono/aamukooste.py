@@ -125,7 +125,7 @@ def rikkinaiset_yksikot(suorita=subprocess.run):
     return [rivi.split()[0] for rivi in r.stdout.splitlines() if rivi.strip()]
 
 
-def keraa(repo, perus, nyt, hae=None, yksikot=None):
+def keraa(repo, perus, nyt, hae=None, yksikot=None, paatokset_hak=None):
     """Kokoaa kooste-aineiston. `hae` = GitHub-haku (testeissa tekaistu), `yksikot` = failed-yksikoiden lahde."""
     from agentti import aamupaketti
     alku = nyt - timedelta(hours=IKKUNA_H)
@@ -159,7 +159,12 @@ def keraa(repo, perus, nyt, hae=None, yksikot=None):
         kaistat = kaistamittaus.rivi(Path(repo).parent, nyt, perus)
     except Exception:
         kaistat = None
-    return {"nyt": nyt, "kaistat": kaistat, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku),
+    try:   # paivan paatoslista (claudejono.paatokset, tuodaan tassa kehaviitteen valttamiseksi); virhe ei kaada koostetta
+        from . import paatokset
+        paatoslista = paatokset.lista_tekstina(paatokset_hak) if paatokset_hak else ""
+    except Exception:
+        paatoslista = ""
+    return {"nyt": nyt, "kaistat": kaistat, "paatoslista": paatoslista, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku),
             "pr": pr_ryhmat, "pr_virheita": virheet, "yojono": yojono_tila(perus, nyt),
             "yksikot": (yksikot or rikkinaiset_yksikot)(), "vaiteportti": vaiteportti.puutteet(repo)}
 
@@ -239,7 +244,7 @@ def linkit(t):
 
 
 def muotoile(t):
-    return "\n".join(rivit(t)) + "\n\nLinkit:\n" + "\n".join(linkit(t))
+    return "\n".join(rivit(t)) + (("\n\n" + t["paatoslista"]) if t.get("paatoslista") else "") + "\n\nLinkit:\n" + "\n".join(linkit(t))
 
 
 def main(argv=None):
@@ -252,7 +257,7 @@ def main(argv=None):
     nyt = datetime.fromisoformat(a.nyt) if a.nyt else datetime.now(TZ)
     if nyt.tzinfo is None:
         nyt = nyt.replace(tzinfo=TZ)
-    teksti = muotoile(keraa(a.repo, a.yojono, nyt))
+    teksti = muotoile(keraa(a.repo, a.yojono, nyt, paatokset_hak=os.environ.get("CLAUDEJONO_PAATOKSET", "/var/lib/claude-jono/paatokset")))
     print(teksti)
     if a.laheta:
         from yojono.ajuri import laheta_telegram

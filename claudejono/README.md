@@ -111,6 +111,14 @@ Kuiva-ajo (ei lähetä): `cd /opt/agentti-pohja && python3 -B -m claudejono.aamu
 
 **Viikkoehdotus** (`python3 -m claudejono.viikkoehdotus`) kirjoittaa tiedoston `<vvvv-vv>-ehdotus.md` (hyöty × varmuus / vaiva). Ehdokkaat tulevat jonon tehtävistä, joilla ei ole tulosta ja joilla on `Pisteet:`-rivi, viimeisen 7 vuorokauden epäonnistuneista tai hylätyistä tehtävistä sekä valinnaisesta tiedostosta `claude-jono/ehdokkaat.md` (rivi: `- nimi | hyöty | varmuus | vaiva h | tavoite`). Pisteitä ei keksitä: välitavoite, jolle ei ole pisteytettyä ehdokasta, listataan erikseen aukkona. Oletushakemisto on `/var/lib/claude-jono/viikko` eli docs-kloonin ulkopuolella, koska ajuri saa committaa vain sallitut polut (`sallittu_polku`). Jos tiedoston haluaa docs-repoon, polkulistan laajennus on Tonyn päätös.
 
+**Päätökset** (`python3 -m claudejono.paatokset`, Tonyn päätös 4.11.2026): Digi-Tony lukee avoimet päätöskohdat (`tonylle.md`:n kohdat kahden viime päivän ajalta ja tulosten `## Tonylle` -osiot) ja kysyy mallilta jokaisesta päätöksen, varmuuden 1–5, perustelun ja kompassiviitteen. Koodi päättää, ei malli: varmuus ≥ 4, ei rajattu ja kompassiviitteen on löydyttävä `kompassi.md`:stä sanasta sanaan → rivi `paatokset.md`:hen. Muut menevät päivälistalle (enintään 5 kohtaa, vaihtoehdot A/B/C), joka tulostuu aamukoosteeseen viiden rivin perään. Rajattuihin (oikea raha, salaisuudet, oikeudet ja kulukatot, julkaisu Tonyn nimissä) ei koskaan päätöstä eikä edes suositusta; rajaus tehdään avainsanoilla koodissa ja mallin luokalla, ja virhe tarkoittaa aina listaa. Terveys-, perhe- ja tilitietoja sisältävää kohtaa ei lähetetä mallille. Malli ajetaan ilman työkaluja (`--tools ""`), ja kohteen teksti on pelkkää dataa.
+
+- Ajo: `python3 -m claudejono.paatokset --ajo` (ilman lippuja vain laskee avoimet kohdat; mallikutsuja enintään 8 / ajo, loput seuraavalla ajolla). Malli: `CLAUDEJONO_PAATOS_MALLI` (esim. `opus`), komento: `CLAUDEJONO_CLAUDE`.
+- Tiedostot: `/var/lib/claude-jono/paatokset/` (`CLAUDEJONO_PAATOKSET`): `paatokset.md` (rivit vain lisätään: PAATOS, VASTAUS, PERUTTU), `lista.json`, `kasitellyt.jsonl`.
+- Peruminen: `python3 -m claudejono.paatokset --peru <8 merkin tunniste>`. Vastaus listaan: `--vastaa 2B`. Telegram-vastausten automaattinen luku on erillinen jatkotehtävä.
+- Mittari: `--mittari` (perutut / tehdyt). Sama rivi tulee viikkoehdotukseen.
+- Ajastusta ei ole asennettu: aja käsin tai lisää ajastin vasta, kun Tony on hyväksynyt sen.
+
 ### Asennus (Tony)
 
 ```
