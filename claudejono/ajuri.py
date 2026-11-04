@@ -243,19 +243,45 @@ def aktiiviset_varaukset(tila, nyt=None, vanhenee_s=OLETUS_AIKARAJA_S + VARAUS_M
     return sorted(p.name for p in hak.iterdir() if p.is_file() and _varaus_elossa(p, nyt, vanhenee_s))
 
 
-def varaa_seuraava(repo, tila, kaista, nyt=None, vanhenee_s=OLETUS_AIKARAJA_S + VARAUS_MARGINAALI_S, ohita=None):
-    """Vanhin kelvollinen tehtava ilman tulosta ja ilman toisen kaistan varausta; varaa sen. None jos ei ole.
-    ohita(polku) -> True ohittaa tehtavan (esim. Claude-reitti, kun Tonyn varaus tai kayttoraja estaa sen), jotta jono ei jaa jumiin."""
+KAISTARIVI_RE = re.compile(r"^Kaista:[ \t]*(\d+)[ \t]*$", re.MULTILINE)
+KAISTARIVI_LUKU_MAX = 20000   # tavua; rivi luetaan vain tiedoston alusta
+
+
+def tehtavan_kaista(polku, kaistoja=KAISTOJA_MAX):
+    """Tehtavan `Kaista: N` -rivi. Palauttaa kaistanumeron tai None (vapaa tehtava).
+    Rivi on dataa: puuttuva, lukukelvoton tai kaistojen maaran ulkopuolinen arvo (esim. Kaista: 3 kun kaistoja on 2)
+    tulkitaan vapaaksi, jotta kiinnitys ei jaa ikuisesti ottajaa vaille. Ensimmainen rivi ratkaisee."""
+    try:
+        with open(polku, "rb") as f:
+            teksti = f.read(KAISTARIVI_LUKU_MAX).decode("utf-8", "replace")
+    except OSError:
+        return None
+    m = KAISTARIVI_RE.search(teksti)
+    if not m:
+        return None
+    n = int(m.group(1))
+    return n if 1 <= n <= min(kaistoja, KAISTOJA_MAX) else None
+
+
+def odottavat_tehtavat(repo):
+    """Kaikki kelvolliset tehtavat ilman tulosta nimen mukaisessa jarjestyksessa."""
     teht = Path(repo) / JONO / "tehtavat"
     tul = Path(repo) / JONO / "tulokset"
     if not teht.is_dir():
-        return None
-    for p in sorted(teht.iterdir()):
-        if p.is_file() and kelvollinen_nimi(p.name) and not (tul / p.name).exists():
-            if ohita and ohita(p):
-                continue
-            if varaa(tila, p.name, kaista, nyt, vanhenee_s):
-                return p
+        return []
+    return [p for p in sorted(teht.iterdir()) if p.is_file() and kelvollinen_nimi(p.name) and not (tul / p.name).exists()]
+
+
+def varaa_seuraava(repo, tila, kaista, nyt=None, vanhenee_s=OLETUS_AIKARAJA_S + VARAUS_MARGINAALI_S, kaistoja=KAISTOJA_MAX, ohita=None):
+    """Valinta: 1) kaistalle kiinnitetyt (`Kaista: N`) vanhin ensin, 2) vapaat vanhin ensin. Toisen kaistan kiinnittamiin ei
+    kosketa eika toisen kaistan varaamiin. Varaa valitun. None jos ei ole.
+    ohita(polku) -> True ohittaa tehtavan (esim. Claude-reitti, kun Tonyn varaus tai kayttoraja estaa sen)."""
+    odottavat = [(p, tehtavan_kaista(p, kaistoja)) for p in odottavat_tehtavat(repo)]
+    for omat in (True, False):
+        for p, k in odottavat:
+            if ((k == kaista) if omat else (k is None)) and not (ohita and ohita(p)):
+                if varaa(tila, p.name, kaista, nyt, vanhenee_s):
+                    return p
     return None
 
 
@@ -713,7 +739,7 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
     # Valinta + varaus yhden lyhyen git-lukon sisalla: pull, tulosten tarkistus ja atominen varaus eivat lomitu toisen kaistan kanssa.
     with git_lukko(tila) as odotus:
         git(repo, "pull", "-q", "--rebase", "origin", "main")
-        t = varaa_seuraava(repo, tila, kaista, vanhenee_s=vanhenee, ohita=ohita)
+        t = varaa_seuraava(repo, tila, kaista, vanhenee_s=vanhenee, kaistoja=kaistojen_maara(env), ohita=ohita)
         suunnittelu = False
         if t is None:
             if ohitettu:
