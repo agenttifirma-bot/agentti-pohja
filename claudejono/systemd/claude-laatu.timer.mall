@@ -1,0 +1,11 @@
+# Mallitiedosto: ei asenna mitaan. Ajetaan ennen aamukoostetta (klo 6.30), jotta mittaririvi on valmis.
+[Unit]
+Description=Claude-jono laatuotos joka aamu klo 5.45 Helsingin aikaa
+
+[Timer]
+OnCalendar=*-*-* 05:45:00 Europe/Helsinki
+Persistent=true
+Unit=claude-laatu.service
+
+[Install]
+WantedBy=timers.target
