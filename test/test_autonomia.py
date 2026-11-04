@@ -74,7 +74,7 @@ class AgenttiJaLuokka(unittest.TestCase):
     def test_suojattu_voittaa(self):
         for n in (".github/workflows/a.yml", "tools/automerge.py", "agentti/config.py", "yojono/a.py", "test/token.md", "../x.md"):
             self.assertEqual(au.luokittele(tied(n, "README.md")), "suojattu", n)
-        self.assertEqual(au.luokittele([{"filename": "docs/b.md", "previous_filename": "tools/a.md"}]), "suojattu")
+        self.assertEqual(au.luokittele([{"filename": "docs/b.md", "previous_filename": ".github/a.md"}]), "suojattu")
 
     def test_ci(self):
         self.assertEqual(au.ci_tulos(ajot("success", "skipped")), "ok")

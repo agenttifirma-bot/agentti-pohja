@@ -149,3 +149,37 @@ systemctl list-timers 'claude-*'
 ```
 
 Ajastus on Helsingin aikaa (`OnCalendar=... Europe/Helsinki`), joten kesäaika ei siirrä kellonaikaa vaikka palvelimen aikavyöhyke on UTC. Kääntäminen päälle: lisää `Environment=CLAUDEJONO_ILMOITUKSET=kooste` tiedostoon `claude-jono.service` (ja yojono-palveluun), `daemon-reload`. Peruutus: poista rivi tai aseta arvoksi `heti`.
+
+## Riippumaton tarkastaja ja automerge v2 (Tonyn päätös 4.11.2026)
+
+Kaikki PR:t yhdistyvät ilman Tonya, kun CI on vihreä ja riippumaton tarkastaja on hyväksynyt saman head-commitin. Poikkeus
+on rajatut: oikea raha, salaisuudet, oikeudet ja kulukatot, työnkulut (`.github`), `tools/automerge.py`, palomuuri ja
+julkaisu Tonyn nimissä. Ne yhdistää aina Tony. Säännöt ovat tiedostossa `tools/automerge.py`, ja agentit eivät voi muuttaa
+niitä (`agentti/pr_kutsu.py`, `AGENTILTA_KIELLETYT_RE`).
+
+Ketju:
+1. `claude-tarkastaja.timer` ajaa 10 minuutin välein komennon `python3 -m claudejono.tarkastaja kierros` rootina.
+2. Ohjelma ohittaa PR:t, jotka eivät muutenkaan kelpaa automergeen, joten tarkastusta ei kuluteta niihin.
+3. Malli (oletuksena Opus, tilauksesta) arvioi diffin erillisenä käyttäjänä `tarkastaja` ilman työkaluja.
+4. Ohjelma kirjoittaa PR:ään kommentin, jonka lopussa on merkki `riippumaton-tarkastus v1 sha=... paatos=...`.
+5. Kommentti käynnistää Automerge-työnkulun. Se kytkee auto-mergen vain paatos=HYVAKSYTTY-merkinnälle ja vain samaan commitiin (`--match-head-commit`).
+
+Rajat: 40 tarkastusta vuorokaudessa, 6 per PR ja diff enintään 150 kt. Isompi diff on Tonylle. Kaikki epäselvä on Tonylle.
+
+Käyttöönotto (Tony, kerran, CT115):
+```
+useradd --system --create-home --home-dir /var/lib/tarkastaja --shell /bin/bash tarkastaja
+runuser -u tarkastaja -- bash -c 'curl -fsSL https://claude.ai/install.sh | bash'
+runuser -u tarkastaja -- /var/lib/tarkastaja/.local/bin/claude
+```
+Viimeinen komento avaa Clauden. Kirjaudu `/login`-komennolla samalla tilillä kuin claudejono ja poistu `/exit`-komennolla. Sen jälkeen:
+```
+cd /opt/agentti-pohja/claudejono/systemd
+cp claude-tarkastaja.service.mall /etc/systemd/system/claude-tarkastaja.service
+cp claude-tarkastaja.timer.mall /etc/systemd/system/claude-tarkastaja.timer
+systemctl daemon-reload
+cd /opt/agentti-pohja && python3 -m claudejono.tarkastaja kierros --kuiva
+systemctl enable --now claude-tarkastaja.timer
+```
+Kuiva-ajo listaa tarkastettavat PR:t ajamatta mallia. Loki on tiedostossa `/var/lib/claude-jono/tarkastukset.jsonl`.
+Peruutus: `systemctl disable --now claude-tarkastaja.timer`. Ilman tarkastajaa mikään ei yhdisty automaattisesti.

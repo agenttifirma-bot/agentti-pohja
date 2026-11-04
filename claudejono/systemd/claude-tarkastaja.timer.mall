@@ -1,0 +1,11 @@
+# Mallitiedosto: ei asenna mitaan. Asennus README.md:n osion "Riippumaton tarkastaja" mukaan.
+[Unit]
+Description=Claude-jono: riippumaton PR-tarkastaja 10 min valein
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
