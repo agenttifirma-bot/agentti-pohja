@@ -22,7 +22,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from . import kulutus, litellm_ajo, varaus
+from . import kilpailu, kulutus, litellm_ajo, varaus
 from . import malli as mallit
 
 TEHTAVA_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-[a-z0-9-]{1,60}\.md$")
@@ -615,6 +615,16 @@ def _ilmoita_varaus(tila, env, laheta, nyt):
         pass
 
 
+def _otos(tila, nimi, tehtava_teksti, vastaus, claude_malli, env, suorita, litellm, kaista):
+    """Joka 5. tavallinen Claude-reitin tehtava: halvan mallin vertailuvastaus ja Opus-tuomarin pisteet (vain pisteet kirjataan,
+    ei PR:aa eika tulostiedostoa). Mikaan virhe ei saa kaataa ajoa."""
+    try:
+        if kilpailu.otos_vuorossa(tila):
+            kilpailu.otos(tila, nimi, tehtava_teksti, vastaus, claude_malli, env, suorita, litellm, kaista=kaista)
+    except Exception:
+        pass
+
+
 def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, litellm=None):
     """litellm = testattava korvike litellm_ajo.aja:lle (alias, teksti, env) -> (ok, teksti, luvut)."""
     env = dict(os.environ if env is None else env)
@@ -629,7 +639,13 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
     ohitettu = []
 
     def ohita(p):
-        m = mallit.valitse(p.name, _lue_teksti(p))
+        teksti_p = _lue_teksti(p)
+        m = mallit.valitse(p.name, teksti_p)
+        if kilpailu.kentta(teksti_p) is not None:   # kilpailun tuomari on aina Opus -> Clauden esteet koskevat sita
+            if estetty:
+                ohitettu.append(p.name)
+                return True
+            return False
         if (m.reitti == "claude" and estetty) or (m.reitti == "openrouter" and not litellm_kunnossa):
             ohitettu.append(p.name)
             return True
@@ -668,7 +684,15 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
         m = mallit.valitse(t.name, tehtava_teksti)
         r = None
         luvut = {}
-        if m.reitti == "openrouter":
+        kisa = kilpailu.kentta(tehtava_teksti) is not None
+        if kisa:
+            # Ajattelun kilpailutus: mallit ja tuomari ilman tyokaluja; kilpailu kirjaa itse kulut (laji kilpailu) ja pisteet.
+            if len(t.read_bytes()) > TEHTAVA_MAX_TAVUA:
+                raise JonoVirhe(f"tehtava yli {TEHTAVA_MAX_TAVUA} tavua")
+            m = mallit.Malli("claude", "opus", "kilpailu")
+            tulos = kilpailu.kilpaile(tila, t.name, tehtava_teksti, env, suorita, litellm, kaista=kaista)
+            ok, teksti = tulos.get("tila") == "valmis", kilpailu.muotoile(tulos)
+        elif m.reitti == "openrouter":
             if len(t.read_bytes()) > TEHTAVA_MAX_TAVUA:
                 raise JonoVirhe(f"tehtava yli {TEHTAVA_MAX_TAVUA} tavua")
             ok, teksti, luvut = (litellm or litellm_ajo.aja)(m.nimi, tehtava_teksti, env)
@@ -683,8 +707,9 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
             except subprocess.TimeoutExpired:
                 ok, teksti = False, "aikakatkaisu"
         kesto = time.monotonic() - alku
-        kulutus.kirjaa(tila, m.tunniste, t.name, kaista, "tehtava", ok, kesto, luvut)
-        if m.reitti == "claude" and not ok and RAJA_RE.search(teksti or ""):
+        if not kisa:
+            kulutus.kirjaa(tila, m.tunniste, t.name, kaista, "tehtava", ok, kesto, luvut)
+        if m.reitti == "claude" and not kisa and not ok and RAJA_RE.search(teksti or ""):
             # Kayttorajavirhe: kaikki Claude-kaistat tauolle, tehtava jaa jonoon (ei tulosta) enintaan RAJA_YRITYKSIA kertaa. Ei uusintasilmukkaa.
             tauko, yritys = varaus.kirjaa_raja(tila, kaista, t.name, env)
             if laheta:
@@ -695,12 +720,14 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
         with git_lukko(tila) as odotus2:
             polku = kirjoita_tulos(repo, t.name, ok, teksti, malli=m.tunniste)
             pushattu = julkaise(repo, polku)
-            if ok and m.reitti == "claude":
+            if ok and m.reitti == "claude" and not kisa:
                 uudet, _ = suodata_opit(poimi_uusi_oppi(teksti))
                 if uudet:
                     julkaise_opit(repo, paivita_opit(lue_opit(repo), uudet))
         kirjaa_kaistaloki(tila, kaista, "tehtava", t.name, ok, kesto, teksti, getattr(r, "stdout", "") or "", pushattu, odotus + odotus2,
                           malli=m.tunniste)
+        if ok and m.reitti == "claude" and not kisa and not estetty:
+            _otos(tila, t.name, tehtava_teksti, teksti, m.nimi, env, suorita, litellm, kaista)
     finally:
         vapauta(tila, t.name, kaista)   # varaus vapautuu tuloksen kirjauksen jalkeen tai virheessa; muuten se vanhenee aikarajalla
     viesti = f"claude-jono: {t.name} {'VALMIS' if ok else 'EPAONNISTUI'}{leima}" + ("" if pushattu else " (push epaonnistui)")

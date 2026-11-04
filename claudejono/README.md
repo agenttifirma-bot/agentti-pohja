@@ -157,3 +157,9 @@ Ajastus on Helsingin aikaa (`OnCalendar=... Europe/Helsinki`), joten kesäaika e
 - Valinnainen rivi `Laji: arkkitehtuuri|strategia|tavoitteet|muu`. Kauppatiimin kilpailut vain paperistrategioista.
 - Kulukatto: `CLAUDEJONO_KILPAILU_USD_PV` (oletus 1.0) OpenRouter-kuluille vuorokaudessa. Kun katto täyttyy, kilpailu ajetaan vain Clauden malleilla (`opus`, `sonnet`). Muut katot eivät muutu.
 - `viikkokooste()` antaa viime viikon tulokset malleittain aamukoosteeseen.
+
+### Kytkentä jonoon
+
+- Tehtävä, jossa on rivi `Kilpailu: ...`, ajetaan kilpailuna (`ajuri.aja`). Tulostiedostoon tulee voittajan vastaus, muiden tiivistelmät ja pisteet; tulos on aina `Malli: opus` (tuomari). Kun Clauden käyttö on tauolla tai Tonyn varauksessa, kilpailutehtävä jää jonoon.
+- Otos: joka 5. tavallinen Claude-reitin tehtävä (laskuri `<tila>/otos-laskuri.json`) ajetaan lisäksi halvalla mallilla (`openrouter:deepseek-flash`). Opus-tuomari pisteyttää vastaukset, ja vain pisteet kirjataan (`laji: otos`). Vertailu ei tee PR:ää, muutoksia eikä tulostiedostoa. Virhe ei kaada ajoa.
+- Aamukooste: maanantaisin yksi rivi viime viikon kilpailuista malleittain.

@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import ajuri, kaistamittaus, kulutus, varaus
+from . import ajuri, kaistamittaus, kilpailu, kulutus, varaus
 
 TZ = ZoneInfo("Europe/Helsinki")
 OLETUS_REPO = "/var/lib/claude-jono/docs"
@@ -26,7 +26,7 @@ OLETUS_YOJONO = "/var/lib/yojono"
 DOCS_URL = "https://github.com/tonyweckstrom1987/agenttifirma-docs/blob/main/claude-jono"
 IKKUNA_H = 24
 RIVI_MAX = 300
-KULU_RIVI_MAX = 700   # kulutusrivi (mallit + viikko + Tonyn varaus) on pidempi kuin muut rivit
+KULU_RIVI_MAX = 1000   # kulutusrivi (mallit + viikko + Tonyn varaus + maanantaisin kilpailut) on pidempi kuin muut rivit
 MAX_MERGELINKKEJA = 4
 BUDJETTI_HALYTYS = 0.8   # nayttorajaus: kuukausikulu >= 80 % katosta nostetaan halytyksiin (ei muuta kattoa)
 
@@ -167,7 +167,13 @@ def keraa(repo, perus, nyt, hae=None, yksikot=None):
         varaus_rivi, varaus_kysymys = varaus.aamukooste_osa(tila, os.environ, nyt)
     except Exception:
         pass
-    return {"nyt": nyt, "kaistat": kaistat, "kulutus": kulutus_teksti, "varaus": varaus_rivi, "varaus_kysymys": varaus_kysymys, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku),
+    kilpailu_teksti = None
+    try:   # kilpailujen viikkokooste malleittain kerran viikossa (maanantaina)
+        if nyt.astimezone(kulutus.TZ).weekday() == 0:
+            kilpailu_teksti = kilpailu.viikkokooste(Path(repo).parent, nyt)
+    except Exception:
+        pass
+    return {"nyt": nyt, "kaistat": kaistat, "kulutus": kulutus_teksti, "kilpailu": kilpailu_teksti, "varaus": varaus_rivi, "varaus_kysymys": varaus_kysymys, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku),
             "pr": pr_ryhmat, "pr_virheita": virheet, "yojono": yojono_tila(perus, nyt),
             "yksikot": (yksikot or rikkinaiset_yksikot)()}
 
@@ -231,7 +237,7 @@ def rivit(t):
         kulut = f"Kulut: y\u00f6jono t\u00e4n\u00e4\u00e4n {paiva} USD, kuukausi {kk} USD."
     else:
         kulut = "Kulut: y\u00f6jonon tilaa ei saatu luettua."
-    kulut = " ".join(x.rstrip(".") + "." for x in (kulut, t.get("kulutus"), t.get("varaus")) if x)
+    kulut = " ".join(x.rstrip(".") + "." for x in (kulut, t.get("kulutus"), t.get("varaus"), t.get("kilpailu")) if x)
     return [_lyhenna(r, KULU_RIVI_MAX if r is kulut else RIVI_MAX) for r in (tehty, tarvitaan, opittu, hal, kulut)]
 
 
