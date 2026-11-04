@@ -131,6 +131,76 @@ class Kooste(Pohja):
         self.assertIs(m.call_args.kwargs.get("pakota"), True)
 
 
+class Koetila(Kooste):
+    """Kiinteat kellot ja injektoitu env: ei riipu oikeasta paivasta (ei aikapommia)."""
+    ENV = {"CLAUDEJONO_KOEPAIVA": "2026-11-20"}
+
+    def teksti(self, nyt, env=None, ilta=False, **kw):
+        t = aamukooste.keraa(self.repo, self.yj, nyt, self.hae, lambda: kw.get("yksikot", ["paivakatsaus.service"]))
+        return aamukooste.muotoile(t, self.ENV if env is None else env, ilta=ilta)
+
+    def test_ennen_koetta_16_paivaa(self):
+        rv = self.teksti(datetime(2026, 11, 4, 6, 30, tzinfo=TZ)).splitlines()
+        self.assertEqual(rv[0], "Matematiikan koe 20.11.2026: 16 p\u00e4iv\u00e4\u00e4. Aamu kokeelle.")
+        self.assertTrue(rv[1].startswith("H\u00e4lytykset:"))
+        self.assertIn("failed: paivakatsaus.service", rv[1])
+        self.assertIn("iltaviestiss\u00e4 klo 18", rv[-1])
+
+    def test_aamulla_ei_infra_asioita(self):
+        teksti = self.teksti(datetime(2026, 11, 10, 6, 30, tzinfo=TZ))
+        for ei in ("Tehty:", "Opittu:", "Kulut:", "Merge:", "pull/9", "Tarvitaan sinulta"):
+            self.assertNotIn(ei, teksti)
+
+    def test_yksi_paiva(self):
+        self.assertIn("20.11.2026: 1 p\u00e4iv\u00e4. Aamu", self.teksti(datetime(2026, 11, 19, 6, 30, tzinfo=TZ)))
+
+    def test_koetila_pois_ennen_ikkunaa_ja_koepaivana_ja_jalkeen(self):
+        normaali = aamukooste.muotoile(self.keraa(), {})
+        for nyt in (datetime(2026, 11, 3, 6, 30, tzinfo=TZ),     # 17 paivaa: ikkunan ulkopuolella
+                    datetime(2026, 11, 20, 6, 30, tzinfo=TZ),    # koepaiva itse
+                    datetime(2026, 11, 21, 6, 30, tzinfo=TZ), datetime(2027, 3, 1, 6, 30, tzinfo=TZ)):
+            teksti = self.teksti(nyt)
+            self.assertNotIn("Matematiikan koe", teksti, nyt)
+            self.assertTrue(teksti.startswith("Tehty:"), nyt)
+        self.assertTrue(normaali.startswith("Tehty:"))
+
+    def test_asetus_puuttuu_tai_rikki_ei_koetilaa(self):
+        nyt = datetime(2026, 11, 10, 6, 30, tzinfo=TZ)
+        for env in ({}, {"CLAUDEJONO_KOEPAIVA": ""}, {"CLAUDEJONO_KOEPAIVA": "huomenna"}):
+            self.assertTrue(self.teksti(nyt, env).startswith("Tehty:"), env)
+
+    def test_halytykset_tulevat_aina_samoina(self):
+        nyt = datetime(2026, 11, 10, 6, 30, tzinfo=TZ)
+        normaali = aamukooste.rivit(aamukooste.keraa(self.repo, self.yj, nyt, self.hae, lambda: ["a.service", "b.service"]))[3]
+        self.assertIn(normaali, self.teksti(nyt, yksikot=["a.service", "b.service"]).splitlines())
+
+    def test_kiireellinen_paatos_nakyy_aamulla(self):
+        self.kirjoita("tonylle.md", "## 2026-11-09T22:10+02:00 KIIREELLINEN: hyvaksy tunnus?\nx\n\n## 2026-11-09T22:20+02:00 luonnos\ny\n")
+        teksti = self.teksti(datetime(2026, 11, 10, 6, 30, tzinfo=TZ))
+        self.assertIn("Kiireelliset p\u00e4\u00e4t\u00f6kset:", teksti)
+        self.assertIn("hyv", teksti)
+        self.assertNotIn("luonnos", teksti)
+
+    def test_ei_kiireellista_ei_riveja(self):
+        self.assertNotIn("Kiireelliset", self.teksti(datetime(2026, 11, 10, 6, 30, tzinfo=TZ)))
+
+    def test_ilta_sisaltaa_kaiken_muun(self):
+        teksti = self.teksti(datetime(2026, 11, 10, 18, 0, tzinfo=TZ), ilta=True)
+        self.assertTrue(teksti.startswith("Iltaviesti, matematiikan koe 20.11.2026: 10 p\u00e4iv\u00e4\u00e4."))
+        for on in ("Tehty:", "Tarvitaan sinulta:", "Kulut:"):
+            self.assertIn(on, teksti)
+
+    def test_ilta_koetilan_ulkopuolella_ei_viestia(self):
+        self.assertIsNone(self.teksti(datetime(2026, 11, 21, 18, 0, tzinfo=TZ), ilta=True))
+
+    def test_main_ilta_ei_laheta_koetilan_ulkopuolella(self):
+        with mock.patch.dict(os.environ, {}, clear=False), mock.patch.object(yojono_ajuri, "laheta_telegram") as m, \
+                mock.patch.object(aamukooste, "keraa", return_value=self.keraa()):
+            os.environ.pop("CLAUDEJONO_KOEPAIVA", None)
+            self.assertEqual(aamukooste.main(["--ilta", "--laheta", "--nyt", "2026-11-21T18:00+02:00"]), 0)
+        m.assert_not_called()
+
+
 class IlmoitusRajaus(unittest.TestCase):
     ENV = {"YOJONO_TELEGRAM_TOKEN": "t", "YOJONO_TELEGRAM_CHAT": "c"}
 

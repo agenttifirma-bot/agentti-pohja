@@ -1,0 +1,11 @@
+# Mallitiedosto: ei asenna mitaan.
+[Unit]
+Description=Koetilan iltaviesti klo 18 (Helsingin aika)
+
+[Timer]
+OnCalendar=*-*-* 18:00:00 Europe/Helsinki
+Persistent=false
+Unit=claude-iltakooste.service
+
+[Install]
+WantedBy=timers.target

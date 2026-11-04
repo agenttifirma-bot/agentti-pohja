@@ -5,7 +5,7 @@ Lahteet (kaikki vain luku):
   - avoimet PR:t (GitHubin julkinen API, agentti.aamupaketti.keraa; ei tunnuksia)
   - yojonon tila (tila.json, jono.json: kulut ja katot vain luettuna) ja systemd:n failed-yksikot
 
-Kaytto: python3 -m claudejono.aamukooste [--laheta] [--nyt ISO-AIKA] [--repo POLKU] [--yojono POLKU]
+Kaytto: python3 -m claudejono.aamukooste [--laheta] [--ilta] [--nyt ISO-AIKA] [--repo POLKU] [--yojono POLKU]
 Ilman --laheta vain tulostaa (kuiva-ajo). Lahetys kayttaa YOJONO_TELEGRAM_TOKEN ja YOJONO_TELEGRAM_CHAT -ymparistoa.
 Teksti kirjoitetaan Tonylle suomeksi; koodi on ASCII (\\u-merkinnat)."""
 import argparse
@@ -14,7 +14,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -28,6 +28,7 @@ IKKUNA_H = 24
 RIVI_MAX = 300
 KULU_RIVI_MAX = 700   # kulutusrivi (mallit + viikko + Tonyn varaus) on pidempi kuin muut rivit
 MAX_MERGELINKKEJA = 4
+KOE_IKKUNA_PV = 16   # koetila: koepaivaa edeltavat 1..16 paivaa (koepaiva itse asetuksesta CLAUDEJONO_KOEPAIVA, ei koodissa)
 BUDJETTI_HALYTYS = 0.8   # nayttorajaus: kuukausikulu >= 80 % katosta nostetaan halytyksiin (ei muuta kattoa)
 
 TYHJA_OPPI_RE = re.compile(r"(?i)^(t[a\u00e4]m[a\u00e4] ajo ei|ei uutta|ei uusia|ei opittu|ei mit[a\u00e4][a\u00e4]n)")
@@ -249,21 +250,66 @@ def linkit(t):
     return ulos
 
 
-def muotoile(t):
-    return "\n".join(rivit(t)) + "\n\nLinkit:\n" + "\n".join(linkit(t))
+def koe_jaljella(env, nyt):
+    """Koetila: (koepaiva, paivia jaljella), jos CLAUDEJONO_KOEPAIVA (ISO-pvm) on 1..KOE_IKKUNA_PV paivan paassa, muuten None.
+    `nyt` annetaan parametrina (ei omaa kelloa); puuttuva tai virheellinen asetus = koetila pois."""
+    try:
+        koe = date.fromisoformat((env.get("CLAUDEJONO_KOEPAIVA") or "").strip())
+    except ValueError:
+        return None
+    n = (koe - nyt.astimezone(TZ).date()).days
+    return (koe, n) if 1 <= n <= KOE_IKKUNA_PV else None
+
+
+def _koe_otsikko(koe, n, ilta=False):
+    paivia = "1 p\u00e4iv\u00e4" if n == 1 else f"{n} p\u00e4iv\u00e4\u00e4"
+    if ilta:
+        return f"Iltaviesti, matematiikan koe {_suomi_pvm(koe)}: {paivia}. Kokeen j\u00e4lkeen -asiat."
+    return f"Matematiikan koe {_suomi_pvm(koe)}: {paivia}. Aamu kokeelle."
+
+
+def kiireelliset(t):
+    """tonylle.md:n kohdat, joiden otsikossa on KIIREELLINEN (yhden napin paatos, joka ei odota)."""
+    return [o for _, o in t["tonylle"] if "KIIREELL" in o.upper()]
+
+
+def koe_muotoile(t, koe, n):
+    """Koeaamun viesti: vain koe-otsikko, halytykset ja kiireelliset paatokset. Halytysrivi on sama kuin tavallisessa koosteessa."""
+    rv = [_koe_otsikko(koe, n), rivit(t)[3]]
+    kiire = kiireelliset(t)
+    if kiire:
+        rv.append(_lyhenna("Kiireelliset p\u00e4\u00e4t\u00f6kset: " + "; ".join(kiire[:3]) + "."))
+    rv.append("Muu infra (luonnokset, julkaisut, PR:t): iltaviestiss\u00e4 klo 18, kokeen j\u00e4lkeen.")
+    ulos = "\n".join(rv)
+    if kiire:
+        ulos += f"\n\nLinkit:\ntonylle.md: {DOCS_URL}/tonylle.md"
+    return ulos
+
+
+def muotoile(t, env=None, ilta=False):
+    """Normaali kooste; koetilassa (ks. koe_jaljella) aamulla vain halytykset ja kiireelliset, illalla (ilta=True) kaikki muu.
+    Ilta ilman koetilaa -> None (iltaviestia ei lahteta)."""
+    koe = koe_jaljella(os.environ if env is None else env, t["nyt"])
+    normaali = "\n".join(rivit(t)) + "\n\nLinkit:\n" + "\n".join(linkit(t))
+    if ilta:
+        return None if koe is None else _koe_otsikko(*koe, ilta=True) + "\n" + normaali
+    return normaali if koe is None else koe_muotoile(t, *koe)
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(description="Aamukooste Telegramiin (kuiva-ajo ilman --laheta)")
     p.add_argument("--laheta", action="store_true")
     p.add_argument("--nyt", help="ISO-aika (testaus)")
+    p.add_argument("--ilta", action="store_true", help="koetilan iltaviesti (klo 18): kooste kokonaan; ilman koetilaa ei tee mitaan")
     p.add_argument("--repo", default=os.environ.get("CLAUDEJONO_REPO", OLETUS_REPO))
     p.add_argument("--yojono", default=os.environ.get("YOJONO_PERUS", OLETUS_YOJONO))
     a = p.parse_args(argv)
     nyt = datetime.fromisoformat(a.nyt) if a.nyt else datetime.now(TZ)
     if nyt.tzinfo is None:
         nyt = nyt.replace(tzinfo=TZ)
-    teksti = muotoile(keraa(a.repo, a.yojono, nyt))
+    teksti = muotoile(keraa(a.repo, a.yojono, nyt), ilta=a.ilta)
+    if teksti is None:   # --ilta koetilan ulkopuolella
+        return 0
     print(teksti)
     if a.laheta:
         from yojono.ajuri import laheta_telegram
