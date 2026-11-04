@@ -13,6 +13,7 @@ from unittest import mock
 
 from agentti import pr_kutsu as pk
 
+KUV = "Muutos.\n\nTodennettu kaytossa: testattu paikallisesti\n"
 TUNNUS = "github_pat_" + "A1b2C3d4E5" * 4
 
 
@@ -56,11 +57,28 @@ class Vastaus:
 
 class SuojatutTest(unittest.TestCase):
     def test_suojatut(self):
-        for p in (".github/workflows/ci.yml", "tools/automerge.py", "systemd/x.service", "isanta/a.py", "agentti/rajat.py",
-                  "config.py", "a/.env", "x/github_token.txt", "y/api_key.py", "k/id_ed25519"):
+        for p in (".github/workflows/ci.yml", "tools/automerge.py", "agentti/rajat.py", "agentti/pr_kutsu.py", "claudejono/varaus.py",
+                  "claudejono/sudoers.claudejono", "isanta/nftables.conf", "yojono/ajuri.py", "config.py", "a/.env",
+                  "x/github_token.txt", "y/api_key.py", "k/id_ed25519", "/etc/x", "../b"):
             self.assertTrue(pk.suojattu(p), p)
-        for p in ("README.md", "agentti/viikkoraportti.py", "test/test_a.py", "docs/kuvaus.md"):
+        for p in ("README.md", "agentti/viikkoraportti.py", "test/test_a.py", "docs/kuvaus.md", "isanta/a.py", "systemd/x.service",
+                  "tools/mutantit.py", "yojono/test_uusi.py", "claudejono/ajuri.py"):
             self.assertFalse(pk.suojattu(p), p)
+
+    def test_agentilta_kielletyt(self):
+        for p in ("tools/automerge.py", ".github/workflows/automerge.yml", "agentti/pr_kutsu.py", "agentti/github_app.py",
+                  "claudejono/claudejono-pr", "claudejono/sudoers.claudejono", "isanta/sudoers.d/x", "a/.env", "x/token.txt",
+                  "/etc/x", "a/../../b", "./tools/automerge.py"):
+            self.assertTrue(pk.agentilta_kielletty(p), p)
+        for p in (".github/workflows/ci.yml", "tools/mutantit.py", "isanta/asenna.sh", "agentti/rajat.py", "claudejono/varaus.py",
+                  "systemd/x.service", "README.md"):
+            self.assertFalse(pk.agentilta_kielletty(p), p)
+
+    def test_sallittu_repo(self):
+        for r in ("agentti-pohja", "uusi-repo", "x.y_z"):
+            self.assertTrue(pk.sallittu_repo(r), r)
+        for r in ("tonyweckstrom1987.github.io", "agenttifirma-docs", "", "../x", "a/b", "-x", None, "a" * 101):
+            self.assertFalse(pk.sallittu_repo(r), r)
 
 
 class TarkistaTest(unittest.TestCase):
@@ -70,7 +88,7 @@ class TarkistaTest(unittest.TestCase):
 
     def test_vaarat_repot_ja_haarat(self):
         with tee_repo({"a.md": "x"}) as hak:
-            for repo in ("tuntematon-repo", "../x", ""):
+            for repo in ("agenttifirma-docs", "tonyweckstrom1987.github.io", "../x", ""):
                 with self.assertRaises(pk.PrVirhe):
                     pk.tarkista(repo, hak, "yo/koe")
             for haara in ("main", "yo/", "yo/Iso", "feature/x", "yo/a b", "yo/../x", None):
@@ -78,10 +96,15 @@ class TarkistaTest(unittest.TestCase):
                     pk.tarkista("agentti-pohja", hak, haara)
 
     def test_suojattu_polku_estaa(self):
-        with tee_repo({"docs/a.md": "x", ".github/workflows/x.yml": "y"}) as hak:
+        with tee_repo({"docs/a.md": "x", "tools/automerge.py": "y"}) as hak:
             with self.assertRaises(pk.PrVirhe) as ctx:
                 pk.tarkista("agentti-pohja", hak, "yo/koe")
-            self.assertIn(".github/workflows/x.yml", str(ctx.exception))
+            self.assertIn("tools/automerge.py", str(ctx.exception))
+
+    def test_isanta_tools_ja_github_saa_ehdottaa(self):
+        with tee_repo({"isanta/a.sh": "x", "tools/b.py": "y", ".github/workflows/ci.yml": "z", "agentti/rajat.py": "w"}) as hak:
+            self.assertEqual(sorted(pk.tarkista("agentti-pohja", hak, "yo/koe")),
+                             [".github/workflows/ci.yml", "agentti/rajat.py", "isanta/a.sh", "tools/b.py"])
 
     def test_ei_muutoksia_ja_puuttuva_haara(self):
         with tee_repo({}) as hak:
@@ -213,7 +236,7 @@ class PrTest(unittest.TestCase):
         self.assertEqual(saatu["body"]["base"], "main")
         self.assertTrue(saatu["body"]["title"].startswith("[yojono] Otsikko"))
         self.assertNotIn("\n", saatu["body"]["title"])
-        self.assertIn("Tony katselmoi", saatu["body"]["body"])
+        self.assertIn("Riippumaton tarkastaja katselmoi", saatu["body"]["body"])
         self.assertFalse(saatu["body"]["maintainer_can_modify"])
         self.assertEqual(saatu["h"]["Authorization"], "Bearer " + TUNNUS)
 
@@ -296,7 +319,7 @@ class KokoketjuTest(unittest.TestCase):
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
             return subprocess.run(cmd, **kw)
         with tee_repo({"docs/a.md": "x"}) as hak:
-            osoite = pk.luo_pr("agentti-pohja", hak, "yo/koe", "o", "k", env=self.env, suorita=suorita,
+            osoite = pk.luo_pr("agentti-pohja", hak, "yo/koe", "o", KUV, env=self.env, suorita=suorita,
                                avaa=lambda p, timeout: Vastaus({"html_url": "https://github.com/a/b/pull/1"}))
         self.assertEqual(osoite, "https://github.com/a/b/pull/1")
         self.assertTrue(any("push" in c for c in komennot))
@@ -320,7 +343,7 @@ class KokoketjuTest(unittest.TestCase):
             return Vastaus({"html_url": "https://github.com/a/b/pull/1"})
         self.env["YOJONO_BOT_KAYTTAJA"] = "botti-x"
         with tee_repo({"docs/a.md": "x"}) as hak:
-            pk.luo_pr("agentti-pohja", hak, "yo/koe", "o", "k", env=self.env, suorita=suorita, avaa=avaa)
+            pk.luo_pr("agentti-pohja", hak, "yo/koe", "o", KUV, env=self.env, suorita=suorita, avaa=avaa)
         self.assertEqual(tapahtumat, ["sync", "push", "pr"])
 
     def test_suojattu_polku_ei_paase_pushiin_eika_kuluta_paivarajaa(self):
@@ -329,9 +352,9 @@ class KokoketjuTest(unittest.TestCase):
         def suorita(cmd, **kw):
             komennot.append(cmd)
             return subprocess.run(cmd, **kw)
-        with tee_repo({"tools/x.py": "x"}) as hak:
+        with tee_repo({"tools/automerge.py": "x"}) as hak:
             with self.assertRaises(pk.PrVirhe):
-                pk.luo_pr("agentti-pohja", hak, "yo/koe", "o", "k", env=self.env, suorita=suorita)
+                pk.luo_pr("agentti-pohja", hak, "yo/koe", "o", KUV, env=self.env, suorita=suorita)
         self.assertFalse(any("push" in c for c in komennot))
         self.assertFalse(os.path.exists(self.env["YOJONO_PR_TILA"]))
 
@@ -339,14 +362,14 @@ class KokoketjuTest(unittest.TestCase):
         self.env["YOJONO_BOT_TUNNUS"] = "/ei/ole"
         with tee_repo({"docs/a.md": "x"}) as hak:
             with self.assertRaises(pk.PrVirhe):
-                pk.luo_pr("agentti-pohja", hak, "yo/koe", "o", "k", env=self.env)
+                pk.luo_pr("agentti-pohja", hak, "yo/koe", "o", KUV, env=self.env)
         self.assertFalse(os.path.exists(self.env["YOJONO_PR_TILA"]))
 
 
 class MainTest(unittest.TestCase):
     def test_kayttovirhe_ja_tarkista(self):
         self.assertEqual(pk.main([]), 2)
-        self.assertEqual(pk.main(["tarkista", "tuntematon-repo", "/x", "yo/a"]), 1)
+        self.assertEqual(pk.main(["tarkista", "agenttifirma-docs", "/x", "yo/a"]), 1)
         with tee_repo({"docs/a.md": "x"}) as hak:
             self.assertEqual(pk.main(["tarkista", "agentti-pohja", hak, "yo/koe"]), 0)
 
@@ -362,7 +385,7 @@ class RajatutPolutTest(unittest.TestCase):
     def test_kauppatiimi_lukot_hylataan(self):
         for polku in ("riskivahti.py", "salkku.py", "kirjanpito.py", "asetukset.py", "rajat.py", "config.py", "kauppa-ajo.timer",
                       "kauppa.service", "data/havainnot.md", "historia.db", "kokeilut.sqlite3", "sub/salkku.py", "./riskivahti.py",
-                      "test_a/../salkku.py", ".github/workflows/ci.yml"):
+                      "test_a/../salkku.py", "tools/automerge.py"):
             with self.subTest(polku=polku), tee_repo({"test_ok.py": "x", polku: "y"}) as hak:
                 with self.assertRaises(pk.PrVirhe):
                     pk.tarkista("kauppatiimi", hak, "yo/koe")
@@ -647,7 +670,7 @@ class ForkSynkkausTesti(ForkPohja):
         self.assertEqual((ok, koodi), (False, "fork_tarkistus_epaonnistui"))
 
     def test_repo_ei_sallittujen_listalla(self):
-        ok, koodi, selitys = pk.fork_valmis("jokin-muu-repo", self.env, suorita=self.suorita, url=self.url)
+        ok, koodi, selitys = pk.fork_valmis("agenttifirma-docs", self.env, suorita=self.suorita, url=self.url)
         self.assertEqual((ok, koodi), (False, "fork_tarkistus_epaonnistui"))
         self.assertEqual(self.kutsut, [])
 
@@ -739,7 +762,7 @@ def _ok(stdout="", stderr="", koodi=0):
 
 class SuojattuRajatTest(unittest.TestCase):
     def test_alkupiste_vinoviiva_poistetaan(self):
-        self.assertTrue(pk.suojattu("./tools/x.py"))
+        self.assertTrue(pk.suojattu("./tools/automerge.py"))
         self.assertTrue(pk.suojattu("././.github/a.yml"))
         self.assertFalse(pk.suojattu("./docs/a.md"))
 
@@ -757,10 +780,10 @@ class GitApuTest(unittest.TestCase):
         self.assertEqual(pk._git("/h", "x", suorita=lambda *a, **k: _ok(stdout=" ulos ", stderr=None)), (0, "ulos", ""))
 
     def test_vain_viisi_suojattua_nimea_viestissa(self):
-        with tee_repo({"tools/%d.py" % i: "x" for i in range(7)}) as hak:
+        with tee_repo({"x/token%d.txt" % i: "x" for i in range(7)}) as hak:
             with self.assertRaises(pk.PrVirhe) as ctx:
                 pk.tarkista("agentti-pohja", hak, "yo/koe")
-        self.assertEqual(str(ctx.exception).count("tools/"), 5)
+        self.assertEqual(str(ctx.exception).count("x/token"), 5)
 
     def test_github_url(self):
         self.assertEqual(pk._github_url("o", "r"), "https://github.com/o/r.git")
@@ -947,12 +970,49 @@ class MainTarkkaTest(unittest.TestCase):
         koodi, _, virhe = self.ajaa(["pr", "agentti-pohja", "/h", "yo/koe", "O", "/ei/ole/tiedostoa"])
         self.assertEqual(koodi, 1)
         self.assertIn("pr_kutsu: tiedostovirhe: FileNotFoundError", virhe)
-        koodi, _, virhe = self.ajaa(["tarkista", "tuntematon-repo", "/x", "yo/a"])
+        koodi, _, virhe = self.ajaa(["tarkista", "agenttifirma-docs", "/x", "yo/a"])
         self.assertEqual(koodi, 1)
-        self.assertIn("pr_kutsu: repo ei ole sallittujen listalla", virhe)
+        self.assertIn("pr_kutsu: repo ei ole sallittu", virhe)
         self.assertEqual(self.ajaa(["pr", "a"])[0], 2)
         self.assertIn("kaytto: pr_kutsu", self.ajaa([])[2])
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TodennusPortti(unittest.TestCase):
+    """Koodiportti: PR-kuvauksessa pitaa olla 'Todennettu kaytossa: miten'."""
+
+    def hylatty(self, kuvaus):
+        with self.assertRaises(pk.PrVirhe) as ctx:
+            pk.tarkista_todennus(kuvaus)
+        return str(ctx.exception)
+
+    def test_puuttuva_rivi_hylataan(self):
+        self.assertIn("puuttuu", self.hylatty("## Mit\u00e4\n\nMuutos.\n\n## Testit\n42 OK\n"))
+
+    def test_tyhja_ja_viiva_hylataan(self):
+        for arvo in ("", " ", "-", "\u2013", "TBD", "n/a", "ei mit\u00e4\u00e4n"):
+            with self.subTest(arvo=arvo):
+                self.assertIn("tyhja", self.hylatty(f"Muutos\nTodennettu k\u00e4yt\u00f6ss\u00e4: {arvo}\n"))
+
+    def test_rivi_yli_kuvausrajan_ei_laske(self):
+        # runkoon paatyy vain KUVAUS_MAX merkkia; sen jalkeen oleva rivi ei ole PR:ssa
+        self.assertIn("puuttuu", self.hylatty("x" * pk.KUVAUS_MAX + "\nTodennettu kaytossa: kylla\n"))
+
+    def test_oikeat_rivit_menevat_lapi(self):
+        for rivi in ("Todennettu k\u00e4yt\u00f6ss\u00e4: ajettu oikeaa repoa vastaan",
+                     "- **Todennettu k\u00e4yt\u00f6ss\u00e4:** asennettu puhtaaseen kansioon",
+                     "todennettu kaytossa: cron-loki luettu"):
+            with self.subTest(rivi=rivi):
+                pk.tarkista_todennus("Muutos\n\n" + rivi + "\n")
+
+    def test_luo_pr_hylkaa_ennen_pushia_eika_kuluta_paivarajaa(self):
+        with tempfile.TemporaryDirectory() as d:
+            tila = os.path.join(d, "tila.json")
+            suorita = mock.Mock()
+            with self.assertRaises(pk.PrVirhe):
+                pk.luo_pr("agentti-pohja", d, "yo/koe", "o", "Muutos ilman todennusta", env={"YOJONO_PR_TILA": tila}, suorita=suorita)
+            suorita.assert_not_called()
+            self.assertFalse(os.path.exists(tila))

@@ -1,0 +1,21 @@
+# Mallitiedosto: ei asenna mitaan. Asennus README.md:n mukaan (osio Aamukooste).
+[Unit]
+Description=Claude-jono: aamukooste Telegramiin (5 rivia + linkit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/agentti-pohja
+Environment=CLAUDEJONO_REPO=/var/lib/claude-jono/docs
+Environment=YOJONO_PERUS=/var/lib/yojono
+EnvironmentFile=-/etc/yojono/telegram.env
+# Sama asetustiedosto kuin ajurilla (agenttien osuus % nakyy koosteessa samana lukuna)
+EnvironmentFile=-/etc/claude-jono/asetukset.env
+# Vain luku -kasittely: ei kirjoita mihinkaan. Testaa ensin ilman --laheta.
+ExecStart=/usr/bin/python3 -B -m claudejono.aamukooste --laheta
+TimeoutStartSec=300
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true

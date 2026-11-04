@@ -1,0 +1,11 @@
+# Mallitiedosto: ei asenna mitaan.
+[Unit]
+Description=Viikkoehdotus sunnuntaisin klo 7 (Helsingin aika)
+
+[Timer]
+OnCalendar=Sun *-*-* 07:00:00 Europe/Helsinki
+Persistent=false
+Unit=claude-viikkoehdotus.service
+
+[Install]
+WantedBy=timers.target
