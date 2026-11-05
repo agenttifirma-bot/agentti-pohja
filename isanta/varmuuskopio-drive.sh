@@ -3,7 +3,7 @@
 # varmuuskopio-drive.sh - vzdump-varmuuskopiot salattuna Google Driveen (rclone crypt).
 #
 # Kaytto (Proxmox-isannalla, root; cron klo 3.30 vzdumpin jalkeen):
-#     varmuuskopio-drive.sh              ajaa synkronoinnin
+#     varmuuskopio-drive.sh              ajaa kopioinnin (copy + sailytys Driven listauksen mukaan)
 #     varmuuskopio-drive.sh --luettelo   listaa paikalliset tiedostot: kopioidaan / ohitetaan.
 #                                        Ei kayta rclonea eika tunnuksia, toimii ennen asennusta
 #     varmuuskopio-drive.sh --kuiva      rclone --dry-run: ei muuta mitaan, ei pingia
@@ -25,7 +25,7 @@
 #   RCLONE        rclone                  rclone-ohjelma
 #   VAADITUT_KONTIT 111 112 113 114 115 119 (kaikki kontit, Tony 5.11. A590)
 #                                   valilyonnilla erotetut kontti-/VM-tunnukset, joiden dump on oltava
-#                                         lahteessa (113 = Gitea). Puuttuva tunnus: synkronointi tehdaan,
+#                                         lahteessa (113 = Gitea). Puuttuva tunnus: kopiointi tehdaan,
 #                                         mutta ajo paattyy virheeseen ja Kuma saa tilan down
 # rclone.conf (sisaltaa crypt-avaimen ja Driven luvan) on oltava vain omistajan luettavissa (600).
 # Skripti kieltaytyy ajosta, jos ryhma tai muut voivat lukea sen. Polku: RCLONE_CONFIG tai
@@ -45,6 +45,9 @@ esac
 ASETUS_TIEDOSTO="${ASETUS_TIEDOSTO:-/etc/varmuuskopio-drive.env}"
 if [ -f "$ASETUS_TIEDOSTO" ]; then
   # shellcheck disable=SC1090
+  if [ "$(stat -c %u "$ASETUS_TIEDOSTO")" != "$(id -u)" ]; then
+    echo "EPAONNISTUI: $ASETUS_TIEDOSTO omistaja ei ole ajava kayttaja (rootina ajettaessa omistajan pitaa olla root)" >&2; exit 1
+  fi
   if [ -n "$(find "$ASETUS_TIEDOSTO" -perm /077 2>/dev/null)" ]; then
     echo "EPAONNISTUI: $ASETUS_TIEDOSTO on ryhman tai muiden luettavissa tai kirjoitettavissa (pitaa olla 600)" >&2; exit 1
   fi
@@ -109,7 +112,7 @@ mapfile -t TIEDOSTOT < <(find "$DUMP_DIR" -maxdepth 1 -type f -name 'vzdump-*' -
 PERUSNIMET=$(printf '%s\n' "${TIEDOSTOT[@]:-}" \
   | sed -nE 's/^(vzdump-(lxc|qemu)-([0-9]+)-[0-9]{4}_[0-9]{2}_[0-9]{2}-[0-9]{2}_[0-9]{2}_[0-9]{2})\..*$/\3 \1/p' \
   | sort -u)
-# Tyhja lahde + sync = koko Drive-kopio tyhjenisi. Kieltaydytaan.
+# Tyhja lahde: ei kopioitavaa (todennakoisesti vika). Kieltaydytaan.
 [ -n "$PERUSNIMET" ] || { loki "dump-hakemistossa ei ole vzdump-tiedostoja, ei synkronoida tyhjaa"; exit 1; }
 
 # Vaaditut tunnukset (esim. Gitea = 113) on oltava mukana, muuten kopio on hiljaa vajaa.
@@ -125,7 +128,7 @@ echo "$PERUSNIMET" | sort -k1,1 -k2,2r \
 VANHOJA=$(wc -l < "$TMP/vanhat.txt")
 
 if [ "$TILA" = luettelo ]; then
-  # Ei rclonea, ei verkkoa, ei tunnuksia: nayttaa vain mita sync kopioisi ja mita ei.
+  # Ei rclonea, ei verkkoa, ei tunnuksia: nayttaa vain mita kopioitaisiin ja mita ei.
   while read -r _ pn; do echo "$pn"; done < <(echo "$PERUSNIMET" | sort -k1,1 -k2,2r \
     | awk -v n="$SAILYTA" '{ if ($1 != e) { e=$1; k=0 } k++; if (k>n) print $1, $2 }') | sort > "$TMP/vanhat-nimet.txt"
   for f in "${TIEDOSTOT[@]}"; do
@@ -139,6 +142,13 @@ if [ "$TILA" = luettelo ]; then
 fi
 
 BASE=("$RCLONE" --bwlimit "$BWLIMIT" --log-file "$LOKI" --log-level NOTICE --stats 0 --retries 3 --low-level-retries 5)
+
+# Salaus ennen siirtoa: kohteen on oltava rclone crypt -tyyppinen. Pelkka Drive-kohde veisi
+# dumpit selkokielisina, joten silloin ei siirreta mitaan. (listremotes ei tulosta salaisuuksia.)
+KOHDE_NIMI="${REMOTE%%:*}"
+if ! "$RCLONE" listremotes --long 2>/dev/null | grep -qE "^${KOHDE_NIMI}:[[:space:]]+crypt\$"; then
+  loki "kohde $KOHDE_NIMI ei ole crypt-tyyppinen, ei siirreta eika haeta salaamatonta dataa"; exit 1
+fi
 
 if [ "$TILA" = palautus ]; then
   # Uusimmista dumpeista pienin (nopea testi). Haetaan, puretaan crypt ja verrataan sha256.
@@ -161,25 +171,25 @@ if [ "$TILA" = palautus ]; then
   loki "palautustesti EPAONNISTUI: sha256 ei tasmaa"; exit 1
 fi
 
-# Salaus ennen siirtoa: kohteen on oltava rclone crypt -tyyppinen. Pelkka Drive-kohde veisi
-# dumpit selkokielisina, joten silloin ei siirreta mitaan. (listremotes ei tulosta salaisuuksia.)
-KOHDE_NIMI="${REMOTE%%:*}"
-if ! "$RCLONE" listremotes --long 2>/dev/null | grep -qE "^${KOHDE_NIMI}:[[:space:]]+crypt\$"; then
-  loki "kohde $KOHDE_NIMI ei ole crypt-tyyppinen, ei siirreta salaamatonta dataa"; exit 1
-fi
-
 KUIVA=()
 [ "$TILA" = kuiva ] && KUIVA=(--dry-run)
 loki "alku tila=$TILA lahde=$DUMP_DIR kohde=$REMOTE sailyta=$SAILYTA vanhoja_ryhmia=$VANHOJA"
 
-# 1) Synkronoi: vanhat (yli SAILYTA) jaavat pois, .partial-tiedostot ohitetaan.
-"${BASE[@]}" "${KUIVA[@]}" sync "$DUMP_DIR" "$REMOTE" \
+# 1) Kopioi (ei sync): Drivesta ei koskaan poisteta sita, mika on kadonnut paikallisesti.
+#    Vanhat (yli SAILYTA) ja keskeneraiset jaavat pois siirrosta.
+"${BASE[@]}" "${KUIVA[@]}" copy "$DUMP_DIR" "$REMOTE" \
   --exclude-from "$TMP/vanhat.txt" --exclude '*.tmp' --exclude '*.partial' \
-  --max-delete "$MAX_POISTO" --transfers 2 --checkers 4 || { loki "sync epaonnistui"; exit 1; }
+  --transfers 2 --checkers 4 || { loki "kopiointi epaonnistui"; exit 1; }
 
-# 2) Poista Drivesta vanhat (sync ei koske suodattimella poissuljettuihin). Vain tasmaavat nimet.
-if [ "$VANHOJA" -gt 0 ]; then
-  "${BASE[@]}" "${KUIVA[@]}" delete "$REMOTE" --include-from "$TMP/vanhat.txt" --max-delete "$MAX_POISTO" \
+# 2) Sailytys Driven oman listauksen mukaan: per tunnus SAILYTA uusinta jaa, vain sita vanhemmat
+#    poistetaan. Paikallinen katoaminen ei siis poista Driven kopioita.
+"${BASE[@]}" lsf "$REMOTE" --files-only > "$TMP/eta.txt" || { loki "Driven listaus epaonnistui"; exit 1; }
+sed -nE 's/^(vzdump-(lxc|qemu)-([0-9]+)-[0-9]{4}_[0-9]{2}_[0-9]{2}-[0-9]{2}_[0-9]{2}_[0-9]{2})\..*$/\3 \1/p' "$TMP/eta.txt" \
+  | sort -u | sort -k1,1 -k2,2r \
+  | awk -v n="$SAILYTA" '{ if ($1 != e) { e=$1; k=0 } k++; if (k>n) print "/" $2 ".*" }' > "$TMP/eta-vanhat.txt"
+ETA_VANHOJA=$(wc -l < "$TMP/eta-vanhat.txt")
+if [ "$ETA_VANHOJA" -gt 0 ]; then
+  "${BASE[@]}" "${KUIVA[@]}" delete "$REMOTE" --include-from "$TMP/eta-vanhat.txt" --max-delete "$MAX_POISTO" \
     || { loki "vanhojen poisto epaonnistui"; exit 1; }
 fi
 

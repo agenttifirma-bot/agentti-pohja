@@ -14,12 +14,16 @@ LINUX = sys.platform.startswith("linux") and all(shutil.which(x) for x in ("bash
 SKRIPTI = Path(__file__).resolve().parent.parent / "isanta" / "varmuuskopio-drive.sh"
 
 VALE = """#!/bin/bash
-# rclone-vale: kirjaa argumentit; sync/delete tallentaa suodatintiedoston; copyto kopioi $VALE_KOHDE:sta.
+# rclone-vale: kirjaa argumentit; copy/delete tallentaa suodatintiedoston; copyto kopioi $VALE_KOHDE:sta;
+# lsf listaa Driven "sisallon" = $VALE_ETA (oletus: DUMP_DIR, eli kuin edellinen kopio olisi onnistunut).
 if [ "$1" = listremotes ]; then echo "${VALE_TYYPPI-drive-crypt: crypt}"; exit 0; fi
+for a in "$@"; do
+  if [ "$a" = lsf ]; then ls -1 "${VALE_ETA:-$DUMP_DIR}"; exit ${VALE_LSF_KOODI:-0}; fi
+done
 echo "$*" >> "$VALE_LOKI"
 komento=""; prev=""
 for a in "$@"; do
-  case "$a" in sync|delete|copyto) [ -z "$komento" ] && komento=$a ;; esac
+  case "$a" in copy|delete|copyto) [ -z "$komento" ] && komento=$a ;; esac
   if [ "$prev" = "--exclude-from" ] || [ "$prev" = "--include-from" ]; then cat "$a" > "$VALE_LOKI.$komento"; fi
   prev=$a
 done
@@ -67,16 +71,58 @@ class Pohja(unittest.TestCase):
 
 
 class ValeTesti(Pohja):
-    def test_sync_rajaa_kopiot_ja_poistaa_vanhat(self):
+    def test_kopio_rajaa_siirrot_ja_poistaa_vanhat(self):
         r = self.aja()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         rivit = self.valeloki.read_text().splitlines()
-        self.assertTrue(any(" sync " in " " + x + " " and "--bwlimit 8M" in x for x in rivit))
+        self.assertTrue(any(" copy " in " " + x + " " and "--bwlimit 8M" in x for x in rivit))
+        self.assertFalse(any(" sync " in " " + x + " " for x in rivit), "sync peilaisi paikalliset poistot Driveen")
         self.assertTrue(any(" delete " in " " + x + " " for x in rivit))
-        vanhat = Path(str(self.valeloki) + ".sync").read_text().splitlines()
-        # kontti 110: 4 dumppia, SAILYTA=2 -> kaksi vanhinta pois (myos .log)
-        self.assertEqual(sorted(vanhat), ["/vzdump-lxc-110-2026_10_28-02_00_01.*", "/vzdump-lxc-110-2026_10_29-02_00_01.*"])
+        odotus = ["/vzdump-lxc-110-2026_10_28-02_00_01.*", "/vzdump-lxc-110-2026_10_29-02_00_01.*"]
+        # kontti 110: 4 dumppia, SAILYTA=2 -> kaksi vanhinta pois siirrosta ja Drivesta (myos .log)
+        self.assertEqual(sorted(Path(str(self.valeloki) + ".copy").read_text().splitlines()), odotus)
+        self.assertEqual(sorted(Path(str(self.valeloki) + ".delete").read_text().splitlines()), odotus)
         self.assertIn("valmis", self.loki.read_text())
+
+    def test_paikallinen_katoaminen_ei_poista_drivesta(self):
+        eta = Path(self.tmp.name) / "eta"; eta.mkdir()
+        # Drivessa on kontin 112 kaksi kopiota, joita ei enaa ole paikallisesti (esim. levyvika).
+        for n in DUMPIT + ["vzdump-lxc-112-2026_10_30-02_00_01.tar.zst", "vzdump-lxc-112-2026_10_31-02_00_01.tar.zst"]:
+            (eta / n).write_bytes(b"x")
+        r = self.aja(VALE_ETA=str(eta))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        poistot = Path(str(self.valeloki) + ".delete").read_text()
+        self.assertNotIn("112", poistot)
+
+    def test_drivessa_yli_sailyta_poistetaan_vaikka_ei_paikallisesti(self):
+        eta = Path(self.tmp.name) / "eta"; eta.mkdir()
+        for n in DUMPIT + [f"vzdump-lxc-112-2026_10_{p}-02_00_01.tar.zst" for p in (28, 29, 30)]:
+            (eta / n).write_bytes(b"x")
+        r = self.aja(VALE_ETA=str(eta))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        poistot = Path(str(self.valeloki) + ".delete").read_text().splitlines()
+        self.assertIn("/vzdump-lxc-112-2026_10_28-02_00_01.*", poistot)
+        self.assertNotIn("/vzdump-lxc-112-2026_10_30-02_00_01.*", poistot)
+
+    def test_driven_listausvirhe_epaonnistuu_ilman_poistoja(self):
+        r = self.aja(VALE_LSF_KOODI="1")
+        self.assertEqual(r.returncode, 1)
+        self.assertFalse(Path(str(self.valeloki) + ".delete").exists())
+
+    def test_asetustiedoston_omistaja_tarkistetaan(self):
+        p = Path(self.tmp.name) / "o.env"; p.write_text("SAILYTA=5\n"); p.chmod(0o600)
+        if os.getuid() == 0:
+            os.chown(p, 65534, 65534)
+            r = self.aja(ASETUS_TIEDOSTO=str(p))
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("omistaja", r.stderr)
+        else:
+            self.assertEqual(self.aja(ASETUS_TIEDOSTO=str(p)).returncode, 0)
+
+    def test_palautustesti_vaatii_crypt_kohteen(self):
+        r = self.aja("--palautustesti", VALE_TYYPPI="drive: drive", VALE_KOHDE=str(self.dump))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("ei ole crypt-tyyppinen", r.stdout)
 
     def test_kuiva_ajo_ei_pingaa_ja_antaa_dry_run(self):
         r = self.aja("--kuiva", KUMA_PUSH_URL="http://127.0.0.1:9/push/x")
@@ -97,7 +143,7 @@ class ValeTesti(Pohja):
         r = self.aja(VAADITUT_KONTIT="113")
         self.assertEqual(r.returncode, 1)
         self.assertIn("puuttuu lahteesta, tunnus: 113", r.stdout)
-        self.assertTrue(any(" sync " in " " + x + " " for x in self.valeloki.read_text().splitlines()))
+        self.assertTrue(any(" copy " in " " + x + " " for x in self.valeloki.read_text().splitlines()))
         self.assertIn("EPAONNISTUI", self.loki.read_text())
 
     def test_vaadittu_kontti_loytyy(self):
@@ -228,7 +274,7 @@ class ValeTesti(Pohja):
 
 @unittest.skipUnless(shutil.which("rclone"), "rclone ei ole asennettu")
 class OikeaCryptTesti(Pohja):
-    """Paikallinen local + crypt -kohde: synkronointi, salattu sisalto ja purku tiivisteineen."""
+    """Paikallinen local + crypt -kohde: kopiointi, sailytys, salattu sisalto ja purku tiivisteineen."""
 
     def test_salattu_kopio_purkautuu_ja_tiivisteet_tasmaavat(self):
         t = Path(self.tmp.name)
@@ -257,6 +303,13 @@ class OikeaCryptTesti(Pohja):
         self.assertIn("vzdump-lxc-110-2026_10_31-02_00_01.tar.zst", nimet)
         for n in nimet:
             self.assertEqual((ulos / n).read_bytes(), (self.dump / n).read_bytes())
+        # paikallinen katoaminen ei poista Drivesta
+        (self.dump / "vzdump-lxc-111-2026_10_31-02_00_01.tar.zst").unlink()
+        r = self.aja(**env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        ulos2 = t / "ulos2"
+        subprocess.run(["rclone", "--config", str(conf), "copy", "drive-crypt:proxmox", str(ulos2)], check=True)
+        self.assertIn("vzdump-lxc-111-2026_10_31-02_00_01.tar.zst", [p.name for p in ulos2.iterdir()])
 
 
 if __name__ == "__main__":

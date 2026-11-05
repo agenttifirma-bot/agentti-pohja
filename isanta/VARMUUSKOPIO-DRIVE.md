@@ -274,7 +274,7 @@ Odotettu: ei tulostetta. Tarkista:
 cat /etc/cron.d/varmuuskopio-drive
 ```
 
-Odotettu: kaksi riviä: päivittäinen synkronointi 3.30 ja kuukauden ensimmäisen päivän palautustesti 5.00.
+Odotettu: kaksi riviä: päivittäinen kopiointi 3.30 ja kuukauden ensimmäisen päivän palautustesti 5.00.
 
 **B15. Seuraavana päivänä** tarkista, että yöajo onnistui ja Kuma on vihreä:
 
@@ -294,12 +294,15 @@ Odotettu: rivi `palautustesti OK: sha256 tasmaa (...)`.
 
 - Siirtää dumpit vain `crypt`-tyyppiseen kohteeseen. Ennen siirtoa se kysyy rclonelta kohteen tyypin (`rclone listremotes --long`, ei tulosta salaisuuksia). Jos `REMOTE` osoittaa tavalliseen Drive-kohteeseen, mitään ei siirretä ja ajo päättyy virheeseen. Näin Gitean ja Aivon data ei voi päätyä Driveen salaamattomana, vaikka asetus menisi väärin.
 - Vaatii, että `VAADITUT_KONTIT`-listan tunnuksilla (oletus `111 112 113 114 115 119` eli kaikki kontit, Tonyn päätös 5.11.2026) on dump lähteessä. Puuttuessa ajo päättyy virheeseen ja Kuma saa tilan `down`.
-- Synkronoi `DUMP_DIR`-hakemiston kohteeseen `drive-crypt:proxmox` (`rclone sync`, nopeusrajoitus `BWLIMIT`, oletus 8 Mt/s).
+- Kopioi `DUMP_DIR`-hakemiston kohteeseen `drive-crypt:proxmox` (`rclone copy`, ei `sync`: paikallisesti kadonnut dump ei poistu Drivesta; nopeusrajoitus `BWLIMIT`, oletus 8 Mt/s).
+- Säilytys lasketaan Driven oman listauksen mukaan (`rclone lsf`): per kontti `SAILYTA` uusinta jää, vain sitä vanhemmat poistetaan (`--max-delete MAX_POISTO`). Jos listaus epäonnistuu, mitään ei poisteta.
 - Säilyttää enintään `SAILYTA` (oletus 3) uusinta kopiota per kontti tai virtuaalikone. Vanhemmat jäävät lähettämättä ja poistuvat Drivesta.
-- Kieltäytyy synkronoinnista, jos lähdehakemistossa ei ole vzdump-tiedostoja. Muuten tyhjä lähde tyhjentäisi Drive-kopion.
+- Kieltäytyy ajosta, jos lähdehakemistossa ei ole vzdump-tiedostoja (todennäköisesti vika).
+- Asetustiedoston on oltava ajavan käyttäjän (rootina root) omistama ja oikeuksiltaan 600; muuten ajo keskeytyy.
+- Palautustesti vaatii myös crypt-tyyppisen kohteen.
 - `--max-delete` (oletus 20) estää massapoiston. Lukko estää päällekkäiset ajot. Loki on tiedostossa `/var/log/varmuuskopio-drive.log`.
 - Kieltäytyy ajosta, jos `rclone.conf` tai asetustiedosto on ryhmän tai muiden luettavissa.
-- Ilmoittaa Kumalle vain onnistuneesta synkronoinnista. Jos ilmoitusta ei tule 26 tunnin sisällä, Kuma hälyttää. Epäonnistuminen lähettää heti tilan `down`.
+- Ilmoittaa Kumalle onnistuneesta päivittäisestä kopioinnista. Jos ilmoitusta ei tule 26 tunnin sisällä, Kuma hälyttää. Epäonnistuminen lähettää heti tilan `down`.
 
 ## Osa C: yhden kontin (CT113, Gitea) palautustesti
 
