@@ -18,7 +18,7 @@ import xml.etree.ElementTree as ET
 from . import ilmoita
 
 OLETUS_HAKUSANAT = ["llmops", "mlops", "devops", "platform", "backend", "python", "healthtech", "terveysteknologia",
-                    "harjoittelu", "tyossaoppiminen", "intern", "trainee", "sre", "site reliability"]
+                    "harjoittelu", "harjoittelupaikka", "tyossaoppiminen", "intern", "internship", "trainee", "sre", "site reliability"]
 AIKAKATKAISU = 20
 VASTAUS_MAX = 8_000_000
 MAX_VIESTISSA = 8
