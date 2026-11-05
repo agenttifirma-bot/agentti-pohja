@@ -164,6 +164,18 @@ class ValeTesti(Pohja):
         # fixturessa on 111:n dump, muut puuttuvat
         self.assertIn("PUUTTUU vaadittu dump, tunnus: 112 113 114 115 119", r.stdout)
 
+    def test_pelkka_loki_ei_tayta_vaadittua_konttia(self):
+        (self.dump / "vzdump-lxc-113-2026_10_31-02_00_01.log").write_bytes(b"epaonnistui")
+        r = self.aja("--luettelo", VAADITUT_KONTIT="113")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("tunnus: 113", r.stdout)
+
+    def test_palautustesti_ohittaa_keskeneraiset(self):
+        (self.dump / "vzdump-lxc-111-2026_11_01-02_00_01.tar.zst.partial").write_bytes(b"x")
+        r = self.aja("--palautustesti", VALE_KOHDE=str(self.dump))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn(".partial", r.stdout)
+
     def test_virheellinen_vaadittu_tunnus(self):
         self.assertEqual(self.aja(VAADITUT_KONTIT="abc").returncode, 1)
 

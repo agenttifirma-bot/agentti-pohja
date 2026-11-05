@@ -119,7 +119,9 @@ PERUSNIMET=$(printf '%s\n' "${TIEDOSTOT[@]:-}" \
 PUUTTUVAT=""
 for id in $VAADITUT_KONTIT; do
   [[ "$id" =~ ^[0-9]+$ ]] || { loki "VAADITUT_KONTIT ei kelpaa: $id"; exit 1; }
-  echo "$PERUSNIMET" | grep -q "^$id " || PUUTTUVAT="$PUUTTUVAT $id"
+  # Vain varsinainen arkisto kelpaa (pelkka .log epaonnistuneesta ajosta ei riita).
+  printf '%s\n' "${TIEDOSTOT[@]:-}" | grep -qE "^vzdump-(lxc|qemu)-$id-[0-9_-]+\.(tar|vma)(\.(zst|gz|lzo))?\$" \
+    || PUUTTUVAT="$PUUTTUVAT $id"
 done
 
 # Vanhat: per tunnus kaikki paitsi SAILYTA uusinta (aikaleima jarjestaa nimet).
@@ -157,7 +159,7 @@ if [ "$TILA" = palautus ]; then
   while read -r pn; do
     for f in "$DUMP_DIR/$pn".*; do
       [ -f "$f" ] || continue
-      case "$f" in *.log|*.notes) continue ;; esac
+      case "$f" in *.log|*.notes|*.tmp|*.partial) continue ;; esac
       k=$(stat -c %s "$f"); if [ -z "$KOKO" ] || [ "$k" -lt "$KOKO" ]; then KOKO=$k; VALINTA=$f; fi
     done
   done <<< "$UUSIMMAT"
