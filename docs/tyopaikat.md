@@ -39,8 +39,9 @@ Haku kohdistuu otsikkoon ja tiimiin/osastoon, skandit ja isot kirjaimet ei haitt
 ## Suodattimen rajat
 
 - Hakusanat ja paikat tasmaavat kokonaisiin sanoihin (sanaraja), ei alimerkkijonoihin: `intern` ei tasmaa sanaan
-  `international`. Seuraus: `intern` ei tasmaa sanaan `internship` eika `platform` sanaan `platforms`; lisaa tarvittaessa
-  oma hakusana asetuksiin.
+  `international`. Seuraus: `intern` ei tasmaa sanaan `internship` eika `platform` sanaan `platforms`; siksi oletushakusanoissa on
+  erikseen `internship` ja `harjoittelupaikka`. Jos asetustiedostossa on oma `hakusanat`-lista, oletukset eivat
+  vaikuta: lisaa sanat omaan listaan.
 - Remote-rajaus: jos sijainnissa on `remote` ja Euroopan ulkopuolinen alue (United States, US, USA, Canada, Americas,
   LATAM, APAC, India jne.), ilmoitus hylataan (esim. "Remote - United States"). Pelkka "Remote" tai remote + Europe/EU/
   EMEA/Finland/Nordics kelpaa. Rajaus koskee vain sijaintia, jossa remote-sana esiintyy ja paikat on annettu.
