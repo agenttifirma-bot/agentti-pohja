@@ -23,7 +23,8 @@
 #   LUKKO         /run/varmuuskopio-drive.lock
 #   KUMA_PUSH_URL (valinnainen)           Uptime Kuma push-osoite ilman kyselyosaa
 #   RCLONE        rclone                  rclone-ohjelma
-#   VAADITUT_KONTIT 113                   valilyonnilla erotetut kontti-/VM-tunnukset, joiden dump on oltava
+#   VAADITUT_KONTIT 111 112 113 114 115 119 (kaikki kontit, Tony 5.11. A590)
+#                                   valilyonnilla erotetut kontti-/VM-tunnukset, joiden dump on oltava
 #                                         lahteessa (113 = Gitea). Puuttuva tunnus: synkronointi tehdaan,
 #                                         mutta ajo paattyy virheeseen ja Kuma saa tilan down
 # rclone.conf (sisaltaa crypt-avaimen ja Driven luvan) on oltava vain omistajan luettavissa (600).
@@ -44,8 +45,8 @@ esac
 ASETUS_TIEDOSTO="${ASETUS_TIEDOSTO:-/etc/varmuuskopio-drive.env}"
 if [ -f "$ASETUS_TIEDOSTO" ]; then
   # shellcheck disable=SC1090
-  if [ -n "$(find "$ASETUS_TIEDOSTO" -perm /022 2>/dev/null)" ]; then
-    echo "EPAONNISTUI: $ASETUS_TIEDOSTO on ryhman tai muiden kirjoitettavissa" >&2; exit 1
+  if [ -n "$(find "$ASETUS_TIEDOSTO" -perm /077 2>/dev/null)" ]; then
+    echo "EPAONNISTUI: $ASETUS_TIEDOSTO on ryhman tai muiden luettavissa tai kirjoitettavissa (pitaa olla 600)" >&2; exit 1
   fi
   . "$ASETUS_TIEDOSTO"
 fi
@@ -59,7 +60,7 @@ LOKI="${LOKI:-/var/log/varmuuskopio-drive.log}"
 LUKKO="${LUKKO:-/run/varmuuskopio-drive.lock}"
 KUMA_PUSH_URL="${KUMA_PUSH_URL:-}"
 RCLONE="${RCLONE:-rclone}"
-VAADITUT_KONTIT="${VAADITUT_KONTIT-113}"
+VAADITUT_KONTIT="${VAADITUT_KONTIT-111 112 113 114 115 119}"
 
 loki() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOKI" 2>/dev/null || true; printf '%s\n' "$*"; }
 
@@ -67,7 +68,8 @@ TMP=""
 ONNISTUI=0
 ping_kuma() {  # $1 = up|down, $2 = viesti; vain tila, ei salaisuuksia lokiin
   [ -n "$KUMA_PUSH_URL" ] || return 0
-  [ "$TILA" = sync ] || return 0
+  # sync pingaa aina; palautustesti vain epaonnistuessaan (Kuma-monitori seuraa paivittaista synkkaa)
+  [ "$TILA" = sync ] || { [ "$TILA" = palautus ] && [ "$1" = down ]; } || return 0
   curl -fsS -m 20 -G --data-urlencode "status=$1" --data-urlencode "msg=$2" "$KUMA_PUSH_URL" >/dev/null 2>&1 \
     || loki "VAROITUS: Uptime Kuma -pingi epaonnistui"
 }

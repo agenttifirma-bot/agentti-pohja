@@ -111,11 +111,12 @@ class ValeTesti(Pohja):
         self.assertEqual(r.returncode, 1)
         self.assertIn("PUUTTUU vaadittu dump, tunnus: 113", r.stdout)
 
-    def test_oletuksena_gitea_113_on_vaadittu(self):
+    def test_oletuksena_kaikki_kontit_vaaditaan(self):
         env = {k: v for k, v in self.env.items() if k != "VAADITUT_KONTIT"}
         r = subprocess.run(["bash", str(SKRIPTI), "--luettelo"], env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 1)
-        self.assertIn("tunnus: 113", r.stdout)
+        # fixturessa on 111:n dump, muut puuttuvat
+        self.assertIn("PUUTTUU vaadittu dump, tunnus: 112 113 114 115 119", r.stdout)
 
     def test_virheellinen_vaadittu_tunnus(self):
         self.assertEqual(self.aja(VAADITUT_KONTIT="abc").returncode, 1)
@@ -177,6 +178,16 @@ class ValeTesti(Pohja):
         p = Path(self.tmp.name) / "a.env"; p.write_text("SAILYTA=5\n"); p.chmod(0o664)
         self.assertEqual(self.aja(ASETUS_TIEDOSTO=str(p)).returncode, 1)
 
+    def test_asetustiedosto_muiden_luettava_hylataan(self):
+        p = Path(self.tmp.name) / "b.env"; p.write_text("SAILYTA=5\n"); p.chmod(0o644)
+        r = self.aja(ASETUS_TIEDOSTO=str(p))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("luettavissa", r.stderr)
+
+    def test_asetustiedosto_600_kelpaa(self):
+        p = Path(self.tmp.name) / "c.env"; p.write_text("SAILYTA=5\n"); p.chmod(0o600)
+        self.assertEqual(self.aja(ASETUS_TIEDOSTO=str(p)).returncode, 0)
+
     def test_kuma_ping_onnistuessa_ja_epaonnistuessa(self):
         curl = Path(self.tmp.name) / "bin"; curl.mkdir()
         c = curl / "curl"; c.write_text('#!/bin/bash\necho "$*" >> "$CURL_LOKI"\n'); c.chmod(0o755)
@@ -200,6 +211,19 @@ class ValeTesti(Pohja):
         r = self.aja("--palautustesti")
         self.assertEqual(r.returncode, 1)
         self.assertIn("ei tasmaa", r.stdout)
+
+    def test_palautustesti_epaonnistuminen_halyttaa_kumaan(self):
+        curl = Path(self.tmp.name) / "bin"; curl.mkdir()
+        c = curl / "curl"; c.write_text('#!/bin/bash\necho "$*" >> "$CURL_LOKI"\n'); c.chmod(0o755)
+        cl = Path(self.tmp.name) / "curl.log"
+        env = dict(KUMA_PUSH_URL="https://kuma.example/api/push/abc", CURL_LOKI=str(cl),
+                   PATH=f"{curl}:{os.environ['PATH']}")
+        self.assertEqual(self.aja("--palautustesti", VALE_KOHDE=str(self.dump), **env).returncode, 0)
+        self.assertFalse(cl.exists(), "onnistunut palautustesti ei pingaa")
+        for n in DUMPIT:
+            (self.kohde / n).write_bytes(b"rikki")
+        self.assertEqual(self.aja("--palautustesti", **env).returncode, 1)
+        self.assertIn("status=down", cl.read_text())
 
 
 @unittest.skipUnless(shutil.which("rclone"), "rclone ei ole asennettu")
