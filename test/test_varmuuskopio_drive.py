@@ -3,14 +3,19 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+# Skripti kayttaa Linux-tyokaluja (flock, stat -c, find -printf, bash 4): macOS-ajossa ohitetaan.
+LINUX = sys.platform.startswith("linux") and all(shutil.which(x) for x in ("bash", "flock"))
 
 SKRIPTI = Path(__file__).resolve().parent.parent / "isanta" / "varmuuskopio-drive.sh"
 
 VALE = """#!/bin/bash
 # rclone-vale: kirjaa argumentit; sync/delete tallentaa suodatintiedoston; copyto kopioi $VALE_KOHDE:sta.
+if [ "$1" = listremotes ]; then echo "${VALE_TYYPPI-drive-crypt: crypt}"; exit 0; fi
 echo "$*" >> "$VALE_LOKI"
 komento=""; prev=""
 for a in "$@"; do
@@ -33,6 +38,7 @@ DUMPIT = [
 ]
 
 
+@unittest.skipUnless(LINUX, "vaatii Linuxin ja flockin")
 class Pohja(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -49,7 +55,7 @@ class Pohja(unittest.TestCase):
             "PATH": os.environ["PATH"], "DUMP_DIR": str(self.dump), "REMOTE": "drive-crypt:proxmox",
             "RCLONE": str(self.vale), "LOKI": str(self.loki), "LUKKO": str(t / "lukko"),
             "VALE_LOKI": str(self.valeloki), "VALE_KOHDE": str(self.kohde),
-            "ASETUS_TIEDOSTO": str(t / "ei-ole.env"), "SAILYTA": "2",
+            "ASETUS_TIEDOSTO": str(t / "ei-ole.env"), "SAILYTA": "2", "VAADITUT_KONTIT": "",
         }
 
     def tearDown(self):
@@ -78,6 +84,41 @@ class ValeTesti(Pohja):
         for rivi in self.valeloki.read_text().splitlines():
             self.assertIn("--dry-run", rivi)
         self.assertNotIn("Kuma", r.stdout)
+
+    def test_ei_crypt_kohdetta_ei_siirreta_mitaan(self):
+        for tyyppi in ("drive: drive", "muu-crypt: crypt", ""):
+            self.valeloki.unlink(missing_ok=True)
+            r = self.aja(VALE_TYYPPI=tyyppi)
+            self.assertEqual(r.returncode, 1, tyyppi)
+            self.assertIn("ei ole crypt-tyyppinen", r.stdout)
+            self.assertFalse(self.valeloki.exists(), "rclone sync/delete ei saa kaynnistya")
+
+    def test_vaadittu_kontti_puuttuu_siirtaa_muut_mutta_epaonnistuu(self):
+        r = self.aja(VAADITUT_KONTIT="113")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("puuttuu lahteesta, tunnus: 113", r.stdout)
+        self.assertTrue(any(" sync " in " " + x + " " for x in self.valeloki.read_text().splitlines()))
+        self.assertIn("EPAONNISTUI", self.loki.read_text())
+
+    def test_vaadittu_kontti_loytyy(self):
+        (self.dump / "vzdump-lxc-113-2026_10_31-02_00_01.tar.zst").write_bytes(b"gitea")
+        r = self.aja(VAADITUT_KONTIT="110 113")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("valmis", self.loki.read_text())
+
+    def test_luettelo_ilmoittaa_puuttuvan_vaaditun_kontin(self):
+        r = self.aja("--luettelo", VAADITUT_KONTIT="113")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("PUUTTUU vaadittu dump, tunnus: 113", r.stdout)
+
+    def test_oletuksena_gitea_113_on_vaadittu(self):
+        env = {k: v for k, v in self.env.items() if k != "VAADITUT_KONTIT"}
+        r = subprocess.run(["bash", str(SKRIPTI), "--luettelo"], env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("tunnus: 113", r.stdout)
+
+    def test_virheellinen_vaadittu_tunnus(self):
+        self.assertEqual(self.aja(VAADITUT_KONTIT="abc").returncode, 1)
 
     def test_tyhja_lahde_ei_synkronoida(self):
         for f in self.dump.iterdir():

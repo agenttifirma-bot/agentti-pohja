@@ -52,6 +52,14 @@ grep -A4 '^dir: local' /etc/pve/storage.cfg
 
 Odotettu: rivi `path /var/lib/vz` ja rivi `content` jossa sana `backup`. Jos polku on muu, lisää B13:n asetustiedostoon rivi `DUMP_DIR=<polku>/dump`.
 
+**B1b. Varmista, että Gitea (CT113) kuuluu varmuuskopioihin.** Skripti siirtää vain sen, mitä vzdump on jo tehnyt. Tämä komento listaa koneet, joita mikään varmuuskopiotyö ei kata:
+
+```
+pvesh get /cluster/backup-info/not-backed-up
+```
+
+Odotettu: tyhjä tulos tai taulukko, jossa ei ole riviä, jonka `vmid` on `113`. Jos `113` on listalla, lisää CT113 vzdump-työhön Proxmoxin käyttöliittymässä (Datacenter, Backup) ja jatka vasta, kun tämä komento ei enää listaa sitä. Skripti tarkistaa saman joka yö: jos `vzdump-lxc-113-`-tiedostoa ei ole, ajo päättyy virheeseen ja Kuma hälyttää (muut kopiot siirretään silti).
+
 **B2. Asenna rclone.**
 
 ```
@@ -284,12 +292,131 @@ Odotettu: rivi `palautustesti OK: sha256 tasmaa (...)`.
 
 ## Mitä skripti tekee
 
+- Siirtää dumpit vain `crypt`-tyyppiseen kohteeseen. Ennen siirtoa se kysyy rclonelta kohteen tyypin (`rclone listremotes --long`, ei tulosta salaisuuksia). Jos `REMOTE` osoittaa tavalliseen Drive-kohteeseen, mitään ei siirretä ja ajo päättyy virheeseen. Näin Gitean ja Aivon data ei voi päätyä Driveen salaamattomana, vaikka asetus menisi väärin.
+- Vaatii, että `VAADITUT_KONTIT`-listan tunnuksilla (oletus `113`, Gitea) on dump lähteessä. Puuttuessa ajo päättyy virheeseen ja Kuma saa tilan `down`.
 - Synkronoi `DUMP_DIR`-hakemiston kohteeseen `drive-crypt:proxmox` (`rclone sync`, nopeusrajoitus `BWLIMIT`, oletus 8 Mt/s).
 - Säilyttää enintään `SAILYTA` (oletus 3) uusinta kopiota per kontti tai virtuaalikone. Vanhemmat jäävät lähettämättä ja poistuvat Drivesta.
 - Kieltäytyy synkronoinnista, jos lähdehakemistossa ei ole vzdump-tiedostoja. Muuten tyhjä lähde tyhjentäisi Drive-kopion.
 - `--max-delete` (oletus 20) estää massapoiston. Lukko estää päällekkäiset ajot. Loki on tiedostossa `/var/log/varmuuskopio-drive.log`.
 - Kieltäytyy ajosta, jos `rclone.conf` tai asetustiedosto on ryhmän tai muiden luettavissa.
 - Ilmoittaa Kumalle vain onnistuneesta synkronoinnista. Jos ilmoitusta ei tule 26 tunnin sisällä, Kuma hälyttää. Epäonnistuminen lähettää heti tilan `down`.
+
+## Osa C: yhden kontin (CT113, Gitea) palautustesti
+
+Testi palauttaa Gitean uusimman Drive-kopion **uudeksi väliaikaiseksi kontiksi 913**. Alkuperäiseen CT113:een ei kosketa. Kontti 913 **ei saa käynnistyä**, koska sillä olisi sama IP-osoite kuin CT113:lla. Testi vaatii vapaata levytilaa kopion koon verran kahteen kertaan (tiedosto `/var/tmp` ja kontti 913). Aja isännällä rootina yksi komento kerrallaan. Osan B pitää olla tehtynä (B10 valmis).
+
+**C1. Varmista, että tunnus 913 on vapaa.**
+
+```
+pct status 913
+```
+
+Odotettu: virheilmoitus `Configuration file 'nodes/.../lxc/913.conf' does not exist`. Jos tulostuu `status: ...`, tunnus on käytössä: lopeta ja kysy.
+
+**C2. Tarkista tallennuspaikka ja tila.**
+
+```
+pvesm status
+```
+
+Odotettu: taulukko, jossa rivi `local-lvm` (tila `active`) ja rivi `local`. Katso sarake `Available`: sen pitää olla suurempi kuin kaksi kertaa CT113:n dumpin koko (koko näkyy C3:ssa). Jos `local-lvm` puuttuu, lopeta ja kysy, mikä tallennuspaikka on kontteja varten.
+
+**C3. Etsi Gitean uusin kopio Drivesta.**
+
+```
+NIMI=$(rclone lsf drive-crypt:proxmox --include 'vzdump-lxc-113-*.tar.*' | sort | tail -n 1); echo "$NIMI"
+```
+
+Odotettu: yksi rivi muotoa `vzdump-lxc-113-2026_11_05-02_00_01.tar.zst` (päiväys on uusin ajo). Jos rivi on tyhjä, kopiota ei ole: lopeta ja palaa osaan B. Katso koko:
+
+```
+rclone size drive-crypt:proxmox --include "$NIMI"
+```
+
+Odotettu: rivit `Total objects: 1` ja `Total size: ...`.
+
+**C4. Hae kopio Drivesta ja pura salaus.** Sama komento hakee salatun tiedoston ja purkaa sen.
+
+```
+rclone copyto "drive-crypt:proxmox/$NIMI" "/var/tmp/$NIMI"
+```
+
+Odotettu: ei tulostetta (rclone on hiljainen onnistuessaan). Tarkista, että tiedosto on olemassa:
+
+```
+ls -l "/var/tmp/$NIMI"
+```
+
+Odotettu: yksi rivi, jossa on tiedoston koko ja nimi.
+
+**C5. Vertaa isännän omaan kopioon.**
+
+```
+sha256sum "/var/tmp/$NIMI" "/var/lib/vz/dump/$NIMI"
+```
+
+Odotettu: kaksi riviä, joiden alussa on täsmälleen sama 64 merkin tiiviste. Jos tiivisteet eroavat, kopio on rikki: lopeta, älä jatka C6:een.
+
+**C6. Palauta kopio uudeksi kontiksi 913 (ei käynnistetä).**
+
+```
+pct restore 913 "/var/tmp/$NIMI" --storage local-lvm --unprivileged 1
+```
+
+Odotettu: lopussa rivi `extracting archive ...` ja `Total bytes read: ...`, ei rivejä `ERROR`. Tarkista, ettei kontti käynnisty:
+
+```
+pct status 913
+```
+
+Odotettu: `status: stopped`. Jos tulostuu `status: running`, pysäytä heti komennolla `pct stop 913` ja kerro Tonylle.
+
+**C7. Katso, että Gitean data on mukana.** Liitä kontin levy isännän hakemistoon vain lukua varten:
+
+```
+pct mount 913
+```
+
+Odotettu: rivi `mounted CT 913 in '/var/lib/lxc/913/rootfs'`. Sitten:
+
+```
+find /var/lib/lxc/913/rootfs -maxdepth 4 -name app.ini
+```
+
+Odotettu: vähintään yksi polku, joka päättyy `app.ini` (Gitean asetustiedosto). Sitten:
+
+```
+find /var/lib/lxc/913/rootfs -maxdepth 5 \( -name '*.db' -o -name gitea-repositories \)
+```
+
+Odotettu: vähintään yksi rivi (Gitean tietokanta tai repokansio). Jos molemmat haut ovat tyhjiä, kopio ei sisällä Giteaa: kysy.
+
+**C8. Irrota levy ja siivoa.** Kontti 913 ja tiedosto poistetaan vasta, kun testi on onnistunut. Tämä on Tonyn oma päätös: ohje ei poista mitään muuta kuin tämän testin omat tiedostot.
+
+```
+pct unmount 913
+```
+
+Odotettu: ei tulostetta. Sitten:
+
+```
+pct destroy 913 --purge 1
+```
+
+Odotettu: ei tulostetta; `pct status 913` antaa taas C1:n virheen. Lopuksi:
+
+```
+rm "/var/tmp/$NIMI"
+```
+
+Odotettu: ei tulostetta. Kirjaa päiväys ja tulos (OK tai mikä epäonnistui) omaan muistiin: testi toistetaan esimerkiksi kerran kvartaalissa.
+
+Jos testi onnistui, Gitean varmuuskopio on todennettu: salattu kopio Drivessä, purku onnistuu, tiiviste täsmää ja sisältö palautuu.
+
+## Todennettu käytössä
+
+- Todennettu: skriptin testit CT115:ssä rclone-valejäljitelmällä (salaamattoman kohteen esto, CT113-vaatimus, rajaukset). Koko sarja vihreä Linuxilla.
+- Ei vielä todennettu: oikea Drive, oikea crypt-ajo ja tämän osan C komennot (`pct restore` jne.) isännällä. Tony merkitsee tähän päiväyksen ja tuloksen ensimmäisen onnistuneen C-testin jälkeen: `Todennettu käytössä: PP.KK.VVVV, tulos`.
 
 ## Täydellinen palautus uudelle koneelle
 

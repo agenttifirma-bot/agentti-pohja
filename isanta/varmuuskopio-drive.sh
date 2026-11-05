@@ -23,6 +23,9 @@
 #   LUKKO         /run/varmuuskopio-drive.lock
 #   KUMA_PUSH_URL (valinnainen)           Uptime Kuma push-osoite ilman kyselyosaa
 #   RCLONE        rclone                  rclone-ohjelma
+#   VAADITUT_KONTIT 113                   valilyonnilla erotetut kontti-/VM-tunnukset, joiden dump on oltava
+#                                         lahteessa (113 = Gitea). Puuttuva tunnus: synkronointi tehdaan,
+#                                         mutta ajo paattyy virheeseen ja Kuma saa tilan down
 # rclone.conf (sisaltaa crypt-avaimen ja Driven luvan) on oltava vain omistajan luettavissa (600).
 # Skripti kieltaytyy ajosta, jos ryhma tai muut voivat lukea sen. Polku: RCLONE_CONFIG tai
 # $HOME/.config/rclone/rclone.conf.
@@ -56,6 +59,7 @@ LOKI="${LOKI:-/var/log/varmuuskopio-drive.log}"
 LUKKO="${LUKKO:-/run/varmuuskopio-drive.lock}"
 KUMA_PUSH_URL="${KUMA_PUSH_URL:-}"
 RCLONE="${RCLONE:-rclone}"
+VAADITUT_KONTIT="${VAADITUT_KONTIT-113}"
 
 loki() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOKI" 2>/dev/null || true; printf '%s\n' "$*"; }
 
@@ -106,6 +110,13 @@ PERUSNIMET=$(printf '%s\n' "${TIEDOSTOT[@]:-}" \
 # Tyhja lahde + sync = koko Drive-kopio tyhjenisi. Kieltaydytaan.
 [ -n "$PERUSNIMET" ] || { loki "dump-hakemistossa ei ole vzdump-tiedostoja, ei synkronoida tyhjaa"; exit 1; }
 
+# Vaaditut tunnukset (esim. Gitea = 113) on oltava mukana, muuten kopio on hiljaa vajaa.
+PUUTTUVAT=""
+for id in $VAADITUT_KONTIT; do
+  [[ "$id" =~ ^[0-9]+$ ]] || { loki "VAADITUT_KONTIT ei kelpaa: $id"; exit 1; }
+  echo "$PERUSNIMET" | grep -q "^$id " || PUUTTUVAT="$PUUTTUVAT $id"
+done
+
 # Vanhat: per tunnus kaikki paitsi SAILYTA uusinta (aikaleima jarjestaa nimet).
 echo "$PERUSNIMET" | sort -k1,1 -k2,2r \
   | awk -v n="$SAILYTA" '{ if ($1 != e) { e=$1; k=0 } k++; if (k>n) print "/" $2 ".*" }' > "$TMP/vanhat.txt"
@@ -121,6 +132,7 @@ if [ "$TILA" = luettelo ]; then
     if grep -qxF "$pn" "$TMP/vanhat-nimet.txt"; then echo "OHITETAAN (yli $SAILYTA uusinta) $f"
     else echo "KOPIOIDAAN $f ($(stat -c %s "$DUMP_DIR/$f") tavua)"; fi
   done
+  if [ -n "$PUUTTUVAT" ]; then echo "PUUTTUU vaadittu dump, tunnus:$PUUTTUVAT"; exit 1; fi
   ONNISTUI=1; exit 0
 fi
 
@@ -147,6 +159,13 @@ if [ "$TILA" = palautus ]; then
   loki "palautustesti EPAONNISTUI: sha256 ei tasmaa"; exit 1
 fi
 
+# Salaus ennen siirtoa: kohteen on oltava rclone crypt -tyyppinen. Pelkka Drive-kohde veisi
+# dumpit selkokielisina, joten silloin ei siirreta mitaan. (listremotes ei tulosta salaisuuksia.)
+KOHDE_NIMI="${REMOTE%%:*}"
+if ! "$RCLONE" listremotes --long 2>/dev/null | grep -qE "^${KOHDE_NIMI}:[[:space:]]+crypt\$"; then
+  loki "kohde $KOHDE_NIMI ei ole crypt-tyyppinen, ei siirreta salaamatonta dataa"; exit 1
+fi
+
 KUIVA=()
 [ "$TILA" = kuiva ] && KUIVA=(--dry-run)
 loki "alku tila=$TILA lahde=$DUMP_DIR kohde=$REMOTE sailyta=$SAILYTA vanhoja_ryhmia=$VANHOJA"
@@ -160,6 +179,10 @@ loki "alku tila=$TILA lahde=$DUMP_DIR kohde=$REMOTE sailyta=$SAILYTA vanhoja_ryh
 if [ "$VANHOJA" -gt 0 ]; then
   "${BASE[@]}" "${KUIVA[@]}" delete "$REMOTE" --include-from "$TMP/vanhat.txt" --max-delete "$MAX_POISTO" \
     || { loki "vanhojen poisto epaonnistui"; exit 1; }
+fi
+
+if [ -n "$PUUTTUVAT" ]; then
+  loki "VAADITTU dump puuttuu lahteesta, tunnus:$PUUTTUVAT (muut siirrettiin)"; exit 1
 fi
 
 ONNISTUI=1
