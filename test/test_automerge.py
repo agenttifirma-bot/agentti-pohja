@@ -66,7 +66,8 @@ class RajatutTesti(unittest.TestCase):
 
     def test_kauppatiimin_raha_rajattu_vain_kauppatiimissa(self):
         kt = dict(PR, head_repo="o/kauppatiimi", base_repo="o/kauppatiimi")
-        for nimi in ("riskivahti.py", "src/salkku.py", "kirjanpito.py", "asetukset.py", "data/x.csv", "kt.service", "a.db"):
+        for nimi in ("riskivahti.py", "src/salkku.py", "kirjanpito.py", "asetukset.py", "data/x.csv", "kt.service", "a.db",
+                     "k7.py", "src/k7.py", "systemd/kt.timer.malli", "kt.service.malli", "api_key.txt", "binance_keys.py"):
             ok, syyt = am.arvioi(kt, [tied(nimi)], OK)
             self.assertFalse(ok, nimi)
             self.assertTrue(any("oikea raha" in s for s in syyt), syyt)
