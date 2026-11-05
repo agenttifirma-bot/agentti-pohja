@@ -1,21 +1,21 @@
-"""Valmis-portti (A515-A516): tila VALMIS vaatii riippumattoman tarkastajan merkinnän.
+"""Valmis-portti (A515-A516): tila VALMIS vaatii riippumattoman tarkastajan merkinn\u00e4n.
 
-Merkintä on tiedosto tulokset/<tulos>.tarkastus.md (esim. tulokset/2026-11-05-17.md -> tulokset/2026-11-05-17.tarkastus.md):
+Merkint\u00e4 on tiedosto tulokset/<tulos>.tarkastus.md (esim. tulokset/2026-11-05-17.md -> tulokset/2026-11-05-17.tarkastus.md):
   - Tarkastaja: <malli tai istunto>     (eri kuin tuloksen "- Malli:"-rivi; sama arvo ei ole riippumaton)
-  - Toimii käytössä: kyllä | ei
-  - Todiste: <lokirivi, tuloste tai URL>  (tyhjä tai pelkkä viiva ei kelpaa)
-VALMIS ilman kelvollista merkintää näytetään tilassa KESKEN. Merkintä "Toimii käytössä: ei" VALMIS-tulokselle
+  - Toimii k\u00e4yt\u00f6ss\u00e4: kyll\u00e4 | ei
+  - Todiste: <lokirivi, tuloste tai URL>  (tyhj\u00e4 tai pelkk\u00e4 viiva ei kelpaa)
+VALMIS ilman kelvollista merkint\u00e4\u00e4 n\u00e4ytet\u00e4\u00e4n tilassa KESKEN. Merkint\u00e4 "Toimii k\u00e4yt\u00f6ss\u00e4: ei" VALMIS-tulokselle
 on virhe, jonka virhemittari laskee. Vain stdlib, vain luku."""
 import re
 from pathlib import Path
 
 PAATE = ".tarkastus.md"
 TARKASTAJA_RE = re.compile(r"^[ \t>*_-]*Tarkastaja[ \t]*:(?:\*\*|__)?[ \t]*(\S.*?)[ \t]*$", re.I | re.M)
-TOIMII_RE = re.compile(r"^[ \t>*_-]*Toimii k(?:ä|a)yt(?:ö|o)ss(?:ä|a)[ \t]*:(?:\*\*|__)?[ \t]*(\S.*?)[ \t]*$", re.I | re.M)
+TOIMII_RE = re.compile(r"^[ \t>*_-]*Toimii k(?:\u00e4|a)yt(?:\u00f6|o)ss(?:\u00e4|a)[ \t]*:(?:\*\*|__)?[ \t]*(\S.*?)[ \t]*$", re.I | re.M)
 TODISTE_RE = re.compile(r"^[ \t>*_-]*Todiste[ \t]*:(?:\*\*|__)?[ \t]*(\S.*?)[ \t]*$", re.I | re.M)
 MALLI_RE = re.compile(r"^- Malli:[ \t]*(\S.*?)[ \t]*$", re.M)
-TYHJA_RE = re.compile(r"^[\s\-–—.:*_]*(?:tbd|todo|n/?a|ei mit(?:ä|a)(?:ä|a)n|ei ole|ei todistetta)?[\s\-–—.:*_]*$", re.I)
-KYLLA_RE = re.compile(r"^(?:kyll(?:ä|a)|on|ok)\b", re.I)
+TYHJA_RE = re.compile(r"^[\s\-\u2013\u2014.:*_]*(?:tbd|todo|n/?a|ei mit(?:\u00e4|a)(?:\u00e4|a)n|ei ole|ei todistetta)?[\s\-\u2013\u2014.:*_]*$", re.I)
+KYLLA_RE = re.compile(r"^(?:kyll(?:\u00e4|a)|on|ok)\b", re.I)
 EI_RE = re.compile(r"^(?:ei|false)\b", re.I)
 
 
@@ -25,7 +25,7 @@ def tarkastuspolku(hakemisto, tulosnimi):
 
 
 def lue(tarkastusteksti):
-    """Jäsentää merkinnän: {tarkastaja, toimii (True/False/None), todiste}. Puuttuva kenttä on None."""
+    """J\u00e4sent\u00e4\u00e4 merkinn\u00e4n: {tarkastaja, toimii (True/False/None), todiste}. Puuttuva kentt\u00e4 on None."""
     teksti = tarkastusteksti or ""
     haku = lambda re_: (lambda m: m.group(1) if m else None)(re_.search(teksti))
     toimii = haku(TOIMII_RE)
@@ -46,7 +46,7 @@ def _riippumaton(tulosteksti, tarkastaja):
 
 
 def kelvollinen(tulosteksti, tarkastusteksti):
-    """True, jos merkintässä on riippumaton tarkastaja, 'toimii käytössä: kyllä' ja todisteviite."""
+    """True, jos merkint\u00e4ss\u00e4 on riippumaton tarkastaja, 'toimii k\u00e4yt\u00f6ss\u00e4: kyll\u00e4' ja todisteviite."""
     if not tarkastusteksti:
         return False
     t = lue(tarkastusteksti)
@@ -54,7 +54,7 @@ def kelvollinen(tulosteksti, tarkastusteksti):
 
 
 def toimimaton(tarkastusteksti):
-    """True, jos tarkastaja totesi tuloksen toimimattomaksi ('Toimii käytössä: ei') ja liitti todisteen."""
+    """True, jos tarkastaja totesi tuloksen toimimattomaksi ('Toimii k\u00e4yt\u00f6ss\u00e4: ei') ja liitti todisteen."""
     t = lue(tarkastusteksti)
     return t["toimii"] is False and _todiste_ok(t["todiste"])
 
