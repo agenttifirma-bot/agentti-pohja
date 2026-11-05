@@ -28,8 +28,8 @@ from . import ilmoita, kysynta
 from .kysynta import OMISTAJA, hae_json, ulkoinen
 from .pr_kutsu import REPOT
 
-HISTORIA_OLETUS = "/var/lib/claude-jono/docs/claude-jono/kysynta"
-NAHDYT_OLETUS = "/var/lib/yojono/kysynta-nahdyt.json"
+HISTORIA_OLETUS = os.path.join(kysynta.TILAHAKEMISTO, "historia")
+NAHDYT_OLETUS = os.path.join(kysynta.TILAHAKEMISTO, "kysynta-nahdyt.json")
 PYPI_PAKETIT = {"llm-stopcheck": "llm-stopcheck"}
 NAHDYT_MAX = 2000
 VIESTEJA_AJOSSA = 5          # tulva-esto: loput tiivistetaan yhteen viestiin

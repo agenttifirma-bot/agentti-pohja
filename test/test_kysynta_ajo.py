@@ -254,5 +254,17 @@ class MainTesti(unittest.TestCase):
             self.assertNotIn("/proc", virhe.getvalue())
 
 
+class OletuspolutTesti(unittest.TestCase):
+    def test_kaikki_oletukset_samassa_hakemistossa(self):
+        from agentti import kysynta as k
+        for polku in (k.TILA_OLETUS, a.HISTORIA_OLETUS, a.NAHDYT_OLETUS):
+            self.assertEqual(os.path.commonpath([polku, k.TILAHAKEMISTO]), k.TILAHAKEMISTO)
+
+    def test_oletukset_eivat_osoita_kirjoituskielletyille_hakemistoille(self):
+        for polku in (a.HISTORIA_OLETUS, a.NAHDYT_OLETUS):
+            self.assertNotIn("/var/lib/claude-jono", polku)
+            self.assertNotIn("/var/lib/yojono", polku)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -33,7 +33,10 @@ from pathlib import Path
 
 from .pr_kutsu import REPOT
 
-TILA_OLETUS = "/opt/agentscope/tyo/kysynta-tila/kysynta.json"  # claudejono saa kirjoittaa tanne; /var/lib/claude-jono ei
+# Kaikki kysyntamittarin oletustiedostot (taman moduulin ja kysynta_ajon) ovat yhdessa hakemistossa. claudejono saa kirjoittaa
+# tanne; /var/lib/claude-jono ei. Isanta voi siirtaa koko hakemiston ymparistomuuttujalla KYSYNTA_TILAHAKEMISTO.
+TILAHAKEMISTO = os.environ.get("KYSYNTA_TILAHAKEMISTO") or "/opt/agentscope/tyo/kysynta-tila"
+TILA_OLETUS = os.path.join(TILAHAKEMISTO, "kysynta.json")
 OMISTAJA = "tonyweckstrom1987"
 OMAT_TUNNUKSET = {OMISTAJA, "agenttifirma-bot"}
 NPM_PAKETIT = {
