@@ -14,8 +14,12 @@ ilmoitetaan agentti.ilmoita-moduulilla. Ensimmainen ajo ilman tilaa kirjaa lahto
 uusi eika tyhjenna tilaa. Jos ilmoitus ei lahde, uudet jaavat nakematta ja halytys toistuu seuraavalla ajolla. --kuiva tulostaa
 halytyksen lahettamatta eika kirjoita tilaa. Haku nakee uusimmat SIVUKOKO issuea/PR:aa; harvempi ajo kuin kerran paivassa
 voi ohittaa tulvan alle jaaneet.
-Vain luku, ei tunnuksia, vain stdlib. GitHubin kirjautumaton raja on 60 pyyntoa tunnissa; yksi ajo kuluttaa enintaan
-3 pyyntoa repoa kohden (+1 npm), joten aja kerran paivassa tai harvemmin. Virheista nakyy vain tyypin nimi ja HTTP-tila."""
+Vain luku, ei tunnuksia, vain stdlib. GitHubin kirjautumaton raja on 60 pyyntoa tunnissa. Pyyntoja kuluu koosteilla:
+1 repolista (tahdet ja forkkien maara kaikille repoille), 1 hakupyynto (kaikki ulkopuoliset issuet ja PR:t kaikissa repoissa)
+ja 1 forkkilista vain niille repoille, joilla on forkkeja. Repomaarasta riippumaton osa on siis 2 pyyntoa. Sama osoite haetaan
+yhden ajon aikana vain kerran. Jaljella oleva raja luetaan X-RateLimit-Remaining-otsakkeesta: kun jaljella on korkeintaan
+VARARAJA pyyntoa, loput haut jatetaan tekematta (RajaLoppu) ja luvut ovat "?".
+Virheista nakyy vain tyypin nimi ja HTTP-tila."""
 import argparse
 import json
 import os
@@ -23,6 +27,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -39,15 +44,61 @@ NPM_PAKETIT = {
 }
 AIKAKATKAISU = 20
 SIVUKOKO = 100
+GITHUB = "https://api.github.com/"
+REPOLISTA_URL = GITHUB + "users/%s/repos?type=owner&per_page=%d" % (OMISTAJA, SIVUKOKO)
+# Kaikki muiden kuin Tonyn ja botin avaamat issuet ja PR:t Tonyn repoissa yhdella pyynnolla (hakurajapinnalla on oma raja).
+HAKU_URL = GITHUB + "search/issues?" + urllib.parse.urlencode(
+    {"q": "user:%s -author:%s -author:agenttifirma-bot" % (OMISTAJA, OMISTAJA), "sort": "created", "order": "desc", "per_page": SIVUKOKO})
+VARARAJA = 5    # GitHub-pyyntoja jatetaan tekematta, kun jaljella on korkeintaan tama monta
 HISTORIA_MAX = 120
 UA = "agenttifirma-kysynta/1"
 SARAKKEET = ("npm_viikko", "tahdet", "forkit", "issuet", "prt")
 
 
+class RajaLoppu(Exception):
+    """GitHubin tuntiraja on lahes taynna: haku jatetaan tekematta, ettei loppu raja kulu eika tulos jaa puolittaiseksi."""
+
+
+RAJA = {}   # resurssi ("core", "search") -> viimeksi nahty X-RateLimit-Remaining
+
+
+def _raja_talteen(otsakkeet):
+    try:
+        RAJA[otsakkeet.get("X-RateLimit-Resource") or "core"] = int(otsakkeet.get("X-RateLimit-Remaining"))
+    except (AttributeError, TypeError, ValueError):
+        pass
+
+
 def hae_json(osoite):
+    resurssi = None
+    if osoite.startswith(GITHUB):
+        resurssi = "search" if "/search/" in osoite else "core"
+        if RAJA.get(resurssi, VARARAJA + 1) <= VARARAJA:
+            raise RajaLoppu()
     pyynto = urllib.request.Request(osoite, headers={"Accept": "application/json", "User-Agent": UA})
-    with urllib.request.urlopen(pyynto, timeout=AIKAKATKAISU) as v:
-        return json.loads(v.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(pyynto, timeout=AIKAKATKAISU) as v:
+            if resurssi:
+                _raja_talteen(v.headers)
+            return json.loads(v.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if resurssi:
+            _raja_talteen(e.headers)
+        raise
+
+
+def muistiin(hae):
+    """Sama osoite haetaan yhden ajon aikana vain kerran (viikkoluvut ja halytys jakavat repolistan ja haun). Virheita ei muisteta."""
+    if getattr(hae, "muistissa", False):
+        return hae
+    muisti = {}
+
+    def muistava(osoite):
+        if osoite not in muisti:
+            muisti[osoite] = hae(osoite)
+        return muisti[osoite]
+    muistava.muistissa = True
+    return muistava
 
 
 def _virhe(e):
@@ -70,36 +121,87 @@ def _laske_ulkoiset(lista):
     return "%d+" % maara if len(lista) >= SIVUKOKO else maara
 
 
-def repo_luvut(repo, hae=hae_json):
-    """Yhden repon GitHub-luvut. Kukin luku haetaan erikseen, joten yksi epaonnistunut haku ei vie muita."""
-    perus = "https://api.github.com/repos/%s/%s" % (OMISTAJA, repo)
-    luvut = {"tahdet": "?", "forkit": "?", "issuet": "?", "prt": "?"}
-    virheet = []
+def repolista(hae=hae_json):
+    """Tonyn julkiset repot yhdella pyynnolla: {nimi: rivi}. Rivilla on tahdet, forkkien maara ja fork/archived-liput."""
+    return {r["name"]: r for r in hae(REPOLISTA_URL) if isinstance(r, dict) and isinstance(r.get("name"), str)}
+
+
+def ulkoiset_kohteet(hae=hae_json):
+    """Kaikki ulkopuoliset issuet ja PR:t yhdella hakupyynnolla. Palauttaa (lista, taysi). Listan alkio on
+    {"repo", "numero", "laji" ("issue" tai "pr"), "tunnus"}; taysi tarkoittaa, etta osa tuloksista jai saamatta (luvut ovat alarajoja).
+    Otsikoita tai tekstia ei oteta mukaan."""
+    vastaus = hae(HAKU_URL)
+    rivit = vastaus["items"]
+    kokonais = vastaus.get("total_count")
+    taysi = bool(vastaus.get("incomplete_results")) or (kokonais > len(rivit) if type(kokonais) is int else len(rivit) >= SIVUKOKO)
+    tulos = []
+    for r in rivit:
+        if not isinstance(r, dict) or not ulkoinen(r.get("user")) or type(r.get("number")) is not int:
+            continue
+        osat = str(r.get("repository_url", "")).rstrip("/").split("/")
+        if len(osat) < 2 or osat[-2].lower() != OMISTAJA.lower() or not osat[-1]:
+            continue
+        tulos.append({"repo": osat[-1], "numero": r["number"], "laji": "pr" if "pull_request" in r else "issue", "tunnus": r["user"]["login"]})
+    return tulos, taysi
+
+
+def _int(arvo):
+    if isinstance(arvo, bool) or not isinstance(arvo, int):
+        raise ValueError("ei lukua")
+    return arvo
+
+
+def mittaa_github(repot, hae=hae_json):
+    """Repojen GitHub-luvut koosteilla (ks. moduulin ohje). Palauttaa (luvut repoittain, virherivit repoittain {repo: [..]}).
+    Kukin luku on omassa try-lohkossaan, joten yksi epaonnistunut haku ei vie muita."""
+    hae = muistiin(hae)
+    virheet = {r: [] for r in repot}
     try:
-        # Repon oma stargazers_count-kentta: stargazers-osoite vaatii kirjautumisen (401). Luku on kokonaismaara, omat tahdet mukana.
-        maara = hae(perus).get("stargazers_count")
-        if isinstance(maara, bool) or not isinstance(maara, int):
-            raise ValueError("ei lukua")
-        luvut["tahdet"] = maara
+        rivit = repolista(hae)
     except Exception as e:
-        virheet.append("tahdet: " + _virhe(e))
+        rivit, lista_virhe = {}, _virhe(e)
+    else:
+        lista_virhe = None
     try:
-        luvut["forkit"] = _laske_ulkoiset([f.get("owner") for f in hae("%s/forks?per_page=%d" % (perus, SIVUKOKO))])
+        kohteet, taysi = ulkoiset_kohteet(hae)
+        haku_virhe = None
     except Exception as e:
-        virheet.append("forkit: " + _virhe(e))
-    try:
-        # GitHubin issues-rajapinta palauttaa myos PR:t; ne erottaa pull_request-kentasta.
-        rivit = hae("%s/issues?state=all&per_page=%d" % (perus, SIVUKOKO))
-        taysi = len(rivit) >= SIVUKOKO
-        numerot = {}
-        for avain, onko_pr in (("issuet", False), ("prt", True)):
-            ulk = [r for r in rivit if ("pull_request" in r) == onko_pr and ulkoinen(r.get("user"))]
-            luvut[avain] = "%d+" % len(ulk) if taysi else len(ulk)
-            numerot[avain] = sorted(r["number"] for r in ulk if type(r.get("number")) is int)
-        luvut["numerot"] = numerot  # vain onnistuneesta haustasta: puuttuva avain tarkoittaa "ei tietoa", ei "ei mitaan"
-    except Exception as e:
-        virheet.append("issuet: " + _virhe(e))
-    return luvut, virheet
+        kohteet, taysi, haku_virhe = [], False, _virhe(e)
+    tulos = {}
+    raja_loppu = isinstance(haku_virhe, str) and haku_virhe == RajaLoppu.__name__   # raja tuli vastaan: ei yritysta enaa
+    for repo in repot:
+        luvut = {"tahdet": "?", "forkit": "?", "issuet": "?", "prt": "?"}
+        rivi = rivit.get(repo)
+        if lista_virhe or rivi is None:   # jaettu haku kaatui tai repoa ei ole listalla: ei yhtaan lukua repolistasta
+            syy = lista_virhe or "ei repolistassa"
+            virheet[repo] += ["tahdet: " + syy, "forkit: " + syy]
+        else:
+            # Repon oma stargazers_count-kentta: stargazers-osoite vaatii kirjautumisen (401). Luku on kokonaismaara, omat tahdet mukana.
+            try:
+                luvut["tahdet"] = _int(rivi.get("stargazers_count"))
+            except Exception as e:
+                virheet[repo].append("tahdet: " + _virhe(e))
+            try:
+                if _int(rivi.get("forks_count")) == 0:
+                    luvut["forkit"] = 0
+                elif raja_loppu:
+                    raise RajaLoppu()
+                else:   # forkkilista vain, kun forkkeja on: botin oma forkki ei ole kysyntaa, joten kokonaismaara ei kelpaa sellaisenaan
+                    luvut["forkit"] = _laske_ulkoiset([f.get("owner") for f in hae("%srepos/%s/%s/forks?per_page=%d" % (GITHUB, OMISTAJA, repo, SIVUKOKO))])
+            except Exception as e:
+                raja_loppu = raja_loppu or isinstance(e, RajaLoppu)
+                virheet[repo].append("forkit: " + _virhe(e))
+        if haku_virhe:
+            virheet[repo].append("issuet: " + haku_virhe)
+        else:
+            numerot = {}
+            for avain, laji in (("issuet", "issue"), ("prt", "pr")):
+                nrot = sorted(k["numero"] for k in kohteet if k["repo"] == repo and k["laji"] == laji)
+                luvut[avain] = "%d+" % len(nrot) if taysi else len(nrot)
+                numerot[avain] = nrot
+            luvut["numerot"] = numerot  # vain onnistuneesta haustasta: puuttuva avain tarkoittaa "ei tietoa", ei "ei mitaan"
+        tulos[repo] = luvut
+    return tulos, virheet
 
 
 def npm_viikko(paketti, hae=hae_json):
@@ -118,13 +220,13 @@ def npm_viikko(paketti, hae=hae_json):
 
 def mittaa(repot=REPOT, hae=hae_json):
     """Palauttaa (luvut repoittain, virherivit). Virherivilla on vain virheen tyyppi."""
-    tulos, virheet = {}, []
+    hae = muistiin(hae)
+    tulos, repon_virheet = mittaa_github(repot, hae)
+    virheet = []
     for repo in repot:
-        luvut, repon_virheet = repo_luvut(repo, hae)
         luku, virhe = npm_viikko(NPM_PAKETIT.get(repo), hae)
-        luvut["npm_viikko"] = luku
-        tulos[repo] = luvut
-        virheet += ["%s %s" % (repo, v) for v in repon_virheet + ([virhe] if virhe else [])]
+        tulos[repo]["npm_viikko"] = luku
+        virheet += ["%s %s" % (repo, v) for v in repon_virheet[repo] + ([virhe] if virhe else [])]
     return tulos, virheet
 
 
