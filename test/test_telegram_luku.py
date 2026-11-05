@@ -146,6 +146,105 @@ class AjaTesti(Pohja):
             self.assertNotIn("peru 9", self.lue(polku).replace("peru-", ""))
 
 
+class KorjausTesti(Pohja):
+    """Tarkastajan loydokset 1-4 (PR 196)."""
+
+    def test_paivakatto_rajoittaa_peru_tehtavat_ja_halyttaa(self):
+        paivitykset = [viesti(i, "peru %d" % (100 + i)) for i in range(1, 9)]
+        self.aja(paivitykset)
+        self.assertEqual(len(self.tehtavat()), tl.PERU_PAIVAKATTO)
+        self.assertEqual(self.lue("tonylle.md").count("HALYTYS"), 1)
+        # 6. peru on ensimmainen ylitys: vastaus on halytys (vastauksia lahetetaan enintaan VASTAUS_MAX)
+        self.assertEqual(self.lahetetyt[tl.PERU_PAIVAKATTO - 1][:7], "Kirjatt")
+        self.assertEqual(len(self.lahetetyt), tl.VASTAUS_MAX)
+
+    def test_katto_ei_nollaudu_vaikka_tehtavatiedostot_siirretaan(self):
+        self.aja([viesti(i, "peru %d" % i) for i in range(1, 6)])
+        for n in self.tehtavat():
+            os.remove(os.path.join(self.docs, "tehtavat", n))
+        self.aja([viesti(6, "peru 77")])
+        self.assertEqual(self.tehtavat(), [])
+        self.assertIn("HALYTYS", self.lue("tonylle.md"))
+        self.assertTrue(self.lahetetyt[-1].startswith("H\u00c4LYTYS"))
+
+    def test_katto_nollautuu_seuraavana_paivana(self):
+        self.aja([viesti(i, "peru %d" % i) for i in range(1, 7)])
+        huomenna = lambda: datetime.datetime(2026, 11, 5, 9, 0, tzinfo=TZ)
+        tl.aja(self.docs, self.tila, TONY, {"TELEGRAM_BOT_TOKEN": "tok"},
+               hae=FeikkiAPI([viesti(20, "peru 500")]), laheta=self.lahetetyt.append, kello=huomenna)
+        self.assertIn("2026-11-05-01-auto-peru-agentti-pohja-pr-500.md", self.tehtavat())
+
+    def test_katto_ei_koske_vastauksia(self):
+        self.aja([viesti(i, "1A") for i in range(1, 12)])
+        self.assertEqual(self.lue("paatokset.md").count("Telegram |"), 11)
+
+    def test_tehtavapohja_ei_ohita_harkintaa_ja_tarkistaa_yhdistyksen(self):
+        self.aja([viesti(1, "peru 123")])
+        teksti = self.lue("tehtavat/" + self.tehtavat()[0])
+        self.assertNotIn("ei harkita uudelleen", teksti)
+        self.assertNotIn("nimenomainen p\u00e4\u00e4t\u00f6s", teksti)
+        self.assertIn("ei ole yhdistetty", teksti)
+        self.assertIn("peruttavissa", teksti)
+        self.assertIn("tarkista itse", teksti)
+
+    def test_lahetysvirhe_ei_toista_kirjausta(self):
+        def rikkoutuu(_teksti):
+            raise OSError("verkko")
+        api = FeikkiAPI([viesti(1, "2B")])
+        with self.assertRaises(OSError):
+            tl.aja(self.docs, self.tila, TONY, {"TELEGRAM_BOT_TOKEN": "tok"}, hae=api, laheta=rikkoutuu, kello=kello)
+        self.assertEqual(tl.lue_offset(self.tila), 2)
+        self.assertEqual(self.aja([viesti(1, "2B")], api), (0, 0))
+        self.assertEqual(self.lue("paatokset.md").count("Telegram |"), 1)
+
+    def test_kirjaus_on_idempotentti_update_id_perusteella(self):
+        # simuloi kaatumista kirjauksen ja offsetin valissa: sama viesti tulee uudelleen ilman offsetia
+        self.aja([viesti(7, "1A 2B")])
+        os.remove(os.path.join(self.tila, tl.OFFSET_TIEDOSTO))
+        self.aja([viesti(7, "1A 2B")])
+        self.assertEqual(self.lue("paatokset.md").count("Telegram |"), 2)
+        self.aja([viesti(8, "1A 2B")])
+        self.assertEqual(self.lue("paatokset.md").count("Telegram |"), 4)
+
+    def test_verkkovirhe_ei_vuoda_tunnusta(self):
+        import io
+        import traceback
+        import urllib.error
+        import urllib.request
+        from unittest import mock
+        token = "123456:SALAINEN-TOKEN"
+
+        def rikki(osoite, timeout=None):
+            raise urllib.error.HTTPError(osoite, 401, "Unauthorized", {}, io.BytesIO(b""))
+        with mock.patch.object(urllib.request, "urlopen", rikki):
+            with self.assertRaises(tl.TelegramVirhe) as ctx:
+                tl.hae_paivitykset(token, None)
+        kuvaus = "".join(traceback.format_exception(ctx.exception))
+        self.assertNotIn("SALAINEN", kuvaus)
+        self.assertNotIn(token, kuvaus)
+        self.assertIn("HTTPError 401", str(ctx.exception))
+        self.assertIsNone(ctx.exception.__cause__)
+        self.assertTrue(ctx.exception.__suppress_context__)
+
+    def test_main_tulostaa_vain_tyypin_verkkovirheesta(self):
+        import contextlib
+        import io
+        import urllib.request
+        from unittest import mock
+        chat = os.path.join(self._t.name, "chat")
+        with open(chat, "w") as f:
+            f.write(str(TONY))
+        err = io.StringIO()
+
+        def rikki(osoite, timeout=None):
+            raise OSError(osoite)
+        with mock.patch.object(urllib.request, "urlopen", rikki), contextlib.redirect_stderr(err):
+            kood = tl.main(["--docs", self.docs, "--tila", self.tila, "--chat-tiedosto", chat],
+                           env={"TELEGRAM_BOT_TOKEN": "SALAINEN-TOKEN"})
+        self.assertEqual(kood, 1)
+        self.assertEqual(err.getvalue().strip(), "telegram_luku epaonnistui: TelegramVirhe")
+
+
 class MainTesti(Pohja):
     def test_virhe_tulostaa_vain_tyypin(self):
         import contextlib
