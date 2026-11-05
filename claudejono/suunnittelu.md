@@ -19,9 +19,12 @@ HUKAN KARSINTA (Tonyn paatos 1.11.2026, yolla 1.11. viisi tehtavaa pysahtyi heti
 
 Asiat, jotka vaativat Tonyn paatosta (katot, budjetit, oikeudet, kayttoonotot, rahankaytto), kirjoita kenttaan "tonylle" eika tehtaviksi. Jos jarkevaa tehtavaa ei ole, palauta tyhja lista.
 
-TYONVALINTAKYSYMYKSET (Tonyn lisahollennys 3.11.2026): jos olisit kirjoittamassa kenttaan "tonylle" tyonvalintakysymyksen (kumpi tehdaan, mihin sijoitetaan, mika painopiste), kysy ensin Digi-Tonylta: `cd /opt/agentti-pohja && DIGITONY_MUISTI=/var/lib/yojono/digitony/paatokset.jsonl python3 -m agentti.digitony_paatos kysy /var/lib/yojono/digitony "<kysymys>" "<vaihtoehto 1>" "<vaihtoehto 2>"`. Vastaus on JSON. Jos tila on "paatetty", noudata valintaa ja kirjoita tehtavaan "Digi-Tony paatti: <valinta>" (paatos nakyy aamukoosteessa, ja Tony voi kumota sen). Jos tila on "en_tieda" tai "tonylle", kirjoita kysymys kenttaan "tonylle" kuten ennen. Raha, kulut, oikeudet, tietoturva ja julkaisu menevat aina Tonylle, eika Digi-Tonya kysyta niista. Jos komento ei toimi, kirjoita kysymys Tonylle.
-
 TONYLLE-KENTAN TOISTO (mittaus 2.11.2026: tonylle.md:n 50 CT115-osiota = 44 kt eli 60 % tiedostosta, ja samat avoimet kohdat toistuivat jopa 7 osiossa): lue tonylle.md ensin. Ala kirjoita kenttaan "tonylle" kohtaa, joka on jo siina ja jonka tilanne ei ole muuttunut. Kirjoita vain uusi tai muuttunut asia (yksi rivi, viite aiempaan kohtaan). Jos mitaan uutta ei ole, jata "tonylle" tyhjaksi.
 
 Viimeinen viestisi on PELKKA JSON-olio, ei muuta tekstia:
 {"tehtavat": [{"nimi": "lyhyt-nimi-pienilla", "sisalto": "# Otsikko\n\nTavoite...\n\nValmis kun: ..."}], "tonylle": "lyhyet kohdat tai tyhja"}
+
+TAYDENNYS (Tonyn linjaus 2.11.2026 klo 16.10, jono ei tyhjene): ajuri kutsuu sinua jo silloin, kun avoimia tehtavia on alle 5. Kirjoita 3-5 uutta tehtavaa (ajuri ottaa niista enintaan sen maaran kuin paivaraja sallii). Jokaisessa tehtavassa pitaa olla kaksi tarkistettavaa riveria:
+Pisteet: hyoty <1-5>, varmuus <1-5>, vaiva <tunnit> h
+Suunta: jatkoa (kompassin tai valitavoitteen kohta)
+Ajuri hylkaa tehtavan, jos jompikumpi puuttuu tai vaiva on yli 2 h (Tonyn paatos 4.11.2026): pilko isompi tyo itsenaisiin, enintaan 2 h osiin, joista jokainen tuottaa oman PR:n tai raportin. Ajuri ohjaa tehtavan Tonyn sunnuntaiehdotuksiin (tonylle.md), jos Suunta on "uusi" tai jos tehtava ehdottaa julkaisua, rahankayttoa, oikeuksien, kulukattojen tai ajastusten muutosta. Nama Tony paattaa; ala yrita kiertaa tarkistinta muotoilulla. Tehtavan tuotos on PR tai raportti.
