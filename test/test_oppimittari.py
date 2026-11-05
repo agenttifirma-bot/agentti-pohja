@@ -10,117 +10,72 @@ from agentti import viikkoraportti as vr
 NYT = date(2030, 6, 15)     # kiintea "nyt" annetaan parametrina: mittari ei lue kelloa
 
 
-def rivi(ika_pv, syy, tarkastaja=False, tunniste=""):
+def rivi(ika_pv, teksti):
+    """Virhelokin rivi: sama muoto kuin oikeassa lokissa."""
     p = (NYT - timedelta(days=ika_pv)).isoformat()
-    return "- %s%s: jotain tapahtui. Syy: %s. Saanto: x.%s" % (p, " (tarkastaja, tulos 1)" if tarkastaja else "", syy, tunniste)
+    return "- %s: %s" % (p, teksti)
 
 
 def loki(*rivit):
     return "# Virheloki\n\n" + "\n".join(rivit) + "\n"
 
 
-class JasennysTesti(unittest.TestCase):
-    def test_syy_ja_luokka(self):
-        mm = om.jasenna(loki(rivi(1, "testi k\u00e4ytti oikeaa kelloa")))
-        self.assertEqual(mm[0]["luokka"], "aikapommi")
-        self.assertEqual(mm[0]["paiva"], NYT - timedelta(days=1))
+# Virhemittarin saantotaulun tunnisteet: "(juurisyy N)" ja LOKI_SAANNOT-osat.
+class RiviTesti(unittest.TestCase):
+    def test_kayttaa_virhemittarin_luokkia(self):
+        r = om.rivi(loki(rivi(1, "x (juurisyy 1)"), rivi(2, "y (juurisyy 2)")), NYT)
+        self.assertIn("1 tehty\u2260toimii x1", r)
+        self.assertIn("2 muistista x1", r)
 
-    def test_tunniste_ohittaa_saannot(self):
-        mm = om.jasenna(loki(rivi(1, "oikeaa kelloa", tunniste=" [juurisyy: oma_luokka]")))
-        self.assertEqual(mm[0]["luokka"], "oma_luokka")
+    def test_sama_luokka_kahtena_viikkona_ehdottaa_koodia(self):
+        r = om.rivi(loki(rivi(8, "x (juurisyy 1)"), rivi(1, "y (juurisyy 1)")), NYT)
+        self.assertIn("luokka 1 kahtena viikkona", r)
+        self.assertIn("korjausehdotus koodiin", r)
 
-    def test_tuntematon_syy_ei_luokkaa(self):
-        self.assertIsNone(om.jasenna(loki(rivi(1, "aivan uusi asia")))[0]["luokka"])
+    def test_eri_luokat_eivat_ole_toisto(self):
+        r = om.rivi(loki(rivi(8, "x (juurisyy 1)"), rivi(1, "y (juurisyy 2)")), NYT)
+        self.assertTrue(r.rstrip(".").endswith("toistuiko sama juurisyy: ei"))
 
-    def test_otsikkomerkinta_miksi_rivi(self):
-        t = "## 14.6.2030: git stash\n- Mita: x\n- Miksi: yksi tyopuu, kaksi samanaikaista tyota\n- Saanto: y\n"
-        mm = om.jasenna(t)
-        self.assertEqual(mm[0]["paiva"], date(2030, 6, 14))
-        self.assertEqual(mm[0]["luokka"], "ymparisto")
+    def test_kolmas_kerta_menee_tonylle(self):
+        r = om.rivi(loki(rivi(15, "x (juurisyy 3)"), rivi(8, "y (juurisyy 3)"), rivi(1, "z (juurisyy 3)")), NYT)
+        self.assertIn("kolmas kerta", r)
+        self.assertIn("Tonylle", r)
 
-    def test_tarkastajan_merkinta(self):
-        self.assertTrue(om.jasenna(loki(rivi(1, "x", tarkastaja=True)))[0]["tarkastaja"])
-
-
-class KorjausTesti(unittest.TestCase):
-    """Tarkastajan l\u00f6yd\u00f6kset (PR #198): jokainen n\u00e4ist\u00e4 kaatuu ilman korjausta."""
-
-    def test_ascii_saanto_ei_kuulu_syyhyn(self):
-        t = "- %s: x. Syy: aivan uusi asia. Saanto: tarkista muistista ja oikeaa kelloa." % (NYT - timedelta(days=1))
-        m = om.jasenna(t)[0]
-        self.assertEqual(m["syy"], "aivan uusi asia.")
-        self.assertIsNone(m["luokka"])
-
-    def test_umlaut_saanto_ei_kuulu_syyhyn(self):
-        t = "- %s: x. Syy: aivan uusi asia. S\u00e4\u00e4nt\u00f6: tarkista muistista." % (NYT - timedelta(days=1))
-        m = om.jasenna(t)[0]
-        self.assertEqual(m["syy"], "aivan uusi asia.")
-        self.assertIsNone(m["luokka"])
+    def test_luokittelematon_ei_ole_toisto(self):
+        r = om.rivi(loki(rivi(8, "aivan uusi asia"), rivi(1, "toinen uusi asia")), NYT)
+        self.assertIn("luokittelematta x1", r)
+        self.assertTrue(r.rstrip(".").endswith("toistuiko sama juurisyy: ei"))
 
     def test_toisto_lasketaan_paivan_mukaan_ei_tiedostojarjestyksesta(self):
-        # uudempi merkint\u00e4 on tiedostossa ennen vanhempaa: vanhempi (ikkunan ulkopuolella) on alkuper\u00e4inen, uudempi toisto
-        teksti = loki(rivi(2, "aikapommi"), rivi(20, "aikapommi"))
-        self.assertEqual(om.mittari(teksti, NYT)["nyt"]["toistoja"], 1)
+        a = om.rivi(loki(rivi(1, "y (juurisyy 1)"), rivi(8, "x (juurisyy 1)")), NYT)
+        b = om.rivi(loki(rivi(8, "x (juurisyy 1)"), rivi(1, "y (juurisyy 1)")), NYT)
+        self.assertEqual(a, b)
 
-    def test_paivamaaraton_otsikko_katkaisee_blokin(self):
-        t = "## %d.%d.%d: a\n- Mita: x\n## Muuta\n- Miksi: oikeaa kelloa\n" % (14, 6, 2030)
-        mm = om.jasenna(t)
-        self.assertEqual(len(mm), 1)
-        self.assertIsNone(mm[0]["syy"])
-        self.assertIsNone(mm[0]["luokka"])
+    def test_saanto_ascii_ja_umlaut_sama_tulos(self):
+        t1 = "- %s: x (juurisyy 1). Saanto: tarkista muistista." % (NYT - timedelta(days=1))
+        t2 = "- %s: x (juurisyy 1). S\u00e4\u00e4nt\u00f6: tarkista muistista." % (NYT - timedelta(days=1))
+        self.assertEqual(om.rivi(loki(t1), NYT), om.rivi(loki(t2), NYT).replace("S\u00e4\u00e4nt\u00f6", "Saanto"))
 
-
-class LaskentaTesti(unittest.TestCase):
-    def test_toisto_vaatii_aiemman_samaluokkaisen(self):
-        teksti = loki(rivi(20, "kiinte\u00e4 p\u00e4iv\u00e4 testiss\u00e4"), rivi(2, "aikapommi taas"), rivi(1, "ajettiin vain k\u00e4sin"))
-        v = om.mittari(teksti, NYT)
-        self.assertEqual((v["nyt"]["n"], v["nyt"]["toistoja"]), (2, 1))
-        self.assertEqual(v["nyt"]["luokat"], {"aikapommi": 1})
-
-    def test_ensimmainen_esiintyma_ei_ole_toisto(self):
-        v = om.mittari(loki(rivi(2, "aikapommi")), NYT)
-        self.assertEqual(v["nyt"]["toistoja"], 0)
-
-    def test_edellinen_viikko_ja_suunta_paremmin(self):
-        teksti = loki(rivi(30, "aikapommi"), rivi(12, "aikapommi"), rivi(11, "aikapommi"), rivi(3, "ajettiin vain k\u00e4sin"), rivi(2, "uusi"))
-        v = om.mittari(teksti, NYT)
-        self.assertEqual((v["ed"]["n"], v["ed"]["toistoja"]), (2, 2))
-        self.assertEqual((v["nyt"]["n"], v["nyt"]["toistoja"]), (2, 0))
-        self.assertEqual(om.suunta(v["nyt"], v["ed"]), "parempi")
-
-    def test_suunta_huonompi_ja_ei_muutosta(self):
-        a = {"n": 4, "toistoja": 2}
-        self.assertEqual(om.suunta(a, {"n": 4, "toistoja": 1}), "huonompi")
-        self.assertEqual(om.suunta(a, {"n": 2, "toistoja": 1}), "ei muutosta")
-
-    def test_ei_dataa_ei_vaiteta_suuntaa(self):
-        self.assertIn("data ei riit", om.suunta({"n": 3, "toistoja": 1}, {"n": 0, "toistoja": 0}))
-
-    def test_ikkunan_rajat(self):
-        # tasmalleen 7 pv sitten kuuluu edelliseen viikkoon (alku, loppu], tanaan nykyiseen
-        v = om.mittari(loki(rivi(7, "uusi"), rivi(0, "uusi2")), NYT)
-        self.assertEqual((v["ed"]["n"], v["nyt"]["n"]), (1, 1))
-
-    def test_tarkastajan_luku(self):
-        v = om.mittari(loki(rivi(1, "uusi", tarkastaja=True), rivi(2, "x")), NYT)
-        self.assertEqual(v["nyt"]["tarkastajan"], 1)
-
-
-class RiviTesti(unittest.TestCase):
-    def test_rivi_sisaltaa_luvut(self):
-        teksti = loki(rivi(20, "aikapommi"), rivi(2, "aikapommi"), rivi(1, "x"))
-        r = om.rivi(teksti, NYT)
-        self.assertTrue(r.startswith("Oppiminen:"))
-        self.assertIn("toistoja 1", r)
-        self.assertIn("aikapommi x1", r)
-        self.assertIn("luokittelematta 1", r)
-        self.assertLessEqual(len(r), 300)
+    def test_paivamaaraton_otsikko_katkaisee_otsikkomerkinnan(self):
+        t = "## %d.%d.%d: git stash\n- Mita: x\n## Muu osio\n- Miksi: x (juurisyy 1)\n" % (
+            (NYT - timedelta(days=1)).day, (NYT - timedelta(days=1)).month, (NYT - timedelta(days=1)).year)
+        r = om.rivi(t, NYT)
+        self.assertIn("virhelokimerkint\u00f6j\u00e4 1", r)
+        self.assertIn("3 v\u00e4\u00e4r\u00e4 oletus x1", r)      # "git stash" -saanto osuu otsikkoon
+        self.assertNotIn("tehty\u2260toimii", r)       # tunniste kuului muuhun osioon, ei merkintaan
 
     def test_puuttuva_loki(self):
         self.assertIn("ei saatu luettua", om.rivi(None, NYT))
 
-    def test_tyhja_loki(self):
+    def test_tyhja_loki_sanoo_data_ei_riita(self):
         self.assertIn("data ei riit", om.rivi("# Virheloki\n", NYT))
+
+    def test_vanha_data_ei_ole_taman_viikon_luku(self):
+        self.assertIn("data ei riit", om.rivi(loki(rivi(60, "x (juurisyy 1)")), NYT))
+
+    def test_rivi_on_lyhyt(self):
+        t = loki(*[rivi(1, "x%d (juurisyy %d)" % (i, 1 + i % 4)) for i in range(30)])
+        self.assertLessEqual(len(om.rivi(t, NYT)), 500)
 
     def test_main_ilman_tiedostoa_ei_kaadu(self):
         self.assertEqual(om.main(["/ei/ole/olemassa.md"]), 2)
@@ -142,7 +97,7 @@ class ViikkoraporttiLiitosTesti(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "virheloki.md")
             with open(p, "w", encoding="utf-8") as f:
-                f.write(loki(rivi(1, "uusi")))
+                f.write(loki(rivi(1, "uusi (juurisyy 1)")))
             with mock.patch.dict(os.environ, {"VIRHELOKI": p}):
                 self.assertIn("Oppiminen:", vr.oppimisrivi(NYT))
             with mock.patch.dict(os.environ, {"VIRHELOKI": os.path.join(d, "puuttuu.md")}):
@@ -154,11 +109,11 @@ class ViikkoraporttiLiitosTesti(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             toinen = os.path.join(d, "toinen.md")
             with open(toinen, "w", encoding="utf-8") as f:
-                f.write(loki(rivi(1, "uusi")))
+                f.write(loki(rivi(1, "uusi (juurisyy 1)")))
             env = {k: v for k, v in os.environ.items() if k != "VIRHELOKI"}
             with mock.patch.dict(os.environ, env, clear=True), \
                     mock.patch.object(vr, "VIRHELOKI_OLETUKSET", (os.path.join(d, "eka.md"), toinen)):
-                self.assertIn("viikon virhelokimerkinn\u00e4t 1", vr.oppimisrivi(NYT))
+                self.assertIn("virhelokimerkint\u00f6j\u00e4 1", vr.oppimisrivi(NYT))
             with mock.patch.dict(os.environ, env, clear=True), \
                     mock.patch.object(vr, "VIRHELOKI_OLETUKSET", (os.path.join(d, "eka.md"), os.path.join(d, "toka.md"))):
                 self.assertIn("ei l\u00f6ytynyt", vr.oppimisrivi(NYT))

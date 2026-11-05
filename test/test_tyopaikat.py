@@ -53,6 +53,13 @@ class SanarajaTest(unittest.TestCase):
         self.assertTrue(t.sopii({"otsikko": "AI Infrastructure Engineer"}, self.H))
         self.assertTrue(t.sopii({"otsikko": "Intern, Platform"}, self.H))
 
+    def test_internship_osuu_oletushakusanoilla(self):
+        O = t.OLETUS_HAKUSANAT
+        self.assertTrue(t.sopii({"otsikko": "Software Engineering Internship 2027"}, O))
+        self.assertTrue(t.sopii({"otsikko": "Harjoittelupaikka, tietohallinto"}, O))
+        self.assertFalse(t.sopii({"otsikko": "Internal Auditor"}, O))
+        self.assertFalse(t.sopii({"otsikko": "International Tax Manager"}, O))
+
     def test_erikoismerkit_escapataan(self):
         self.assertTrue(t.sopii({"otsikko": "C++ Developer"}, ["c++"]))
         self.assertFalse(t.sopii({"otsikko": "Cxx Developer"}, ["c++"]))

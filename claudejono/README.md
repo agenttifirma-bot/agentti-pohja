@@ -9,6 +9,17 @@ Pilvi-Claude ei pääse Tailscale-verkkoon, mutta molemmat pääsevät GitHubiin
 
 Rajat (Tony hyväksyi 30.10.2026, doc 71): PR-taso, ei mergeä, ei katto-/oikeusmuutoksia, ei salaisuuksia, ei poistoja. Kehote: `kehote.md`. Ajuri committaa vain tulostiedostot, `-auto-`-tehtävät ja `tonylle.md`:n (testattu).
 
+## Itsekehittyvä silmukka (Tonyn linjaus 2.11.2026 klo 16.10)
+
+Kolme osaa, joiden koodi on `silmukka.py` ja `laatu.py`. Ne eivät muuta kulukattoja, oikeuksia eivätkä polkurajoja (`AUTO_MAX_PAIVA`, `AUTO_PER_AJO`, `sallittu_polku` ovat ennallaan).
+
+1. **Jono ei tyhjene.** Kun avoimia tehtäviä on alle 5 (`silmukka.AVOIMIA_ALARAJA`), ajuri kutsuu itsesuunnittelua jo ennen kuin jono on tyhjä, ja ajaa silti vuorossa olevan tehtävän. Suunnittelun kaatuminen ei estä tehtävää. Suunnittelija kirjoittaa pisteytetyt tehtävät (`Pisteet:`- ja `Suunta:`-rivi). **Porttitarkistin** hylkää tehtävän, jos rivit puuttuvat. Tarkistin ohjaa tehtävän Tonyn sunnuntaiehdotuksiin (`tonylle.md`, rivi alkaa `Sunnuntaiehdotus (syy)`), jos se koskee julkaisua, rahaa, oikeuksia, kulukattoja, ajastuksia tai uutta suuntaa. Tarkistin on karkea sanalista, ja kieltolauseet ("ei saa muuttaa kattoja") ohitetaan. Se on lisävartija, ei ainoa raja: tehtävän suorittajaa sitovat silti kehotteen rajat ja ajurin polkuraja.
+2. **Viikoittainen optimointikierros.** Pohja `toistuvat/optimointi.md` (tehtävä 43). Ajuri luo siitä tehtävän `<pvm>-NN-auto-optimointi.md`, kun edellisestä on 7 päivää eikä edellinen odota ajoa. Luonti ei tarvitse uutta ajastinta: se tapahtuu `claude-jono.service`-ajon alussa. Tehtävä kuuluu itse keksittyjen tehtävien päivärajaan.
+3. **Päivittäinen laatuotos.** `python3 -m claudejono laatu` valitsee 2–3 satunnaista eilistä tulosta. Eri `claude -p` -istunto tarkistaa ne lähteitä vasten työkaluilla `Read`, `Grep` ja `Glob` (`--tools`, `--no-session-persistence`). Tulos kirjataan tiedostoon `$CLAUDEJONO_TYOHAK/laatu-tila.json` (ei docs-repoon). Vakava virhe vaatii todisteen (lähteen polku ja lainaus), muuten se lasketaan lieväksi. `python3 -m claudejono mittari` tulostaa aamukoosteen mittaririvin: otoksen tulos, hyväksytyt ja hylätyt PR:t, uudet virhelokimerkinnät ja puuttuvat "Todennettu käytössä" -rivit.
+4. **Pysäytysehto.** Jos laatuotos löytää vakavan virheen kahtena kalenteripäivänä peräkkäin, itsesuunnittelu ja toistuvat tehtävät pysähtyvät ja Telegramiin lähtee `HALYTYS`-viesti. Pysäytys poistuu vain komennolla `python3 -m claudejono vapauta`. Jo jonossa olevat tehtävät ajetaan edelleen.
+
+**Käyttöönotto (Tony, ajastinmuutos):** kopioi `systemd/claude-laatu.service.mall` ja `claude-laatu.timer.mall` hakemistoon `/etc/systemd/system/` ilman `.mall`-päätettä, aja `systemctl daemon-reload` ja `systemctl enable --now claude-laatu.timer`. Kokeile ensin: `systemctl start claude-laatu.service` ja `journalctl -u claude-laatu -n 20 --no-pager`. Aamukoosteen (PR #160) valmistuttua mittaririvin voi liittää koosteeseen kutsulla `claudejono.laatu.mittaririvi(tyohak, repo, nyt)`.
+
 ## Käyttöönotto CT115:ssä (Tony, kerran)
 
 1. `claude` → `/status`: kirjautuminen tilauksella (ei API-avainta).
