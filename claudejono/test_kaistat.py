@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
-from claudejono import ajuri
+from claudejono import ajuri, silmukka
 from claudejono.test_ajuri import Pohja, git, git_ulos
 
 
@@ -279,6 +279,13 @@ class KilpaAjo(Pohja):
 
 
 class Ajo(Pohja):
+    def setUp(self):
+        super().setUp()
+        # Nama testit koskevat kaistojen varauksia, eivat toistuvia tehtavia: tyhja jono pysyy tyhjana.
+        paikka = mock.patch.object(silmukka, "toistuvat_erapaivalla", return_value=[])
+        paikka.start()
+        self.addCleanup(paikka.stop)
+
     def f(self, palaute=None, koodi=0, sivu=None):
         def suorita(kom, **kw):
             if sivu:
@@ -438,7 +445,7 @@ class Ajo(Pohja):
         self.assertEqual(kutsut, [])
 
     def test_suunnittelu_varaa_ja_vapauttaa(self):
-        vastaus = json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A"}], "tonylle": ""})
+        vastaus = json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A\n\nPisteet: hyoty 4, varmuus 4, vaiva 2 h\nSuunta: jatkoa (kompassi 1)\nValmis kun: PR.\n"}], "tonylle": ""})
         nahdyt = []
         v = ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_KAISTOJA": "2"}, kaista=2,
                       suorita=self.f({"subtype": "success", "result": vastaus},
