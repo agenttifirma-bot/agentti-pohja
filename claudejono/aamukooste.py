@@ -279,16 +279,12 @@ def kiireelliset(t):
 
 
 def koe_muotoile(t, koe, n):
-    """Koeaamun viesti: vain koe-otsikko, halytykset ja kiireelliset paatokset. Halytysrivi on sama kuin tavallisessa koosteessa."""
-    rv = [_koe_otsikko(koe, n), _lyhenna(halytysrivi(t))]
+    """Koeaamun viesti: koe-otsikko + normaalit rivit (h\u00e4lytykset, Tarvitaan sinulta jne. n\u00e4kyv\u00e4t aina) + kiireelliset p\u00e4\u00e4t\u00f6kset."""
+    rv = [_koe_otsikko(koe, n)] + rivit(t)
     kiire = kiireelliset(t)
     if kiire:
         rv.append(_lyhenna("Kiireelliset p\u00e4\u00e4t\u00f6kset: " + "; ".join(kiire[:3]) + "."))
-    rv.append("Muu infra (luonnokset, julkaisut, PR:t): viikonlopun listassa, merkint\u00e4 \"kokeen j\u00e4lkeen\".")
-    ulos = "\n".join(rv)
-    if kiire:
-        ulos += f"\n\nLinkit:\ntonylle.md: {DOCS_URL}/tonylle.md"
-    return ulos
+    return "\n".join(rv) + "\n\nLinkit:\n" + "\n".join(linkit(t))
 
 
 def muotoile(t, env=None):

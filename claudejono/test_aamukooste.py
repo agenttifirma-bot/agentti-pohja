@@ -143,16 +143,17 @@ class Koetila(Kooste):
         teksti_kaikki = self.teksti(datetime(2026, 11, 4, 6, 30, tzinfo=TZ))
         rv = teksti_kaikki.splitlines()
         self.assertEqual(rv[0], "Matematiikan koe 20.11.2026: 16 p\u00e4iv\u00e4\u00e4. Aamu kokeelle.")
-        self.assertTrue(rv[1].startswith("H\u00e4lytykset:"))
-        self.assertIn("failed: paivakatsaus.service", rv[1])
-        self.assertIn("viikonlopun listassa", rv[-1])
-        self.assertIn("kokeen j\u00e4lkeen", rv[-1])
+        self.assertIn("failed: paivakatsaus.service", teksti_kaikki)
+        self.assertNotIn("viikonlopun listassa", teksti_kaikki)
         self.assertNotIn("iltaviest", teksti_kaikki.lower())
 
-    def test_aamulla_ei_infra_asioita(self):
+    def test_koeaamu_ei_piilota_rivejä(self):
+        """Kaatuu, jos koeaamun viesti piilottaa hälytykset tai Tarvitaan sinulta -rivin."""
         teksti = self.teksti(datetime(2026, 11, 10, 6, 30, tzinfo=TZ))
-        for ei in ("Tehty:", "Opittu:", "Kulut:", "Merge:", "pull/9", "Tarvitaan sinulta"):
-            self.assertNotIn(ei, teksti)
+        for pitaa in ("Tehty:", "Tarvitaan sinulta:", "Hälytykset:", "failed: paivakatsaus.service", "Kulut:"):
+            self.assertIn(pitaa, teksti)
+        self.assertNotIn("viikonlopun listassa", teksti)
+        self.assertNotIn("kokeen jälkeen", teksti)
 
     def test_yksi_paiva(self):
         self.assertIn("20.11.2026: 1 p\u00e4iv\u00e4. Aamu", self.teksti(datetime(2026, 11, 19, 6, 30, tzinfo=TZ)))
