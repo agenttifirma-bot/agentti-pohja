@@ -2,11 +2,11 @@
 
 Ajetaan isannalla kayttajana `aivo` (ks. docs/aivo-kysymykset.md). Komennot:
 
-  laadi    Käy läpi kirjaston (muisti ja päätökset), etsii ohuimmat kohdat ja ristiriidat ja
-           kirjoittaa kysymyslistan <ulos>/YYYY-MM-DD.md. Sama aihe kysytään vain kerran (A140).
+  laadi    Kay lapi kirjaston (muisti ja paatokset), etsii ohuimmat kohdat ja ristiriidat ja
+           kirjoittaa kysymyslistan <ulos>/YYYY-MM-DD.md. Sama aihe kysytaan vain kerran (A140).
   lue      Lukee vastaustiedostot <vastaukset>/YYYY-MM-DD.md ja kirjaa vastaukset kirjaston
-           merkintöihin (paivitetty-kentta paivittyy).
-  tarkista Takautuva testi (A577): onko jokainen luettu vastaus kirjattu muistiin 7 pv sisällä.
+           merkintoihin (paivitetty-kentta paivittyy).
+  tarkista Takautuva testi (A577): onko jokainen luettu vastaus kirjattu muistiin 7 pv sisalla.
 
 Tietosuoja (A329): listaan paatyy vain kysymyksia aiheista, joiden front matterissa on
 `luokka: yleinen`. Kaikki muu (luokka puuttuu tai on jokin muu) on henkilokohtainen ja nakyy
@@ -37,8 +37,8 @@ MAX_HENKILOKOHTAISIA = 3
 KIRJAUS_PV = 7               # A577: vastaus kirjattava muistiin viikon sisalla
 AIHE_SALLITTU = re.compile(r"^[\w .,/+()-]{2,60}$")
 
-# Arkaluonteiset sanat (taivutusrungot, vertailu ilman ääkkosia). Osuma -> aihe on henkilokohtainen.
-ARKA = ("terve", "sairau", "laak", "lääk", "diagnoo", "kipu", "masenn", "ahdist", "mielen", "terapi",
+# Arkaluonteiset sanat (taivutusrungot, vertailu ilman aakkosia). Osuma -> aihe on henkilokohtainen.
+ARKA = ("terve", "sairau", "laak", "diagnoo", "kipu", "masenn", "ahdist", "mielen", "terapi",
         "perhe", "aiti", "isa ", "veli", "sisko", "vanhem", "lapsi", "puoliso", "tyttoyst", "poikayst",
         "seurustel", "suhde", "ystava", "kaveri", "raha", "talou", "tili", "velka", "palkk", "tulot",
         "vero", "laina", "tunne", "pelko", "suru", "viha", "yksinai", "uni", "stressi", "syke", "paino",
@@ -46,7 +46,7 @@ ARKA = ("terve", "sairau", "laak", "lääk", "diagnoo", "kipu", "masenn", "ahdis
 
 
 def _laskos(teksti):
-    """Pienet kirjaimet ja ääkkoset pois, jotta vertailu on ymmarrettava ja ASCII-kestava."""
+    """Pienet kirjaimet ja \u00e4\u00e4kkoset pois, jotta vertailu on ymmarrettava ja ASCII-kestava."""
     t = unicodedata.normalize("NFKD", str(teksti).lower())
     return "".join(c for c in t if not unicodedata.combining(c))
 
@@ -160,7 +160,7 @@ def _tarkista_lista(teksti):
     """Viimeinen portti: kysymyksista ei saa loytya arkaluonteisia sanoja, paitsi mallien oma
     'Henkilokohtainen aihe'-rivi, joka kayttaa vain tunnistetta."""
     for rivi in teksti.split("\n"):
-        if re.match(r"^\d+\. \*\*K\d+\*\* \(henkilokohtainen-aihe-\d+\): Henkilökohtainen aihe \d+:", rivi):
+        if re.match(r"^\d+\. \*\*K\d+\*\* \(henkilokohtainen-aihe-\d+\): Henkil\u00f6kohtainen aihe \d+:", rivi):
             continue
         if re.match(r"^\d+\. \*\*K\d+\*\*", rivi) and on_arka(rivi):
             raise ValueError("ArkaluonteinenSana")
@@ -185,9 +185,9 @@ def laadi(kirjasto, ulos, tila_polku, tanaan=None):
     if not yleiset and not henk:
         return None, {"uusia": 0, "kommentti": "ei uusia kysyttavia"}
     rivit = [f"# Aivon kysymykset {tanaan.isoformat()}", "",
-             "Ohje Claudelle: esitä yleiset kysymykset sellaisenaan. Henkilökohtaisista aiheista kysy ensin Tonylta, "
-             "saako aiheesta kysyä, äläkä arvaile aiheen sisältöä. Vastaukset: yleiset docs-repoon tiedostoon "
-             f"`vastaukset/{tanaan.isoformat()}.md` (otsikko `## K1` jne.), henkilökohtaiset Giteaan Tonyn kautta.", ""]
+             "Ohje Claudelle: esit\u00e4 yleiset kysymykset sellaisenaan. Henkil\u00f6kohtaisista aiheista kysy ensin Tonylta, "
+             "saako aiheesta kysy\u00e4, \u00e4l\u00e4k\u00e4 arvaile aiheen sis\u00e4lt\u00f6\u00e4. Vastaukset: yleiset docs-repoon tiedostoon "
+             f"`vastaukset/{tanaan.isoformat()}.md` (otsikko `## K1` jne.), henkil\u00f6kohtaiset Giteaan Tonyn kautta.", ""]
     kuvaus, n_henk = [], 0
     nro = 0
     for tyyppi, avain, aihe, ms in yleiset:
@@ -252,7 +252,7 @@ def lue(kirjasto, vastaukset, tila_polku, tanaan=None):
             if k not in vast or (lista["vastaukset"].get(k) or {}).get("muistiin"):
                 continue
             tieto = lista["vastaukset"].setdefault(k, {"nahty": tanaan.isoformat(), "muistiin": None})
-            if vast[k].strip().lower() in ("ei", "ei saa", "ei saa kysya", "ei saa kysyä"):
+            if vast[k].strip().lower() in ("ei", "ei saa", "ei saa kysya", "ei saa kysy\u00e4"):
                 tieto["muistiin"] = tanaan.isoformat()
                 tieto["huomio"] = "lupaa ei annettu"
                 continue
