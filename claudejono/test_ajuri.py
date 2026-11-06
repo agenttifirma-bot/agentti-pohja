@@ -608,10 +608,10 @@ class TulosPortti(Pohja):
         # 4.11.2026: 3/7 KESKEN-raportista kirjoitti rivin otsikkona; kehotteen esimerkin pitaa lapaista portti.
         import re
         kehote = ajuri.KEHOTE.read_text(encoding="utf-8")
-        esim = re.search(r"Esimerkki: `(Todennettu käytössä:[^`]+)`", kehote)
+        esim = re.search(r"Esimerkki: `(Todennettu k\u00e4yt\u00f6ss\u00e4:[^`]+)`", kehote)
         self.assertIsNotNone(esim)
         self.assertTrue(ajuri.on_todennettu(esim.group(1)))
-        for otsikko in ("### Todennettu käytössä\nAjoin testit", "## Todennettu käytössä: miten\n- ajoin"):
+        for otsikko in ("### Todennettu k\u00e4yt\u00f6ss\u00e4\nAjoin testit", "## Todennettu k\u00e4yt\u00f6ss\u00e4: miten\n- ajoin"):
             with self.subTest(otsikko=otsikko):
                 self.assertFalse(ajuri.on_todennettu(otsikko))
 
