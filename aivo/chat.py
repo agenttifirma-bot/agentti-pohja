@@ -27,6 +27,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import stat
 import subprocess
 import sys
@@ -98,22 +99,27 @@ textarea{resize:none;height:3.2rem}button{font:inherit;padding:.5rem .9rem;borde
 <script>
 let kid=null;const V=document.getElementById('viestit');
 const H={'Content-Type':'application/json','X-Aivo':'1'};
-function lisaa(rooli,teksti,idx){const d=document.createElement('div');d.className='v '+rooli;d.textContent=teksti;
- if(rooli==='tony'&&idx!==undefined){const b=document.createElement('button');b.textContent='Kirjaa p\u00e4\u00e4t\u00f6kseksi (sanasi sellaisenaan)';
-  b.onclick=async()=>{if(!confirm('Kirjataanko t\u00e4m\u00e4 viesti p\u00e4\u00e4t\u00f6skirjastoon sellaisenaan?'))return;
-   const r=await fetch('/api/paatos',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,indeksi:idx})});
-   b.textContent=r.ok?'Kirjattu':'Kirjaus ep\u00e4onnistui ('+r.status+')';b.disabled=true;};d.appendChild(b);}
+function lisaa(rooli,teksti){const d=document.createElement('div');d.className='v '+rooli;d.textContent=teksti;
  V.appendChild(d);V.scrollTop=V.scrollHeight;return d;}
+function painike(d,k,idx,teksti){const b=document.createElement('button');b.textContent='Kirjaa p\u00e4\u00e4t\u00f6kseksi (sanasi sellaisenaan)';
+ b.onclick=async()=>{if(!confirm('Kirjataanko t\u00e4m\u00e4 viesti p\u00e4\u00e4t\u00f6skirjastoon sellaisenaan?'))return;b.disabled=true;
+  try{const r=await fetch('/api/paatos',{method:'POST',headers:H,body:JSON.stringify({keskustelu:k,indeksi:idx,teksti:teksti})});
+   const j=await r.json().catch(()=>({}));
+   if(r.ok&&j.tila){b.textContent='Kirjattu';}
+   else{b.textContent='Kirjaus ep\u00e4onnistui ('+r.status+'), yrit\u00e4 uudelleen';b.disabled=false;}}
+  catch(x){b.textContent='Yhteysvirhe, yrit\u00e4 uudelleen';b.disabled=false;}};
+ d.appendChild(b);}
 async function aloita(){const r=await fetch('/api/uusi',{method:'POST',headers:H,body:'{}'});
  if(r.status===401){location.href='/kirjaudu';return;}kid=(await r.json()).id;V.textContent='';}
 document.getElementById('uusi').onclick=aloita;
-let n=0;
 document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();const t=document.getElementById('teksti');
  const s=t.value.trim();if(!s)return;t.value='';if(!kid)await aloita();
- const idx=n;n+=2;lisaa('tony',s,idx);const odota=lisaa('aivo','\u2026');
- try{const r=await fetch('/api/viesti',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,teksti:s})});
+ const k=kid;const tony=lisaa('tony',s);const odota=lisaa('aivo','\u2026');
+ try{const r=await fetch('/api/viesti',{method:'POST',headers:H,body:JSON.stringify({keskustelu:k,teksti:s})});
   if(r.status===401){location.href='/kirjaudu';return;}
-  const j=await r.json();odota.textContent=j.vastaus||('Virhe: '+(j.virhe||r.status));}
+  const j=await r.json();
+  if(typeof j.indeksi==='number')painike(tony,k,j.indeksi,s);
+  odota.textContent=j.vastaus||('Virhe: '+(j.virhe||r.status));}
  catch(x){odota.textContent='Yhteysvirhe';}};
 aloita();
 </script></body></html>
@@ -249,7 +255,8 @@ def _jarjestys(nimi):
 
 def lue_muisti(kirjasto):
     """Palauttaa (teksti, tiedostolista). Lukee vain .md/.txt-tiedostot kirjaston sisalta (ei .git, ei linkkeja
-    kirjaston ulkopuolelle). Ylarajan ylittyessa loput jaavat pois ja puute mainitaan."""
+    kirjaston ulkopuolelle). Liian suuresta tiedostosta otetaan loppu, koska uusimmat paatokset ovat lopussa.
+    Jos kokonaisraja ylittyy, tiedosto jaa pois mutta pienemmat jatkavat, ja pois jaaneet mainitaan tekstissa."""
     juuri = Path(kirjasto).resolve()
     tiedostot = []
     if juuri.is_dir():
@@ -264,19 +271,27 @@ def lue_muisti(kirjasto):
                 continue
             tiedostot.append(str(p.relative_to(juuri)))
     tiedostot.sort(key=_jarjestys)
-    osat, mukana, yht = [], [], 0
+    osat, mukana, pois, yht = [], [], [], 0
     for nimi in tiedostot:
         try:
-            data = (juuri / nimi).read_bytes()[:TIEDOSTO_YLARAJA].decode("utf-8", "replace")
+            raaka = (juuri / nimi).read_bytes()
         except OSError:
             continue
+        katkaistu = len(raaka) > TIEDOSTO_YLARAJA
+        data = raaka[-TIEDOSTO_YLARAJA:].decode("utf-8", "replace")
         data = data.replace(RAJA, "").replace("\x00", "")
+        if katkaistu:
+            data = "[tiedoston alku katkaistu, uusin osa mukana]\n" + data
         if yht + len(data) > MUISTI_YLARAJA:
-            break
+            pois.append(nimi)
+            continue
         yht += len(data)
         mukana.append(nimi)
         osat.append("%s\n### TIEDOSTO: %s\n%s\n" % (RAJA, nimi, data))
-    return "".join(osat) + RAJA + "\n", mukana
+    huom = ""
+    if pois:
+        huom = "%s\n### HUOM\nYlarajan vuoksi pois j\u00e4tetyt tiedostot: %s\n" % (RAJA, ", ".join(n.replace(RAJA, "") for n in pois))
+    return "".join(osat) + huom + RAJA + "\n", mukana
 
 
 def tarkista_lahteet(vastaus, tiedostot):
@@ -333,7 +348,7 @@ class Keskustelut:
         return kid
 
     def _polku(self, kid):
-        if not ID_RE.match(kid or ""):
+        if not isinstance(kid, str) or not ID_RE.match(kid):
             raise ChatVirhe("virheellinen keskustelun tunniste")
         return self.data / (kid + ".jsonl")
 
@@ -344,11 +359,13 @@ class Keskustelut:
         with self._lukko:
             if not p.exists():
                 raise ChatVirhe("keskustelua ei ole")
+            indeksi = len([r for r in p.read_text(encoding="utf-8").splitlines() if r.strip()])
             fd = os.open(p, os.O_WRONLY | os.O_APPEND)
             try:
                 os.write(fd, (rivi + "\n").encode("utf-8"))
             finally:
                 os.close(fd)
+            return indeksi
 
     def lue(self, kid):
         p = self._polku(kid)
@@ -357,32 +374,68 @@ class Keskustelut:
         return [json.loads(r) for r in p.read_text(encoding="utf-8").splitlines() if r.strip()]
 
 
+ONNISTUNEET = ("pushattu", "ei-gitissa", "ei-etaa")      # kirjauksen tilat, joista kayttajalle voi sanoa "Kirjattu"
+PAATOSLUKKO = threading.Lock()      # palvelin on saikeistetty: luku-muokkaus-kirjoitus ja git yksi kerrallaan
+
+
+def _git(kirjasto, suorita, *a):
+    try:
+        return suorita(["git", "-C", str(kirjasto), *a], capture_output=True, text=True, check=False, timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise ChatVirhe("git-kutsu epaonnistui (%s)" % type(e).__name__)
+
+
+def tarkista_etarepo(kirjasto, suorita=subprocess.run):
+    """Palauttaa "ok", "ei-gitissa" tai "ei-etaa". Kieltaytyy (ChatVirhe), jos MIKA TAHANSA etarepo osoittaa
+    GitHubiin joko hakuosoitteella tai push-osoitteella (pushurl), tai jos osoitetta ei voi lukea (suljettu oletus)."""
+    if _git(kirjasto, suorita, "rev-parse", "--is-inside-work-tree").returncode != 0:
+        return "ei-gitissa"
+    nimet = _git(kirjasto, suorita, "remote")
+    if nimet.returncode != 0:
+        return "ei-etaa"
+    etat = [n.strip() for n in nimet.stdout.splitlines() if n.strip()]
+    for nimi in etat:
+        for lippu in ((), ("--push",)):
+            o = _git(kirjasto, suorita, "remote", "get-url", *lippu, "--all", nimi)
+            if o.returncode != 0:
+                raise ChatVirhe("etarepon osoitetta ei voi lukea; ei pushata")
+            if "github" in o.stdout.lower():
+                raise ChatVirhe("kirjaston etarepo osoittaa GitHubiin; ei pushata")
+    return "ok" if "origin" in etat else "ei-etaa"
+
+
 def kirjaa_paatos(kirjasto, kid, aika, teksti, suorita=subprocess.run):
-    """Liittaa Tonyn sanat sellaisenaan paatoskirjastoon (lainauksena) ja julkaisee kirjaston Giteaan."""
-    polku = Path(kirjasto) / PAATOS_TIEDOSTO
-    polku.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    lainaus = "\n".join("> " + r for r in teksti.splitlines()) or "> "
-    osa = ("\n\n## Keskustelusta %s (%s)\n\nTony sanoi sellaisenaan:\n\n%s\n\nL\u00e4hde: aivo-chat, keskustelu %s. "
-           "Kirjattu Tonyn painalluksella; ei Aivon p\u00e4\u00e4telm\u00e4.\n" % (aika[:10], aika[11:16], lainaus, kid))
-    vanha = polku.read_text(encoding="utf-8") if polku.exists() else "# Aivon p\u00e4\u00e4t\u00f6skirjasto\n"
-    kirjoita_600(polku, vanha + osa)
-    return julkaise_kirjastoon(kirjasto, polku, suorita)
+    """Liittaa Tonyn sanat sellaisenaan paatoskirjastoon (lainauksena) ja julkaisee kirjaston Giteaan.
+    GitHub-esto tarkistetaan ENNEN kirjoitusta. Sama keskustelu+aika kirjataan vain kerran, joten uusinta on turvallinen."""
+    with PAATOSLUKKO:
+        tarkista_etarepo(kirjasto, suorita)
+        polku = Path(kirjasto) / PAATOS_TIEDOSTO
+        polku.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        tunniste = "Tunniste: %s %s" % (kid, aika)
+        vanha = polku.read_text(encoding="utf-8") if polku.exists() else "# Aivon p\u00e4\u00e4t\u00f6skirjasto\n"
+        if tunniste not in vanha:
+            lainaus = "\n".join("> " + r for r in teksti.splitlines()) or "> "
+            osa = ("\n\n## Keskustelusta %s (%s)\n\nTony sanoi sellaisenaan:\n\n%s\n\nL\u00e4hde: aivo-chat, keskustelu %s. "
+                   "Kirjattu Tonyn painalluksella; ei Aivon p\u00e4\u00e4telm\u00e4.\n%s\n" % (aika[:10], aika[11:16], lainaus, kid, tunniste))
+            kirjoita_600(polku, vanha + osa)
+        return julkaise_kirjastoon(kirjasto, polku, suorita)
 
 
 def julkaise_kirjastoon(kirjasto, polku, suorita=subprocess.run):
-    """Jos kirjasto on git-repo: commit ja push. Kieltaytyy, jos etarepo on GitHubissa."""
-    def git(*a):
-        return suorita(["git", "-C", str(kirjasto), *a], capture_output=True, text=True, check=False, timeout=120)
-    if git("rev-parse", "--is-inside-work-tree").returncode != 0:
-        return "ei-gitissa"
-    osoite = git("remote", "get-url", "origin")
-    if osoite.returncode != 0:
-        return "ei-etaa"
-    if "github" in osoite.stdout.lower():
-        raise ChatVirhe("kirjaston etarepo osoittaa GitHubiin; ei pushata")
-    if git("add", "--", str(polku)).returncode != 0 or git("commit", "-m", "Aivo: paatos keskustelusta", "--", str(polku)).returncode != 0:
-        return "ei-muutosta"
-    return "pushattu" if git("push").returncode == 0 else "push-epaonnistui"
+    """Jos kirjasto on git-repo: commit ja push nimettyyn originiin. Kieltaytyy, jos mika tahansa etarepo on GitHubissa.
+    Tulos: ei-gitissa, ei-etaa, pushattu, commit-epaonnistui tai push-epaonnistui."""
+    tila = tarkista_etarepo(kirjasto, suorita)
+    if tila != "ok":
+        return tila
+    muutos = _git(kirjasto, suorita, "status", "--porcelain", "--", str(polku))
+    if muutos.returncode != 0:
+        return "commit-epaonnistui"
+    if muutos.stdout.strip():
+        if (_git(kirjasto, suorita, "add", "--", str(polku)).returncode != 0
+                or _git(kirjasto, suorita, "commit", "-m", "Aivo: paatos keskustelusta", "--", str(polku)).returncode != 0):
+            return "commit-epaonnistui"
+    # Nimetty etarepo ja HEAD: pushRemote- tai pushDefault-asetus ei voi ohjata pushia tarkistamattomaan etaan.
+    return "pushattu" if _git(kirjasto, suorita, "push", "origin", "HEAD").returncode == 0 else "push-epaonnistui"
 
 
 # --- Palvelin -------------------------------------------------------------------------------------
@@ -401,7 +454,10 @@ def sallittu_osoite(osoite):
 
 def sallittu_host(host_otsake, sallitut):
     h = (host_otsake or "").strip().lower()
-    nimi = h.rsplit(":", 1)[0] if not h.startswith("[") and ":" in h else h
+    if h.startswith("["):
+        nimi = h.split("]", 1)[0] + "]" if "]" in h else h
+    else:
+        nimi = h.rsplit(":", 1)[0] if ":" in h else h
     if nimi in ("localhost", "127.0.0.1", "[::1]"):
         return True
     return any(nimi == s or (s.startswith(".") and nimi.endswith(s)) for s in sallitut)
@@ -511,6 +567,8 @@ def tee_kasittelija(tila):
                     return self._paatos(d)
             except ChatVirhe as e:
                 return self._json(400, {"virhe": str(e)})
+            except OSError as e:
+                return self._json(500, {"virhe": "tallennus epaonnistui (%s)" % type(e).__name__})
             self._json(404, {"virhe": "ei loydy"})
 
         def _kirjaudu(self):
@@ -534,18 +592,22 @@ def tee_kasittelija(tila):
             if not tila.vastauslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen vastaus on kesken"})
             try:
-                tila.keskustelut.lisaa(kid, "tony", teksti.strip())
+                # Palvelin kertoo Tonyn viestin indeksin: selain ei laske sita itse (virheet siirtaisivat laskuria).
+                indeksi = tila.keskustelut.lisaa(kid, "tony", teksti.strip())
                 historia = tila.keskustelut.lue(kid)
                 muisti, tiedostot = lue_muisti(tila.kirjasto)
                 try:
                     vastaus = tila.kysy(muisti, historia)
                 except ChatVirhe as e:
-                    return self._json(502, {"virhe": str(e)})
-                vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
-                tila.keskustelut.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus])
-                self._json(200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn)})
+                    koodi, olio = 502, {"virhe": str(e), "indeksi": indeksi}
+                else:
+                    vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
+                    tila.keskustelut.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus])
+                    koodi, olio = 200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "indeksi": indeksi}
             finally:
                 tila.vastauslukko.release()
+            # vastaus lahetetaan vasta lukon vapautuksen jalkeen, jotta nopea seuraava viesti ei saa 429:aa
+            self._json(koodi, olio)
 
         def _paatos(self, d):
             kid, i = d.get("keskustelu"), d.get("indeksi")
@@ -553,7 +615,12 @@ def tee_kasittelija(tila):
             if not isinstance(i, int) or not 0 <= i < len(historia) or historia[i]["rooli"] != "tony":
                 return self._json(400, {"virhe": "vain Tonyn viestin voi kirjata"})
             v = historia[i]
+            if d.get("teksti") != v["teksti"]:
+                return self._json(400, {"virhe": "viesti ei vastaa kirjattavaa indeksia"})
             tulos = tila.julkaise(tila.kirjasto, kid, v["aika"], v["teksti"])
+            if tulos not in ONNISTUNEET:
+                # paatos on tallessa isannalla, mutta julkaisu ei onnistunut: ei "Kirjattu"-vastausta
+                return self._json(502, {"virhe": "julkaisu ep\u00e4onnistui (%s)" % tulos, "tila": tulos})
             self._json(200, {"tila": tulos})
 
     return K
@@ -562,8 +629,9 @@ def tee_kasittelija(tila):
 def kaynnista(osoite, portti, tila):
     if not sallittu_osoite(osoite):
         raise ChatVirhe("osoite ei ole loopback eika Tailscale; kieltaydyn kuuntelemasta")
-    palvelin = ThreadingHTTPServer((osoite, portti), tee_kasittelija(tila))
-    return palvelin
+    class Palvelin(ThreadingHTTPServer):
+        address_family = socket.AF_INET6 if ipaddress.ip_address(osoite).version == 6 else socket.AF_INET
+    return Palvelin((osoite, portti), tee_kasittelija(tila))
 
 
 def main(argv=None):

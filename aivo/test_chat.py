@@ -1,9 +1,12 @@
 import http.client
 import json
 import os
+import socket
 import stat
+import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -189,7 +192,33 @@ class KirjastoTesti(unittest.TestCase):
                     k.lue(paha)
 
 
-class PalveluTesti(unittest.TestCase):
+class PalveluApu:
+    """Yhteiset pyyntoapurit palvelutesteille (self.portti asetetaan luokassa)."""
+
+    def pyynto(self, menetelma, polku, runko=None, otsakkeet=None, host=None):
+        c = http.client.HTTPConnection(ip(127, 0, 0, 1), self.portti, timeout=10)
+        h = dict(otsakkeet or {})
+        if host:
+            h["Host"] = host
+        c.request(menetelma, polku, body=runko, headers=h)
+        r = c.getresponse()
+        data = r.read()
+        return r.status, dict(r.getheaders()), data
+
+    def kirjaudu(self):
+        s, h, _ = self.pyynto("POST", "/kirjaudu", "salasana=" + SAL, {"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(s, 303)
+        ev = h["Set-Cookie"]
+        for osa in ("HttpOnly", "Secure", "SameSite=Strict"):
+            self.assertIn(osa, ev)
+        return ev.split(";")[0]
+
+    def api(self, ev, polku, olio):
+        s, _, d = self.pyynto("POST", polku, json.dumps(olio), {"Cookie": ev, "X-Aivo": "1", "Content-Type": "application/json"})
+        return s, json.loads(d)
+
+
+class PalveluTesti(PalveluApu, unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
@@ -217,28 +246,6 @@ class PalveluTesti(unittest.TestCase):
         cls.srv.shutdown()
         cls.srv.server_close()
         cls.tmp.cleanup()
-
-    def pyynto(self, menetelma, polku, runko=None, otsakkeet=None, host=None):
-        c = http.client.HTTPConnection(ip(127, 0, 0, 1), self.portti, timeout=10)
-        h = dict(otsakkeet or {})
-        if host:
-            h["Host"] = host
-        c.request(menetelma, polku, body=runko, headers=h)
-        r = c.getresponse()
-        data = r.read()
-        return r.status, dict(r.getheaders()), data
-
-    def kirjaudu(self):
-        s, h, _ = self.pyynto("POST", "/kirjaudu", "salasana=" + SAL, {"Content-Type": "application/x-www-form-urlencoded"})
-        self.assertEqual(s, 303)
-        ev = h["Set-Cookie"]
-        for osa in ("HttpOnly", "Secure", "SameSite=Strict"):
-            self.assertIn(osa, ev)
-        return ev.split(";")[0]
-
-    def api(self, ev, polku, olio):
-        s, _, d = self.pyynto("POST", polku, json.dumps(olio), {"Cookie": ev, "X-Aivo": "1", "Content-Type": "application/json"})
-        return s, json.loads(d)
 
     def test_ilman_kirjautumista_ei_paase(self):
         s, h, _ = self.pyynto("GET", "/")
@@ -293,7 +300,7 @@ class PalveluTesti(unittest.TestCase):
         # paatos: vain Tonyn viesti (indeksi 0) kelpaa, Aivon (1) ei
         s, _ = self.api(ev, "/api/paatos", {"keskustelu": kid, "indeksi": 1})
         self.assertEqual(s, 400)
-        s, _ = self.api(ev, "/api/paatos", {"keskustelu": kid, "indeksi": 0})
+        s, _ = self.api(ev, "/api/paatos", {"keskustelu": kid, "indeksi": 0, "teksti": "mit\u00e4 tied\u00e4t minusta?"})
         self.assertEqual(s, 200)
         self.assertEqual(self.paatokset, ["mit\u00e4 tied\u00e4t minusta?"])
 
@@ -309,6 +316,291 @@ class PalveluTesti(unittest.TestCase):
         self.assertEqual(s, 200)
         self.assertIn(b'name="viewport"', d)
         self.assertEqual(h["Cache-Control"], "no-store")
+
+
+def git_feikki(vastaukset, kutsut):
+    """Feikki-git: vastaukset on sanakirja {komento-alku: (paluukoodi, tuloste)}; oletus rc 0 ja tyhja."""
+    def f(kom, **kw):
+        a = tuple(kom[3:])            # ["git", "-C", kirjasto, ...]
+        kutsut.append(a)
+        osuvat = [k for k in vastaukset if a[:len(k)] == k]
+        if osuvat:
+            rc, ulos = vastaukset[max(osuvat, key=len)]       # tarkin osuma voittaa
+            return SimpleNamespace(returncode=rc, stdout=ulos, stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    return f
+
+
+GITEA = "ssh://git@gitea.example.lan/tony/kirjasto.git\n"
+GH = "https://github.com/x/y.git\n"
+
+
+def perus_git(yli=None):
+    v = {("rev-parse",): (0, "true\n"), ("remote",): (0, "origin\n"),
+         ("remote", "get-url"): (0, GITEA), ("status",): (0, " M aivo-paatoskirjasto.md\n")}
+    v.update(yli or {})
+    return v
+
+
+class JulkaisuKorjausTesti(unittest.TestCase):
+    """PR #230:n tarkastajan hylkayssyyt: Kirjattu-tila ja GitHub-esto."""
+
+    def test_commit_epaonnistuu_ei_ole_ei_muutosta(self):
+        kutsut = []
+        f = git_feikki(perus_git({("commit",): (1, "")}), kutsut)
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(chat.julkaise_kirjastoon(d, Path(d) / "a.md", f), "commit-epaonnistui")
+        self.assertFalse([k for k in kutsut if k[0] == "push"])      # ei pushata ilman commitia
+
+    def test_push_epaonnistuu(self):
+        f = git_feikki(perus_git({("push",): (1, "")}), [])
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(chat.julkaise_kirjastoon(d, Path(d) / "a.md", f), "push-epaonnistui")
+
+    def test_ei_muutettavaa_mutta_push_yritetaan_uudelleen(self):
+        # edellinen yritys commitoi mutta push kaatui: tyopuu on siisti, pushin pitaa silti yrittaa
+        kutsut = []
+        f = git_feikki(perus_git({("status",): (0, "")}), kutsut)
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(chat.julkaise_kirjastoon(d, Path(d) / "a.md", f), "pushattu")
+        self.assertFalse([k for k in kutsut if k[0] == "commit"])
+        self.assertTrue([k for k in kutsut if k[0] == "push"])
+
+    def test_push_kohdistetaan_nimettyyn_originiin(self):
+        # pushRemote/pushDefault -asetukset eivat saa ohjata pushia tarkistamattomaan etaan
+        kutsut = []
+        with tempfile.TemporaryDirectory() as d:
+            chat.julkaise_kirjastoon(d, Path(d) / "a.md", git_feikki(perus_git(), kutsut))
+        self.assertIn(("push", "origin", "HEAD"), kutsut)
+
+    def test_pushurl_github_estaa_vaikka_fetch_osoite_on_gitea(self):
+        def f(kom, **kw):
+            a = tuple(kom[3:])
+            if a[:2] == ("remote", "get-url") and "--push" in a:
+                return SimpleNamespace(returncode=0, stdout=GH, stderr="")
+            return git_feikki(perus_git(), [])(kom, **kw)
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(chat.ChatVirhe):
+                chat.julkaise_kirjastoon(d, Path(d) / "a.md", f)
+
+    def test_toinen_etarepo_github_estaa(self):
+        def f(kom, **kw):
+            a = tuple(kom[3:])
+            if a == ("remote",):
+                return SimpleNamespace(returncode=0, stdout="origin\nvaraus\n", stderr="")
+            if a[:2] == ("remote", "get-url") and a[-1] == "varaus":
+                return SimpleNamespace(returncode=0, stdout=GH, stderr="")
+            return git_feikki(perus_git(), [])(kom, **kw)
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(chat.ChatVirhe):
+                chat.julkaise_kirjastoon(d, Path(d) / "a.md", f)
+
+    def test_oikea_git_pushurl_github_estaa(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull)
+            def g(*a):
+                subprocess.run(["git", "-C", d, *a], check=True, capture_output=True, env=env)
+            g("init", "-q")
+            g("remote", "add", "origin", "ssh://git@gitea.example.lan/tony/k.git")
+            g("remote", "set-url", "--push", "origin", "https://github.com/x/y.git")
+            (Path(d) / "a.md").write_text("x")
+            with self.assertRaises(chat.ChatVirhe):
+                chat.julkaise_kirjastoon(d, Path(d) / "a.md", lambda kom, **kw: subprocess.run(kom, env=env, **kw))
+
+    def test_git_aikakatkaisu_on_chatvirhe(self):
+        def f(kom, **kw):
+            raise subprocess.TimeoutExpired(kom, 1)
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(chat.ChatVirhe):
+                chat.julkaise_kirjastoon(d, Path(d) / "a.md", f)
+
+    def test_github_esto_ennen_kirjoitusta(self):
+        f = git_feikki(perus_git({("remote", "get-url"): (0, GH)}), [])
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(chat.ChatVirhe):
+                chat.kirjaa_paatos(d, "20261106-120000-abcdef01", "2026-11-06T12:00:00+00:00", "Teksti.", suorita=f)
+            self.assertFalse((Path(d) / chat.PAATOS_TIEDOSTO).exists())
+
+    def test_uusinta_ei_tuplaa_kirjausta(self):
+        f = git_feikki(perus_git({("push",): (1, "")}), [])
+        with tempfile.TemporaryDirectory() as d:
+            for _ in range(2):
+                self.assertEqual(chat.kirjaa_paatos(d, "20261106-120000-abcdef01", "2026-11-06T12:00:00+00:00",
+                                                    "Vain kerran.", suorita=f), "push-epaonnistui")
+            t = (Path(d) / chat.PAATOS_TIEDOSTO).read_text(encoding="utf-8")
+            self.assertEqual(t.count("> Vain kerran."), 1)
+
+    def test_rinnakkaiset_kirjaukset_eivat_havita_toisiaan(self):
+        alkuperainen = chat.kirjoita_600
+
+        def hidas(polku, teksti):
+            time.sleep(0.03)
+            alkuperainen(polku, teksti)
+        f = git_feikki(perus_git(), [])
+        chat.kirjoita_600 = hidas
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                saikeet = [threading.Thread(target=chat.kirjaa_paatos, args=(
+                    d, "20261106-120000-abcdef01", "2026-11-06T12:0%d:00+00:00" % i, "Paatos numero %d." % i, f))
+                    for i in range(6)]
+                for t in saikeet:
+                    t.start()
+                for t in saikeet:
+                    t.join()
+                teksti = (Path(d) / chat.PAATOS_TIEDOSTO).read_text(encoding="utf-8")
+        finally:
+            chat.kirjoita_600 = alkuperainen
+        for i in range(6):
+            self.assertIn("> Paatos numero %d." % i, teksti)
+
+
+class MuistiKorjausTesti(unittest.TestCase):
+    def test_liian_suuri_tiedosto_sailyttaa_uusimman_lopun(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "aivo-paatoskirjasto.md").write_text("VANHA\n" + "x" * 500 + "\nUUSIN PAATOS")
+            vanha = chat.TIEDOSTO_YLARAJA
+            chat.TIEDOSTO_YLARAJA = 100
+            try:
+                teksti, tied = chat.lue_muisti(d)
+            finally:
+                chat.TIEDOSTO_YLARAJA = vanha
+            self.assertIn("UUSIN PAATOS", teksti)
+            self.assertNotIn("VANHA", teksti)
+            self.assertEqual(tied, ["aivo-paatoskirjasto.md"])
+            self.assertIn("katkaistu", teksti)
+
+    def test_ylaraja_ei_pudota_pienempia_tiedostoja_ja_puute_mainitaan(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "aivo-paatoskirjasto.md").write_text("p" * 80)       # jarjestyksessa ensin, ei mahdu
+            (Path(d) / "pieni.md").write_text("pieni")
+            vanha = chat.MUISTI_YLARAJA
+            chat.MUISTI_YLARAJA = 50
+            try:
+                teksti, tied = chat.lue_muisti(d)
+            finally:
+                chat.MUISTI_YLARAJA = vanha
+            self.assertEqual(tied, ["pieni.md"])
+            self.assertIn("aivo-paatoskirjasto.md", teksti.split("pieni")[0] + teksti.split("pieni")[-1])
+            self.assertIn("pois", teksti)
+
+
+class OsoiteKorjausTesti(unittest.TestCase):
+    def test_ipv6_host_portilla(self):
+        self.assertTrue(chat.sallittu_host("[::1]:8780", []))
+        self.assertTrue(chat.sallittu_host("[::1]", []))
+        self.assertFalse(chat.sallittu_host("[::2]:8780", []))
+
+    def test_ipv6_loopback_sidotaan_oikeaan_perheeseen(self):
+        try:
+            koe = socket.socket(socket.AF_INET6)
+            koe.bind(("::1", 0))
+            koe.close()
+        except OSError:
+            self.skipTest("::1 ei kaytettavissa taalla")
+        srv = chat.kaynnista("::1", 0, None)
+        try:
+            self.assertEqual(srv.address_family, socket.AF_INET6)
+        finally:
+            srv.server_close()
+
+
+class IndeksiKorjausTesti(PalveluApu, unittest.TestCase):
+    """Hylkaysperuste 1: paatospainike kirjasi vaaran viestin."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        k = Path(cls.tmp.name) / "kirjasto"
+        k.mkdir()
+        cls.tulos = {"kysy": "vastaus", "julkaise": "pushattu"}
+        cls.paatokset = []
+
+        def kysy(muisti, historia):
+            if cls.tulos["kysy"] is None:
+                raise chat.ChatVirhe("vastaus epaonnistui (paluukoodi 1)")
+            return cls.tulos["kysy"]
+
+        def julkaise(kirjasto, kid, aika, teksti):
+            cls.paatokset.append(teksti)
+            return cls.tulos["julkaise"]
+        cls.tila = chat.Tila(chat.tiivista_salasana(SAL), str(k), str(Path(cls.tmp.name) / "data"), [TS],
+                             kysy=kysy, julkaise=julkaise)
+        cls.srv = chat.kaynnista(ip(127, 0, 0, 1), 0, cls.tila)
+        cls.portti = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+        cls.tmp.cleanup()
+
+    def setUp(self):
+        self.tulos.update({"kysy": "vastaus", "julkaise": "pushattu"})
+        self.paatokset.clear()
+        self.ev = self.kirjaudu()
+
+    def uusi(self):
+        return self.api(self.ev, "/api/uusi", {})[1]["id"]
+
+    def laheta(self, kid, teksti):
+        return self.api(self.ev, "/api/viesti", {"keskustelu": kid, "teksti": teksti})
+
+    def test_palvelin_kertoo_viestin_indeksin_ja_uusi_keskustelu_alkaa_nollasta(self):
+        a = self.uusi()
+        self.assertEqual(self.laheta(a, "yksi")[1]["indeksi"], 0)
+        self.assertEqual(self.laheta(a, "kaksi")[1]["indeksi"], 2)
+        b = self.uusi()
+        self.assertEqual(self.laheta(b, "uuden eka")[1]["indeksi"], 0)
+
+    def test_virhe_ei_siirra_indeksia_vaarin(self):
+        kid = self.uusi()
+        self.tulos["kysy"] = None
+        s, j = self.laheta(kid, "ei saa vastausta")
+        self.assertEqual(s, 502)
+        self.assertEqual(j["indeksi"], 0)                  # Tonyn viesti tallentui, joten sillekin on indeksi
+        self.tulos["kysy"] = "vastaus"
+        s, j = self.laheta(kid, "toinen")
+        self.assertEqual(j["indeksi"], 1)                  # edellisella ei ollut Aivon vastausta
+        s, _ = self.api(self.ev, "/api/paatos", {"keskustelu": kid, "indeksi": 1, "teksti": "toinen"})
+        self.assertEqual(s, 200)
+        self.assertEqual(self.paatokset, ["toinen"])
+
+    def test_paatos_vaatii_tasmaavan_tekstin(self):
+        kid = self.uusi()
+        self.laheta(kid, "oikea viesti")
+        s, _ = self.api(self.ev, "/api/paatos", {"keskustelu": kid, "indeksi": 0, "teksti": "joku muu viesti"})
+        self.assertEqual(s, 400)
+        s, _ = self.api(self.ev, "/api/paatos", {"keskustelu": kid, "indeksi": 0})
+        self.assertEqual(s, 400)
+        self.assertEqual(self.paatokset, [])
+
+    def test_epaonnistunut_julkaisu_ei_ole_200(self):
+        kid = self.uusi()
+        self.laheta(kid, "tama kirjataan")
+        for tila, odotettu in (("push-epaonnistui", 502), ("commit-epaonnistui", 502), ("pushattu", 200),
+                               ("ei-gitissa", 200), ("ei-etaa", 200)):
+            self.tulos["julkaise"] = tila
+            s, j = self.api(self.ev, "/api/paatos", {"keskustelu": kid, "indeksi": 0, "teksti": "tama kirjataan"})
+            self.assertEqual(s, odotettu, tila)
+            self.assertEqual(j.get("tila"), tila)
+
+    def test_muu_kuin_merkkijono_tunniste_on_400_ei_poikkeus(self):
+        for polku, olio in (("/api/viesti", {"keskustelu": 123, "teksti": "x"}),
+                            ("/api/paatos", {"keskustelu": ["a"], "indeksi": 0, "teksti": "x"})):
+            s, _ = self.api(self.ev, polku, olio)
+            self.assertEqual(s, 400, polku)
+
+    def test_sivu_ei_laske_indeksia_itse(self):
+        # selain ei saa arvata indeksia laskurilla: se luetaan palvelimen vastauksesta
+        self.assertNotIn("n+=2", chat.HTML)
+        self.assertNotIn("let n=0", chat.HTML)
+        self.assertIn("j.indeksi", chat.HTML)
+
+    def test_sivu_nayttaa_kirjattu_vain_onnistuneesta_kirjauksesta(self):
+        self.assertNotIn("b.textContent=r.ok?'Kirjattu'", chat.HTML)
+        self.assertIn("r.ok", chat.HTML)
+        self.assertIn("b.disabled=false", chat.HTML)        # epaonnistunut kirjaus voidaan yrittaa uudelleen
 
 
 if __name__ == "__main__":
