@@ -613,6 +613,25 @@ class TestRaportinPalautus(Pohja):
         self.assertIn("Tila: VALMIS", tulos)
         self.assertIn("Iso raportti", tulos)
 
+    def test_tuloksen_2026_11_06_20_muoto_taustailmoituksen_jalkeen(self):
+        """Raportti on omassa viestissaan, sen jalkeen tulee taustatehtavan ilmoitus ja vain lyhyt jalkikommentti."""
+        self.lisaa_tehtava("2026-11-06-20-a.md")
+        koti = self.tmp / "koti"
+        sekaviesti = self.viesti("", message={"role": "assistant", "content": [
+            {"type": "thinking", "thinking": "mietin"},
+            {"type": "text", "text": self.RAPORTTI},
+            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]})
+        ilmoitus = json.dumps({"type": "user", "sessionId": self.ISTUNTO,
+                               "message": {"role": "user", "content": "<task-notification>valmis</task-notification>"}})
+        self.loki([sekaviesti, ilmoitus, self.viesti("Taustatehtava valmistui, ei muuta.")])
+        ajuri.aja(self.repo, self.tmp, env={"HOME": str(koti)},
+                  suorita=lambda kom, **kw: subprocess.CompletedProcess(kom, 0, self.stdout("Taustatehtava valmistui, ei muuta."), ""))
+        tulos = (self.repo / ajuri.JONO / "tulokset" / "2026-11-06-20-a.md").read_text(encoding="utf-8")
+        self.assertIn("Tila: VALMIS", tulos)
+        self.assertIn("Todennettu kaytossa: testi", tulos)
+        self.assertIn("## Tonylle opittavaa", tulos)
+        self.assertIn("Taustatehtava valmistui", tulos)
+
 if __name__ == "__main__":
     unittest.main()
 
