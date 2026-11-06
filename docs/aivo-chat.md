@@ -1,5 +1,7 @@
 # Aivon oma keskustelusivu (A705–A706)
 
+Yksityinen tila ja ydinohjeet: katso `docs/aivo-yksityinen.md`.
+
 Tämä ohje on Tonylle. Sivu on pieni oma palvelu (`aivo/chat.py`, vain Pythonin vakiokirjasto). Claude on kirjoittanut koodin, ja Tony ottaa sen käyttöön itse: palvelu on uusi, se koskee Aivon oikeuksia ja siinä on salasana. Tony asettaa salasanan itse. Mitään salaisuutta ei ole repossa.
 
 ## Mitä sivu tekee

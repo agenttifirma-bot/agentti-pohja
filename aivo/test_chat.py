@@ -277,7 +277,7 @@ class PalveluTesti(unittest.TestCase):
 
     def test_keskustelu_muisti_lahteet_ja_paatos(self):
         ev = self.kirjaudu()
-        s, d = self.api(ev, "/api/uusi", {})
+        s, d = self.api(ev, "/api/uusi", {"tila": "tyokalu"})
         self.assertEqual(s, 200)
         kid = d["id"]
         s, d = self.api(ev, "/api/viesti", {"keskustelu": kid, "teksti": "mit\u00e4 tied\u00e4t minusta?"})
@@ -299,7 +299,7 @@ class PalveluTesti(unittest.TestCase):
 
     def test_liian_pitka_viesti_hylataan(self):
         ev = self.kirjaudu()
-        _, d = self.api(ev, "/api/uusi", {})
+        _, d = self.api(ev, "/api/uusi", {"tila": "tyokalu"})
         s, _ = self.api(ev, "/api/viesti", {"keskustelu": d["id"], "teksti": "x" * (chat.VIESTI_YLARAJA + 1)})
         self.assertEqual(s, 400)
 

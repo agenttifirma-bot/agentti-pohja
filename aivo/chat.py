@@ -38,6 +38,9 @@ from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from aivo import yksityinen
+from aivo.yksityinen import YksityinenVirhe as ChatVirhe, julkaise_kirjastoon   # sama poikkeus kaikkialla
+
 OLETUS_SALASANA = "/etc/aivo/chat-salasana"
 OLETUS_KIRJASTO = "/var/lib/aivo/kirjasto"
 OLETUS_DATA = "/var/lib/aivo/chat"
@@ -92,11 +95,13 @@ textarea{resize:none;height:3.2rem}button{font:inherit;padding:.5rem .9rem;borde
 #kirjaus{padding:2rem;max-width:22rem;margin:auto}
 .pieni{font-size:.8rem;opacity:.7}
 </style></head><body>
-<header><strong>Aivo</strong><span><button id="uusi">Uusi keskustelu</button></span></header>
+<header><strong>Aivo</strong><span><select id="tila" aria-label="Tila">
+<option value="yksityinen" selected>Yksityinen (oma malli, ei verkkoa)</option>
+<option value="tyokalu">Ty\u00f6kalu (Claude pilvess\u00e4)</option></select> <button id="uusi">Uusi keskustelu</button></span></header>
 <div id="viestit" aria-live="polite"></div>
 <form id="lomake"><textarea id="teksti" maxlength="4000" placeholder="Kirjoita Aivolle\u2026" required></textarea><button>L\u00e4het\u00e4</button></form>
 <script>
-let kid=null;const V=document.getElementById('viestit');
+let kid=null;let nyt='yksityinen';const V=document.getElementById('viestit');
 const H={'Content-Type':'application/json','X-Aivo':'1'};
 function lisaa(rooli,teksti,idx){const d=document.createElement('div');d.className='v '+rooli;d.textContent=teksti;
  if(rooli==='tony'&&idx!==undefined){const b=document.createElement('button');b.textContent='Kirjaa p\u00e4\u00e4t\u00f6kseksi (sanasi sellaisenaan)';
@@ -104,10 +109,12 @@ function lisaa(rooli,teksti,idx){const d=document.createElement('div');d.classNa
    const r=await fetch('/api/paatos',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,indeksi:idx})});
    b.textContent=r.ok?'Kirjattu':'Kirjaus ep\u00e4onnistui ('+r.status+')';b.disabled=true;};d.appendChild(b);}
  V.appendChild(d);V.scrollTop=V.scrollHeight;return d;}
-async function aloita(){const r=await fetch('/api/uusi',{method:'POST',headers:H,body:'{}'});
- if(r.status===401){location.href='/kirjaudu';return;}kid=(await r.json()).id;V.textContent='';}
-document.getElementById('uusi').onclick=aloita;
-let n=0;
+async function aloita(){const r=await fetch('/api/uusi',{method:'POST',headers:H,body:JSON.stringify({tila:document.getElementById('tila').value})});
+ if(r.status===401){location.href='/kirjaudu';return;}
+ if(!r.ok){lisaa('aivo','Tilaa ei voi k\u00e4ytt\u00e4\u00e4 ('+r.status+')');return;}
+ const j=await r.json();kid=j.id;nyt=j.tila;n=0;V.textContent='';}
+let n=0;document.getElementById('uusi').onclick=aloita;
+document.getElementById('tila').onchange=e=>{if(e.target.value==='tyokalu'&&!confirm('Ty\u00f6kalutilassa viestit kulkevat Clauden pilvipalveluun. Jatketaanko?')){e.target.value='yksityinen';return;}aloita();};
 document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();const t=document.getElementById('teksti');
  const s=t.value.trim();if(!s)return;t.value='';if(!kid)await aloita();
  const idx=n;n+=2;lisaa('tony',s,idx);const odota=lisaa('aivo','\u2026');
@@ -130,8 +137,7 @@ input,button{font:inherit;width:100%;padding:.6rem;margin:.4rem 0;box-sizing:bor
 """
 
 
-class ChatVirhe(Exception):
-    """Odotettu virhe. Viesti on aina turvallinen tulostaa."""
+# ChatVirhe on yksityinen.YksityinenVirhe (odotettu virhe; viesti on aina turvallinen tulostaa)
 
 
 def _nyt():
@@ -247,9 +253,11 @@ def _jarjestys(nimi):
     return (len(MUISTI_JARJESTYS), n)
 
 
-def lue_muisti(kirjasto):
+def lue_muisti(kirjasto, ylaraja=None, tiedosto_raja=None, kysymys=None):
     """Palauttaa (teksti, tiedostolista). Lukee vain .md/.txt-tiedostot kirjaston sisalta (ei .git, ei linkkeja
     kirjaston ulkopuolelle). Ylarajan ylittyessa loput jaavat pois ja puute mainitaan."""
+    ylaraja = MUISTI_YLARAJA if ylaraja is None else ylaraja
+    tiedosto_raja = TIEDOSTO_YLARAJA if tiedosto_raja is None else tiedosto_raja
     juuri = Path(kirjasto).resolve()
     tiedostot = []
     if juuri.is_dir():
@@ -263,16 +271,27 @@ def lue_muisti(kirjasto):
             except OSError:
                 continue
             tiedostot.append(str(p.relative_to(juuri)))
-    tiedostot.sort(key=_jarjestys)
+    if kysymys:      # yksityinen tila: pieni kehote, joten osuvimmat tiedostot ensin
+        sanat = {w for w in re.findall(r"\w{4,}", kysymys.lower())}
+
+        def osuma(nimi):
+            try:
+                alku = (juuri / nimi).read_bytes()[:tiedosto_raja].decode("utf-8", "replace").lower()
+            except OSError:
+                return 0
+            return -sum(1 for w in sanat if w in alku)
+        tiedostot.sort(key=lambda n: (osuma(n), _jarjestys(n)))
+    else:
+        tiedostot.sort(key=_jarjestys)
     osat, mukana, yht = [], [], 0
     for nimi in tiedostot:
         try:
-            data = (juuri / nimi).read_bytes()[:TIEDOSTO_YLARAJA].decode("utf-8", "replace")
+            data = (juuri / nimi).read_bytes()[:tiedosto_raja].decode("utf-8", "replace")
         except OSError:
             continue
         data = data.replace(RAJA, "").replace("\x00", "")
-        if yht + len(data) > MUISTI_YLARAJA:
-            break
+        if yht + len(data) > ylaraja:
+            continue
         yht += len(data)
         mukana.append(nimi)
         osat.append("%s\n### TIEDOSTO: %s\n%s\n" % (RAJA, nimi, data))
@@ -306,6 +325,8 @@ def kysy_claudelta(muisti, historia, suorita=subprocess.run, env=None):
     """Kutsuu `claude -p` suoraan isannalla ilman tyokaluja. Ei LiteLLM:aa eika OpenRouteria."""
     env = os.environ if env is None else env
     kom = [env.get("AIVO_CLAUDE", "claude"), "-p", "--output-format", "text", "--max-turns", "1", "--tools", ""]
+    if env.get("AIVO_TYOKALU_KAYTTAJA"):       # tyokalutila omana kayttajanaan: ei paase yksityisiin kansioihin
+        kom = ["sudo", "-n", "-u", env["AIVO_TYOKALU_KAYTTAJA"], "--"] + kom
     try:
         r = suorita(kom, input=muodosta_syote(muisti, historia), capture_output=True, text=True,
                     timeout=VASTAUS_AIKARAJA_S, check=False)
@@ -369,22 +390,6 @@ def kirjaa_paatos(kirjasto, kid, aika, teksti, suorita=subprocess.run):
     return julkaise_kirjastoon(kirjasto, polku, suorita)
 
 
-def julkaise_kirjastoon(kirjasto, polku, suorita=subprocess.run):
-    """Jos kirjasto on git-repo: commit ja push. Kieltaytyy, jos etarepo on GitHubissa."""
-    def git(*a):
-        return suorita(["git", "-C", str(kirjasto), *a], capture_output=True, text=True, check=False, timeout=120)
-    if git("rev-parse", "--is-inside-work-tree").returncode != 0:
-        return "ei-gitissa"
-    osoite = git("remote", "get-url", "origin")
-    if osoite.returncode != 0:
-        return "ei-etaa"
-    if "github" in osoite.stdout.lower():
-        raise ChatVirhe("kirjaston etarepo osoittaa GitHubiin; ei pushata")
-    if git("add", "--", str(polku)).returncode != 0 or git("commit", "-m", "Aivo: paatos keskustelusta", "--", str(polku)).returncode != 0:
-        return "ei-muutosta"
-    return "pushattu" if git("push").returncode == 0 else "push-epaonnistui"
-
-
 # --- Palvelin -------------------------------------------------------------------------------------
 
 # RFC 6598 -alue (Tailscale-osoitteet) kokonaislukuna; alueen alku on 0x64400000, pituus 10 bittia.
@@ -408,7 +413,12 @@ def sallittu_host(host_otsake, sallitut):
 
 
 class Tila:
-    def __init__(self, tiiviste, kirjasto, data, sallitut_hostit, kysy=kysy_claudelta, julkaise=kirjaa_paatos):
+    """Kaksi tilaa: "yksityinen" (oletus; paikallinen malli, oma muisti, ydinohjeet) ja "tyokalu" (Claude, kirjasto).
+    Yksityinen tila on kaytossa vain, jos yks_data on annettu; sen kansioiden pitaa olla palvelun kayttajan 0700."""
+
+    def __init__(self, tiiviste, kirjasto, data, sallitut_hostit, kysy=kysy_claudelta, julkaise=kirjaa_paatos,
+                 yks_data=None, yks_muisti=None, ydinohjeet=None, ehdotukset=None,
+                 malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None):
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
         self.keskustelut = Keskustelut(data)
@@ -417,6 +427,28 @@ class Tila:
         self.kysy = kysy
         self.julkaise = julkaise
         self.vastauslukko = threading.Lock()   # yksi Claude-kutsu kerrallaan
+        self.yks = None
+        if yks_data:
+            if not yksityinen.sallittu_malli_osoite(malli_url):
+                raise ChatVirhe("mallipalvelimen osoite ei ole loopback; kieltaydyn kaynnistymasta")
+            self.yks = Keskustelut(yksityinen.tarkista_yksityinen_hakemisto(yks_data))
+            self.yks_muisti = str(yksityinen.tarkista_yksityinen_hakemisto(yks_muisti or str(Path(yks_data).parent / "muisti")))
+            self.ydinohjeet = ydinohjeet or yksityinen.OLETUS_YDINOHJEET
+            self.ehdotukset = str(yksityinen.tarkista_yksityinen_hakemisto(
+                ehdotukset or str(Path(yks_data).parent / "ehdotukset")))
+            self.kysy_yks = kysy_yks or (lambda muisti, historia, ohjeet: yksityinen.kysy_paikalliselta(
+                muisti, historia, ohjeet, malli_url))
+        self.yks_vastauslukko = threading.Lock()
+
+    def tila_ja_kasittelija(self, kid):
+        """Palauttaa (tila, keskustelut) sen mukaan, kummassa kansiossa keskustelu on."""
+        if self.yks is not None:
+            try:
+                if self.yks._polku(kid).exists():
+                    return "yksityinen", self.yks
+            except ChatVirhe:
+                pass
+        return "tyokalu", self.keskustelut
 
 
 def tee_kasittelija(tila):
@@ -504,7 +536,7 @@ def tee_kasittelija(tila):
                 return self._json(400, {"virhe": "virheellinen pyynto"})
             try:
                 if self.path == "/api/uusi":
-                    return self._json(200, {"id": tila.keskustelut.uusi()})
+                    return self._uusi(d)
                 if self.path == "/api/viesti":
                     return self._viesti(d)
                 if self.path == "/api/paatos":
@@ -526,11 +558,44 @@ def tee_kasittelija(tila):
             ev = "aivo=%s; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=%d" % (t, ISTUNTO_KESTO_S)
             self._laheta(303, "", "text/plain", [("Location", "/"), ("Set-Cookie", ev)])
 
+        def _uusi(self, d):
+            valinta = d.get("tila", "yksityinen")           # oletus: yksityinen
+            if valinta not in ("yksityinen", "tyokalu"):
+                return self._json(400, {"virhe": "tuntematon tila"})
+            if valinta == "yksityinen":
+                if tila.yks is None:
+                    return self._json(503, {"virhe": "yksityinen tila ei ole kaytossa"})
+                return self._json(200, {"id": tila.yks.uusi(), "tila": valinta})
+            return self._json(200, {"id": tila.keskustelut.uusi(), "tila": valinta})
+
+        def _viesti_yksityinen(self, kid, teksti):
+            if not tila.yks_vastauslukko.acquire(blocking=False):
+                return self._json(429, {"virhe": "edellinen vastaus on kesken"})
+            try:
+                tila.yks.lisaa(kid, "tony", teksti.strip())
+                historia = tila.yks.lue(kid)
+                muisti, tiedostot = lue_muisti(tila.yks_muisti, yksityinen.MUISTI_YLARAJA,
+                                               yksityinen.MUISTI_YLARAJA // 4, teksti)
+                try:
+                    vastaus = tila.kysy_yks(muisti, historia, yksityinen.lue_ydinohjeet(tila.ydinohjeet))
+                except ChatVirhe as e:
+                    return self._json(502, {"virhe": str(e)})
+                vastaus = yksityinen.irrota_ehdotukset(
+                    vastaus, lambda n, t: yksityinen.tallenna_ehdotus(tila.ehdotukset, n, t))
+                vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
+                tila.yks.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus])
+                self._json(200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "tila": "yksityinen"})
+            finally:
+                tila.yks_vastauslukko.release()
+
         def _viesti(self, d):
             kid, teksti = d.get("keskustelu"), d.get("teksti")
             if not isinstance(teksti, str) or not teksti.strip() or len(teksti) > VIESTI_YLARAJA:
                 return self._json(400, {"virhe": "viesti puuttuu tai on liian pitka"})
-            tila.keskustelut.lue(kid)       # tarkistaa tunnisteen
+            valittu, ks = tila.tila_ja_kasittelija(kid)
+            ks.lue(kid)       # tarkistaa tunnisteen
+            if valittu == "yksityinen":
+                return self._viesti_yksityinen(kid, teksti)
             if not tila.vastauslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen vastaus on kesken"})
             try:
@@ -549,11 +614,13 @@ def tee_kasittelija(tila):
 
         def _paatos(self, d):
             kid, i = d.get("keskustelu"), d.get("indeksi")
-            historia = tila.keskustelut.lue(kid)
+            valittu, ks = tila.tila_ja_kasittelija(kid)
+            historia = ks.lue(kid)
             if not isinstance(i, int) or not 0 <= i < len(historia) or historia[i]["rooli"] != "tony":
                 return self._json(400, {"virhe": "vain Tonyn viestin voi kirjata"})
             v = historia[i]
-            tulos = tila.julkaise(tila.kirjasto, kid, v["aika"], v["teksti"])
+            kirjasto = tila.yks_muisti if valittu == "yksityinen" else tila.kirjasto     # yksityinen paatos vain yksityiseen muistiin
+            tulos = tila.julkaise(kirjasto, kid, v["aika"], v["teksti"])
             self._json(200, {"tila": tulos})
 
     return K
@@ -576,13 +643,20 @@ def main(argv=None):
     ap.add_argument("--portti", type=int, default=int(os.environ.get("AIVO_CHAT_PORTTI", OLETUS_PORTTI)))
     ap.add_argument("--host", action="append", default=[],
                     help="sallittu Host-nimi (esim. .ts.net tai taydellinen nimi); toistettava")
+    ap.add_argument("--yksityinen-data", default=os.environ.get("AIVO_YKSITYINEN_DATA"),
+                    help="ottaa yksityisen tilan kayttoon; kansion pitaa kuulua palvelun kayttajalle (0700)")
+    ap.add_argument("--yksityinen-muisti", default=os.environ.get("AIVO_YKSITYINEN_MUISTI"))
+    ap.add_argument("--ydinohjeet", default=os.environ.get("AIVO_YDINOHJEET", yksityinen.OLETUS_YDINOHJEET))
+    ap.add_argument("--ehdotukset", default=os.environ.get("AIVO_EHDOTUKSET"))
+    ap.add_argument("--malli-url", default=os.environ.get("AIVO_MALLI_URL", yksityinen.OLETUS_MALLI_URL))
     a = ap.parse_args(argv)
     try:
         if a.komento == "aseta-salasana":
             aseta_salasana(a.salasana_tiedosto)
             return 0
         hostit = a.host or [".ts.net"]
-        tila = Tila(lue_tiiviste(a.salasana_tiedosto), a.kirjasto, a.data, hostit)
+        tila = Tila(lue_tiiviste(a.salasana_tiedosto), a.kirjasto, a.data, hostit, yks_data=a.yksityinen_data,
+                    yks_muisti=a.yksityinen_muisti, ydinohjeet=a.ydinohjeet, ehdotukset=a.ehdotukset, malli_url=a.malli_url)
         palvelin = kaynnista(a.osoite, a.portti, tila)
     except ChatVirhe as e:
         print("virhe: %s" % e, file=sys.stderr)
