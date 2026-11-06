@@ -315,6 +315,73 @@ class Itsesuunnittelu(Pohja):
         self.assertEqual(len(kutsut), 1)
 
 
+class JononEnimmaiskoko(Itsesuunnittelu):
+    def tayta(self, n):
+        teht = self.repo / ajuri.JONO / "tehtavat"
+        teht.mkdir(parents=True, exist_ok=True)
+        for i in range(n):
+            (teht / f"2026-10-29-{i + 1:02d}-vanha{i}.md").write_text(f"# vanha {i}\n")
+        git(self.repo, "add", "-A"); git(self.repo, "commit", "-q", "-m", "t"); git(self.repo, "push", "-q", "origin", "main")
+
+    VASTAUS = json.dumps({"tehtavat": [{"nimi": "uusi-a", "sisalto": "# A"}, {"nimi": "uusi-b", "sisalto": "# B"}], "tonylle": ""})
+
+    def test_49_avointa_lisaa_vain_yhden(self):
+        self.tayta(49)
+        kutsut = []
+        ajuri.suunnittele(self.repo, self.tmp, {}, self.malli(self.VASTAUS, kutsut), nyt=self.nyt())
+        self.assertEqual(len(kutsut), 1)
+        self.assertEqual(len(ajuri.odottavat_tehtavat(self.repo)), ajuri.JONO_MAX_AVOIMIA)
+        auto = [p for p in self.origin_tiedostot() if "-auto-uusi" in p]
+        self.assertEqual(len(auto), 1)
+
+    def test_50_avointa_ohittaa_eika_kutsu_mallia(self):
+        self.tayta(50)
+        kutsut = []
+        v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli(self.VASTAUS, kutsut), nyt=self.nyt())
+        self.assertEqual(kutsut, [])
+        self.assertIn("ohitettu", v)
+        self.assertEqual([p for p in self.origin_tiedostot() if "-auto-" in p], [])
+
+    def test_tulos_vapauttaa_tilaa(self):
+        self.tayta(50)
+        (self.repo / ajuri.JONO / "tulokset").mkdir()
+        (self.repo / ajuri.JONO / "tulokset" / "2026-10-29-01-vanha0.md").write_text("ok")
+        self.assertEqual(len(ajuri.odottavat_tehtavat(self.repo)), 49)
+
+    def test_kaistaloki_kirjaa_ohituksen(self):
+        ajuri.kirjaa_kaistaloki(self.tmp, 1, "suunnittelu", "", True, 0.1, viesti="itsesuunnittelu ohitettu: x")
+        rivi = json.loads((self.tmp / ajuri.KAISTALOKI).read_text().splitlines()[-1])
+        self.assertEqual(rivi["viesti"], "itsesuunnittelu ohitettu: x")
+
+
+class Prioriteetti(Pohja):
+    def nimet(self):
+        return [p.name for p in ajuri.odottavat_tehtavat(self.repo)]
+
+    def test_prioriteettirivi_jarjestaa_ensin(self):
+        self.lisaa_tehtava("2026-10-30-01-a.md", "# A\n")
+        self.lisaa_tehtava("2026-10-30-02-b.md", "# PRIORITEETTI 2\n\nb")
+        self.lisaa_tehtava("2026-10-30-03-c.md", "PRIORITEETTI 1\nc")
+        self.lisaa_tehtava("2026-10-30-04-d.md", "# D\n")
+        self.assertEqual(self.nimet(), ["2026-10-30-03-c.md", "2026-10-30-02-b.md", "2026-10-30-01-a.md", "2026-10-30-04-d.md"])
+        self.assertEqual(ajuri.seuraava_tehtava(self.repo).name, "2026-10-30-03-c.md")
+
+    def test_sama_prioriteetti_nimen_mukaan(self):
+        self.lisaa_tehtava("2026-10-30-02-b.md", "PRIORITEETTI 1")
+        self.lisaa_tehtava("2026-10-30-01-a.md", "PRIORITEETTI 1")
+        self.assertEqual(self.nimet(), ["2026-10-30-01-a.md", "2026-10-30-02-b.md"])
+
+    def test_auto_tehtava_ei_voi_nostaa_itseaan(self):
+        self.lisaa_tehtava("2026-10-30-01-a.md", "tavallinen")
+        self.lisaa_tehtava("2026-10-30-02-auto-x.md", "PRIORITEETTI 1")
+        self.assertEqual(self.nimet(), ["2026-10-30-01-a.md", "2026-10-30-02-auto-x.md"])
+
+    def test_rivi_keskella_tekstia_ei_laske(self):
+        self.lisaa_tehtava("2026-10-30-01-a.md", "tavallinen")
+        self.lisaa_tehtava("2026-10-30-02-b.md", "mainitaan: kayta PRIORITEETTI 1 -otsikkoa")
+        self.assertEqual(self.nimet(), ["2026-10-30-01-a.md", "2026-10-30-02-b.md"])
+
+
 class TulosKatkaisu(Pohja):
     def test_ylipitka_raportti_merkitaan_katkaistuksi(self):
         p = ajuri.kirjoita_tulos(self.repo, "2026-10-30-01-a.md", True, "\u00e4" * ajuri.TULOS_MAX_TAVUA)
