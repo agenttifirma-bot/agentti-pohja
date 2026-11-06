@@ -220,5 +220,5 @@ systemctl daemon-reload
 cd /opt/agentti-pohja && python3 -m claudejono.tarkastaja kierros --kuiva
 systemctl enable --now claude-tarkastaja.timer
 ```
-Kuiva-ajo listaa tarkastettavat PR:t ajamatta mallia. Loki on tiedostossa `/var/lib/claude-jono/tarkastukset.jsonl`.
+Kuiva-ajo listaa tarkastettavat PR:t ajamatta mallia. Loki on tiedostossa `/var/lib/claude-jono/tarkastukset.jsonl`. Jos PR ei kelpaa tarkastukseen rakennesyystä, lokiin tulee yksi rivi per head-commit: `{"repo", "pr", "tulos": "OHITETTU", "syyt": [...], "sha", "aika"}`. Rivi ei kuluta tarkastusta eikä nosta hälytystä. Jos syyt muuttuvat ilman uutta committia, uutta riviä ei tule.
 Peruutus: `systemctl disable --now claude-tarkastaja.timer`. Ilman tarkastajaa mikään ei yhdisty automaattisesti.
