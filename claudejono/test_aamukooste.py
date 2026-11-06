@@ -141,6 +141,12 @@ class TarkastajaVirheet(Pohja):
         rivi = next(r for r in aamukooste.rivit(self.aineisto()) if r.startswith("H\u00e4lytykset:"))
         self.assertIn("PR-tarkastaja/-avaaja: 1 virhett\u00e4, viimeisin korjaus/x: GitHub HTTP 403", rivi)
 
+    def test_ohitettu_pr_ei_nouse_halytyksiin(self):
+        (self.tmp / "tarkastukset.jsonl").write_text(json.dumps(
+            {"repo": "mcp-doctor", "pr": 29, "tulos": "OHITETTU", "syyt": ["luonnos"], "sha": "c" * 12, "aika": "2026-11-03T05:00:00+02:00"}) + "\n")
+        rivi = next(r for r in aamukooste.rivit(self.aineisto()) if r.startswith("H\u00e4lytykset:"))
+        self.assertNotIn("PR-tarkastaja", rivi)
+
     def test_ilman_lokia_ei_halytysta(self):
         rivi = next(r for r in aamukooste.rivit(self.aineisto()) if r.startswith("H\u00e4lytykset:"))
         self.assertNotIn("PR-tarkastaja", rivi)

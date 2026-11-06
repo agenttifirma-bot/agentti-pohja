@@ -4,7 +4,8 @@ tarkastaja on hyvaksynyt, paitsi rajatut).
 Ajetaan isannalla rootina (systemd-ajastin claude-tarkastaja.timer). Yksi kierros:
   1. hakee avoimet PR:t seurattavista repoista (GitHubin API, botin tunnuksella vain luku + kommentti)
   2. ohittaa PR:t, jotka eivat muutenkaan kelpaa automergeen (tools/automerge.rakenne_syyt: rajatut, koko, osoitteet)
-     tai joiden head-commit on jo tarkastettu
+     tai joiden head-commit on jo tarkastettu. Rakennesyysta ohitettu PR kirjataan lokiin kerran per head-commit
+     (tulos OHITETTU ja syyt), jotta lokista nakee, miksi PR odottaa Tonya.
   3. hakee diffin, ja malli (oletus Opus) arvioi sen ERILLISENA kayttajana (CLAUDEJONO_TARKASTAJA_KAYTTAJA, ei agentin
      kayttaja eika root) ilman tyokaluja: --tools "" ja --strict-mcp-config, kehote stdinista
   4. kirjoittaa PR:aan kommentin, jonka lopussa on merkki
@@ -51,6 +52,8 @@ PERUSTELU_MAX = 1500
 LOYDOS_MAX = 300
 LOYDOKSIA_MAX = 10
 VIRHESYY_MAX = 200
+OHITUS_SYITA_MAX = 20
+OHITUS_SYY_MAX = 200
 PAATOKSET = {"HYVAKSY": "HYVAKSYTTY", "HYLKAA": "HYLATTY", "RAJATTU": "RAJATTU", "EN_TIEDA": "EN_TIEDA"}
 KAYTTAJA_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -271,6 +274,32 @@ def avaa_puuttuvat(env, tunnus, tila, avaa=urllib.request.urlopen, kuiva=False):
     return tehty
 
 
+def ohitetut_lokista(tila_hak):
+    """Lokiin jo kirjatut rakennesyyohitykset: joukko (repo, pr, sha). Puuttuva loki tai roskarivi ei kaada kierrosta."""
+    try:
+        with open(Path(tila_hak) / LOKI, encoding="utf-8", errors="replace") as f:
+            rivit = f.read().splitlines()
+    except OSError:
+        return set()
+    ulos = set()
+    for rivi in rivit:
+        try:
+            d = json.loads(rivi)
+            if d.get("tulos") == "OHITETTU":
+                ulos.add((d.get("repo"), d.get("pr"), d.get("sha")))
+        except (ValueError, AttributeError, TypeError):
+            continue
+    return ulos
+
+
+def ohitusrivi(repo, nro, sha, syyt):
+    """Lokirivi rakennesyysta ohitetulle PR:lle. Syyt sisaltavat tiedostonimia, joten niiden pituus ja maara on rajattu."""
+    siistit = [_siivoa(s, OHITUS_SYY_MAX) for s in syyt[:OHITUS_SYITA_MAX]]
+    if len(syyt) > OHITUS_SYITA_MAX:
+        siistit.append("+%d muuta syyta" % (len(syyt) - OHITUS_SYITA_MAX))
+    return {"repo": repo, "pr": nro, "tulos": "OHITETTU", "syyt": siistit, "sha": sha[:12]}
+
+
 def kierros(env, tunnus, nyt=None, suorita=subprocess.run, avaa=urllib.request.urlopen, kuiva=False):
     """Yksi kierros kaikkiin seurattaviin repoihin. Palauttaa lokirivit (dict)."""
     nyt = nyt or datetime.now().astimezone()
@@ -279,6 +308,7 @@ def kierros(env, tunnus, nyt=None, suorita=subprocess.run, avaa=urllib.request.u
     tila = lue_tila(tilapolku, nyt.date().isoformat())
     max_pv = int(env.get("CLAUDEJONO_TARKASTUS_MAX_PAIVA", MAX_PAIVASSA))
     tehty, auki = [], set()
+    ohitetut = ohitetut_lokista(tila_hak)
     if env.get("CLAUDEJONO_PR_AVAAJA", "1") == "1":
         tehty.extend(avaa_puuttuvat(env, tunnus, tila, avaa=avaa, kuiva=kuiva))
     for repo in seurattavat_repot(env):
@@ -297,8 +327,12 @@ def kierros(env, tunnus, nyt=None, suorita=subprocess.run, avaa=urllib.request.u
             try:
                 tiedostot = hae_sivutettu("%s/repos/%s/%s/pulls/%s/files" % (API, OMISTAJA, repo, nro), tunnus, avaa=avaa)
                 syyt = automerge.rakenne_syyt(pr, tiedostot)
-                if syyt:
-                    continue                                           # Tonylle joka tapauksessa: ei kuluteta tarkastusta
+                if syyt:                                               # Tonylle joka tapauksessa: ei kuluteta tarkastusta
+                    pari = (repo, nro, pr["head_sha"][:12])
+                    if pari not in ohitetut:
+                        ohitetut.add(pari)
+                        tehty.append(ohitusrivi(repo, nro, pr["head_sha"], syyt))
+                    continue
                 kommentit = [{"user": (k.get("user") or {}).get("login"), "body": k.get("body")}
                              for k in hae_sivutettu("%s/repos/%s/%s/issues/%s/comments" % (API, OMISTAJA, repo, nro), tunnus, avaa=avaa)]
                 if automerge.tarkastajan_paatos(kommentit, pr["head_sha"]) is not None:
