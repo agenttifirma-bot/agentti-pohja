@@ -3,6 +3,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -593,6 +594,45 @@ class TestRaportinPalautus(Pohja):
         p.unlink()
         os.link(salainen, p)
         self.assertEqual(self.palauta(), "jalkikommentti")
+
+    def _salainen_loki(self):
+        """Loki, joka olisi kelvollinen, mutta sijaitsee koti-hakemiston ulkopuolella."""
+        ulko = self.tmp / "ulko" / "projects" / "-opt-agentscope-tyo"
+        ulko.mkdir(parents=True)
+        (ulko / f"{self.ISTUNTO}.jsonl").write_text(self.viesti(self.RAPORTTI) + "\n", encoding="utf-8")
+        return self.tmp / "ulko"
+
+    def test_symlinkki_polun_keskella_torjutaan_dotclaude(self):
+        ulko = self._salainen_loki()
+        koti = self.tmp / "koti"
+        koti.mkdir()
+        (koti / ".claude").symlink_to(ulko)
+        self.assertEqual(self.palauta(), "jalkikommentti")
+
+    def test_symlinkki_polun_keskella_torjutaan_projects(self):
+        ulko = self._salainen_loki()
+        (self.tmp / "koti" / ".claude").mkdir(parents=True)
+        (self.tmp / "koti" / ".claude" / "projects").symlink_to(ulko / "projects")
+        self.assertEqual(self.palauta(), "jalkikommentti")
+
+    def test_symlinkki_projektihakemistona_torjutaan(self):
+        ulko = self._salainen_loki()
+        pro = self.tmp / "koti" / ".claude" / "projects"
+        pro.mkdir(parents=True)
+        (pro / "-opt-agentscope-tyo").symlink_to(ulko / "projects" / "-opt-agentscope-tyo")
+        self.assertEqual(self.palauta(), "jalkikommentti")
+
+    def test_lukuvirhe_ei_kaada_ajoa(self):
+        self.loki([self.viesti(self.RAPORTTI)])
+        for virhe in (PermissionError("x"), OSError(5, "io"), ValueError("x")):
+            def rikki(*a, _v=virhe, **k):
+                raise _v
+            with mock.patch.object(ajuri, "_lue_istuntoloki", rikki):
+                self.assertEqual(self.palauta(), "jalkikommentti")
+
+    def test_syvaan_sisakkainen_json_ei_kaada_ajoa(self):
+        self.loki(["[" * 200000, self.viesti(self.RAPORTTI)])
+        self.assertTrue(self.palauta().startswith(self.RAPORTTI))
 
     def test_ylisuuri_loki_torjutaan(self):
         self.loki([self.viesti(self.RAPORTTI)])
