@@ -85,10 +85,22 @@ class ViikkoraporttiLiitosTesti(unittest.TestCase):
     TIEDOT = {"paivaa": 7, "tapahtumia": 0, "virheita": 0, "virhekoodit": {}, "ohitettuja": 0, "ohituskoodit": {},
               "kulu_usd": 0.0, "kulu_agentti": {}, "hyvaksymis_pros": None, "paatettyja": 0}
 
-    def test_rivi_mukana_ennen_vihjeita(self):
+    def test_rivi_mukana_vihjeiden_jalkeen(self):
         t = vr.muodosta(self.TIEDOT, {}, "Oppiminen: testirivi.")
         self.assertIn("Oppiminen: testirivi.", t)
-        self.assertLess(t.index("Oppiminen"), t.index("Vihjeet"))
+        self.assertGreater(t.index("Oppiminen"), t.index("Vihjeet"))
+
+    def test_pitka_oppimisrivi_ei_katkaise_vihjeita(self):
+        # Tarkastajan loydos: TEKSTI_MAX-katkaisu leikkasi vihjeet (levy- ja muistihalytykset), kun oppimisrivi oli niiden edella.
+        tiedot = dict(self.TIEDOT, tapahtumia=500, virheita=300, ohitettuja=40, kulu_usd=12.5, hyvaksymis_pros=10.0, paatettyja=9,
+                      virhekoodit={"virhekoodi_pitka_%d" % i: i + 30 for i in range(30)},
+                      ohituskoodit={"ohituskoodi_pitka_%d" % i: 5 for i in range(30)},
+                      kulu_agentti={"agentti_nimi_%d" % i: 3.1 for i in range(30)})
+        res = {"levy_kaytetty_pros": 95.0, "muisti_vapaa_pros": 5.0, "kuorma_1min": 3.0}
+        t = vr.muodosta(tiedot, res, "Oppiminen: " + "x" * 450 + ".")
+        self.assertLessEqual(len(t), vr.TEKSTI_MAX)
+        self.assertIn("Levy 95", t)
+        self.assertIn("harkitse lisamuistia.", t)
 
     def test_ilman_rivia_ennallaan(self):
         self.assertNotIn("Oppiminen", vr.muodosta(self.TIEDOT, {}))
@@ -131,6 +143,28 @@ class ViikkoraporttiLiitosTesti(unittest.TestCase):
                     mock.patch("sys.stdout") as ulos:
                 vr.main(["7"])
             self.assertIn("Oppiminen:", "".join(c.args[0] for c in ulos.write.call_args_list))
+
+
+class KuvausVastaaKoodiaTesti(unittest.TestCase):
+    """Tarkastajan loydos (PR #198): kuvaus ja muutosloki puhuivat toteutuksesta, jota koodissa ei ole."""
+    JUURI = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def _lue(self, *osat):
+        with open(os.path.join(self.JUURI, *osat), encoding="utf-8") as f:
+            return f.read()
+
+    def test_muutosloki_ei_viittaa_poistettuun_koodiin(self):
+        loki = self._lue("docs", "muutokset", "oppimisen-mittari-korjaukset.md")
+        for poistettu in ("SYY_RE", "JUURISYYT", "[juurisyy: nimi]"):
+            self.assertNotIn(poistettu, loki)
+        self.assertIn("virhemittari", loki)
+
+    def test_koodissa_ei_omaa_juurisyytaulukkoa(self):
+        for osat in (("agentti", "oppimittari.py"), ("agentti", "viikkoraportti.py")):
+            koodi = self._lue(*osat)
+            self.assertNotIn("JUURISYYT", koodi)
+            self.assertNotIn("SYY_RE", koodi)
+        self.assertIn("virhemittari", self._lue("agentti", "oppimittari.py"))
 
 
 if __name__ == "__main__":

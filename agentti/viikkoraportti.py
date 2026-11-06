@@ -136,10 +136,10 @@ def muodosta(tiedot, res, oppiminen=None):
         osat.append("kuorma %.2f" % res["kuorma_1min"])
     if osat:
         r.append("Resurssit: " + ", ".join(osat) + ".")
-    if oppiminen:      # oppimisen mittari (agentti.oppimittari); rivi ennen vihjeita, ettei TEKSTI_MAX leikkaa sita
-        r.append(oppiminen)
     ehdotukset = vihjeet(tiedot, res)
     r.append("Vihjeet: " + (" ".join(ehdotukset) if ehdotukset else "ei huomautettavaa."))
+    if oppiminen:      # oppimisen mittari (agentti.oppimittari); viimeisena, jotta TEKSTI_MAX-katkaisu leikkaa ensin sen eika halytyksia
+        r.append(oppiminen)
     teksti = "\n".join(r)
     return teksti[:TEKSTI_MAX]
 
