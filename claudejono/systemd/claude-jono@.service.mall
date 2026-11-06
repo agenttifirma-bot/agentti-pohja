@@ -12,6 +12,7 @@ WorkingDirectory=/opt/agentti-pohja
 Environment=CLAUDEJONO_REPO=/var/lib/claude-jono/docs
 Environment=CLAUDEJONO_TYOHAK=/opt/agentscope
 Environment=CLAUDEJONO_KAISTOJA=2
+Environment=CLAUDEJONO_TOISTUVAT=1
 Environment=CLAUDEJONO_KAYTTAJA=claudejono
 Environment=CLAUDEJONO_CLAUDE=/var/lib/claudejono/.local/bin/claude
 # Testattu CT115:ssa 30.10.2026: auto-tila toimii headless-ajossa ilman lupakyselya
@@ -23,6 +24,7 @@ EnvironmentFile=-/etc/claude-jono/litellm.env
 # Yksi asetustiedosto (valinnainen): CLAUDEJONO_AGENTTIEN_OSUUS_PROS=60, CLAUDEJONO_RAJA_TAUKO_S=3600
 EnvironmentFile=-/etc/claude-jono/asetukset.env
 ExecStart=/usr/bin/python3 -B -m claudejono ajo --kaista %i
-TimeoutStartSec=3600
+# Opus-tehtava 90 min + git ja tuloksen kirjaus (Tonyn paatos 4.11.2026)
+TimeoutStartSec=6300
 # Ei NoNewPrivileges: agentin ainoa sudo-oikeus (claudejono-pr prbottina) tarvitsee sen.
 PrivateTmp=true

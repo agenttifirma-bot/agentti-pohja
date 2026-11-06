@@ -23,7 +23,7 @@
 #   LUKKO         /run/varmuuskopio-drive.lock
 #   KUMA_PUSH_URL (valinnainen)           Uptime Kuma push-osoite ilman kyselyosaa
 #   RCLONE        rclone                  rclone-ohjelma
-#   VAADITUT_KONTIT 111 112 113 114 115 119 (kaikki kontit, Tony 5.11. A590)
+#   VAADITUT_KONTIT 111 112 113 114 115 119 (kaikki kontit)
 #                                   valilyonnilla erotetut kontti-/VM-tunnukset, joiden dump on oltava
 #                                         lahteessa (113 = Gitea). Puuttuva tunnus: kopiointi tehdaan,
 #                                         mutta ajo paattyy virheeseen ja Kuma saa tilan down

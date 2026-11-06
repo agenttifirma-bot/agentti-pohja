@@ -9,6 +9,17 @@ Pilvi-Claude ei pääse Tailscale-verkkoon, mutta molemmat pääsevät GitHubiin
 
 Rajat (Tony hyväksyi 30.10.2026, doc 71): PR-taso, ei mergeä, ei katto-/oikeusmuutoksia, ei salaisuuksia, ei poistoja. Kehote: `kehote.md`. Ajuri committaa vain tulostiedostot, `-auto-`-tehtävät ja `tonylle.md`:n (testattu).
 
+## Itsekehittyvä silmukka (Tonyn linjaus 2.11.2026 klo 16.10)
+
+Kolme osaa, joiden koodi on `silmukka.py` ja `laatu.py`. Ne eivät muuta kulukattoja, oikeuksia eivätkä polkurajoja (`AUTO_MAX_PAIVA`, `AUTO_PER_AJO`, `sallittu_polku` ovat ennallaan).
+
+1. **Jono ei tyhjene.** Kun avoimia tehtäviä on alle 5 (`silmukka.AVOIMIA_ALARAJA`), ajuri kutsuu itsesuunnittelua jo ennen kuin jono on tyhjä, ja ajaa silti vuorossa olevan tehtävän. Suunnittelun kaatuminen ei estä tehtävää. Suunnittelija kirjoittaa pisteytetyt tehtävät (`Pisteet:`- ja `Suunta:`-rivi). **Porttitarkistin** hylkää tehtävän, jos rivit puuttuvat. Tarkistin ohjaa tehtävän Tonyn sunnuntaiehdotuksiin (`tonylle.md`, rivi alkaa `Sunnuntaiehdotus (syy)`), jos se koskee julkaisua, rahaa, oikeuksia, kulukattoja, ajastuksia tai uutta suuntaa. Tarkistin on karkea sanalista, ja kieltolauseet ("ei saa muuttaa kattoja") ohitetaan. Se on lisävartija, ei ainoa raja: tehtävän suorittajaa sitovat silti kehotteen rajat ja ajurin polkuraja.
+2. **Viikoittainen optimointikierros.** Pohja `toistuvat/optimointi.md` (tehtävä 43). Ajuri luo siitä tehtävän `<pvm>-NN-auto-optimointi.md`, kun edellisestä on 7 päivää eikä edellinen odota ajoa. Luonti ei tarvitse uutta ajastinta: se tapahtuu `claude-jono.service`-ajon alussa. Tehtävä kuuluu itse keksittyjen tehtävien päivärajaan.
+3. **Päivittäinen laatuotos.** `python3 -m claudejono laatu` valitsee 2–3 satunnaista eilistä tulosta. Eri `claude -p` -istunto tarkistaa ne lähteitä vasten työkaluilla `Read`, `Grep` ja `Glob` (`--tools`, `--no-session-persistence`). Tulos kirjataan tiedostoon `$CLAUDEJONO_TYOHAK/laatu-tila.json` (ei docs-repoon). Vakava virhe vaatii todisteen (lähteen polku ja lainaus), muuten se lasketaan lieväksi. `python3 -m claudejono mittari` tulostaa aamukoosteen mittaririvin: otoksen tulos, hyväksytyt ja hylätyt PR:t, uudet virhelokimerkinnät ja puuttuvat "Todennettu käytössä" -rivit.
+4. **Pysäytysehto.** Jos laatuotos löytää vakavan virheen kahtena kalenteripäivänä peräkkäin, itsesuunnittelu ja toistuvat tehtävät pysähtyvät ja Telegramiin lähtee `HALYTYS`-viesti. Pysäytys poistuu vain komennolla `python3 -m claudejono vapauta`. Jo jonossa olevat tehtävät ajetaan edelleen.
+
+**Käyttöönotto (Tony, ajastinmuutos):** kopioi `systemd/claude-laatu.service.mall` ja `claude-laatu.timer.mall` hakemistoon `/etc/systemd/system/` ilman `.mall`-päätettä, aja `systemctl daemon-reload` ja `systemctl enable --now claude-laatu.timer`. Kokeile ensin: `systemctl start claude-laatu.service` ja `journalctl -u claude-laatu -n 20 --no-pager`. Aamukoosteen (PR #160) valmistuttua mittaririvin voi liittää koosteeseen kutsulla `claudejono.laatu.mittaririvi(tyohak, repo, nyt)`.
+
 ## Käyttöönotto CT115:ssä (Tony, kerran)
 
 1. `claude` → `/status`: kirjautuminen tilauksella (ei API-avainta).
@@ -123,6 +134,32 @@ CT116/CT117 jne. eivät näy CT115:n systemd:lle. Vaihtoehto: kunkin CT:n oma `O
 ### Seuraava porras (Tonyn päätettäväksi, EI toteutettu)
 Sallittu lista turvallisia toimia, esim. `systemctl reset-failed <yksikkö>` + **yksi** uudelleenkäynnistys, vain valvottujen listan yksiköille, ajurin (ei agentin) suorittamana ja vain kun agentin diagnoosi on luokiteltu tyyppiin "ohimenevä" (esim. verkkovirhe). Edellytys mittareille: vähintään ~10 diagnoosia, joista Tony on merkinnyt osuneiksi ≥ 80 % (lisää `korjaukset/`-tiedostoon rivi "Osuiko: kyllä/ei"), eikä yhtään väärää toimintaehdotusta. Toimi kirjataan lokiin ja rajataan 1 / yksikkö / vrk. Tämä on oikeusmuutos, joten se vaatii Tonyn nimenomaisen luvan erikseen.
 
+## Jonon vahti: pysähtymisen hälytys (Tonyn päätös 4.11.2026)
+
+20 tunnin katkos jäi huomaamatta, joten pysähtyminen havaitaan kahta tietä: ajurin oma vahti ja Uptime Kuma ulkopuolelta.
+
+`python3 -m claudejono.vahti` ajetaan ajastimella 15 min välein (root, koska se käynnistää korjaajan):
+1. Katsoo `kaistaloki.jsonl`:n viimeisen **onnistuneen** tehtävä- tai suunnitteluajon. Alle 2 h: `terve`.
+2. Muuten tarkistetaan tarkoituksellinen tauko: pysäytystiedosto `/var/lib/claude-jono/pysayta` (Tony luo komennolla `touch`), kaikki `claude-jono@N.timer` pois päältä, käyttörajan tauko, kulutusjarru (varauksen `kaistoja` = 0) tai tyhjä jono (ei avoimia tehtäviä, ja itsesuunnittelu on pois tai sen tauko on käynnissä). Silloin tila on `tauolla`, eikä hälytetä.
+3. Muuten `pysahtynyt`: Telegram-viesti (alkaa sanalla `HALYTYS`, joten `CLAUDEJONO_ILMOITUKSET=kooste` ei pidätä sitä) ja `systemctl start --no-block korjaaja@claude-jono.service.service`. Toistoeste 2 h (`vahti-tila.json`, kirjataan ennen toimia). Korjaajan omat rajat (1 diagnoosi / 6 h / yksikkö, 8 / vrk) pysyvät ennallaan.
+4. Jos kaistalokia ei ole tai siinä ei ole yhtään onnistunutta ajoa, tila on `ei_dataa`: ei hälytystä eikä pingiä.
+
+**Uptime Kuma:** vahti pingaa push-osoitetta vain, kun tila on `terve` tai `tauolla`. Pysähtyneenä pingiä ei lähde, ja Kuma hälyttää, kun heartbeat-aika ylittyy. Sama koskee tilannetta, jossa koko CT115 tai vahdin ajastin on alhaalla. Osoite luetaan muuttujasta `CLAUDEJONO_KUMA_PUSH_URL`; sitä ei tulosteta, ei kirjata eikä viedä repoon. Ping-virheestä näytetään vain poikkeuksen tyyppi.
+
+### Asennus (Tony, kerran; ei tehdä automaattisesti)
+1. Kuman monitori (vaatii kirjautumisen CT114:ään): Add New Monitor → tyyppi **Push** → nimi `claude-jono` → Heartbeat Interval **1800** s (2 ajoväliä) → Retries 1 → ilmoitus Telegramiin. Kopioi monitorin Push URL.
+2. Osoite asetustiedostoon (tiedoston omistaja root, oikeudet 600), esimerkiksi editorilla: rivi `CLAUDEJONO_KUMA_PUSH_URL=<Push URL>`. Älä liitä osoitetta keskusteluun tai repoon.
+3. Ajastin:
+```
+cd /opt/agentti-pohja/claudejono/systemd
+cp claude-vahti.service.mall /etc/systemd/system/claude-vahti.service
+cp claude-vahti.timer.mall /etc/systemd/system/claude-vahti.timer
+systemctl daemon-reload && systemctl enable --now claude-vahti.timer
+```
+4. Kuiva-ajo (ei viestiä, ei korjaajaa, ei pingiä): `cd /opt/agentti-pohja && python3 -B -m claudejono.vahti --kuiva`. Oikea ajo: `systemctl start claude-vahti.service`; Kuman monitorin pitäisi muuttua vihreäksi.
+5. Tarkoituksellinen pysäytys: `touch /var/lib/claude-jono/pysayta`; jatko: `rm /var/lib/claude-jono/pysayta`.
+Peruutus: `systemctl disable --now claude-vahti.timer` ja poista yksikkötiedostot.
+
 ## Aamukooste ja ilmoitusten rajaus
 
 **Aamukooste** (`python3 -m claudejono.aamukooste`) kokoaa yhden Telegram-viestin: enintään viisi riviä (tehty, tarvitaan sinulta, opittu, hälytykset, kulut) ja linkit. Lähteet ovat edellisen vuorokauden tulokset, `tonylle.md`:n uudet kohdat, avoimet PR:t (GitHubin julkinen API, ei tunnuksia), yöjonon tila (`tila.json`, `jono.json`, vain luku) ja systemd:n failed-yksiköt. Napit ovat GitHub-linkkejä: mergattavien PR:ien sivut (merge-painike on PR-sivulla). Jos GitHub-haku epäonnistuu (esim. 60 haun tuntiraja), rivi kertoo sen eikä näytä tyhjää listaa onnistumisena.
@@ -183,5 +220,5 @@ systemctl daemon-reload
 cd /opt/agentti-pohja && python3 -m claudejono.tarkastaja kierros --kuiva
 systemctl enable --now claude-tarkastaja.timer
 ```
-Kuiva-ajo listaa tarkastettavat PR:t ajamatta mallia. Loki on tiedostossa `/var/lib/claude-jono/tarkastukset.jsonl`.
+Kuiva-ajo listaa tarkastettavat PR:t ajamatta mallia. Loki on tiedostossa `/var/lib/claude-jono/tarkastukset.jsonl`. Jos PR ei kelpaa tarkastukseen rakennesyystä, lokiin tulee yksi rivi per head-commit: `{"repo", "pr", "tulos": "OHITETTU", "syyt": [...], "sha", "aika"}`. Rivi ei kuluta tarkastusta eikä nosta hälytystä. Jos syyt muuttuvat ilman uutta committia, uutta riviä ei tule.
 Peruutus: `systemctl disable --now claude-tarkastaja.timer`. Ilman tarkastajaa mikään ei yhdisty automaattisesti.

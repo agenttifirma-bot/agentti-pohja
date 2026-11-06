@@ -293,7 +293,7 @@ Odotettu: rivi `palautustesti OK: sha256 tasmaa (...)`.
 ## Mitä skripti tekee
 
 - Siirtää dumpit vain `crypt`-tyyppiseen kohteeseen. Ennen siirtoa se kysyy rclonelta kohteen tyypin (`rclone listremotes --long`, ei tulosta salaisuuksia). Jos `REMOTE` osoittaa tavalliseen Drive-kohteeseen, mitään ei siirretä ja ajo päättyy virheeseen. Näin Gitean ja Aivon data ei voi päätyä Driveen salaamattomana, vaikka asetus menisi väärin.
-- Vaatii, että `VAADITUT_KONTIT`-listan tunnuksilla (oletus `111 112 113 114 115 119` eli kaikki kontit, Tonyn päätös 5.11.2026) on dump lähteessä. Puuttuessa ajo päättyy virheeseen ja Kuma saa tilan `down`.
+- Vaatii, että `VAADITUT_KONTIT`-listan tunnuksilla (oletus `111 112 113 114 115 119` eli kaikki kontit) on dump lähteessä. Puuttuessa ajo päättyy virheeseen ja Kuma saa tilan `down`.
 - Kopioi `DUMP_DIR`-hakemiston kohteeseen `drive-crypt:proxmox` (`rclone copy`, ei `sync`: paikallisesti kadonnut dump ei poistu Drivesta; nopeusrajoitus `BWLIMIT`, oletus 8 Mt/s).
 - Säilytys lasketaan Driven oman listauksen mukaan (`rclone lsf`): per kontti `SAILYTA` uusinta jää, vain sitä vanhemmat poistetaan (`--max-delete MAX_POISTO`). Jos listaus epäonnistuu, mitään ei poisteta.
 - Säilyttää enintään `SAILYTA` (oletus 3) uusinta kopiota per kontti tai virtuaalikone. Vanhemmat jäävät lähettämättä ja poistuvat Drivesta.
