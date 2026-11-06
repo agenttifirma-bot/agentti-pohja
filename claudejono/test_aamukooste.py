@@ -142,6 +142,23 @@ class UusiMuoto(Kooste):
         self.assertEqual(t["tonylle"], [])   # 24 h:n uusien lista tyhj\u00e4, p\u00e4\u00e4t\u00f6s silti rivill\u00e4
         self.assertIn("1 avointa kohtaa", aamukooste.rivit(t)[0])
 
+    def test_avainsanaan_osumaton_kohta_ei_katoa_hiljaa(self):
+        self.kirjoita("tonylle.md", "## 2026-11-03T01:00+02:00 Lis\u00e4tietoa X\n## 2026-11-03T02:00+02:00 Ilmoitus Y\n## 2026-11-03T03:00+02:00 AAMULLA ENSIN Z\n")
+        t = self.keraa()
+        rivit = aamukooste.rivit(t)
+        self.assertEqual([o for _, o in t["paatokset"]], ["AAMULLA ENSIN Z"])
+        self.assertIn("+2 muuta kohtaa tonylle.md:ss\u00e4", rivit[0])
+        self.assertLessEqual(len(rivit), 10)
+
+    def test_laskuri_ei_katoa_pitkien_otsikoiden_taakse(self):
+        otsikot = "".join(f"## 2026-11-03T0{i}:00+02:00 AAMULLA ENSIN " + "p" * 150 + "\n" for i in range(1, 4))
+        self.kirjoita("tonylle.md", otsikot + "## 2026-11-03T04:00+02:00 tiedote\n")
+        self.assertIn("+1 muuta kohtaa tonylle.md:ss\u00e4", aamukooste.rivit(self.keraa())[0])
+
+    def test_ei_laskuria_kun_kaikki_kohdat_ovat_paatoksia(self):
+        self.kirjoita("tonylle.md", "## 2026-11-03T03:00+02:00 AAMULLA ENSIN Z\n")
+        self.assertNotIn("muuta kohtaa", aamukooste.rivit(self.keraa())[0])
+
     def test_kesken_ja_saantopaivitykset(self):
         self.kirjoita("tulokset/2026-11-03-01-k.md", tulos("k", "KESKEN", "2026-11-03T03:00+02:00"))
         self.kirjoita("saantopaivitykset.md", "# S\u00e4\u00e4nn\u00f6t\n## 2026-11-03T01:00+02:00 raja X tarkennettu\n## 2026-10-01 vanha\n")

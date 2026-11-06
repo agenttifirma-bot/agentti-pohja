@@ -211,6 +211,9 @@ def rivit(t):
         if t["pr"].get("automerge"):
             paatos_osat.append(f"{len(t['pr']['automerge'])} hoituu automergell\u00e4")
     avoimet = t.get("paatokset") or []
+    muut = [k for k in (t.get("tonylle") or []) if k not in avoimet]   # ei hiljaa katoavia kohtia: avainsanaan osumattomat vain laskurina
+    if muut:
+        paatos_osat.append(f"+{len(muut)} muuta kohtaa tonylle.md:ss\u00e4")
     if avoimet:
         paatos_osat.append(f"{len(avoimet)} avointa kohtaa tonylle.md:ss\u00e4 (muistutus p\u00e4ivitt\u00e4in): " + "; ".join(f"{a.day}.{a.month}. {o}".strip() for a, o in avoimet[:2]))
     if t.get("varaus_kysymys"):
