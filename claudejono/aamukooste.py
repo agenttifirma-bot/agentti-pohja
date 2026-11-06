@@ -101,7 +101,7 @@ def tonylle_uudet(repo, alku, tiedosto=None):
 def avoimet_paatokset(repo, nyt):
     """tonylle.md:n kohdat viimeiselt\u00e4 PAATOS_IKKUNA_PV p\u00e4iv\u00e4lt\u00e4, joiden otsikossa ei ole suljettu-merkint\u00e4\u00e4 (TEHTY, HOIDETTU, VASTATTU, P\u00c4\u00c4TETTY).
     Vastauksen merkkaa Tony tai pilvi-Claude otsikkoon; ilman merkint\u00e4\u00e4 kohta muistutetaan joka aamu (A490)."""
-    return [(a, o) for a, o in tonylle_uudet(repo, nyt - timedelta(days=PAATOS_IKKUNA_PV)) if PAATOS_RE.search(o) and not SULJETTU_RE.search(o)]
+    return [(a, o) for a, o in tonylle_uudet(repo, nyt - timedelta(days=PAATOS_IKKUNA_PV)) if PAATOS_RE.search(o) and not (SULJETTU_RE.search(o) and "?" not in o)]   # kysymysmerkillinen otsikko on aina avoin ("onko X tehty?")
 
 
 def yojono_tila(perus, nyt):
@@ -214,10 +214,11 @@ def rivit(t):
     muut = [k for k in (t.get("tonylle") or []) if k not in avoimet]   # ei hiljaa katoavia kohtia: avainsanaan osumattomat vain laskurina
     if muut:
         paatos_osat.append(f"+{len(muut)} muuta kohtaa tonylle.md:ss\u00e4")
-    if avoimet:
-        paatos_osat.append(f"{len(avoimet)} avointa kohtaa tonylle.md:ss\u00e4 (muistutus p\u00e4ivitt\u00e4in): " + "; ".join(f"{a.day}.{a.month}. {o}".strip() for a, o in avoimet[:2]))
+    # kalibrointipyynt\u00f6 ennen vapaamittaisia otsikoita: _lyhenna leikkaa rivin lopusta, joten pyynt\u00f6 ei saa j\u00e4\u00e4d otsikoiden taakse
     if t.get("varaus_kysymys"):
         paatos_osat.append(t["varaus_kysymys"])
+    if avoimet:
+        paatos_osat.append(f"{len(avoimet)} avointa kohtaa tonylle.md:ss\u00e4 (muistutus p\u00e4ivitt\u00e4in): " + "; ".join(f"{a.day}.{a.month}. {o}".strip() for a, o in avoimet[:2]))
     paatokset = "P\u00e4\u00e4t\u00f6kset sinulle: " + ", ".join(paatos_osat) + "."
 
     osat = [f"{len(t['tulokset'])} jonotulosta ({nimet['VALMIS']} valmis, {nimet['EPAONNISTUI']} ep\u00e4onnistui, {nimet['HYLATTY']} hyl\u00e4tty)"]

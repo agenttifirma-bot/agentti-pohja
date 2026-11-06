@@ -155,6 +155,20 @@ class UusiMuoto(Kooste):
         self.kirjoita("tonylle.md", otsikot + "## 2026-11-03T04:00+02:00 tiedote\n")
         self.assertIn("+1 muuta kohtaa tonylle.md:ss\u00e4", aamukooste.rivit(self.keraa())[0])
 
+    def test_varaus_kysymys_ei_katoa_pitkien_otsikoiden_taakse(self):
+        otsikot = "".join(f"## 2026-11-03T0{i}:00+02:00 AAMULLA ENSIN " + "p" * 150 + "\n" for i in range(1, 4))
+        self.kirjoita("tonylle.md", otsikot)
+        t = self.keraa()
+        kysymys = 'kerro asetussivun luku "T\u00e4ll\u00e4 viikolla x % k\u00e4ytetty" (python3 -m claudejono.varaus kalibroi <luku>)'
+        t["varaus_kysymys"] = kysymys
+        rivi = aamukooste.rivit(t)[0]
+        self.assertIn(kysymys, rivi)
+        self.assertLessEqual(len(rivi), aamukooste.RIVI_MAX)
+
+    def test_kysymysotsikko_jossa_sana_tehty_ei_ole_suljettu(self):
+        self.kirjoita("tonylle.md", "## 2026-11-03T03:00+02:00 kysymys: onko X tehty?\n")
+        self.assertEqual(len(aamukooste.avoimet_paatokset(self.repo, NYT)), 1)
+
     def test_ei_laskuria_kun_kaikki_kohdat_ovat_paatoksia(self):
         self.kirjoita("tonylle.md", "## 2026-11-03T03:00+02:00 AAMULLA ENSIN Z\n")
         self.assertNotIn("muuta kohtaa", aamukooste.rivit(self.keraa())[0])
