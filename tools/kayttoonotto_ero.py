@@ -2,7 +2,11 @@
 """Kertoo, paljonko kayttoonotettu kopio on jaljessa GitHubin oletushaaraa (yhdistetty ei ole sama kuin kaytossa).
 
 Peruste: tulos 2026-11-05-34. PR #214 oli mainissa, mutta /opt/agentti-pohja ei ollut paivittynyt, joten
-PR-avaajan virheen syy ei tullut lokiin. Tyokalu vain lukee: ei fetchia, ei pullia, ei kirjoituksia.
+PR-avaajan virheen syy ei tullut lokiin.
+
+Verkko: tyokalu tekee GitHubin julkiseen rajapintaan (api.github.com) tunnistautumattoman lukupyynnon (compare) ja
+tarvittaessa toisen (repon olemassaolo, vain 404:n syyn erottamiseen). Muuta se ei tee: ei fetchia, ei pullia,
+ei kirjoituksia, ei tunnuksia. Yksityinen repo nakyy tunnistautumattomalle 404:na.
 
 Kaytto: tools/kayttoonotto_ero.py [--hakemisto /opt/agentti-pohja] [--repo agentti-pohja] [--haara main]
 Poistumiskoodi: 0 ajan tasalla, 1 jaljessa, 2 tilaa ei saatu selville.
@@ -17,7 +21,9 @@ import urllib.request
 
 API = "https://api.github.com"
 OMISTAJA = "tonyweckstrom1987"
-PR_RE = re.compile(r"#(\d+)")
+# Vain GitHubin yhdistamisotsikot: "Merge pull request #N from ..." ja squash-yhdistamisen paate "Otsikko (#N)".
+# Muut #-numerot otsikossa tai rungossa (esim. "viittaa #1") eivat ole PR-numeroita.
+PR_RE = re.compile(r"^Merge pull request #(\d+) from |\s\(#(\d+)\)$")
 AIKARAJA_S = 20
 
 
@@ -43,10 +49,34 @@ def hae_vertailu(repo, commit, haara, avaa=urllib.request.urlopen):
             return json.loads(v.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            raise EroVirhe("commit %s ei loydy GitHubista: kopiossa voi olla omia committeja" % commit[:12])
+            raise EroVirhe(selita_404(repo, commit, avaa))
         raise EroVirhe("GitHub HTTP %s" % e.code)
     except (urllib.error.URLError, OSError, ValueError) as e:
         raise EroVirhe("GitHub-haku epaonnistui: " + type(e).__name__)
+
+
+def repo_nakyy(repo, avaa=urllib.request.urlopen):
+    """True/False: repo nakyy tunnistautumattomalle; None: ei voitu selvittaa."""
+    pyynto = urllib.request.Request("%s/repos/%s/%s" % (API, OMISTAJA, repo),
+                                    headers={"Accept": "application/vnd.github+json", "User-Agent": "kayttoonotto-ero"})
+    try:
+        with avaa(pyynto, timeout=AIKARAJA_S):
+            return True
+    except urllib.error.HTTPError as e:
+        return False if e.code == 404 else None
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def selita_404(repo, commit, avaa=urllib.request.urlopen):
+    """Pyynto on tunnistautumaton, joten 404 voi tarkoittaa kolmea asiaa: erotellaan ne."""
+    nakyy = repo_nakyy(repo, avaa=avaa)
+    if nakyy is True:
+        return "commit %s ei loydy GitHubista: kopiossa voi olla omia committeja tai haara on eri" % commit[:12]
+    if nakyy is False:
+        return ("GitHub vastasi 404 myos repolle %s/%s: repo on yksityinen (tunnistautumaton pyynto ei nae sita) "
+                "tai --repo on vaarin" % (OMISTAJA, repo))
+    return "GitHub vastasi 404, eika repon nakyvyytta saatu selville: syy voi olla commit, yksityinen repo tai vaara --repo"
 
 
 def tiivista(vertailu):
@@ -54,9 +84,10 @@ def tiivista(vertailu):
     pr = []
     for c in vertailu.get("commits") or []:
         otsikko = ((c.get("commit") or {}).get("message") or "").split("\n", 1)[0]
-        for nro in PR_RE.findall(otsikko):
-            if int(nro) not in pr:
-                pr.append(int(nro))
+        for m in PR_RE.finditer(otsikko):
+            nro = int(m.group(1) or m.group(2))
+            if nro not in pr:
+                pr.append(nro)
     return int(vertailu.get("ahead_by") or 0), int(vertailu.get("behind_by") or 0), pr
 
 

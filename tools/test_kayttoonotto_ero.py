@@ -59,10 +59,44 @@ class Testit(unittest.TestCase):
 
     def test_tuntematon_commit_on_tila_ei_selvinnyt(self):
         def avaa(pyynto, timeout=None):
+            if "/compare/" in pyynto.full_url:
+                raise urllib.error.HTTPError(pyynto.full_url, 404, "x", None, None)
+            return Vastaus(b"{}")  # repo nakyy
+        koodi, ulos = aja(avaa)
+        self.assertEqual(koodi, 2)
+        self.assertIn("ei loydy GitHubista", ulos)
+        self.assertNotIn("yksityinen", ulos)
+
+    def test_404_kun_repo_ei_nay_ohjaa_reposta_ei_commitista(self):
+        def avaa(pyynto, timeout=None):
             raise urllib.error.HTTPError(pyynto.full_url, 404, "x", None, None)
         koodi, ulos = aja(avaa)
         self.assertEqual(koodi, 2)
-        self.assertIn("ei loydy", ulos)
+        self.assertIn("404 myos repolle", ulos)
+        self.assertIn("yksityinen", ulos)
+        self.assertIn("--repo", ulos)
+        self.assertNotIn("omia committeja", ulos)
+        self.assertNotIn("nakyvyytta", ulos)
+
+    def test_404_kun_repon_tila_ei_selvia(self):
+        def avaa(pyynto, timeout=None):
+            if "/compare/" in pyynto.full_url:
+                raise urllib.error.HTTPError(pyynto.full_url, 404, "x", None, None)
+            raise urllib.error.URLError("x")
+        koodi, ulos = aja(avaa)
+        self.assertEqual(koodi, 2)
+        self.assertIn("syy voi olla commit, yksityinen repo", ulos)
+
+    def test_pr_numerot_vain_yhdistamisotsikoista(self):
+        data = {"ahead_by": 4, "behind_by": 0, "commits": [
+            {"commit": {"message": "Korjaa vika #7 ja #8"}},
+            {"commit": {"message": "Merge pull request #193 from x/y\n\n#5"}},
+            {"commit": {"message": "Otsikko (#246)"}},
+            {"commit": {"message": "Viittaa (#9) keskella"}}]}
+        koodi, ulos = aja(avaaja(data))
+        self.assertIn("#193, #246", ulos)
+        for ei in ("#7", "#8", "#5", "#9"):
+            self.assertNotIn(ei, ulos)
 
     def test_verkkovirhe_ei_ole_ajan_tasalla(self):
         def avaa(pyynto, timeout=None):
