@@ -25,7 +25,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from claudejono import silmukka
+from claudejono import prraja, silmukka
 from . import kulutus, litellm_ajo, varaus
 from . import malli as mallit
 
@@ -777,6 +777,10 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None, kaista=1):
         nro = seuraava_numero(repo, pvm)
         # Porttitarkistin (Tonyn linjaus 2.11.): julkaisu, raha, oikeudet, katot, ajastukset ja uusi suunta Tonylle, ei jonoon.
         hyvaksytyt, sunnuntai, _hylatyt_portti = silmukka.suodata(suunn["tehtavat"])
+        # PR-raja (Tonyn paatos A843): taynna olevaan repoon ei lisata tehtavaa, joka avaisi uuden PR:n; viimeistelytehtava kelpaa.
+        hyvaksytyt, lykatyt_raja = prraja.suodata(hyvaksytyt, prraja.hae_taynna())
+        if lykatyt_raja:
+            suunn["tonylle"] = (suunn["tonylle"].strip() + "\n" + prraja.lykkaysrivit(lykatyt_raja)).strip()
         if sunnuntai:
             suunn["tonylle"] = (suunn["tonylle"].strip() + "\n" + silmukka.sunnuntairivit(sunnuntai)).strip()
         uudet, _hylatyt = suodata_uudet(repo, hyvaksytyt, PORTTI)
