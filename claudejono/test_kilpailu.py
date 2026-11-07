@@ -3,6 +3,7 @@ import json
 import random
 import subprocess
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -11,6 +12,7 @@ from claudejono import kilpailu, kulutus
 
 TZ = kulutus.TZ
 NYT = datetime(2026, 11, 4, 12, 0, tzinfo=TZ)
+ENV = {"CLAUDEJONO_KAYTTAJA": "claudejono"}      # ilman kayttajaa claude-kutsua ei tehda
 KYSYMYS = "Kilpailu: opus, openrouter:deepseek-pro, openrouter:qwen-coder\nLaji: arkkitehtuuri\nMika on suurin kitkakohta?"
 
 
@@ -116,22 +118,44 @@ class Kulukatto(Pohja):
 class ClaudeAjo(unittest.TestCase):
     def test_ei_tyokaluja_oikea_malli_ja_salaisuudet_pois(self):
         f = Feikki()
-        env = {"PATH": "/usr/bin", "CLAUDEJONO_LITELLM_KEY": "x", "YOJONO_TELEGRAM_TOKEN": "y", "GIT_SSH_COMMAND": "z", "CLAUDEJONO_CLAUDE": "/k/claude"}
+        env = {**ENV, "PATH": "/usr/bin", "CLAUDEJONO_LITELLM_KEY": "x", "YOJONO_TELEGRAM_TOKEN": "y", "GIT_SSH_COMMAND": "z", "CLAUDEJONO_CLAUDE": "/k/claude"}
         ok, teksti, luvut = kilpailu.claude_ajo("opus", "kysy", env, f)
         kom, kw = f.kutsut[0]
         self.assertTrue(ok)
-        self.assertEqual(kom[0], "/k/claude")
+        self.assertEqual(kom[:4], [kilpailu.RUNUSER, "-u", "claudejono", "--"])
+        self.assertEqual(kom[4], "/k/claude")
         self.assertEqual(kom[kom.index("--tools") + 1], "")
         self.assertEqual(kom[kom.index("--model") + 1], "opus")
-        self.assertEqual(kw["env"], {"PATH": "/usr/bin", "CLAUDEJONO_CLAUDE": "/k/claude"})
+        self.assertEqual(set(kw["env"]), {"PATH", "HOME", "USER", "LOGNAME", "LANG"})     # ei salaisuuksia, ei CLAUDEJONO_*-muuttujia
         self.assertEqual(luvut["tokenit_out"], 7)
 
     def test_kayttaja_ajetaan_runuserilla_ja_kelvoton_hylataan(self):
         f = Feikki()
         kilpailu.claude_ajo("sonnet", "kysy", {"CLAUDEJONO_KAYTTAJA": "claudejono"}, f)
         self.assertEqual(f.kutsut[0][0][:4], [kilpailu.RUNUSER, "-u", "claudejono", "--"])
-        ok, teksti, _ = kilpailu.claude_ajo("sonnet", "kysy", {"CLAUDEJONO_KAYTTAJA": "root"}, f)
-        self.assertFalse(ok)
+        n = len(f.kutsut)
+        for huono in ("root", "", "Bad Name", "a;b"):
+            ok, teksti, _ = kilpailu.claude_ajo("sonnet", "kysy", {"CLAUDEJONO_KAYTTAJA": huono}, f)
+            self.assertEqual((ok, teksti), (False, "claude_kayttaja"))
+        self.assertEqual(len(f.kutsut), n)       # kieltaytyminen ei aja mitaan
+
+    def test_kayttajaton_ajo_kieltaytyy_eika_aja_lasta(self):
+        f = Feikki()
+        self.assertEqual(kilpailu.claude_ajo("opus", "kysy", {}, f)[:2], (False, "claude_kayttaja"))
+        self.assertEqual(kilpailu.claude_ajo("opus", "kysy", {"PATH": "/usr/bin"}, f)[:2], (False, "claude_kayttaja"))
+        self.assertEqual(f.kutsut, [])
+
+    def test_uid_nolla_hylataan_nimesta_riippumatta(self):
+        class Pw:
+            pw_uid = 0
+        f = Feikki()
+        orig = kilpailu.pwd.getpwnam
+        kilpailu.pwd.getpwnam = lambda nimi: Pw()
+        try:
+            self.assertEqual(kilpailu.claude_ajo("opus", "k", {"CLAUDEJONO_KAYTTAJA": "toor"}, f)[:2], (False, "claude_kayttaja"))
+        finally:
+            kilpailu.pwd.getpwnam = orig
+        self.assertEqual(f.kutsut, [])
         self.assertEqual(kilpailu.claude_ajo("gpt", "kysy", {}, f)[:2], (False, "kilpailu_claude_malli"))
 
     def test_aikakatkaisu_ja_virhe_palauttavat_vain_tyypin(self):
@@ -140,8 +164,8 @@ class ClaudeAjo(unittest.TestCase):
 
         def puuttuu(kom, **kw):
             raise FileNotFoundError("salainen-polku")
-        self.assertEqual(kilpailu.claude_ajo("opus", "k", {}, aikakatkaisu)[:2], (False, "claude_aikakatkaisu"))
-        self.assertEqual(kilpailu.claude_ajo("opus", "k", {}, puuttuu)[:2], (False, "claude_FileNotFoundError"))
+        self.assertEqual(kilpailu.claude_ajo("opus", "k", ENV, aikakatkaisu)[:2], (False, "claude_aikakatkaisu"))
+        self.assertEqual(kilpailu.claude_ajo("opus", "k", ENV, puuttuu)[:2], (False, "claude_FileNotFoundError"))
 
 
 class Tuomio(unittest.TestCase):
@@ -170,7 +194,7 @@ class Tuomio(unittest.TestCase):
 class Kilpailu(Pohja):
     def aja(self, teksti=KYSYMYS, f=None, l=None, env=None, seed=1):
         f, l = f or Feikki(), l or FeikkiLitellm()
-        t = kilpailu.kilpaile(self.tila, "2026-11-04-01-arkkitehtuuri-kitka.md", teksti, env or {}, f, l, NYT, random.Random(seed))
+        t = kilpailu.kilpaile(self.tila, "2026-11-04-01-arkkitehtuuri-kitka.md", teksti, {**ENV, **(env or {})}, f, l, NYT, random.Random(seed))
         return t, f, l
 
     def test_koko_kilpailu(self):
@@ -234,7 +258,7 @@ class Kilpailu(Pohja):
         l2 = FeikkiLitellm()
         def osittain(alias, teksti, env):
             return (False, "litellm_http_500", {}) if alias == "qwen-coder" else l2(alias, teksti, env)
-        t = kilpailu.kilpaile(self.tila, "x", KYSYMYS, {}, Feikki(), osittain, NYT, random.Random(1))
+        t = kilpailu.kilpaile(self.tila, "x", KYSYMYS, ENV, Feikki(), osittain, NYT, random.Random(1))
         self.assertEqual(t["tila"], "valmis")
         self.assertEqual(t["epaonnistuneet"], ["openrouter:qwen-coder"])
         rivit = self.rivit(kilpailu.PISTEET)
@@ -269,7 +293,7 @@ class Otos(Pohja):
 
     def test_vain_tuomarin_pisteet_kirjataan(self):
         f, l = Feikki(), FeikkiLitellm()
-        rivit = kilpailu.otos(self.tila, "2026-11-04-02-x.md", "tee x", "sonnetin raportti", "sonnet", {}, f, l, NYT, random.Random(2))
+        rivit = kilpailu.otos(self.tila, "2026-11-04-02-x.md", "tee x", "sonnetin raportti", "sonnet", ENV, f, l, NYT, random.Random(2))
         self.assertEqual(len(rivit), 2)
         self.assertEqual({r["malli"] for r in rivit}, {"sonnet", kilpailu.OTOS_MALLI})
         self.assertTrue(all(r["laji"] == "otos" for r in rivit))
@@ -282,12 +306,102 @@ class Otos(Pohja):
     def test_katto_ja_virheet_ohittavat_otoksen(self):
         kulutus.kirjaa(self.tila, "openrouter:deepseek-flash", "x", 1, "otos", True, 1, {"usd": 2.0}, NYT)
         l = FeikkiLitellm()
-        self.assertIsNone(kilpailu.otos(self.tila, "n", "t", "v", "sonnet", {}, Feikki(), l, NYT))
+        self.assertIsNone(kilpailu.otos(self.tila, "n", "t", "v", "sonnet", ENV, Feikki(), l, NYT))
         self.assertEqual(l.kutsut, [])
         t2 = Path(tempfile.mkdtemp())
-        self.assertIsNone(kilpailu.otos(t2, "n", "t", "v", "sonnet", {}, Feikki(), FeikkiLitellm(ok=False), NYT))
-        self.assertIsNone(kilpailu.otos(t2, "n", "t", "", "sonnet", {}, Feikki(), FeikkiLitellm(), NYT))
+        self.assertIsNone(kilpailu.otos(t2, "n", "t", "v", "sonnet", ENV, Feikki(), FeikkiLitellm(ok=False), NYT))
+        self.assertIsNone(kilpailu.otos(t2, "n", "t", "", "sonnet", ENV, Feikki(), FeikkiLitellm(), NYT))
         self.assertFalse((t2 / kilpailu.PISTEET).exists())
+
+
+class Varaus(Pohja):
+    """Kutsukohtainen katto: varaus lukon alla ennen jokaista OpenRouter-kutsua."""
+    ENV_KATTO = {**ENV, kilpailu.KATTO_ENV: "0.1"}       # mahtuu tasan kaksi arviota (2 x KULU_ARVIO_USD)
+
+    def test_rinnakkaiset_varaukset_eivat_ylita_kattoa(self):
+        tulos, portti = [], threading.Barrier(8)
+
+        def saie():
+            portti.wait()
+            tulos.append(kilpailu.varaa(self.tila, self.ENV_KATTO, NYT))
+        saikeet = [threading.Thread(target=saie) for _ in range(8)]
+        [t.start() for t in saikeet]
+        [t.join() for t in saikeet]
+        self.assertEqual(len([t for t in tulos if t]), 2)
+        self.assertEqual(len(set(t for t in tulos if t)), 2)
+
+    def test_varaus_laskee_mukaan_kirjatun_kulutuksen_ja_vapautus_palauttaa_tilan(self):
+        a = kilpailu.varaa(self.tila, self.ENV_KATTO, NYT)
+        self.assertTrue(a)
+        kulutus.kirjaa(self.tila, "openrouter:deepseek-pro", "x", 1, "kilpailu", True, 1, {"usd": 0.05}, NYT)
+        self.assertIsNone(kilpailu.varaa(self.tila, self.ENV_KATTO, NYT))      # 0.05 kulutettu + 0.05 varattu + 0.05 arvio > 0.1
+        kilpailu.vapauta(self.tila, a, NYT)
+        self.assertTrue(kilpailu.varaa(self.tila, self.ENV_KATTO, NYT))        # 0.05 kulutettu + 0.05 arvio = 0.1, mahtuu
+        self.assertIsNone(kilpailu.varaa(self.tila, self.ENV_KATTO, NYT))
+
+    def test_vanhentunut_varaus_vapautuu(self):
+        a = kilpailu.varaa(self.tila, {**ENV, kilpailu.KATTO_ENV: "0.05"}, NYT)
+        self.assertTrue(a)
+        self.assertIsNone(kilpailu.varaa(self.tila, {**ENV, kilpailu.KATTO_ENV: "0.05"}, NYT))
+        myohemmin = NYT + timedelta(seconds=kilpailu.VARAUS_VANHENEE_S + 1)
+        self.assertTrue(kilpailu.varaa(self.tila, {**ENV, kilpailu.KATTO_ENV: "0.05"}, myohemmin))
+
+    def test_rikkinainen_varaustiedosto_ei_kaada_eika_ohita_kattoa(self):
+        (self.tila / kilpailu.VARAUKSET).write_text("roskaa")
+        self.assertTrue(kilpailu.varaa(self.tila, self.ENV_KATTO, NYT))
+        self.assertIsNone(kilpailu.varaa(Path("/ei/ole/olemassa"), self.ENV_KATTO, NYT))    # levyvirhe -> ei kutsua
+
+    def test_varaus_vapautuu_myos_kun_kutsu_kaatuu(self):
+        def kaatuu(alias, teksti, env):
+            raise ValueError("salainen")
+        with self.assertRaises(ValueError):
+            kilpailu.otos(self.tila, "n", "t", "v", "sonnet", ENV, Feikki(), kaatuu, NYT)
+        self.assertEqual(json.loads((self.tila / kilpailu.VARAUKSET).read_text()), {})
+
+    def test_samanaikainen_toinen_kilpailu_nakee_ensimmaisen_varaukset(self):
+        """Kilpailu A pitaa kahta OpenRouter-kutsua kesken; sisakkainen kilpailu B ei saa ylittaa kattoa (0.1 = kaksi kutsua)."""
+        sisa = {}
+        molemmat_sisalla, b_valmis = threading.Barrier(2), threading.Event()
+        syvyys = []
+
+        def kutsu(alias, teksti, env):
+            if syvyys:                                    # B:n kutsu: katon pitaisi estaa kaikki
+                return True, "b-vastaus", {"usd": 0.05}
+            molemmat_sisalla.wait(timeout=10)
+            if alias == "deepseek-pro":                   # vain toinen saie ajaa B:n
+                syvyys.append(1)
+                t = kilpailu.kilpaile(self.tila, "b", KYSYMYS, self.ENV_KATTO, Feikki(), kutsu, NYT, random.Random(2))
+                sisa["b"] = t
+                b_valmis.set()
+            b_valmis.wait(timeout=10)
+            return True, "a-vastaus", {"usd": 0.05}
+        a = kilpailu.kilpaile(self.tila, "a", KYSYMYS, self.ENV_KATTO, Feikki(), kutsu, NYT, random.Random(1))
+        self.assertEqual(a["tila"], "valmis")
+        b = sisa["b"]
+        # B:ssa vain opus pystyi vastaamaan (OpenRouter-kutsut ohitettiin) -> alle kaksi vastausta, eika yhtaan b-vastausta
+        self.assertEqual(b["tila"], "epaonnistui")
+        self.assertIn("ohitettu", b["huomio"])
+        kulut = [r for r in self.rivit(kulutus.KULUTUS) if r["malli"].startswith("openrouter:")]
+        self.assertEqual(len(kulut), 2)
+        self.assertLessEqual(sum(r["usd"] for r in kulut), 0.1 + 1e-9)
+
+
+class Aivo(Pohja):
+    def test_aivon_tehtava_ei_kilpaile_eika_otoksia(self):
+        f, l = Feikki(), FeikkiLitellm()
+        for nimi, teksti in (("2026-11-07-01-aivo-chat.md", KYSYMYS), ("x", KYSYMYS + "\nAivon muistiinpanot"), ("x", KYSYMYS + " AIVO")):
+            t = kilpailu.kilpaile(self.tila, nimi, teksti, ENV, f, l, NYT, random.Random(1))
+            self.assertEqual(t["tila"], "epaonnistui")
+            self.assertIn("Aivon", t["virhe"])
+            self.assertIsNone(kilpailu.otos(self.tila, nimi, teksti, "v", "sonnet", ENV, f, l, NYT))
+        self.assertEqual((f.kutsut, l.kutsut), ([], []))
+        self.assertFalse((self.tila / kilpailu.PISTEET).exists())
+        self.assertFalse((self.tila / kulutus.KULUTUS).exists())
+
+    def test_tunnistus_ei_osu_muihin_sanoihin(self):
+        self.assertFalse(kilpailu.aivo_tehtava("2026-11-07-kaivo.md", "kaivon syvyys, paivo"))
+        self.assertTrue(kilpailu.aivo_tehtava("", "kysymys Aivosta"))
+        self.assertTrue(kilpailu.aivo_tehtava("aivo-chat", ""))
 
 
 class Viikkokooste(Pohja):

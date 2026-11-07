@@ -6,15 +6,22 @@ Tuomari on aina Opus, ilman tyokaluja, ja saa vastaukset nimettomina satunnaises
 
 Kulukatto: OpenRouter-kulut enintaan CLAUDEJONO_KILPAILU_USD_PV (oletus 1.0) / vrk (Helsingin vuorokausi), mitattuna kulutus.jsonl:n
 riveista (laji kilpailu ja otos). Kun katto tayttyy, kilpailu ajetaan vain Clauden malleilla. Muita kattoja tama moduuli ei kosketa.
+Katto varataan KUTSUKOHTAISESTI: ennen jokaista OpenRouter-kutsua varataan KULU_ARVIO_USD lukon alla (<tila>/kilpailu-katto.lock,
+avoimet varaukset <tila>/kilpailu-varaukset.json), joten rinnakkaiset kilpailut ja saman kilpailun saikeet nakevat toistensa kulut.
+Ei varausta -> ei kutsua. Vahvistettu kulu kirjataan kulutus.jsonl:aan ennen varauksen vapautusta.
+Claude-kutsut vaativat CLAUDEJONO_KAYTTAJA:n (ei rootia): puuttuessa ei ajeta mitaan. Aivon tehtavat eivat koskaan kilpaile (A329).
 Pisteet: <tila>/kilpailut.jsonl, yksi rivi per osallistuja. Viikkokooste malleittain: viikkokooste().
 Kauppatiimin kilpailut vain paperistrategioista: osallistujilla ei ole tyokaluja, joten ne eivat voi koskea tiedostoihin tai rahaan.
 """
+import fcntl
 import json
 import os
+import pwd
 import random
 import re
 import subprocess
 import tempfile
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -33,6 +40,9 @@ OTOS_VALI = 5                # joka 5. tavallinen Claude-reitin tehtava
 OTOS_MALLI = mallit.OPENROUTER_OLETUS
 TUOMARI = "opus"
 AIKARAJA_S = 600
+LUKKO = "kilpailu-katto.lock"
+VARAUKSET = "kilpailu-varaukset.json"
+VARAUS_VANHENEE_S = AIKARAJA_S + 120   # kaatuneen ajon varaus vapautuu itsestaan
 VASTAUS_MAX = 12000          # merkkia per vastaus tuomarille
 TIIVISTELMA_MAX = 400
 KRITEERIT = ("oikeellisuus", "perustelut", "toteutettavuus", "riskit", "hyoty")
@@ -42,6 +52,7 @@ SALAISET_ALKUISET = ("YOJONO_TELEGRAM_", "CLAUDEJONO_GIT", "CLAUDEJONO_LITELLM",
 
 KILPAILU_RIVI_RE = re.compile(r"^[ \t]*Kilpailu[ \t]*:[ \t]*(.*?)[ \t]*$", re.I | re.M)
 LAJI_RIVI_RE = re.compile(r"^[ \t]*Laji[ \t]*:[ \t]*(.*?)[ \t]*$", re.I | re.M)
+AIVO_RE = re.compile(r"(?<![a-z\xe5\xe4\xf6])aivo", re.I)    # Aivo, Aivon, aivo-chat; ei esim. kaivo
 MUUT_KENTTARIVIT_RE = re.compile(r"^[ \t]*(Kilpailu|Laji|Malli)[ \t]*:.*$\n?", re.I | re.M)
 
 ESIPUHE = ("Olet Tonyn agenttifirman asiantuntija. Vastaa alla olevaan kysymykseen itsen\xe4isesti ja perustellusti. "
@@ -92,6 +103,11 @@ def kysymys(teksti):
     return MUUT_KENTTARIVIT_RE.sub("", teksti or "").strip()
 
 
+def aivo_tehtava(nimi, teksti):
+    """True, jos tehtavan nimi tai teksti viittaa Aivoon. Aivon tiedot eivat koskaan mene kilpailutukseen (A329); varovainen osuma."""
+    return bool(AIVO_RE.search(nimi or "") or AIVO_RE.search(teksti or ""))
+
+
 def katto_usd(env):
     """Vuorokausikatto. Rikkinainen arvo -> oletus (ei koskaan ylempi kuin annettu; negatiivinen -> 0)."""
     try:
@@ -113,6 +129,71 @@ def kulutettu_tanaan(tila, nyt):
     return round(summa, 6)
 
 
+class _Lukko:
+    """Prosessien ja saikeiden valinen lukko (flock omalla tiedostokahvalla per kutsu)."""
+    def __init__(self, tila):
+        self.polku = Path(tila) / LUKKO
+
+    def __enter__(self):
+        self.fd = os.open(self.polku, os.O_RDWR | os.O_CREAT, 0o644)
+        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *poikkeus):
+        os.close(self.fd)      # sulkeminen vapauttaa lukon
+
+
+def _lue_varaukset(tila, nyt):
+    """{id: usd} avoimista, ei-vanhentuneista varauksista. Rikkinainen tiedosto -> tyhja."""
+    try:
+        d = json.loads((Path(tila) / VARAUKSET).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    ulos = {}
+    for k, v in (d.items() if isinstance(d, dict) else []):
+        try:
+            if nyt.timestamp() - float(v["aika"]) <= VARAUS_VANHENEE_S and float(v["usd"]) >= 0:
+                ulos[k] = {"aika": float(v["aika"]), "usd": float(v["usd"])}
+        except (KeyError, TypeError, ValueError):
+            continue
+    return ulos
+
+
+def _kirjoita_varaukset(tila, varaukset):
+    polku = Path(tila) / VARAUKSET
+    tmp = polku.with_name(VARAUKSET + ".tmp")
+    tmp.write_text(json.dumps(varaukset), encoding="utf-8")
+    os.replace(tmp, polku)
+
+
+def varaa(tila, env, nyt):
+    """Varaa yhden OpenRouter-kutsun kulun lukon alla. Palauttaa varaustunnuksen tai None, jos kulutettu + avoimet varaukset + arvio
+    ylittaisi katon. Virhe lukituksessa tai levylla -> None (ei kutsua: katto voittaa)."""
+    nyt = nyt.astimezone(kulutus.TZ)
+    try:
+        with _Lukko(tila):
+            avoimet = _lue_varaukset(tila, nyt)
+            if kulutettu_tanaan(tila, nyt) + sum(v["usd"] for v in avoimet.values()) + KULU_ARVIO_USD > katto_usd(env):
+                return None
+            tunnus = uuid.uuid4().hex
+            avoimet[tunnus] = {"aika": nyt.timestamp(), "usd": KULU_ARVIO_USD}
+            _kirjoita_varaukset(tila, avoimet)
+            return tunnus
+    except OSError:
+        return None
+
+
+def vapauta(tila, tunnus, nyt=None):
+    """Vapauttaa varauksen (kutsu kirjataan kulutus.jsonl:aan ENNEN tata). Virhe ei kaada ajoa; vanhentuminen siivoaa jaamat."""
+    try:
+        with _Lukko(tila):
+            avoimet = _lue_varaukset(tila, nyt or datetime.now(kulutus.TZ))
+            avoimet.pop(tunnus, None)
+            _kirjoita_varaukset(tila, avoimet)
+    except OSError:
+        pass
+
+
 def rajaa_katolla(malleja, kulutettu, katto):
     """(osallistujat, huomio). Katon tayttyessa OpenRouter-mallit pudotetaan ja lista taydennetaan Clauden malleilla (opus, sonnet)."""
     if kulutettu < katto:
@@ -127,12 +208,16 @@ def rajaa_katolla(malleja, kulutettu, katto):
 
 
 def _lapsi(kom, env):
-    """Komento ja ymparisto lapsiprosessille: salaisuudet pois; CLAUDEJONO_KAYTTAJA -> runuser (kuten ajuri.lapsen_ajo)."""
+    """Komento ja ymparisto lapsiprosessille: aina runuser CLAUDEJONO_KAYTTAJA:na (kuten ajuri.lapsen_ajo). Kayttaja puuttuu, ei kelpaa
+    tai on root (nimi tai uid 0) -> RuntimeError: lapsi ei saa koskaan ajaa palvelun (mahdollisesti root) oikeuksilla."""
     kayttaja = env.get("CLAUDEJONO_KAYTTAJA", "")
-    if not kayttaja:
-        return kom, {k: v for k, v in env.items() if not k.startswith(SALAISET_ALKUISET)}
-    if not re.match(r"^[a-z_][a-z0-9_-]{0,31}$", kayttaja) or kayttaja == "root":
+    if not kayttaja or not re.match(r"^[a-z_][a-z0-9_-]{0,31}$", kayttaja) or kayttaja == "root":
         raise RuntimeError("kilpailu_kayttaja")
+    try:
+        if pwd.getpwnam(kayttaja).pw_uid == 0:
+            raise RuntimeError("kilpailu_kayttaja")
+    except KeyError:
+        pass       # tuntematon kayttaja: runuser epaonnistuu itse
     koti = env.get("CLAUDEJONO_KOTI", "/var/lib/" + kayttaja)
     return [RUNUSER, "-u", kayttaja, "--"] + kom, {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": koti, "USER": kayttaja,
                                                     "LOGNAME": kayttaja, "LANG": env.get("LANG", "C.UTF-8")}
@@ -149,7 +234,9 @@ def claude_ajo(malli, kehote, env, suorita=subprocess.run):
         r = suorita(kom, cwd=tempfile.gettempdir(), capture_output=True, text=True, timeout=AIKARAJA_S, env=alaenv, check=False)
     except subprocess.TimeoutExpired:
         return False, "claude_aikakatkaisu", {}
-    except (OSError, RuntimeError) as virhe:
+    except RuntimeError:
+        return False, "claude_kayttaja", {}
+    except OSError as virhe:
         return False, "claude_" + type(virhe).__name__, {}
     luvut = kulutus.claude_luvut(getattr(r, "stdout", "") or "")
     try:
@@ -255,17 +342,32 @@ def kilpaile(tila, nimi, teksti, env, suorita=subprocess.run, litellm=None, nyt=
     malleja, virhe = osallistujat(kentta(teksti))
     if virhe:
         return {"tila": "epaonnistui", "virhe": virhe}
+    if aivo_tehtava(nimi, teksti):
+        return {"tila": "epaonnistui", "virhe": "kilpailu: Aivon tehtava ei kilpaile"}
     laji_nimi = laji_nimi or laji(nimi, teksti)
     kys = kysymys(teksti)
     malleja, huomio = rajaa_katolla(malleja, kulutettu_tanaan(tila, nyt), katto_usd(env))
 
     def yksi(m):
+        tunnus = None
+        if m.reitti == "openrouter":
+            tunnus = varaa(tila, env, nyt)     # kutsukohtainen varaus lukon alla; ei varausta -> ei kutsua
+            if tunnus is None:
+                return m, None, "kilpailu_katto"
         alku = datetime.now()
-        ok, vastaus, luvut = aja_osallistuja(m, kys, env, suorita, litellm)
-        kulutus.kirjaa(tila, m.tunniste, nimi, kaista, "kilpailu", ok, (datetime.now() - alku).total_seconds(), luvut, nyt)
+        try:
+            ok, vastaus, luvut = aja_osallistuja(m, kys, env, suorita, litellm)
+            kulutus.kirjaa(tila, m.tunniste, nimi, kaista, "kilpailu", ok, (datetime.now() - alku).total_seconds(), luvut, nyt)
+        finally:
+            if tunnus is not None:
+                vapauta(tila, tunnus, nyt)
         return m, ok, vastaus
     with ThreadPoolExecutor(max_workers=len(malleja)) as pool:
         tulokset = list(pool.map(yksi, malleja))
+    ohitetut = [m.tunniste for m, ok, _ in tulokset if ok is None]
+    if ohitetut:
+        huomio = ((huomio + " ") if huomio else "") + "Katto t\xe4yttyi kesken kilpailun, ohitettu: %s." % ", ".join(ohitetut)
+    tulokset = [t for t in tulokset if t[1] is not None]
     toimivat = {m.tunniste: v for m, ok, v in tulokset if ok}
     epaonnistuneet = [m.tunniste for m, ok, _ in tulokset if not ok]
     if len(toimivat) < MIN_OSALLISTUJAT:
@@ -333,13 +435,19 @@ def otos(tila, nimi, teksti, claude_vastaus, claude_malli, env, suorita=subproce
     tee PR:aa, muutoksia eika tulostiedostoa. Palauttaa kirjatut rivit tai None (katto, virhe)."""
     nyt = nyt or datetime.now(kulutus.TZ)
     rng = rng or random.SystemRandom()
-    if kulutettu_tanaan(tila, nyt) >= katto_usd(env) or not claude_vastaus or claude_malli not in mallit.CLAUDE_MALLIT:
+    if aivo_tehtava(nimi, teksti) or not claude_vastaus or claude_malli not in mallit.CLAUDE_MALLIT:
+        return None
+    tunnus = varaa(tila, env, nyt)
+    if tunnus is None:
         return None
     m = mallit.Malli("openrouter", OTOS_MALLI.split(":", 1)[1], "otos")
     kys = kysymys(teksti)
     alku = datetime.now()
-    ok, vastaus, luvut = aja_osallistuja(m, kys, env, suorita, litellm)
-    kulutus.kirjaa(tila, m.tunniste, nimi, kaista, "otos", ok, (datetime.now() - alku).total_seconds(), luvut, nyt)
+    try:
+        ok, vastaus, luvut = aja_osallistuja(m, kys, env, suorita, litellm)
+        kulutus.kirjaa(tila, m.tunniste, nimi, kaista, "otos", ok, (datetime.now() - alku).total_seconds(), luvut, nyt)
+    finally:
+        vapauta(tila, tunnus, nyt)
     if not ok:
         return None
     tuomio, kartta, virhe = tuomitse(tila, nimi, kys, {claude_malli: claude_vastaus, m.tunniste: vastaus}, env, rng, nyt, suorita, kaista)
