@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from claudejono import ajuri
 
@@ -165,6 +166,15 @@ class Opit(Pohja):
         self.assertIn("<opit>", k)
         self.assertEqual(k.count("</opit>"), 1)
         self.assertNotIn("\n<opit>\n", ajuri.rakenna_kehote(t, opit=""))
+
+    def test_kehotteessa_todennusrivin_saanto(self):
+        t = self.lisaa_tehtava("2026-10-30-01-a.md")
+        k = ajuri.rakenna_kehote(t)
+        self.assertIn("TODENNUSRIVI", k)
+        self.assertIn("Todennettu k\u00e4yt\u00f6ss\u00e4: miten", k)
+        self.assertIn("KESKEN", k)
+        # ohje ei saa neuvoa kielteista riviae, joka lapaisisi ajurin saannon
+        self.assertNotIn("Todennettu k\u00e4yt\u00f6ss\u00e4: ei", k)
 
     def test_ajo_ei_committaa_opit_ilman_lupaa_ja_tulos_pysyy_puhtaana(self):
         self.lisaa_tehtava("2026-10-30-01-a.md")
@@ -612,3 +622,90 @@ class TulosPortti(Pohja):
         self.lisaa_tehtava("2026-11-03-02-b.md")
         f, _ = self.suorita({"subtype": "error", "result": "x"}, koodi=1)
         self.assertIn("EPAONNISTUI", ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_ITSESUUNNITTELU": "0"}, suorita=f))
+
+
+class DocsKirjoitusTesti(unittest.TestCase):
+    """Tonyn paatos 4.11.2026: agentit saavat kirjoittaa docs-repoon (ei Tonyn paatoksia eika jonon omia kansioita)."""
+
+    def test_vapaa_docs_polku(self):
+        for p in ("claude-jono/suunnitelmat/a.md", "claude-jono/muistiot/x.txt", "aanikirjat/matka/M13.md", "claude-jono/virheloki.md",
+                  "claude-jono/data/a.csv", "claude-jono/x.json"):
+            self.assertTrue(ajuri.vapaa_docs_polku(p), p)
+        for p in ("README.md", "claude-jono/kompassi.md", "claude-jono/tehtavat/2026-11-04-01-a.md", "claude-jono/tulokset/a.md",
+                  "claude-jono/isanta-kasin/a.md", "claude-jono/korjaukset/a.md", "claude-jono/opit.md", "claude-jono/sunnuntaiehdotukset.md", "claude-jono/a.sh",
+                  "claude-jono/../x.md", ".github/a.md", "claude-jono/.piilo.md", "a//b.md", "claude-jono/\u00e4.md", "a/b c.md"):
+            self.assertFalse(ajuri.vapaa_docs_polku(p), p)
+
+    def _tar(self, tiedostot, symlinkit=()):
+        import io as _io
+        import tarfile as _tf
+        b = _io.BytesIO()
+        with _tf.open(fileobj=b, mode="w") as tf:
+            for nimi, data in tiedostot.items():
+                ti = _tf.TarInfo("./" + nimi)
+                ti.size = len(data)
+                tf.addfile(ti, _io.BytesIO(data))
+            for nimi, kohde in symlinkit:
+                ti = _tf.TarInfo("./" + nimi)
+                ti.type, ti.linkname = _tf.SYMTYPE, kohde
+                tf.addfile(ti)
+        return b.getvalue()
+
+    def test_poimi_kopioi_vain_sallitut_ja_siivoaa(self):
+        with tempfile.TemporaryDirectory() as d:
+            kaista, repo = Path(d) / "k", Path(d) / "repo"
+            repo.mkdir()
+            ajuri.valmistele_docs_ulos(kaista, {})
+            data = self._tar({"claude-jono/suunnitelmat/a.md": "\u00e4\u00f6".encode(), "claude-jono/kompassi.md": b"x",
+                              "claude-jono/b.md": b"\xff\xfe", "claude-jono/iso.md": b"x" * (ajuri.DOCS_MAX_TAVUA + 1)},
+                             symlinkit=[("claude-jono/linkki.md", "/etc/shadow")])
+            nahty = []
+
+            def suorita(kom, **kw):
+                nahty.append(kom)
+                return SimpleNamespace(returncode=0, stdout=data)
+            polut = ajuri.poimi_docs_ulos(kaista, repo, {"CLAUDEJONO_KAYTTAJA": "claudejono"}, suorita=suorita)
+            self.assertEqual(polut, [repo / "claude-jono/suunnitelmat/a.md"])
+            self.assertEqual(polut[0].read_text(encoding="utf-8"), "\u00e4\u00f6")
+            self.assertEqual(nahty[0][:4], [ajuri.RUNUSER, "-u", "claudejono", "--"])
+            self.assertFalse((kaista / ajuri.DOCS_ULOS).exists())
+            self.assertFalse((repo / "claude-jono/kompassi.md").exists())
+            self.assertTrue(ajuri.sallittu_polku("claude-jono/suunnitelmat/a.md"))
+
+    def test_poimi_virheessa_tyhja(self):
+        with tempfile.TemporaryDirectory() as d:
+            kaista = Path(d) / "k"
+            self.assertEqual(ajuri.poimi_docs_ulos(kaista, Path(d), {}), [])
+            ajuri.valmistele_docs_ulos(kaista, {})
+            for r in (SimpleNamespace(returncode=1, stdout=b""), SimpleNamespace(returncode=0, stdout=b"ei tar")):
+                self.assertEqual(ajuri.poimi_docs_ulos(kaista, Path(d), {}, suorita=lambda *a, **k: r), [])
+                ajuri.valmistele_docs_ulos(kaista, {})
+
+            def kaatuu(*a, **k):
+                raise FileNotFoundError("runuser")
+            self.assertEqual(ajuri.poimi_docs_ulos(kaista, Path(d), {}, suorita=kaatuu), [])
+
+    def test_oikea_tar_ilman_kayttajaa(self):
+        with tempfile.TemporaryDirectory() as d:
+            kaista, repo = Path(d) / "k", Path(d) / "repo"
+            ulos = ajuri.valmistele_docs_ulos(kaista, {})
+            (ulos / "claude-jono" / "muistiot").mkdir(parents=True)
+            (ulos / "claude-jono" / "muistiot" / "m.md").write_text("muistio", encoding="utf-8")
+            self.assertEqual(ajuri.poimi_docs_ulos(kaista, repo, {}), [repo / "claude-jono/muistiot/m.md"])
+
+
+class AikarajaTesti(unittest.TestCase):
+    def test_opus_saa_pidemman_rajan_ja_kierrokset(self):
+        self.assertEqual(ajuri.aikaraja_s({}, "opus"), 90 * 60)
+        self.assertEqual(ajuri.aikaraja_s({}, "sonnet"), 45 * 60)
+        self.assertEqual(ajuri.aikaraja_s({}), 45 * 60)
+        self.assertEqual(ajuri.aikaraja_s({"CLAUDEJONO_AIKARAJA_S": "60"}, "opus"), 60)
+        self.assertEqual(ajuri.aikaraja_s({"CLAUDEJONO_AIKARAJA_S": "60", "CLAUDEJONO_AIKARAJA_OPUS_S": "70"}, "opus"), 70)
+        self.assertEqual(ajuri.max_kierrokset({}, "opus"), 120)
+        self.assertEqual(ajuri.max_kierrokset({}, "sonnet"), 60)
+        self.assertEqual(ajuri.max_kierrokset({"CLAUDEJONO_MAX_KIERROKSET": "5"}, "opus"), 5)
+        k = ajuri.claude_komento("k", {}, "opus")
+        self.assertEqual(k[k.index("--max-turns") + 1], "120")
+
+    def test_varaus_kestaa_opus_ajon(self):
+        self.assertGreater(ajuri.varaus_vanhenee_s({}), 90 * 60)

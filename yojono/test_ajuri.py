@@ -833,7 +833,8 @@ class AjopaivaTesti(unittest.TestCase):
 class TestMain(Pohja):
     def test_virheellinen_jono_palauttaa_2(self):
         self.kirjoita_jono(jono([t("a", repo="../x")]))
-        with mock.patch.dict(os.environ, {"YOJONO_PERUS": str(self.perus)}), mock.patch("sys.stderr"):
+        with mock.patch.dict(os.environ, {"YOJONO_PERUS": str(self.perus)}), mock.patch("sys.stderr"), \
+                mock.patch.object(ajuri, "paivita_opit"):        # ei oikeaa verkkoa (GitHub-haku)
             self.assertEqual(ajuri.main(["ajo"]), 2)
 
     def test_kuiva_tulostaa(self):
@@ -1571,7 +1572,8 @@ class MainTarkkaTesti(Pohja):
 
     def test_peilaus_vain_ajolla(self):
         self.kirjoita_jono(jono([]))
-        with self.env(), mock.patch.dict(os.environ, {"YOJONO_PEILAA": "/p.sh"}), mock.patch.object(ajuri, "peilaa") as p, mock.patch("builtins.print"):
+        with self.env(), mock.patch.dict(os.environ, {"YOJONO_PEILAA": "/p.sh"}), mock.patch.object(ajuri, "peilaa") as p, \
+                mock.patch.object(ajuri, "paivita_opit"), mock.patch.object(ajuri, "laheta_aamupaketti"), mock.patch("builtins.print"):
             self.assertEqual(ajuri.main(["ajo"]), 0)
             p.assert_called_once_with("/p.sh")
             p.reset_mock()
@@ -1580,7 +1582,8 @@ class MainTarkkaTesti(Pohja):
 
     def test_opit_paivittyy_vain_ajolla(self):
         self.kirjoita_jono(jono([]))
-        with self.env(), mock.patch.object(ajuri, "paivita_opit") as p, mock.patch("builtins.print"):
+        with self.env(), mock.patch.object(ajuri, "paivita_opit") as p, \
+                mock.patch.object(ajuri, "laheta_aamupaketti"), mock.patch("builtins.print"):
             self.assertEqual(ajuri.main(["kuiva"]), 0)
             p.assert_not_called()
             self.assertEqual(ajuri.main(["ajo"]), 0)
