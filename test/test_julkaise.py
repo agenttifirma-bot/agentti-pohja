@@ -539,13 +539,16 @@ class JulkaisuTesti(Pohja):
         self.l.ensimmainen()
         self.l.commit(2)
         p, c, s = self.l.paketoi()
+        ennen = time.strftime("%Y%m%d-%H%M%S")              # paikallinen aika, kuten skriptin date
         rc, ulos = self.l.aja(p, c, s, oikea_kello=True)
+        jalkeen = time.strftime("%Y%m%d-%H%M%S")
         self.assertOk(rc, ulos)
         previt = self.l.previt()
         self.assertEqual(len(previt), 2)                    # ensijulkaisun (injektoitu) ja taman ajon (oikea kello)
         for prev in previt:
             self.assertRegex(prev, r"\.prev-\d{8}-\d{6}$")
-        self.assertGreater(previt[-1].split(".prev-")[1], time.strftime("%Y%m%d-000000", time.gmtime(1700000000 + 100)))
+        # sekuntitarkka: aikaleima on ajon alun ja lopun valissa (vaara vyohyke, nollattu aika tai menneisyyden vakio kaatuu)
+        self.assertTrue(ennen <= previt[-1].split(".prev-")[1] <= jalkeen, (ennen, previt[-1], jalkeen))
 
     def test_loki_kirjaa_julkaisun_ja_ohituslipun(self):
         self.l.ensimmainen()
