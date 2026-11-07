@@ -767,17 +767,25 @@ def hylatyt_prt(tila_hak, nyt=None, ika_pv=HYLATYT_IKA_PV):
     finally:
         os.close(fd)
     uusin = {}
+    ohitetut = {}                                                      # virheen tyyppi -> rivien maara (vain tyyppi, ei viestia)
     for rivi in data.decode("utf-8", "replace").splitlines():
         try:
             d = json.loads(rivi)
             aika = datetime.fromisoformat(d["aika"])
             repo, nro, tulos = d["repo"], d["pr"], d["tulos"]
-        except (ValueError, KeyError, TypeError):
+            if tulos not in TARKASTAJAN_PAATOKSET:                     # lista/olio ei ole hajautettava: TypeError, kirjataan
+                continue                                               # esim. ohitus tai virhe ei ole paatos
+        except (ValueError, KeyError, TypeError, RecursionError) as virhe:
+            # Syvasti sisakkainen rivi nostaa RecursionErrorin: yksi huono rivi ei saa kaataa suunnittelua.
+            ohitetut[type(virhe).__name__] = ohitetut.get(type(virhe).__name__, 0) + 1
             continue
-        if tulos not in TARKASTAJAN_PAATOKSET or not isinstance(nro, int) or not isinstance(repo, str) or not REPO_RE.match(repo):
-            continue                                                   # esim. ohitus tai virhe ei ole paatos
+        if not isinstance(nro, int) or not isinstance(repo, str) or not REPO_RE.match(repo):
+            continue
         sha = d.get("sha")
         uusin[(repo, nro)] = (tulos, sha if isinstance(sha, str) and SHA_LYHYT_RE.match(sha) else None, aika)
+    for tyyppi, maara in sorted(ohitetut.items()):
+        if tyyppi in ("TypeError", "RecursionError"):                  # muut (ValueError, KeyError) ovat tavallisia huonoja riveja
+            print(f"claude-jono: tarkastusloki: {maara} rivia ohitettu ({tyyppi})", file=sys.stderr)
     ulos = []
     for (repo, nro), (tulos, sha, aika) in sorted(uusin.items()):
         try:

@@ -1,3 +1,4 @@
+import io
 import os
 import json
 import subprocess
@@ -6,6 +7,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 from claudejono import ajuri
 
@@ -559,6 +561,22 @@ class HylatytPrt(unittest.TestCase):
         self.assertIn("agentti-pohja#4", teksti)
         self.assertIn("pr-4-abcdef1", teksti)
 
+    def test_ei_hajautettava_paatos_ei_kaada_ja_kirjataan(self):
+        # "tulos": [..] nosti TypeErrorin (lista ei ole hajautettava) ja kaatoi suunnittelun
+        self.kirjoita(self.rivi(1, "HYLATTY"), json.dumps({"repo": "agentti-pohja", "pr": 2, "tulos": ["HYLATTY"], "sha": "abcdef1", "aika": "2026-11-04T10:00:00+00:00"}),
+                      json.dumps({"repo": "agentti-pohja", "pr": 3, "tulos": {"a": 1}, "sha": "abcdef1", "aika": "2026-11-04T10:00:00+00:00"}))
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            self.assertEqual([h["pr"] for h in self.lue()], [1])
+        self.assertIn("2 rivia ohitettu (TypeError)", err.getvalue())
+
+    def test_syva_sisakkaisyys_ei_kaada_ja_kirjataan(self):
+        # json.loads nostaa RecursionErrorin; vain tyyppi kirjataan, ei viestia eika rivin sisaltoa
+        self.kirjoita("[" * 100000, self.rivi(1, "HYLATTY"))
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            self.assertEqual([h["pr"] for h in self.lue()], [1])
+        self.assertIn("1 rivia ohitettu (RecursionError)", err.getvalue())
+        self.assertNotIn("[[[", err.getvalue())
+
     def test_tyhja_lista_ei_lisaa_mitaan(self):
         self.assertEqual(ajuri.hylatyt_kehote([]), "")
 
@@ -575,6 +593,22 @@ class HylatytPrt(unittest.TestCase):
     def test_yla_raja(self):
         self.kirjoita(*[self.rivi(i, "HYLATTY") for i in range(ajuri.HYLATYT_MAX + 5)])
         self.assertEqual(len(self.lue()), ajuri.HYLATYT_MAX)
+
+
+class HylatytOhje(unittest.TestCase):
+    """Hylattyjen PR:ien korjaustehtavat eivat saa olla vapautettuja paivan rajasta tai painopistesaannosta."""
+    def setUp(self):
+        self.teksti = ajuri.SUUNNITTELU.read_text(encoding="utf-8")
+        a = self.teksti.index("HYLATYT PR:T")
+        self.kohta = self.teksti[a:self.teksti.index("\n", a)]
+
+    def test_ei_vapautusta_rajoista(self):
+        self.assertNotIn("aiheraja ei koske", self.kohta)
+        self.assertNotIn("painopistesaanto ei koske", self.kohta)
+        self.assertIn("ei vapautuksia", self.kohta)
+
+    def test_push_rajattu_yhteen_haaraan(self):
+        self.assertIn("vain siihen yhteen PR-haaraan", self.kohta)
 
 
 class HylatytSuunnittelussa(Pohja):
