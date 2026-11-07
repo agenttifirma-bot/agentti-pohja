@@ -392,15 +392,28 @@ class Avaa422Testi(unittest.TestCase):
         self.kierros(self.api())
         self.assertTrue(self.tila().get("avaa_422"))
         self.assertEqual(self.kierros(self.api(postin_virhe=None), 25)[0]["tulos"], "avattu")
-        self.assertFalse(self.tila().get("avaa_422"))
+        self.assertNotIn("avaa_422", self.tila())
 
     def test_muu_virhe_yritetaan_seuraavalla_kierroksella(self):
         api = self.api(postin_virhe=502)
         self.assertEqual(self.kierros(api)[0]["tulos"], "virhe")
-        self.assertFalse(self.tila().get("avaa_422"))
+        self.assertNotIn("avaa_422", self.tila())
         api.kutsut.clear()
         self.assertEqual(self.kierros(api, 1)[0]["tulos"], "virhe")
         self.assertEqual(len([k for k in api.kutsut if k[0] == "POST"]), 1)
+
+    def test_avainta_ei_luoda_ennen_ensimmaista_422a(self):
+        api = self.api(postin_virhe=None)
+        self.assertEqual(self.kierros(api)[0]["tulos"], "avattu")
+        self.assertNotIn("avaa_422", self.tila())
+        self.kierros(self.api(postin_virhe=None), 1)
+        self.assertNotIn("avaa_422", self.tila())
+
+    def test_viimeisen_merkinnan_vanhentuessa_avain_poistuu(self):
+        self.kierros(self.api())
+        self.assertIn("agentti-pohja/korjaus/uusi", self.tila()["avaa_422"])
+        self.assertEqual(self.kierros(self.api(postin_virhe=502), 25)[0]["tulos"], "virhe")   # tauko loppu, ei 422
+        self.assertNotIn("avaa_422", self.tila())
 
     def test_merkinta_sailyy_paivan_vaihtuessa(self):
         api = self.api()
