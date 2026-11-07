@@ -34,7 +34,7 @@ Filesystem Size Used Avail Use% Mounted on
 
 class Suodatus(unittest.TestCase):
     def test_osoitteet_pois(self):
-        for s in ("yhteys 192.168.1.121:8700", "10.0.0.5 virhe", "solmu abc.tail1234.ts.net", "100.87.110.22 ok",
+        for s in ("yhteys 192.168.1.121:8700", "10.0.0.5 virhe", "solmu abc.tail1234.ts.net", "100.100.100.100 ok",
                   "julkinen 8.8.8.8", "fd7a:115c:a1e0::1 x", "mac aa:bb:cc:dd:ee:ff", "tony@example.com"):
             u = tr.suodata(s)
             self.assertIn(tr.POISTETTU, u, s)
