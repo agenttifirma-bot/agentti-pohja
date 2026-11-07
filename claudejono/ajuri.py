@@ -847,6 +847,7 @@ def luo_toistuvat(repo, tyohak, nyt=None):
     return polut
 
 
+# Oletuksena pois: ajuri luo nama vain kun palvelu asettaa CLAUDEJONO_EHKAISY=1 (Tony paattaa).
 EHKAISY_AVOIMIA_MAX = 2   # enintaan nain monta ehkaisytehtavaa jonossa yhta aikaa
 EHKAISY_PER_AJO = 1       # ja enintaan yksi uusi per ajo; AUTO_MAX_PAIVA ja AUTO_PER_AJO pysyvat voimassa
 EHKAISY_NIMI = "ehkaisy-koodiin-juurisyy-"
@@ -868,16 +869,20 @@ def luo_ehkaisytehtavat(repo, tyohak, nyt=None):
     polut = []
     for luokka, ms in virheopit.toistuvat_ohjeet(virheopit.jasenna(virheopit.lue_loki(repo)), nyt.date()):
         slug = f"{EHKAISY_NIMI}{luokka}-{ms[-1].pvm.strftime('%Y%m%d')}"
-        if (slug in olemassa or avoimet + len(polut) >= EHKAISY_AVOIMIA_MAX or len(polut) >= EHKAISY_PER_AJO
+        if (slug in olemassa or avoimet + len(polut) >= EHKAISY_AVOIMIA_MAX or len(polut) >= min(EHKAISY_PER_AJO, AUTO_PER_AJO)
                 or auto_tanaan(repo, pvm) + len(polut) >= AUTO_MAX_PAIVA):
             continue
         p = teht / f"{pvm}-{seuraava_numero(repo, pvm) + len(polut):02d}-auto-{slug}.md"
         if not kelvollinen_nimi(p.name):
             continue
+        # Virhelokin rivit ovat dataa: sama kieltolista kuin opeilla myos tehtavatiedoston kautta (rivi pois, ei muokata).
+        rivit = [r for r in (virheopit.rivi_kehotteeseen(m) for m in ms[-5:]) if not OPIT_KIELTOLISTA.search(r)]
+        if not rivit:
+            continue
         sisalto = (EHKAISY_MALLI.read_text(encoding="utf-8")
                    .replace("{luokka}", luokka).replace("{luokan_nimi}", EHKAISY_LUOKAT[luokka])
                    .replace("{lukumaara}", str(len(ms))).replace("{ikkuna}", str(virheopit.TOISTO_IKKUNA_PV))
-                   .replace("{merkinnat}", "\n".join(virheopit.rivi_kehotteeseen(m) for m in ms[-5:])))
+                   .replace("{merkinnat}", "\n".join(rivit)))
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("<!-- Ajuri loi: sama juurisyy toistui virhelokissa, ehkaisy vain ohje (claudejono/virheopit.py) -->\n"
                      + sisalto.rstrip() + "\n", encoding="utf-8")
@@ -950,7 +955,8 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
         if env.get("CLAUDEJONO_ITSESUUNNITTELU", "1") == "1":
             try:
                 valvo_virhelokia(repo, tila, laheta)
-                luo_ehkaisytehtavat(repo, tyohak)
+                if env.get("CLAUDEJONO_EHKAISY") == "1":   # uusien tehtavien luonti oletuksena pois, kuten toistuvat (CLAUDEJONO_TOISTUVAT)
+                    luo_ehkaisytehtavat(repo, tyohak)
             except (OSError, ValueError, JonoVirhe) as virhe:
                 print(f"claude-jono: virheloki-ehkaisy ohitettu: {type(virhe).__name__}", file=sys.stderr)
         t = varaa_seuraava(repo, tila, kaista, vanhenee_s=vanhenee, kaistoja=kaistojen_maara(env), ohita=ohita)
