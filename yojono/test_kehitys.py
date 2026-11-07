@@ -375,6 +375,46 @@ class Ajo(Pohja):
         self.assertNotIn("\x1b", rap)
         self.assertEqual(self.kutsut(), "")
 
+    # budjetin loppuminen ei ole testivika: testeja ei ajeta eika punaista kirjata (tulos 2026-11-07-42)
+    def _budjetti_loppui(self, json_rivi):
+        # keskeneraisen tyon jaljitelma: tiedosto, jonka testi kaatuisi, jos testit ajettaisiin
+        kirjoita(self.agentti, "#!/bin/sh\nprintf 'import unittest\\nclass B(unittest.TestCase):\\n    def test_b(self):\\n        self.fail()\\n' > test/test_b.py\n"
+                 "echo '" + json_rivi + "'\n", True)
+        self.pr_kutsu()
+        r = self.aja(REPO, "1.20", "testit")
+        return r, self.raportti("testit")
+
+    def test_budjetti_loppui_subtype_ei_aja_testeja(self):
+        r, rap = self._budjetti_loppui('{"is_error": true, "subtype": "error_max_budget_usd", "total_cost_usd": 1.2}')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("- Testit: ei ajettu (budjetti loppui, tehtava kesken)", rap)
+        self.assertNotIn("punainen", rap)
+        self.assertNotIn("testit punaisella", rap)
+        self.assertEqual(self.kutsut(), "")
+
+    def test_budjetti_loppui_terminal_reason_ei_aja_testeja(self):
+        r, rap = self._budjetti_loppui('{"is_error": true, "terminal_reason": "budget_exhausted", "total_cost_usd": 1.2}')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("- Testit: ei ajettu (budjetti loppui, tehtava kesken)", rap)
+        self.assertNotIn("punainen", rap)
+        self.assertEqual(self.kutsut(), "")
+
+    def test_punainen_nayttaa_fail_rivit_eika_hantaa(self):
+        self.agentti_skripti('printf "import unittest\\nclass B(unittest.TestCase):\\n    def test_b(self):\\n        self.fail()\\n" > test/test_b.py')
+        self.pr_kutsu()
+        self.assertEqual(self.aja(REPO, "1.00", "testit").returncode, 1)
+        testit = [r for r in self.raportti("testit").splitlines() if r.startswith("- Testit:")][0]
+        self.assertIn("FAIL: test_b", testit)
+        self.assertIn("Ran ", testit)
+        self.assertNotIn("\n", testit)
+        self.assertLessEqual(len(testit) - len("- Testit: punainen ()"), 120)
+
+    def test_muu_agenttivirhe_ei_ole_budjetin_loppu(self):
+        r, rap = self._budjetti_loppui('{"is_error": true, "subtype": "error_during_execution", "total_cost_usd": 0.5}')
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("punainen", rap)
+        self.assertNotIn("budjetti loppui", rap)
+
     def test_pr_kutsun_virhe_antaa_koodin_1_ja_syyn(self):
         self.agentti_skripti('echo "uusi" >> README.md')
         self.pr_kutsu(onnistuu=False)
