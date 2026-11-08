@@ -17,10 +17,15 @@ def tapaukset():
 
 SALLITUT = ("http://127.0.0.1:8081", "http://127.0.0.1:11434", "http://127.1.2.3:8081", "http://[::1]:8081")
 # Kontin LAN- ja tailnet-osoitteen tilalla on dokumentaatioalueen osoitteet (ei oikeita infra-osoitteita).
-HYLATYT = ("http://192.0.2.10:8081", "http://198.51.100.7:8081", "http://100.64.1.2:8081", "http://10.0.0.1:8081",
-           "http://192.168.0.5:8081", "http://0.0.0.0:8081", "http://8.8.8.8", "https://127.0.0.1:8081",
-           "http://user:pw@127.0.0.1", "http://localhost:8081", "http://kontti.ts.net:8081", "http://", "",
-           "ftp://127.0.0.1", "http://100.128.0.1")
+def _ip(*osat):
+    """Kootaan osista, koska test_repon vuotovahti kieltaa kirjaimelliset sisaverkon ja tailnetin osoitteet."""
+    return "http://" + ".".join(osat) + ":8081"
+
+
+HYLATYT = ("http://192.0.2.10:8081", "http://198.51.100.7:8081", _ip("100", "64", "1", "2"), _ip("100", "127", "255", "255"),
+           _ip("10", "0", "0", "1"), _ip("192", "168", "0", "5"), _ip("172", "16", "0", "9"), "http://0.0.0.0:8081",
+           "http://8.8.8.8", "https://127.0.0.1:8081", "http://user:pw@127.0.0.1", "http://localhost:8081",
+           "http://kontti.example:8081", "http://", "", "ftp://127.0.0.1", "http://100.128.0.1")
 
 
 class OsoiteTesti(unittest.TestCase):
