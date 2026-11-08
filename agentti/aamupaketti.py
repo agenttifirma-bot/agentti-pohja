@@ -10,7 +10,7 @@ import subprocess
 import sys
 import urllib.request
 
-from . import pr_laatu, telegram
+from . import github_luku, pr_laatu, telegram
 from .pr_kutsu import REPOT, suojattu as _kriittinen_polku
 from .yksikot import suodata_kohina
 
@@ -82,7 +82,7 @@ def _suojattu(polku, repo="agentti-pohja"):
 
 
 def _oletushaku(url):
-    pyynto = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "agenttifirma-aamupaketti"})
+    pyynto = github_luku.pyynto(url, "agenttifirma-aamupaketti")
     with urllib.request.urlopen(pyynto, timeout=20) as v:
         return json.loads(v.read().decode("utf-8"))
 
@@ -130,7 +130,10 @@ def keraa(hae=None):
                 ryhmat["muut"].append(rivi)
                 continue
             suojattu = any(_suojattu(n, repo) for t in tiedostot for n in (t.get("filename"), t.get("previous_filename")) if n)
-            if suojattu:
+            katkaistu = len(tiedostot) >= MAX_TIEDOSTOJA_HAKUUN   # loppu jai hakematta: suojattu polku voi olla siina
+            if katkaistu and not suojattu:
+                rivi["syy"] = "tiedostolista katkaistu"
+            if suojattu or katkaistu:
                 rivi.update(yhteenveto(tiedostot))
                 ryhmat["tony"].append(rivi)
             elif rivi["ci"] == "vihrea":
