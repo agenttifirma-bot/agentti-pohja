@@ -41,6 +41,22 @@ class Tarkistin(unittest.TestCase):
             tulos = silmukka.tarkista_tehtava(teht(lause))
             self.assertEqual(tulos[0], "sunnuntai", luokka)
 
+    def test_tilaa_ostamisen_merkityksessa_on_raha(self):
+        for lause in ("Tilaa palvelu Hetzneriltä.", "Tilaa lisää laskentaa.", "Tilaa tuote verkkokaupasta.", "Tilaus uudesta palvelusta.",
+                      "Tilataan kuukausilisenssi."):
+            self.assertEqual(silmukka.tarkista_tehtava(teht(lause)), ("sunnuntai", "raha"), lause)
+
+    def test_tilaa_tilan_merkityksessa_ei_ole_raha(self):
+        """Tonyn päätös 8.11.2026 (A889): 'yksityistä tilaa' ym. ei saa ohjautua rahaluokkaan (tonylle.md 7.11. klo 2.57 ja 3.17)."""
+        for lause in ("Tämä antaa yksityistä tilaa ajureille.", "Jätä tilaa kasvulle.", "Levyllä on vapaata tilaa.",
+                      "Lokit vievät tilaa.", "Tarvitaan enemmän tilaa varten.", "Anna agentille lisää tilaa."):
+            tulos = silmukka.tarkista_tehtava(teht(lause))
+            self.assertNotEqual(tulos, ("sunnuntai", "raha"), lause)
+
+    def test_tilaa_kieltosanat_ennallaan(self):
+        self.assertEqual(silmukka.tarkista_tehtava(teht("Osta lisää tilaa."))[1], "raha")   # osta laukaisee edelleen
+        self.assertEqual(silmukka.tarkista_tehtava(teht("Tee LinkedIn-postaus."))[1], "julkaisu")
+
     def test_kompassin_kiellot_menevat_sunnuntaille(self):
         """Triagen (3.11.) lapaisseet esimerkit: kukin pysaytetaan omaan luokkaansa."""
         tapaukset = [

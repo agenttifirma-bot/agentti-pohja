@@ -33,11 +33,38 @@ SUUNTA_RE = re.compile(r"^[ \t]*Suunta:[ \t]*(jatkoa|uusi)\b", re.IGNORECASE | r
 _A = "[a\u00e4]"
 _O = "[o\u00f6]"
 MUUTA = r"(?:lis" + _A + r"|muuta|muokkaa|vaihda|aseta|nosta|laske|kasvata|poista|laajenna|my" + _O + r"nn" + _A + r"|anna|asenna|luo|ota k" + _A + r"ytt" + _O + _O + r"n|s" + _A + _A + r"d" + _A + r")\w*"
+_RAHA_RE = re.compile(r"\b(?:osta(?! ja pid)|ostaa|ostetaan|maksa|maksaa|maksetaan|tilataan|tilaus|tilauksen|hanki|hankitaan|sijoita|sijoitetaan)\b",
+                      re.IGNORECASE)
+_TILAA_RE = re.compile(r"\btilaa\b", re.IGNORECASE)
+_SANA_ENNEN_RE = re.compile(r"(\w+)\W+$")
+_SANA_JALKEEN_RE = re.compile(r"^\W*(\w+)")
+# "tilaa" on sekä käsky (tilata) että osanto (tila). Osanto tunnistetaan edeltävästä sanasta (yksityistä, vapaata, lisää, paljon ...)
+# tai seuraavasta sanasta (kasvulle, varten ...). Muu "tilaa" luokitellaan rahaksi, koska parempi ohjata Tonylle liikaa.
+_TILA_EDELTAJA = {"lis\u00e4\u00e4", "lisaa", "enemm\u00e4n", "enemman", "paljon", "v\u00e4h\u00e4n", "vahan", "tarpeeksi", "riitt\u00e4v\u00e4sti",
+                  "riittavasti", "tarvitsee", "tarvitaan", "tarvitsemme", "vie", "viev\u00e4t", "veisi", "vaatii", "j\u00e4tt\u00e4\u00e4", "jattaa", "varaa", "antaa", "saa"}
+_TILA_SEURAAJA_RE = re.compile(r"^(?:kasvu\w*|kehity\w*|varten|riitt\w*|puuttuu|vapautu\w*|levyll\w*|muistissa|liikkua|hengitt\w*)$",
+                               re.IGNORECASE)
+
+
+def _tilaa_on_osto(lause, m):
+    ed = _SANA_ENNEN_RE.search(lause[:m.start()])
+    ed = ed.group(1).lower() if ed else ""
+    if ed.endswith(("ta", "t\u00e4")) or ed in _TILA_EDELTAJA:
+        return False
+    jalk = _SANA_JALKEEN_RE.search(lause[m.end():])
+    return not (jalk and _TILA_SEURAAJA_RE.match(jalk.group(1)))
+
+
+class RahaRe:
+    """Raha-luokan tunnistin: tavalliset ostosanat ja \"tilaa\" vain ostamisen merkityksessä."""
+    def search(self, lause):
+        return _RAHA_RE.search(lause) or any(_tilaa_on_osto(lause, m) for m in _TILAA_RE.finditer(lause)) or None
+
+
 LUOKAT = {
     "julkaisu": re.compile(r"\bjulkaise\b|\bjulkaisen\b|\bjulkaisemme\b|\bjulkaistaan\b|npm publish|gh release|\bpostaa\b|merkitse julkaistuksi",
                            re.IGNORECASE),
-    "raha": re.compile(r"\b(?:osta(?! ja pid)|ostaa|ostetaan|maksa|maksaa|maksetaan|tilaa|tilataan|hanki|hankitaan|sijoita|sijoitetaan)\b",
-                       re.IGNORECASE),
+    "raha": RahaRe(),
     "oikeudet": re.compile(r"\bsudoers|\bvisudo|\bchmod|\bchown|\bsetfacl|\bdeploy.?key"
                            r"|" + MUUTA + r"\s+(?:\w+\s+){0,3}(?:oikeu\w*|permission\w*)", re.IGNORECASE),
     "kulukatto": re.compile(r"\bauto_max|\bauto_per|" + MUUTA + r"\s+(?:\w+\s+){0,3}(?:kulukat\w*|\w*katto\w*|\w*katot|\w*katon|budjet\w*"
