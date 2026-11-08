@@ -1,4 +1,5 @@
 """Testit aivo/openrouter_zdr.py:lle. Ei verkkoa, ei tunnuksia."""
+import ast
 import unittest
 from pathlib import Path
 
@@ -28,6 +29,37 @@ class ZdrTesti(unittest.TestCase):
                    {"provider": {"zdr": 1}}, {"provider": "zdr"}):
             with self.subTest(kw=kw), self.assertRaises(oz.ZdrVirhe):
                 oz.rakenna_runko("m/x", MSG, **kw)
+
+    def test_provider_avaimen_kirjainkoko_ei_ohita(self):
+        """Iso tai sekakirjaiminen avain ei saa ohittaa pakotusta."""
+        for prov in ({"ZDR": False}, {"Zdr": False}, {"zDr": None}, {" zdr ": False},
+                     {"ZDR": True}, {"zdr": True, "ZDR": False}, {"ZDR": False, "zdr": True}):
+            with self.subTest(prov=prov), self.assertRaises(oz.ZdrVirhe):
+                oz.rakenna_runko("m/x", MSG, provider=prov)
+
+    def test_lisaparametrin_kirjainkoko(self):
+        for k in ("ZDR", "Zdr", "zDR", " zdr"):
+            with self.subTest(k=k), self.assertRaises(oz.ZdrVirhe):
+                oz.rakenna_runko("m/x", MSG, **{k: False})
+
+    def test_rungossa_vain_yksi_zdr_avain(self):
+        r = oz.rakenna_runko("m/x", MSG, provider={"order": ["a"], "Order2": 1})
+        self.assertEqual([k for k in r["provider"] if k.lower() == "zdr"], ["zdr"])
+
+    def test_virheellinen_viesti_nostaa_zdrvirheen(self):
+        for viestit in ("hei", b"hei", None, 5, ["hei"], [1], {"role": "user"},
+                        [{"role": "user"}, "x"]):
+            with self.subTest(viestit=viestit), self.assertRaises(oz.ZdrVirhe):
+                oz.rakenna_runko("m/x", viestit)
+
+    def test_virheellinen_viesti_ei_vuoda_sisaltoa(self):
+        with self.assertRaises(oz.ZdrVirhe) as e:
+            oz.rakenna_runko("m/x", ["salainen"])
+        self.assertNotIn("salainen", str(e.exception))
+
+    def test_generaattori_viesteina_toimii(self):
+        r = oz.rakenna_runko("m/x", (m for m in MSG))
+        self.assertEqual(r["messages"], MSG)
 
     def test_varatut_avaimet_kaatuvat(self):
         for k in ("model", "messages"):
@@ -66,9 +98,23 @@ class ZdrTesti(unittest.TestCase):
         self.assertEqual(osumat, [])
 
     def test_moduuli_ei_tee_verkkokutsua_eika_lue_avaimia(self):
-        koodi = (AIVO / "openrouter_zdr.py").read_text(encoding="utf-8")
-        for kielletty in ("urllib", "requests", "socket", "http.client", "os.environ", "getenv", "open("):
-            self.assertNotIn(kielletty, koodi)
+        """AST-vartija: tarkistaa tuonnit ja kutsut, ei merkkijonoja (docstring ei kaada)."""
+        puu = ast.parse((AIVO / "openrouter_zdr.py").read_text(encoding="utf-8"))
+        kielletyt_moduulit = {"urllib", "requests", "httpx", "aiohttp", "socket", "http",
+                              "subprocess", "os", "ssl", "ftplib", "smtplib", "importlib"}
+        kielletyt_nimet = {"open", "getenv", "environ", "eval", "exec", "__import__"}
+        loydot = []
+        for n in ast.walk(puu):
+            if isinstance(n, ast.Import):
+                loydot += [a.name for a in n.names if a.name.split(".")[0] in kielletyt_moduulit]
+            elif isinstance(n, ast.ImportFrom):
+                if (n.module or "").split(".")[0] in kielletyt_moduulit:
+                    loydot.append(n.module)
+            elif isinstance(n, ast.Name) and n.id in kielletyt_nimet:
+                loydot.append(n.id)
+            elif isinstance(n, ast.Attribute) and n.attr in kielletyt_nimet:
+                loydot.append(n.attr)
+        self.assertEqual(loydot, [])
 
 
 if __name__ == "__main__":

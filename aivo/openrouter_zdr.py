@@ -19,8 +19,26 @@ class ZdrVirhe(ValueError):
     """Pyynto hylatty, koska ZDR-saantoa yritettiin rikkoa."""
 
 
+def _on_zdr_avain(avain: Any) -> bool:
+    """Tosi, jos avain on 'zdr' kirjainkoosta ja ymparoivista valeista riippumatta."""
+    return str(avain).strip().lower() == "zdr"
+
+
 # Avaimet, jotka funktio omistaa: kutsuja ei voi antaa niita lisaparametreina.
 _VARATUT = frozenset({"model", "messages", "provider"})
+
+
+def _viestit(viestit: Any) -> list[dict[str, Any]]:
+    """Kopioi viestilistan; vaara muoto -> ZdrVirhe (viestin sisaltoa ei nayteta)."""
+    if isinstance(viestit, (str, bytes, Mapping)):
+        raise ZdrVirhe("viestit pitaa olla lista kuvauksia")
+    try:
+        tulos = list(viestit)
+    except TypeError:
+        raise ZdrVirhe("viestit pitaa olla lista kuvauksia") from None
+    if not all(isinstance(v, Mapping) for v in tulos):
+        raise ZdrVirhe("viestit pitaa olla lista kuvauksia")
+    return [dict(v) for v in tulos]
 
 
 def rakenna_runko(
@@ -36,7 +54,7 @@ def rakenna_runko(
         raise ZdrVirhe("yksityinen chat ei koskaan lahde OpenRouteriin (A728)")
     if not isinstance(malli, str) or not malli:
         raise ZdrVirhe("malli puuttuu")
-    if "zdr" in lisa or any(str(k).lower() == "zdr" for k in lisa):
+    if any(_on_zdr_avain(k) for k in lisa):
         raise ZdrVirhe("zdr ei ole kutsujan asetettavissa")
     varatut = _VARATUT.intersection(lisa)
     if varatut:
@@ -46,11 +64,14 @@ def rakenna_runko(
         if not isinstance(provider, Mapping):
             raise ZdrVirhe("provider ei ole kuvaus")
         prov = dict(provider)
-        if "zdr" in prov and prov["zdr"] is not True:
-            raise ZdrVirhe("provider.zdr pitaa olla True")
+        # Kaikki zdr-kirjoitusasut ('ZDR', 'Zdr', ' zdr ') kasitellaan samoin:
+        # vain tarkka 'zdr': True sallitaan, muuten pyynto hylataan.
+        for k, v in prov.items():
+            if _on_zdr_avain(k) and not (k == "zdr" and v is True):
+                raise ZdrVirhe("provider.zdr pitaa olla True")
     prov["zdr"] = True
     runko: dict[str, Any] = dict(lisa)
     runko["model"] = malli
-    runko["messages"] = [dict(v) for v in viestit]
+    runko["messages"] = _viestit(viestit)
     runko["provider"] = prov
     return runko
