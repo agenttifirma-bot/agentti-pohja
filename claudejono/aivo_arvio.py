@@ -117,7 +117,8 @@ def viikkoosio(tila, n=OTOS_OLETUS, rng=None):
         rivit += ["", "Tarkistettavia arvioita ei ole (arvioija ei ole viel\u00e4 kytketty tai kaikki on tarkistettu)."]
     else:
         rivit += ["", f"Tarkista {len(o)} satunnaista arviota (`python3 -m claudejono.aivo_arvio tarkista <tehtava> kylla|ei`):", ""]
-        rivit += [f"- {k}: Aivo sanoi {'kyll\u00e4' if v['kylla'] else 'ei'} - {v['syy']}" for k, v in o]
+        kylla_sana = "kyll\u00e4"
+        rivit += [f"- {k}: Aivo sanoi {kylla_sana if v['kylla'] else 'ei'} - {v['syy']}" for k, v in o]
     return "\n".join(rivit) + "\n"
 
 
