@@ -228,10 +228,10 @@ class Itsesuunnittelu(Pohja):
         (self.repo / ajuri.JONO / "tulokset" / "2026-10-30-01-a.md").write_text("ok")
         git(self.repo, "add", "-A"); git(self.repo, "commit", "-q", "-m", "t"); git(self.repo, "push", "-q", "origin", "main")
         vastaus = json.dumps({"tehtavat": [
-            {"nimi": "korjaa-x", "sisalto": "# X\n\nValmis kun: x"},
+            {"nimi": "korjaa-x", "sisalto": "# X\n\nTavoite: yllapito\nValmis kun: x"},
             {"nimi": "HUONO NIMI", "sisalto": "y"},
-            {"nimi": "toinen", "sisalto": "# Y"},
-            {"nimi": "kolmas", "sisalto": "# Z"}], "tonylle": "Nosta katto?"})
+            {"nimi": "toinen", "sisalto": "# Y\nTavoite: yllapito"},
+            {"nimi": "kolmas", "sisalto": "# Z\nTavoite: yllapito"}], "tonylle": "Nosta katto?"})
         v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli("Tassa:\n" + vastaus), nyt=self.nyt())
         self.assertIn("itsesuunnittelu", v)
         tied = self.origin_tiedostot()
@@ -307,7 +307,7 @@ class Itsesuunnittelu(Pohja):
 
     def test_tehtavia_tuottanut_kierros_ei_aloita_taukoa(self):
         kutsut = []
-        f = self.malli(json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A"}], "tonylle": ""}), kutsut)
+        f = self.malli(json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A\nTavoite: yllapito"}], "tonylle": ""}), kutsut)
         ajuri.suunnittele(self.repo, self.tmp, {}, f, nyt=self.nyt())
         ajuri.suunnittele(self.repo, self.tmp, {}, f, nyt=self.nyt())
         self.assertEqual(len(kutsut), 2)
@@ -374,7 +374,7 @@ class TonylleKirjoitus(Pohja):
         self.assertFalse((self.repo / ajuri.JONO / ajuri.TONYLLE).exists())
 
     def test_tonylle_ja_tehtava_samassa_commitissa(self):
-        vastaus = json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A"}], "tonylle": "kysymys"})
+        vastaus = json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A\nTavoite: yllapito"}], "tonylle": "kysymys"})
         v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli(vastaus), nyt=self.nyt())
         self.assertEqual(v, "claude-jono: itsesuunnittelu -> 2026-10-30-01-auto-a.md, tonylle.md")
         self.assertEqual(self.origin_tiedostot(), ["claude-jono/tehtavat/2026-10-30-01-auto-a.md", "claude-jono/tonylle.md"])
@@ -501,7 +501,7 @@ class JulkaisuPushVirhe(Pohja):
     def test_suunnittele_pushin_epaonnistuessa_ei_kaadu(self):
         # Nykytoiminta: julkaise()n paluuarvoa ei lueta, joten viesti ei kerro epaonnistumisesta (ks. PR:n kuvaus).
         self.hylkaa_pushit()
-        vastaus = json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A"}], "tonylle": ""})
+        vastaus = json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A\nTavoite: yllapito"}], "tonylle": ""})
 
         def f(kom, **kw):
             return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": vastaus}), "")

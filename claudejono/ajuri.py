@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path
 
 from claudejono import silmukka
-from . import kulutus, litellm_ajo, varaus
+from . import aivo_arvio, kulutus, litellm_ajo, tavoite, varaus
 from . import malli as mallit
 
 TEHTAVA_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-[a-z0-9-]{1,60}\.md$")
@@ -256,7 +256,8 @@ def avoimet_tehtavat(repo, tila, nyt=None, vanhenee_s=OLETUS_AIKARAJA_S + VARAUS
         return 0
     varatut = set(aktiiviset_varaukset(tila, nyt, vanhenee_s))
     return sum(1 for p in teht.iterdir()
-               if p.is_file() and kelvollinen_nimi(p.name) and not (tul / p.name).exists() and p.name not in varatut)
+               if p.is_file() and kelvollinen_nimi(p.name) and not (tul / p.name).exists() and p.name not in varatut
+               and tavoite.luokittele(p)[0] is not None)   # ilman Tavoite-riviae hylatty tehtava ei tayta jonoa
 
 
 def suunnittelu_tarpeen(repo, tila, env, nyt=None, vanhenee_s=OLETUS_AIKARAJA_S + VARAUS_MARGINAALI_S):
@@ -307,11 +308,11 @@ def varaa_seuraava(repo, tila, kaista, nyt=None, vanhenee_s=OLETUS_AIKARAJA_S + 
     kosketa eika toisen kaistan varaamiin. Varaa valitun. None jos ei ole.
     ohita(polku) -> True ohittaa tehtavan (esim. Claude-reitti, kun Tonyn varaus tai kayttoraja estaa sen)."""
     odottavat = [(p, tehtavan_kaista(p, kaistoja)) for p in odottavat_tehtavat(repo)]
-    for omat in (True, False):
-        for p, k in odottavat:
-            if ((k == kaista) if omat else (k is None)) and not (ohita and ohita(p)):
-                if varaa(tila, p.name, kaista, nyt, vanhenee_s):
-                    return p
+    # Tavoitesidonta (A840): ilman Tavoite-rivia ei aloiteta (kirjaus), ja kaistan tavoiteosuus ratkaisee jarjestyksen (tavoite.py).
+    jarjestys = tavoite.valitse(odottavat, kaista, kaistoja, ohitettu=lambda p, peruste: tavoite.kirjaa_hylkays(tila, p.name, peruste))
+    for p in jarjestys:
+        if not (ohita and ohita(p)) and varaa(tila, p.name, kaista, nyt, vanhenee_s):
+            return p
     return None
 
 
@@ -847,6 +848,8 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None, kaista=1):
         hyvaksytyt, sunnuntai, _hylatyt_portti = silmukka.suodata(suunn["tehtavat"])
         if sunnuntai:
             suunn["tonylle"] = (suunn["tonylle"].strip() + "\n" + silmukka.sunnuntairivit(sunnuntai)).strip()
+        # Tavoitesidonta (A840): itse keksitty tehtava ilman sallittua Tavoite-rivia ei paase jonoon.
+        hyvaksytyt = [t for t in hyvaksytyt if tavoite.tavoite_tekstista(t.get("sisalto", ""))]
         uudet, _hylatyt = suodata_uudet(repo, hyvaksytyt, PORTTI)
         for t in uudet[:tilaa]:
             p = Path(repo) / JONO / "tehtavat" / f"{pvm}-{nro:02d}-auto-{t['nimi']}.md"
@@ -912,8 +915,9 @@ def _ilmoita_varaus(tila, env, laheta, nyt):
         pass
 
 
-def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, litellm=None):
-    """litellm = testattava korvike litellm_ajo.aja:lle (alias, teksti, env) -> (ok, teksti, luvut)."""
+def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, litellm=None, aivo_arvioija=None):
+    """litellm = testattava korvike litellm_ajo.aja:lle (alias, teksti, env) -> (ok, teksti, luvut).
+    aivo_arvioija = Aivon tyokalutila varjotilassa (teksti -> (kylla, syy)); None = ei arviota. Arvio ei koskaan esta ajoa (A841)."""
     env = dict(os.environ if env is None else env)
     kaista = tarkista_kaista(kaista, env) if kaista != 1 else 1
     tila = Path(repo).parent
@@ -953,6 +957,8 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
             suunnittelu = varaa(tila, SUUNNITTELU_VARAUS, kaista, vanhenee_s=vanhenee)
             if not suunnittelu:
                 return "jono tyhja (toinen kaista suunnittelee)"
+    if t is not None:
+        aivo_arvio.arvioi_varjossa(tila, t, aivo_arvioija)   # varjotila: kirjaus isannan tilahakemistoon, ei GitHubiin
     alku = time.monotonic()
     if suunnittelu:
         try:
