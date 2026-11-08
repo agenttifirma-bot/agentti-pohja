@@ -167,6 +167,15 @@ class Opit(Pohja):
         self.assertEqual(k.count("</opit>"), 1)
         self.assertNotIn("\n<opit>\n", ajuri.rakenna_kehote(t, opit=""))
 
+    def test_kehotteessa_todennusrivin_saanto(self):
+        t = self.lisaa_tehtava("2026-10-30-01-a.md")
+        k = ajuri.rakenna_kehote(t)
+        self.assertIn("TODENNUSRIVI", k)
+        self.assertIn("Todennettu k\u00e4yt\u00f6ss\u00e4: miten", k)
+        self.assertIn("KESKEN", k)
+        # ohje ei saa neuvoa kielteista riviae, joka lapaisisi ajurin saannon
+        self.assertNotIn("Todennettu k\u00e4yt\u00f6ss\u00e4: ei", k)
+
     def test_ajo_ei_committaa_opit_ilman_lupaa_ja_tulos_pysyy_puhtaana(self):
         self.lisaa_tehtava("2026-10-30-01-a.md")
 
