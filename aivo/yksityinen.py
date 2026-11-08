@@ -19,6 +19,7 @@ import secrets
 import stat
 import subprocess
 import sys
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -29,6 +30,8 @@ OLETUS_MUISTI = "/var/lib/aivo-yksityinen/muisti"
 OLETUS_YDINOHJEET = "/var/lib/aivo-yksityinen/ydinohjeet"
 OLETUS_EHDOTUKSET = "/var/lib/aivo-yksityinen/ehdotukset"
 OLETUS_MALLI_URL = "http://127.0.0.1:8081"
+SALLITUT_ISANNAT_YMPARISTO = "AIVO_SALLITUT_ETAISANNAT"   # pilkuin erotettu lista, esim. Gitea-palvelimen osoite
+GIT_AIKARAJA_S = 120
 MUISTI_YLARAJA = 16_000          # merkkia: i5-8400:lla kehotteen kasittely on hidasta (ks. docs/aivo-yksityinen.md)
 YDINOHJE_YLARAJA = 20_000
 VASTAUS_AIKARAJA_S = 900
@@ -98,26 +101,39 @@ def sallittu_malli_osoite(url):
 
 
 def lue_ydinohjeet(polku):
-    """Lukee ydinohjeiden .md-tiedostot (ei .git, ei linkkeja ulos). Palauttaa tekstin tai tyhjan."""
+    """Lukee ydinohjeiden .md-tiedostot (ei .git, ei linkkeja ulos). Palauttaa tekstin tai tyhjan.
+    Kieltaytyy, jos kansio ei kuulu palvelun kayttajalle tai on muiden luettavissa (git clone luo tyypillisesti 0755).
+    Jos kaikki tiedostot eivat mahdu ylarajaan, kehotteeseen tulee nakyva varoitus puuttuvista tiedostoista."""
     juuri = Path(polku)
     if not juuri.is_dir():
         return ""
+    tarkista_yksityinen_hakemisto(juuri, luo=False)
     juuri = juuri.resolve()
-    osat, yht = [], 0
+    osat, yht, pois = [], 0, []
     for p in sorted(juuri.rglob("*.md")):
+        nimi = str(p.relative_to(juuri))
         if ".git" in p.relative_to(juuri).parts:
             continue
         try:
             r = p.resolve()
             if not r.is_file() or juuri not in r.parents:
                 continue
-            teksti = r.read_bytes()[:YDINOHJE_YLARAJA].decode("utf-8", "replace").replace("\x00", "")
+            raaka = r.read_bytes()[:YDINOHJE_YLARAJA + 1]
         except OSError:
             continue
+        katkaistu = len(raaka) > YDINOHJE_YLARAJA
+        teksti = raaka[:YDINOHJE_YLARAJA].decode("utf-8", "replace").replace("\x00", "")
+        if katkaistu:
+            teksti += "\n[HUOM: tiedosto katkaistu %d merkkiin]" % YDINOHJE_YLARAJA
         if yht + len(teksti) > YDINOHJE_YLARAJA:
-            break
+            pois.append(nimi)
+            continue
         yht += len(teksti)
-        osat.append("### YDINOHJE: %s\n%s\n" % (p.relative_to(juuri), teksti))
+        osat.append("### YDINOHJE: %s\n%s\n" % (nimi, teksti))
+    if pois:
+        osat.append("### HUOM: ydinohjeita ei mahtunut kehotteeseen (yl\u00e4raja %d merkki\u00e4). Pois j\u00e4i: %s. "
+                    "\u00c4l\u00e4 oleta, ett\u00e4 n\u00e4m\u00e4 s\u00e4\u00e4nn\u00f6t olisivat voimassa; kerro Tonylle.\n"
+                    % (YDINOHJE_YLARAJA, ", ".join(pois)))
     return "".join(osat)
 
 
@@ -186,9 +202,12 @@ def lue_ehdotus(hakemisto, eid):
         raise YksityinenVirhe("virheellinen ehdotuksen tunnus")
     try:
         d = json.loads((Path(hakemisto) / (eid + ".json")).read_text(encoding="utf-8"))
+        if not isinstance(d, dict) or not isinstance(d["tiedosto"], str) or not isinstance(d["teksti"], str) \
+                or not isinstance(d["sha"], str):
+            raise ValueError
         if not YDINOHJE_NIMI_RE.match(d["tiedosto"]) or sha(d["teksti"]) != d["sha"]:
             raise ValueError
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         raise YksityinenVirhe("ehdotusta ei voi lukea")
     return d
 
@@ -198,38 +217,135 @@ def listaa_ehdotukset(hakemisto):
     return sorted(p.stem for p in h.glob("*.json") if EHDOTUS_ID_RE.match(p.stem)) if h.is_dir() else []
 
 
-def hyvaksy_ehdotus(ehdotukset, ydinohjeet, eid, vahvistus, suorita=subprocess.run):
+def hyvaksy_ehdotus(ehdotukset, ydinohjeet, eid, vahvistus, suorita=subprocess.run, sallitut=None):
     """Vie ehdotuksen ydinohjeisiin vain, jos vahvistus on tasmalleen "kylla <sha:n 8 ensimmaista>" tai "kyll\u00e4 ...".
-    Sitoo hyvaksynnan juuri nahtyyn sisaltoon: jos teksti muuttuu, sha ei tasmaa."""
+    Sitoo hyvaksynnan juuri nahtyyn sisaltoon: jos teksti muuttuu, sha ei tasmaa.
+    Jarjestys: (1) etakohde tarkistetaan ennen mitaan muutosta, (2) tiedosto kirjoitetaan ja commitoidaan,
+    (3) jos commit epaonnistuu, tiedosto palautetaan ja ehdotus jaa voimaan, (4) vasta onnistuneen commitin jalkeen
+    ehdotus poistetaan, (5) push tehdaan viimeisena eika sen epaonnistuminen peru muutosta."""
     d = lue_ehdotus(ehdotukset, eid)
     odotettu = ("kyll\u00e4 " + d["sha"][:8], "kylla " + d["sha"][:8])
     if (vahvistus or "").strip().lower() not in odotettu:
         raise YksityinenVirhe("vahvistus ei tasmaa; muutosta ei tehty")
+    kohde_tiedot = tarkista_julkaisukohde(ydinohjeet, suorita, sallitut)       # (1)
     kohde = Path(ydinohjeet) / d["tiedosto"]
     kohde.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    vanha = kohde.read_bytes() if kohde.is_file() else None
     tmp = kohde.with_name(kohde.name + ".tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(d["teksti"])
-    os.replace(tmp, kohde)
-    (Path(ehdotukset) / (eid + ".json")).unlink()          # kasitelty ehdotus poistuu (vain tama ehdotus)
-    return julkaise_kirjastoon(ydinohjeet, kohde, suorita, viesti="Ydinohjeet: Tony hyvaksyi muutoksen %s" % eid)
+    os.replace(tmp, kohde)                                                       # (2)
+    try:
+        tulos = julkaise_kirjastoon(ydinohjeet, kohde, suorita,
+                                    viesti="Ydinohjeet: Tony hyvaksyi muutoksen %s" % eid, kohde_tiedot=kohde_tiedot)
+    except BaseException:
+        if vanha is None:                                                        # (3)
+            kohde.unlink(missing_ok=True)
+        else:
+            kohde.write_bytes(vanha)
+        raise
+    (Path(ehdotukset) / (eid + ".json")).unlink(missing_ok=True)                 # (4) vain tama ehdotus
+    return tulos
 
 
-def julkaise_kirjastoon(kirjasto, polku, suorita=subprocess.run, viesti="Aivo: paatos keskustelusta"):
-    """Jos kirjasto on git-repo: commit ja push. Kieltaytyy, jos etarepo on GitHubissa."""
+def sallitut_isannat(sallitut=None):
+    """Sallitut etapalvelimet (tarkka isantanimi tai IP, pienilla kirjaimilla). Tyhja lista = ei yhtaan sallittua."""
+    if sallitut is None:
+        sallitut = os.environ.get(SALLITUT_ISANNAT_YMPARISTO, "")
+    if isinstance(sallitut, str):
+        sallitut = sallitut.split(",")
+    return {x.strip().lower() for x in sallitut if x.strip()}
+
+
+_SCP_RE = re.compile(r"^(?:[^@/\s]+@)?([^:/\s]+):(?!//)")
+
+
+def etaosoitteen_isanta(osoite):
+    """Palauttaa etaosoitteen isantanimen (https/ssh/git-URL tai scp-muoto) pienilla kirjaimilla, tai None."""
+    osoite = (osoite or "").strip()
+    if "://" in osoite:
+        try:
+            h = urllib.parse.urlparse(osoite).hostname
+        except ValueError:
+            return None
+        return h.lower() if h else None
+    m = _SCP_RE.match(osoite)
+    return m.group(1).lower() if m else None
+
+
+def tarkista_julkaisukohde(kirjasto, suorita=subprocess.run, sallitut=None):
+    """Palauttaa None (ei gitia / ei etaa) tai (haara, osoitteet). Nostaa YksityinenVirhe, jos jokin push-osoite
+    ei ole sallittujen listalla tai jos git ei vastaa. Nimi 'github' ei ole ainoa este: vain lista paastaa lapi."""
     def git(*a):
-        return suorita(["git", "-C", str(kirjasto), *a], capture_output=True, text=True, check=False, timeout=120)
+        try:
+            return suorita(["git", "-C", str(kirjasto), *a], capture_output=True, text=True, check=False,
+                           timeout=GIT_AIKARAJA_S)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise YksityinenVirhe("git ei vastannut (%s)" % type(e).__name__)
+    if git("rev-parse", "--is-inside-work-tree").returncode != 0:
+        return None
+    osoite = git("remote", "get-url", "--push", "--all", "origin")
+    if osoite.returncode != 0:
+        return None
+    osoitteet = [x.strip() for x in osoite.stdout.splitlines() if x.strip()]
+    sallitut = sallitut_isannat(sallitut)
+    for o in osoitteet:
+        h = etaosoitteen_isanta(o)
+        if h is None or h not in sallitut:
+            raise YksityinenVirhe("push-osoite ei ole sallittujen etapalvelimien listalla (%s); ei pushata"
+                                  % SALLITUT_ISANNAT_YMPARISTO)
+    haara = git("symbolic-ref", "--short", "-q", "HEAD")
+    nimi = haara.stdout.strip() if haara.returncode == 0 else ""
+    if not nimi:
+        raise YksityinenVirhe("kirjasto ei ole haarassa (detached HEAD); ei pushata")
+    return nimi, osoitteet
+
+
+def julkaise_kirjastoon(kirjasto, polku, suorita=subprocess.run, viesti="Aivo: paatos keskustelusta", sallitut=None,
+                        kohde_tiedot=False):
+    """Jos kirjasto on git-repo: commit ja push. Kieltaytyy, ellei jokainen push-osoite ole sallittujen listalla.
+    Push nimeaa kohteen ('origin' ja haara) eika kayta pushDefault- tai pushRemote-asetuksia.
+    Commit-virhe nostaa virheen (ei palauta 'ei-muutosta'); vain aidosti muuttumaton tiedosto palauttaa 'ei-muutosta'."""
+    def git(*a):
+        try:
+            return suorita(["git", "-C", str(kirjasto), *a], capture_output=True, text=True, check=False,
+                           timeout=GIT_AIKARAJA_S)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise YksityinenVirhe("git ei vastannut (%s)" % type(e).__name__)
+    if kohde_tiedot is False:
+        kohde_tiedot = tarkista_julkaisukohde(kirjasto, suorita, sallitut)
     if git("rev-parse", "--is-inside-work-tree").returncode != 0:
         return "ei-gitissa"
-    osoite = git("remote", "get-url", "origin")
-    if osoite.returncode != 0:
-        return "ei-etaa"
-    if "github" in osoite.stdout.lower():
-        raise YksityinenVirhe("kirjaston etarepo osoittaa GitHubiin; ei pushata")
-    if git("add", "--", str(polku)).returncode != 0 or git("commit", "-m", viesti, "--", str(polku)).returncode != 0:
+    if git("add", "--", str(polku)).returncode != 0:
+        raise YksityinenVirhe("git add epaonnistui; muutosta ei commitoitu")
+    muutos = git("status", "--porcelain", "--", str(polku))
+    if muutos.returncode == 0 and not muutos.stdout.strip():
         return "ei-muutosta"
-    return "pushattu" if git("push").returncode == 0 else "push-epaonnistui"
+    c = git("commit", "-m", viesti, "--", str(polku))
+    if c.returncode != 0:
+        try:
+            git("reset", "-q", "--", str(polku))                      # pura vaiheistus, ettei se tartu seuraavaan committiin
+        except YksityinenVirhe:
+            pass
+        raise YksityinenVirhe("git commit epaonnistui (koodi %s; puuttuuko git-identiteetti?); muutosta ei commitoitu"
+                              % c.returncode)
+    if kohde_tiedot is None:
+        return "ei-etaa"
+    haara = kohde_tiedot[0]
+    return "pushattu" if git("push", "origin", "HEAD:refs/heads/" + haara).returncode == 0 else "push-epaonnistui"
+
+
+def puhdista_naytolle(teksti):
+    """Korvaa ohjaus- ja muotoilumerkit (ESC, CR, kaksisuuntaisuusmerkit jne.) nakyvilla \\xNN/\\uNNNN-merkinnoilla,
+    jotta terminaalissa nayttava teksti ei voi piilottaa sisaltoa. Rivinvaihto ja sarkain sailyvat."""
+    ulos = []
+    for c in teksti:
+        if c not in "\n\t" and unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp", "Cs", "Co"):
+            ulos.append("\\x%02x" % ord(c) if ord(c) < 256 else "\\u%04x" % ord(c))
+        else:
+            ulos.append(c)
+    return "".join(ulos)
 
 
 def main(argv=None):
@@ -238,17 +354,25 @@ def main(argv=None):
     ap.add_argument("tunnus", nargs="?")
     ap.add_argument("--ehdotukset", default=os.environ.get("AIVO_EHDOTUKSET", OLETUS_EHDOTUKSET))
     ap.add_argument("--ydinohjeet", default=os.environ.get("AIVO_YDINOHJEET", OLETUS_YDINOHJEET))
+    ap.add_argument("--sallitut-etaisannat", default=None, help="pilkuin erotettu lista sallittuja push-palvelimia")
     a = ap.parse_args(argv)
     try:
         if a.komento == "ehdotukset":
             for e in listaa_ehdotukset(a.ehdotukset):
-                d = lue_ehdotus(a.ehdotukset, e)
-                print(e, d["tiedosto"], d["sha"][:8])
+                try:
+                    d = lue_ehdotus(a.ehdotukset, e)
+                    print(e, d["tiedosto"], d["sha"][:8])
+                except YksityinenVirhe:
+                    print(e, "(viallinen ehdotus, ohitettu)")
             return 0
         d = lue_ehdotus(a.ehdotukset, a.tunnus)
         kohde = Path(a.ydinohjeet) / d["tiedosto"]
-        vanha = kohde.read_text(encoding="utf-8").splitlines() if kohde.is_file() else []
-        eroa = difflib.unified_diff(vanha, d["teksti"].splitlines(), "voimassa", "ehdotus", lineterm="")
+        try:
+            vanha = kohde.read_text(encoding="utf-8").split("\n") if kohde.is_file() else []
+        except (OSError, ValueError):
+            raise YksityinenVirhe("voimassa olevaa ohjetta ei voi lukea")
+        eroa = [puhdista_naytolle(x) for x in
+                difflib.unified_diff(vanha, d["teksti"].split("\n"), "voimassa", "ehdotus", lineterm="")]
         if a.komento == "nayta":
             print("\n".join(eroa))
             return 0
@@ -256,7 +380,8 @@ def main(argv=None):
             raise YksityinenVirhe("hyvaksynta vaatii paatteen (Tony kirjoittaa vahvistuksen itse)")
         print("\n".join(eroa))
         v = input("Kirjoita tarkalleen 'kyll\u00e4 %s' hyv\u00e4ksy\u00e4ksesi: " % d["sha"][:8])
-        print("tulos:", hyvaksy_ehdotus(a.ehdotukset, a.ydinohjeet, a.tunnus, v))
+        print("tulos:", hyvaksy_ehdotus(a.ehdotukset, a.ydinohjeet, a.tunnus, v,
+                                                sallitut=a.sallitut_etaisannat))
         return 0
     except YksityinenVirhe as e:
         print("virhe: %s" % e, file=sys.stderr)

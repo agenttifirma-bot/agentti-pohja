@@ -91,7 +91,8 @@ Ota ensin snapshot, jos asennat konttiin. Käyttäjänimet ovat ehdotus.
 Gitea on jo suljettu (rekisteröinti pois, kirjautuminen vaaditaan, käyttäjät vain `tony` ja `aivo`). Tonyn tehtävät:
 
 1. Luo Giteaan **yksityinen** repo `aivo/ydinohjeet`. Älä lisää yhteistyökumppaneita äläkä organisaatiota. Vain `tony` ja `aivo` ovat käyttäjinä.
-2. Kloonaa se: `sudo -u aivo-yksityinen git clone https://GITEA/aivo/ydinohjeet.git /var/lib/aivo-yksityinen/ydinohjeet`. Tarkista, ettei `origin` osoita GitHubiin.
+2. Kloonaa se rajatulla umaskilla: `sudo -u aivo-yksityinen sh -c 'umask 077 && git clone https://GITEA/aivo/ydinohjeet.git /var/lib/aivo-yksityinen/ydinohjeet'`. Tarkista oikeudet: `stat -c '%a %U' /var/lib/aivo-yksityinen/ydinohjeet` → `700 aivo-yksityinen`. Palvelu kieltäytyy lukemasta ydinohjeita, jos kansio ei kuulu sen käyttäjälle tai on muiden luettavissa. Tarkista, ettei `origin` osoita GitHubiin.
+   Aseta sallitut push-palvelimet ympäristömuuttujaan `AIVO_SALLITUT_ETAISANNAT` (esim. `gitea.lan`; tarkka isäntänimi tai IP, pilkulla eroteltuna) tai `hyvaksy`-komennon valitsimella `--sallitut-etaisannat`. Tyhjällä listalla hyväksyntä kieltäytyy, jos kirjastolla on `origin`.
 3. Kirjoita tai kopioi ydinohjeet itse tiedostoiksi (`*.md`) repoon. Claude ei lue, kopioi eikä kirjoita niiden sisältöä (pilvi-Claude ei pääse Giteaan). Ehdotus siirrettävistä kompassin osioista on tiedostossa `claude-jono/suunnitelmat/aivo-ydinohjeet-ehdotus.md` docs-repossa. **Mitään ei ole siirretty.**
 4. **Huomio historiasta:** jos poistat osion docs-repon kompassista, se säilyy docs-repon git-historiassa. Jos osion pitää olla pilvi-Claudelle näkymätön myös historiassa, historia pitää kirjoittaa uusiksi (iso, peruuttamaton toimenpide; ota ensin varmuuskopio).
 
@@ -100,7 +101,8 @@ Gitea on jo suljettu (rekisteröinti pois, kirjautuminen vaaditaan, käyttäjät
 1. Aivo ehdottaa yksityisessä tilassa `[[EHDOTUS saannot.md]] … [[/EHDOTUS]]`. Ehdotus tallentuu kansioon `ehdotukset` (tunnus, tiedosto, sha-tiiviste).
 2. Tony katsoo ehdotukset: `sudo -u aivo-yksityinen python3 -m aivo.yksityinen ehdotukset`, ja eron: `… nayta TUNNUS`.
 3. Tony hyväksyy ajamalla `… hyvaksy TUNNUS` päätteessä ja kirjoittamalla tarkalleen `kyllä XXXXXXXX` (sha:n 8 ensimmäistä merkkiä). Vahvistus on sidottu juuri nähtyyn sisältöön: jos ehdotuksen teksti muuttuu, tiiviste ei täsmää. Ilman päätettä komento ei hyväksy mitään.
-4. Hyväksytty muutos kirjoitetaan ydinohjeisiin ja commitoidaan; pushaus tehdään vain, jos `origin` ei ole GitHub.
+4. Ennen mitään muutosta tarkistetaan kaikki `origin`in push-osoitteet (`git remote get-url --push --all`): jokaisen isännän on oltava sallittujen listalla. Sen jälkeen tiedosto kirjoitetaan ja commitoidaan. Jos commit epäonnistuu (esim. git-identiteetti puuttuu), tiedosto palautetaan, ehdotus säilyy ja komento ilmoittaa virheen. Ehdotus poistetaan vasta onnistuneen commitin jälkeen. Push nimeää kohteen (`git push origin HEAD:refs/heads/<haara>`), joten `remote.pushDefault` ja `branch.*.pushRemote` eivät ohjaa sitä muualle. Pushin epäonnistuminen ei peru commitia; tulos on `push-epaonnistui`.
+5. Ehdotuksen ero tulostetaan terminaaliin puhdistettuna: ohjaus- ja muotoilumerkit (esim. ESC, CR) näkyvät `\\x1b`-tyylisinä merkintöinä, jotta ne eivät voi piilottaa sisältöä ennen hyväksyntää. Jos ydinohjeita ei mahdu kehotteen ylärajaan, kehotteeseen tulee näkyvä huomautus pois jääneistä tiedostoista.
 
 ## Rajat ja avoimet asiat
 
