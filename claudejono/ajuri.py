@@ -474,6 +474,7 @@ def tulkitse(stdout, koodi):
 # Viimeinen viesti ei aina ole raportti: taustatehtavan ilmoitus herattaa uuden vuoron, ja `result` on silloin vain jalkikommentti
 # (tulokset 2026-11-03-23 ja 2026-11-04-19: koko raportti katosi). Kehote vaatii osion "Tonylle opittavaa", joten sen puuttuminen paljastaa tilanteen.
 RAPORTTI_MERKKI = "## Tonylle opittavaa"
+RAPORTTI_OTSIKKO_RE = re.compile(r"^## Tonylle opittavaa[ \t]*$", re.M)    # otsikkorivi, ei maininta tekstin seassa
 ISTUNTOLOKI_MAX_TAVUA = 64 * 1024 * 1024
 ISTUNTO_RE = re.compile(r"^[0-9a-fA-F-]{8,64}$")
 
@@ -494,13 +495,15 @@ def _lue_istuntoloki(koti, istunto):
         projektit = fds[-1]
         for nimi in sorted(os.listdir(projektit)):
             try:
-                fds.append(_avaa_hakemisto_ilman_linkkeja(projektit, nimi))
+                hfd = _avaa_hakemisto_ilman_linkkeja(projektit, nimi)
             except OSError:
                 continue
             try:
-                fd = os.open(f"{istunto}.jsonl", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=fds[-1])
+                fd = os.open(f"{istunto}.jsonl", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=hfd)
             except OSError:
                 continue
+            finally:
+                os.close(hfd)             # ei pideta jokaisen projektihakemiston kuvaajaa auki silmukan loppuun (EMFILE)
             with os.fdopen(fd, "rb") as f:
                 st = os.fstat(f.fileno())
                 if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_size > ISTUNTOLOKI_MAX_TAVUA:
@@ -515,30 +518,41 @@ def _lue_istuntoloki(koti, istunto):
                 pass
 
 
+def _etsi_raportti(data, istunto):
+    """Uusin pääsessiön assistant-viesti, jonka tekstissä on otsikkorivi RAPORTTI_MERKKI. Jaetaan vain \\n-merkistä
+    (str.splitlines() katkaisisi myös U+2028/U+2029/U+0085, jotka JSON sallii merkkijonossa)."""
+    loydetty = ""
+    for rivi in data.split(b"\n"):
+        try:
+            d = json.loads(rivi.decode("utf-8", "replace"))
+            if d.get("type") != "assistant" or d.get("isSidechain") or d.get("sessionId") != istunto:
+                continue
+            for osa in d["message"]["content"]:
+                if osa.get("type") != "text":
+                    continue
+                teksti = osa.get("text")
+                if isinstance(teksti, str) and RAPORTTI_OTSIKKO_RE.search(teksti):
+                    loydetty = teksti
+        except Exception:  # yksi rikkinainen rivi ei esta muiden lukua
+            continue
+    return loydetty
+
+
 def palauta_raportti(teksti, stdout, koti):
     """Jos viimeisesta viestista puuttuu raportin loppuosio, hae se saman istunnon lokista. Muuten teksti ennallaan.
-    Mikaan virhe (luku, JSON, sisakkaisyys, muisti) ei saa kaataa ajoa, koska ajuri voi olla root."""
-    if RAPORTTI_MERKKI in (teksti or "") or not koti:
+    Mikaan virhe (luku, JSON, sisakkaisyys, muisti) ei saa kaataa ajoa, koska ajuri voi olla root:
+    koko haku ja jasennys ovat samassa suojatussa lohkossa."""
+    if not koti or RAPORTTI_OTSIKKO_RE.search(teksti or ""):
         return teksti
     try:
         istunto = json.loads(stdout).get("session_id")
         if not isinstance(istunto, str) or not ISTUNTO_RE.match(istunto):
             return teksti
         data = _lue_istuntoloki(koti, istunto)
+        loydetty = _etsi_raportti(data, istunto) if data else ""
     except Exception as e:  # tarkoituksella laaja: vain tyyppi talteen, ei viestia (voi sisaltaa salaisuuksia)
         print(f"ajuri: raportin palautus ohitettu ({type(e).__name__})", file=sys.stderr)
         return teksti
-    loydetty = ""
-    for rivi in (data or b"").decode("utf-8", "ignore").splitlines():
-        try:
-            d = json.loads(rivi)
-            if d.get("type") != "assistant" or d.get("isSidechain") or d.get("sessionId") != istunto:
-                continue
-            for osa in d["message"]["content"]:
-                if osa.get("type") == "text" and RAPORTTI_MERKKI in osa.get("text", ""):
-                    loydetty = osa["text"]
-        except Exception:  # yksi rikkinainen rivi ei esta muiden lukua
-            continue
     if not loydetty:
         return teksti
     return f"{loydetty}\n\n[AJURI: raportti palautettu istuntolokista. Agentin viimeinen viesti oli:]\n\n{teksti}"

@@ -719,6 +719,54 @@ class TestRaportinPalautus(Pohja):
         self.assertEqual(ajuri.palauta_raportti("x", json.dumps({"session_id": "../../etc/passwd"}), self.tmp), "x")
         self.assertEqual(ajuri.palauta_raportti("x", self.stdout(), None), "x")
 
+    def test_rivi_jossa_u2028_ei_katkea(self):
+        raportti = self.RAPORTTI + "\u2028lisaa\u0085viela\u2029"
+        self.loki([self.viesti(raportti)])        # json.dumps escapoi U+2028; kirjoita raakana
+        p = self.loki([])
+        rivi = json.dumps({"type": "assistant", "sessionId": self.ISTUNTO, "isSidechain": False,
+                           "message": {"content": [{"type": "text", "text": raportti}]}}, ensure_ascii=False)
+        p.write_bytes(rivi.encode("utf-8") + b"\n")
+        self.assertTrue(self.palauta().startswith(self.RAPORTTI))
+
+    def test_pelkka_maininta_otsikosta_ei_kelpaa(self):
+        self.loki([self.viesti("Kirjoitan lopuksi osion ## Tonylle opittavaa myohemmin."),
+                   self.viesti("x", message={"content": [{"type": "text", "text": 5}]})])
+        self.assertEqual(self.palauta(), "jalkikommentti")
+        self.assertEqual(self.palauta("Kirjoitan osion ## Tonylle opittavaa myohemmin"),
+                         "Kirjoitan osion ## Tonylle opittavaa myohemmin")  # ei otsikkorivi: haku yritetaan, lokia ei ole
+
+    def test_virhe_jasennyksessa_ei_kaada(self):
+        self.loki([self.viesti(self.RAPORTTI)])
+        with mock.patch.object(ajuri, "_etsi_raportti", side_effect=MemoryError):
+            self.assertEqual(self.palauta(), "jalkikommentti")
+
+    def test_hakemistokuvaajat_suljetaan_silmukassa(self):
+        koti = self.tmp / "koti"
+        for i in range(30):
+            (koti / ".claude" / "projects" / f"p{i:02d}").mkdir(parents=True)
+        self.loki([self.viesti(self.RAPORTTI)])
+        auki = []
+        oikea_open, oikea_close = os.open, os.close
+
+        def seuraa_open(*a, **k):
+            fd = oikea_open(*a, **k)
+            auki.append(fd)
+            return fd
+
+        def seuraa_close(fd):
+            if fd in auki:
+                auki.remove(fd)
+            return oikea_close(fd)
+        maksimi = []
+        with mock.patch("os.open", seuraa_open), mock.patch("os.close", seuraa_close):
+            def tarkka(*a, **k):
+                fd = seuraa_open(*a, **k)
+                maksimi.append(len(auki))
+                return fd
+            with mock.patch("os.open", tarkka):
+                self.assertIsNotNone(ajuri._lue_istuntoloki(koti, self.ISTUNTO))
+        self.assertLess(max(maksimi), 12)
+
     def test_symlinkki_ja_kova_linkki_torjutaan(self):
         salainen = self.tmp / "salainen.jsonl"
         salainen.write_text(self.viesti(self.RAPORTTI) + "\n", encoding="utf-8")
