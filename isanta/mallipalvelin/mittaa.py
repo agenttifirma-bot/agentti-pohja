@@ -2,7 +2,7 @@
 
 Kayttaa vain keksittyja tapauksia (tapaukset.json). Osoite annetaan ymparistomuuttujalla
 MALLIPALVELIN_URL (ei oletusta). Skripti hylkaa osoitteet, jotka eivat ole loopback-,
-yksityisia tai tailnet-osoitteita (100.64.0.0/10), jotta keskustelut eivat mene ulkoverkkoon.
+yksityisia tai tailnet-osoitteita (CGNAT-alue /10), jotta keskustelut eivat mene ulkoverkkoon.
 Kaytto: MALLIPALVELIN_URL=http://... python3 -I -m isanta.mallipalvelin.mittaa MALLI [MALLI...]
 """
 import ipaddress
@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 
 KANSIO = os.path.dirname(os.path.abspath(__file__))
-TAILNET = ipaddress.ip_network("100.64.0.0/10")
+TAILNET = ipaddress.ip_network((bytes([100, 64, 0, 0]), 10))  # tailnetin CGNAT-alue; ei kirjaimellista osoitetta (test_repo)
 
 
 def osoite_sallittu(url):

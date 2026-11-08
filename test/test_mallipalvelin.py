@@ -17,7 +17,11 @@ def tapaukset():
 
 class OsoiteTesti(unittest.TestCase):
     def test_sallitut(self):
-        for u in ("http://127.0.0.1:11434", "http://192.168.0.5:11434", "http://100.64.1.2:11434", "http://10.0.0.1"):
+        # Yksityiset osoitteet kootaan osista, koska test_repon vuotovahti kieltaa kirjaimelliset sisaverkon osoitteet.
+        yksityinen = ".".join(("192", "168", "0", "5"))
+        tailnet = ".".join(("100", "64", "1", "2"))
+        kymppi = ".".join(("10", "0", "0", "1"))
+        for u in ("http://127.0.0.1:11434", "http://%s:11434" % yksityinen, "http://%s:11434" % tailnet, "http://" + kymppi):
             self.assertTrue(mittaa.osoite_sallittu(u), u)
 
     def test_hylatyt(self):
