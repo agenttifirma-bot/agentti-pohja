@@ -197,7 +197,7 @@ niitä (`agentti/pr_kutsu.py`, `AGENTILTA_KIELLETYT_RE`).
 Ketju:
 1. `claude-tarkastaja.timer` ajaa 10 minuutin välein komennon `python3 -m claudejono.tarkastaja kierros` rootina.
 2. Ohjelma ohittaa PR:t, jotka eivät muutenkaan kelpaa automergeen, joten tarkastusta ei kuluteta niihin.
-3. Malli (oletuksena Opus, tilauksesta) arvioi diffin erillisenä käyttäjänä `tarkastaja` ilman työkaluja.
+3. Malli arvioi diffin erillisenä käyttäjänä `tarkastaja` ilman työkaluja. Mallin valitsee `valitse_malli` (Tonyn päätös A861): sonnet pieneen (enintään 300 riviä) ei-rajattuun PR:ään, opus kaikkeen muuhun: rajatut polut ja repot (`automerge.rajattu`), tools/, agentti/, systemd/, tarkastajan ja mallivalinnan omat tiedostot, kauppatiimi (raha), lisätyt rivit joissa salaisuuteen viittaava sana, katkaistu diff ja kaikki epäselvä. `CLAUDEJONO_TARKASTAJA_MALLI=auto` (oletus) käyttää valintaa, `opus` pakottaa opuksen kaikille (hätäjarru). Palvelumallissa arvo on `auto`; käytössä oleva yksikkö pitää päivittää käsin.
 4. Ohjelma kirjoittaa PR:ään kommentin, jonka lopussa on merkki `riippumaton-tarkastus v1 sha=... paatos=...`.
 5. Kommentti käynnistää Automerge-työnkulun. Se kytkee auto-mergen vain paatos=HYVAKSYTTY-merkinnälle ja vain samaan commitiin (`--match-head-commit`).
 
