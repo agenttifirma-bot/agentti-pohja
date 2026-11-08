@@ -30,7 +30,9 @@ from claudejono import silmukka
 from . import aivo_arvio, kulutus, litellm_ajo, tavoite, varaus
 from . import malli as mallit
 
-TEHTAVA_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-[a-z0-9-]{1,60}\.md$")
+# Isot kirjaimet kelpaavat (8.11.2026): KIIRE-tehtava ohitettiin hiljaa nelja kertaa 7.-8.11., koska kaava salli vain pienet.
+# Polkuturvallisuus ei muutu: ei pistetta, kauttaviivaa, valilyontia eika muita merkkeja.
+TEHTAVA_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-[A-Za-z0-9-]{1,60}\.md$")
 TEHTAVA_MAX_TAVUA = 20000
 TULOS_MAX_TAVUA = 60000
 # Tyhja suunnittelukierros (0 tehtavaa) toistui 1.11. noin 10 min valein ja lisasi tonylle.md:hen lahes saman kohdan
@@ -334,7 +336,7 @@ def varoita_kelvottomista(repo, tila, laheta):
         return []
     teksti = ("claude-jono OHITTAA tehtavan, nimi ei kelpaa: " + ", ".join(uudet[:5])
               + ("" if len(uudet) <= 5 else f" (+{len(uudet) - 5})")
-              + "\nSallittu muoto: VVVV-KK-PP-NN-pienet-kirjaimet-numerot-viivat.md. Nimea tiedosto uudelleen.")
+              + "\nSallittu muoto: VVVV-KK-PP-NN-kirjaimet-numerot-viivat.md (a-z, A-Z, 0-9, -). Nimea tiedosto uudelleen.")
     try:
         lahti = laheta(teksti)
     except Exception as virhe:  # ilmoituskanavan vika ei saa estaa kelvollisten tehtavien ajoa (tarkastus #265)
@@ -759,6 +761,7 @@ def _normalisoi(teksti):
 def tehtavan_slug(tiedostonimi):
     """'2026-11-03-02-auto-nimi.md' -> 'nimi' (paivays, numero ja auto-etuliite pois)."""
     nimi = re.sub(r"^\d{4}-\d{2}-\d{2}-\d{2}-", "", tiedostonimi[:-3] if tiedostonimi.endswith(".md") else tiedostonimi)
+    nimi = nimi.lower()   # isot kirjaimet kelpaavat nimeen, joten KIIRE-x ja kiire-x ovat sama tehtava
     return nimi[5:] if nimi.startswith("auto-") else nimi
 
 
@@ -778,7 +781,7 @@ def suodata_uudet(repo, ehdotukset, portti=None):
     ok, hylatyt = [], []
     for t in ehdotukset:
         slug, sis = t["nimi"], _normalisoi(t["sisalto"])
-        if slug in nimet:
+        if slug.lower() in nimet:
             hylatyt.append((slug, "nimi on jo jonossa tai tehty"))
         elif sis in sisallot:
             hylatyt.append((slug, "sama sisalto on jo jonossa tai tehty"))
@@ -788,7 +791,7 @@ def suodata_uudet(repo, ehdotukset, portti=None):
                 hylatyt.append((slug, f"porttitarkistin: {syy}"))
                 continue
             ok.append(t)
-            nimet.add(slug)
+            nimet.add(slug.lower())
             sisallot.add(sis)
     return ok, hylatyt
 
