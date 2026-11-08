@@ -15,22 +15,51 @@ def tapaukset():
         return json.load(f)
 
 
+SALLITUT = ("http://127.0.0.1:8081", "http://127.0.0.1:11434", "http://127.1.2.3:8081", "http://[::1]:8081")
+# Kontin LAN- ja tailnet-osoitteen tilalla on dokumentaatioalueen osoitteet (ei oikeita infra-osoitteita).
+HYLATYT = ("http://192.0.2.10:8081", "http://198.51.100.7:8081", "http://100.64.1.2:8081", "http://10.0.0.1:8081",
+           "http://192.168.0.5:8081", "http://0.0.0.0:8081", "http://8.8.8.8", "https://127.0.0.1:8081",
+           "http://user:pw@127.0.0.1", "http://localhost:8081", "http://kontti.ts.net:8081", "http://", "",
+           "ftp://127.0.0.1", "http://100.128.0.1")
+
+
 class OsoiteTesti(unittest.TestCase):
-    def test_sallitut(self):
-        for u in ("http://127.0.0.1:11434", "http://192.168.0.5:11434", "http://100.64.1.2:11434", "http://10.0.0.1"):
+    def test_loopback_hyvaksytaan(self):
+        for u in SALLITUT:
             self.assertTrue(mittaa.osoite_sallittu(u), u)
 
-    def test_hylatyt(self):
-        for u in ("http://8.8.8.8", "https://127.0.0.1", "http://user:pw@127.0.0.1", "http://", "ftp://127.0.0.1", "http://100.128.0.1"):
+    def test_lan_tailnet_ja_ulkoiset_hylataan(self):
+        for u in HYLATYT:
             self.assertFalse(mittaa.osoite_sallittu(u), u)
 
-    def test_main_ilman_osoitetta(self):
-        with mock.patch.dict(os.environ, {}, clear=False):
+    def test_oletus_on_aivon_oletus(self):
+        self.assertEqual(mittaa.OLETUS_URL, "http://127.0.0.1:8081")
+
+    def test_sama_saanto_kuin_aivo_yksityinen(self):
+        """Yhteistesti: ajetaan #240:n sallittu_malli_osoite samoilla osoitteilla. Tiedosto annetaan
+        ymparistomuuttujalla AIVO_YKSITYINEN_PY (polku #240:n aivo/yksityinen.py:hyn); ilman sita ohitetaan."""
+        polku = os.environ.get("AIVO_YKSITYINEN_PY")
+        if not polku:
+            self.skipTest("AIVO_YKSITYINEN_PY puuttuu")
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("aivo_yksityinen", polku)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        self.assertEqual(mod.OLETUS_MALLI_URL, mittaa.OLETUS_URL)
+        for u in SALLITUT + HYLATYT:
+            self.assertEqual(mittaa.osoite_sallittu(u), mod.sallittu_malli_osoite(u), u)
+
+    def test_main_ilman_osoitetta_kayttaa_oletusta(self):
+        with mock.patch.dict(os.environ, {}, clear=False), \
+                mock.patch.object(mittaa, "mittaa_malli", return_value={"malli": "x", "ohjeet": [], "yksityisyys": [],
+                                                                        "nopeus_tok_s": []}) as m:
             os.environ.pop("MALLIPALVELIN_URL", None)
-            self.assertEqual(mittaa.main(["x"]), 2)
+            with mock.patch("builtins.print"):
+                self.assertEqual(mittaa.main(["x"]), 0)
+        self.assertEqual(m.call_args[0][0], "http://127.0.0.1:8081")
 
     def test_main_ulkoinen_osoite(self):
-        with mock.patch.dict(os.environ, {"MALLIPALVELIN_URL": "http://8.8.8.8"}):
+        with mock.patch.dict(os.environ, {"MALLIPALVELIN_URL": "http://192.0.2.10:8081"}):
             self.assertEqual(mittaa.main(["x"]), 2)
 
 
@@ -72,29 +101,39 @@ class MittausTesti(unittest.TestCase):
 
 
 class SkriptiTesti(unittest.TestCase):
-    def aja(self, *args, env=None):
-        return subprocess.run(["bash", *args], capture_output=True, text=True, env=env)
+    def aja(self, *args):
+        return subprocess.run(["bash", *args], capture_output=True, text=True)
+
+    def luku(self, nimi):
+        with open(os.path.join(KANSIO, nimi), encoding="utf-8") as f:
+            return f.read()
 
     def test_syntaksi(self):
-        for s in ("luo-kontti.sh", "asennus-kontissa.sh"):
-            self.assertEqual(self.aja("-n", os.path.join(KANSIO, s)).returncode, 0)
+        self.assertEqual(self.aja("-n", os.path.join(KANSIO, "asennus-kontissa.sh")).returncode, 0)
 
-    def test_kuiva_ajo_ei_ota_oikeita_osoitteita_repoon(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".env") as f:
-            f.write("CTID=999\nKONTTI_NIMI=x\nSILTA=vmbrX\nKONTTI_OSOITE=192.0.2.10/24\nYHDYSKAYTAVA=192.0.2.1\n"
-                    "TALLENNUS=s\nLEVY_GT=8\nYDINTA=2\nMUISTI_MB=1024\nSWAP_MB=0\n")
-            f.flush()
-            r = self.aja(os.path.join(KANSIO, "luo-kontti.sh"), f.name)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("[kuiva-ajo] pct create 999", r.stdout)
-        self.assertIn("--unprivileged 1", r.stdout)
-        self.assertNotIn("-p ", r.stdout)
+    def test_ei_omaa_konttia(self):
+        self.assertFalse(os.path.exists(os.path.join(KANSIO, "luo-kontti.sh")))
+        self.assertNotIn("pct create", "".join(self.luku(n) for n in os.listdir(KANSIO) if n.endswith(".sh") or n.startswith("asetukset")))
+
+    def test_ollama_kuuntelee_vain_loopbackissa(self):
+        s = self.luku("asennus-kontissa.sh")
+        self.assertIn("OLLAMA_HOST=127.0.0.1:${OLLAMA_PORTTI}", s)
+        self.assertEqual(s.count("OLLAMA_HOST="), 1)
+        self.assertNotIn("0.0.0.0", s)
+
+    def test_ei_palomuurimuutoksia(self):
+        s = self.luku("asennus-kontissa.sh") + self.luku("asetukset.esimerkki")
+        for sana in ("nft", "iptables", "ufw", "CIDR", "tailscale"):
+            self.assertNotIn(sana, s)
+
+    def test_oletusportti_on_aivon_oletus(self):
+        self.assertIn("OLLAMA_PORTTI=8081", self.luku("asetukset.esimerkki"))
 
     def test_puuttuva_asetus(self):
         with tempfile.NamedTemporaryFile("w", suffix=".env") as f:
-            f.write("CTID=999\n")
+            f.write("OLLAMA_PORTTI=8081\n")
             f.flush()
-            self.assertEqual(self.aja(os.path.join(KANSIO, "luo-kontti.sh"), f.name).returncode, 2)
+            self.assertEqual(self.aja(os.path.join(KANSIO, "asennus-kontissa.sh"), f.name, "x").returncode, 2)
 
     def test_repossa_ei_oikeita_osoitteita(self):
         import re

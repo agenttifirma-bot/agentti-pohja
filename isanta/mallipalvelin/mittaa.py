@@ -1,38 +1,32 @@
 """Mittaa paikallisen mallipalvelimen (Ollama) ohjeiden noudatus, yksityisyyden erottelu ja nopeus.
 
 Kayttaa vain keksittyja tapauksia (tapaukset.json). Osoite annetaan ymparistomuuttujalla
-MALLIPALVELIN_URL (ei oletusta). Skripti hylkaa osoitteet, jotka eivat ole loopback-,
-yksityisia tai tailnet-osoitteita (100.64.0.0/10), jotta keskustelut eivat mene ulkoverkkoon.
-Kaytto: MALLIPALVELIN_URL=http://... python3 -I -m isanta.mallipalvelin.mittaa MALLI [MALLI...]
+MALLIPALVELIN_URL; oletus on Aivon yksityisen tilan oletus http://127.0.0.1:8081. Osoitesaanto on sama kuin
+Aivon yksityisessa tilassa (aivo/yksityinen.py, sallittu_malli_osoite): vain http ja loopback-IP-osoite,
+ei nimia, jotta keskustelut eivat mene verkkoon.
+Kaytto: python3 -I -m isanta.mallipalvelin.mittaa MALLI [MALLI...]
 """
 import ipaddress
 import json
 import os
 import re
-import socket
 import sys
 import time
 import urllib.parse
 import urllib.request
 
 KANSIO = os.path.dirname(os.path.abspath(__file__))
-TAILNET = ipaddress.ip_network("100.64.0.0/10")
+OLETUS_URL = "http://127.0.0.1:8081"
 
 
 def osoite_sallittu(url):
-    """True vain, jos kaikki osoitteen IP:t ovat loopback, yksityisia tai tailnetin."""
-    osat = urllib.parse.urlsplit(url)
-    if osat.scheme != "http" or not osat.hostname or osat.username or osat.password:
-        return False
+    """Sama saanto kuin aivo/yksityinen.py:n sallittu_malli_osoite: vain http + loopback-IP (ei nimia)."""
     try:
-        tiedot = socket.getaddrinfo(osat.hostname, osat.port or 80, proto=socket.IPPROTO_TCP)
-    except OSError:
+        osat = urllib.parse.urlparse(url)
+        ip = ipaddress.ip_address(osat.hostname or "")
+    except ValueError:
         return False
-    for t in tiedot:
-        ip = ipaddress.ip_address(t[4][0])
-        if not (ip.is_loopback or ip.is_private or ip in TAILNET):
-            return False
-    return bool(tiedot)
+    return osat.scheme == "http" and ip.is_loopback and not osat.username and not osat.password
 
 
 def kysy(url, malli, jarjestelma, kysymys, aikaraja=600):
@@ -42,7 +36,8 @@ def kysy(url, malli, jarjestelma, kysymys, aikaraja=600):
         "options": {"temperature": 0},
     }).encode()
     pyynto = urllib.request.Request(url.rstrip("/") + "/api/chat", runko, {"Content-Type": "application/json"})
-    with urllib.request.urlopen(pyynto, timeout=aikaraja) as v:
+    avaa = urllib.request.build_opener(urllib.request.ProxyHandler({})).open  # ei valityspalvelinta (kuten Aivo)
+    with avaa(pyynto, timeout=aikaraja) as v:
         return json.load(v)
 
 
@@ -116,12 +111,9 @@ def tiivista(tulos):
 
 
 def main(argv):
-    url = os.environ.get("MALLIPALVELIN_URL", "")
-    if not url:
-        print("aseta MALLIPALVELIN_URL", file=sys.stderr)
-        return 2
+    url = os.environ.get("MALLIPALVELIN_URL") or OLETUS_URL
     if not osoite_sallittu(url):
-        print("osoite hylatty: vain http ja yksityinen/tailnet/loopback-osoite", file=sys.stderr)
+        print("osoite hylatty: vain http ja loopback-IP-osoite", file=sys.stderr)
         return 2
     if not argv:
         print("anna ainakin yksi malli", file=sys.stderr)
