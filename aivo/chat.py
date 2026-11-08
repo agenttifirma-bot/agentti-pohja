@@ -599,6 +599,7 @@ def tee_kasittelija(tila):
         def _viesti_yksityinen(self, kid, teksti):
             if not tila.yks_vastauslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen vastaus on kesken"})
+            tulos = None
             try:
                 tila.yks.lisaa(kid, "tony", teksti.strip())
                 historia = tila.yks.lue(kid)
@@ -608,15 +609,18 @@ def tee_kasittelija(tila):
                 try:
                     vastaus = tila.kysy_yks(muisti, historia, yksityinen.lue_ydinohjeet(tila.ydinohjeet))
                 except ChatVirhe as e:
-                    return self._json(502, {"virhe": str(e), "indeksi": oma_idx})
+                    tulos = (502, {"virhe": str(e), "indeksi": oma_idx})
+                    return
                 vastaus = yksityinen.irrota_ehdotukset(
                     vastaus, lambda n, t: yksityinen.tallenna_ehdotus(tila.ehdotukset, n, t))
                 vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
                 tila.yks.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus])
-                self._json(200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "tila": "yksityinen",
-                                 "indeksi": oma_idx})
+                tulos = (200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "tila": "yksityinen",
+                               "indeksi": oma_idx})
             finally:
                 tila.yks_vastauslukko.release()
+                if tulos is not None:      # vastaus lahtee vasta lukon vapautuksen jalkeen: seuraava viesti ei saa 429:aa
+                    self._json(*tulos)
 
         def _viesti(self, d):
             kid, teksti = d.get("keskustelu"), d.get("teksti")
@@ -628,6 +632,7 @@ def tee_kasittelija(tila):
                 return self._viesti_yksityinen(kid, teksti)
             if not tila.vastauslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen vastaus on kesken"})
+            tulos = None
             try:
                 tila.keskustelut.lisaa(kid, "tony", teksti.strip())
                 historia = tila.keskustelut.lue(kid)
@@ -636,12 +641,15 @@ def tee_kasittelija(tila):
                 try:
                     vastaus = tila.kysy(muisti, historia)
                 except ChatVirhe as e:
-                    return self._json(502, {"virhe": str(e), "indeksi": oma_idx})
+                    tulos = (502, {"virhe": str(e), "indeksi": oma_idx})
+                    return
                 vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
                 tila.keskustelut.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus])
-                self._json(200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "indeksi": oma_idx})
+                tulos = (200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "indeksi": oma_idx})
             finally:
                 tila.vastauslukko.release()
+                if tulos is not None:
+                    self._json(*tulos)
 
         def _paatos(self, d):
             kid, i = d.get("keskustelu"), d.get("indeksi")

@@ -156,6 +156,14 @@ class YksityinenPalveluTesti(unittest.TestCase):
         self.assertEqual((s, v["indeksi"]), (502, 6))
         self.assertEqual(self.tila.yks.lue(d["id"])[6]["teksti"], "virheviesti")
 
+    def test_perakkaiset_viestit_eivat_saa_429(self):
+        # lukko vapautetaan ennen vastauksen lahetysta; muuten nopea seuraava viesti saisi satunnaisesti 429
+        ev = self.kirjaudu()
+        _, d = self.api(ev, "/api/uusi", {})
+        for i in range(40):
+            s, _ = self.api(ev, "/api/viesti", {"keskustelu": d["id"], "teksti": "v%d" % i})
+            self.assertEqual(s, 200, i)
+
     def test_sivu_ei_arvaa_indeksia(self):
         self.assertNotIn("n+=2", chat.HTML)
         self.assertIn("j.indeksi", chat.HTML)
