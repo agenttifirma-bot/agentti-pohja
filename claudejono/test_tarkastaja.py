@@ -402,6 +402,18 @@ class Avaa422Testi(unittest.TestCase):
         self.assertEqual(self.kierros(api, 1)[0]["tulos"], "virhe")
         self.assertEqual(len([k for k in api.kutsut if k[0] == "POST"]), 1)
 
+    def test_get_kutsun_422_ei_merkitse_haaraa(self):
+        for osa in ("/compare/", "head="):
+            api = self.api(postin_virhe=None)
+            orig = api.__call__
+
+            def kaareet(req, timeout=None, osa=osa, orig=orig):
+                if req.get_method() == "GET" and osa in req.full_url:
+                    raise urllib.error.HTTPError(req.full_url, 422, "x", {}, io.BytesIO(b'{"message": "Validation Failed"}'))
+                return orig(req, timeout)
+            self.assertEqual(self.kierros(kaareet)[0]["tulos"], "virhe", osa)
+            self.assertNotIn("avaa_422", self.tila(), osa)
+
     def test_avainta_ei_luoda_ennen_ensimmaista_422a(self):
         api = self.api(postin_virhe=None)
         self.assertEqual(self.kierros(api)[0]["tulos"], "avattu")

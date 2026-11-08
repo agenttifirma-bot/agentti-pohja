@@ -263,6 +263,7 @@ def avaa_puuttuvat(env, tunnus, tila, avaa=urllib.request.urlopen, kuiva=False, 
                 avain = "%s/%s" % (repo, nimi)
                 if avain in pysaytetyt:
                     continue                                               # 422 alle vuorokausi sitten: ei kutsuja
+                postataan = False                                          # 422 merkitaan vain PR:n luonti-POSTista, ei hakujen GET-kutsuista
                 try:
                     olemassa = hae_json("%s/repos/%s/%s/pulls?state=all&head=%s:%s" % (API, OMISTAJA, repo, OMISTAJA, urllib.parse.quote(nimi, safe="")),
                                         tunnus, avaa=avaa)
@@ -281,6 +282,7 @@ def avaa_puuttuvat(env, tunnus, tila, avaa=urllib.request.urlopen, kuiva=False, 
                     if kuiva:
                         tehty.append({"repo": repo, "haara": nimi, "tulos": "avattaisiin"})
                         continue
+                    postataan = True
                     vastaus = json.loads(_pyynto("%s/repos/%s/%s/pulls" % (API, OMISTAJA, repo), tunnus, avaa=avaa, data={
                         "title": _siivoa(otsikko, 120) or nimi, "head": nimi, "base": pohja,
                         "body": _siivoa(runko, AVAA_RUNKO_MAX) + "\n\n---\nAvattu automaattisesti (pilvi-Clauden haara). Tarkastaja ja automerge hoitavat; rajatut yhdistaa Tony."}).decode("utf-8") or "{}")
@@ -288,7 +290,7 @@ def avaa_puuttuvat(env, tunnus, tila, avaa=urllib.request.urlopen, kuiva=False, 
                     pysaytetyt.pop(avain, None)
                     tehty.append({"repo": repo, "haara": nimi, "tulos": "avattu", "pr": vastaus.get("number")})
                 except (TarkastajaVirhe, ValueError, AttributeError, TypeError) as e:
-                    if getattr(e, "koodi", None) == 422:
+                    if postataan and getattr(e, "koodi", None) == 422:
                         pysaytetyt[avain] = nyt_s
                     tehty.append({"repo": repo, "haara": nimi, "tulos": "virhe", "syy": str(e)[:200]})
     finally:
