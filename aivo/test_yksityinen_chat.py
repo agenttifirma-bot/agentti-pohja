@@ -3,6 +3,7 @@ import json
 import stat
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -68,11 +69,21 @@ class YksityinenPalveluTesti(unittest.TestCase):
         cls.srv.server_close()
         cls.tmp.cleanup()
 
+    # Palvelin vapauttaa vastauslukon vasta kun vastaus on jo lahtenyt, joten heti perassa
+    # lahetetty seuraava viesti voi saada 429. Testi yrittaa uudelleen lyhyella tauolla;
+    # palvelimen lukkoa ei muuteta.
+    UUDELLEENYRITYKSIA = 50
+    TAUKO = 0.02
+
     def api(self, ev, polku, olio):
-        c = http.client.HTTPConnection(ip(127, 0, 0, 1), self.portti, timeout=10)
-        c.request("POST", polku, body=json.dumps(olio), headers={"Cookie": ev, "X-Aivo": "1", "Content-Type": "application/json"})
-        r = c.getresponse()
-        return r.status, json.loads(r.read())
+        for yritys in range(self.UUDELLEENYRITYKSIA + 1):
+            c = http.client.HTTPConnection(ip(127, 0, 0, 1), self.portti, timeout=10)
+            c.request("POST", polku, body=json.dumps(olio), headers={"Cookie": ev, "X-Aivo": "1", "Content-Type": "application/json"})
+            r = c.getresponse()
+            s, d = r.status, json.loads(r.read())
+            if s != 429 or polku != "/api/viesti" or yritys == self.UUDELLEENYRITYKSIA:
+                return s, d
+            time.sleep(self.TAUKO)
 
     def kirjaudu(self):
         c = http.client.HTTPConnection(ip(127, 0, 0, 1), self.portti, timeout=10)
