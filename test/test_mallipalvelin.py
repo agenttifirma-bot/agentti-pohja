@@ -109,6 +109,17 @@ class SkriptiTesti(unittest.TestCase):
                     teksti = fh.read()
                 self.assertFalse(re.search(r"\b192\.168\.\d+\.\d+|\b100\.(?!64\.0\.0/10)\d+\.\d+\.\d+|ts\.net", teksti), nimi)
 
+    def test_pohjan_nimi_sama_skriptissa_ja_readmessa(self):
+        import re
+        malli = r"debian-12-standard_\d+\.\d+-\d+_amd64\.tar\.zst"
+        nimet = []
+        for tiedosto in ("luo-kontti.sh", "README.md"):
+            with open(os.path.join(KANSIO, tiedosto), encoding="utf-8") as fh:
+                loydot = set(re.findall(malli, fh.read()))
+            self.assertEqual(len(loydot), 1, tiedosto)
+            nimet.append(loydot.pop())
+        self.assertEqual(nimet[0], nimet[1])
+
 
 if __name__ == "__main__":
     unittest.main()

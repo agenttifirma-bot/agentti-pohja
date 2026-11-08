@@ -21,7 +21,7 @@ Tämä kansio valmistelee paikallisen mallipalvelimen (Ollama) omaan LXC-konttii
 1. Kontti on uusi, joten snapshotia ei tarvita sitä varten. Tarkista levytila ja vapaa muisti isännällä: `lvs` ja `free -m`.
 2. Kopioi `asetukset.esimerkki.env` nimelle `asetukset.env` ja täytä arvot. Valitse `OLLAMA_VERSIO` Ollaman julkaisusivulta ja ota tarkistussumma julkaisun `sha256sum.txt`-tiedostosta.
 3. Kuiva-ajo: `bash luo-kontti.sh asetukset.env`. Lue tuloste. Sitten `bash luo-kontti.sh asetukset.env --toteuta`.
-4. Debian-pohjan nimi skriptissä (`debian-12-standard_12.7-1`) on arvaus: tarkista `pveam list local` ja korjaa tarvittaessa.
+4. Debian-pohjan nimi skriptissä on `debian-12-standard_12.12-1_amd64.tar.zst`. Nimi on todennettu Proxmoxin julkisesta luettelosta, ei isännältä. Näet ajantasaisen nimen isännällä: `pveam update && pveam available --section system | grep debian-12`. Lataa pohja komennolla `pveam download local <nimi>` ja tarkista se komennolla `pveam list local`. Jos nimi on muuttunut, korjaa se skriptiin.
 5. Kopioi `asennus-kontissa.sh` ja `asetukset.env` konttiin (`pct push`) ja aja: `bash asennus-kontissa.sh asetukset.env <sha256>`.
 6. Lataa mallit kontissa: `ollama pull qwen3:8b` jne. (Tunnisteet on tarkistettava, katso `mallit.json`.)
 

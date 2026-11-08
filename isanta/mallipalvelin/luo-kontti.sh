@@ -17,7 +17,7 @@ if [ "$toteuta" = 1 ] && command -v pct >/dev/null && pct status "$CTID" >/dev/n
 fi
 # Ei julkista porttia: ei portinohjausta, ei firewall=0-ohitusta; silta on sisaverkon silta.
 komennot=(
-  "pct create $CTID local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst --hostname $KONTTI_NIMI --unprivileged 1 --cores $YDINTA --memory $MUISTI_MB --swap $SWAP_MB --rootfs $TALLENNUS:$LEVY_GT --net0 name=eth0,bridge=$SILTA,ip=$KONTTI_OSOITE,gw=$YHDYSKAYTAVA,firewall=1 --onboot 1 --features nesting=0"
+  "pct create $CTID local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst --hostname $KONTTI_NIMI --unprivileged 1 --cores $YDINTA --memory $MUISTI_MB --swap $SWAP_MB --rootfs $TALLENNUS:$LEVY_GT --net0 name=eth0,bridge=$SILTA,ip=$KONTTI_OSOITE,gw=$YHDYSKAYTAVA,firewall=1 --onboot 1 --features nesting=0"
 )
 for k in "${komennot[@]}"; do
   if [ "$toteuta" = 1 ]; then eval "$k"; else echo "[kuiva-ajo] $k"; fi
