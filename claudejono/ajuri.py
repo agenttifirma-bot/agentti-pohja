@@ -519,8 +519,8 @@ def _lue_istuntoloki(koti, istunto):
 
 
 def _etsi_raportti(data, istunto):
-    """Uusin pääsessiön assistant-viesti, jonka tekstissä on otsikkorivi RAPORTTI_MERKKI. Jaetaan vain \\n-merkistä
-    (str.splitlines() katkaisisi myös U+2028/U+2029/U+0085, jotka JSON sallii merkkijonossa)."""
+    """Uusin paasession assistant-viesti, jonka tekstissa on otsikkorivi RAPORTTI_MERKKI. Jaetaan vain rivinvaihdosta
+    (str.splitlines() katkaisisi myos U+2028/U+2029/U+0085, jotka JSON sallii merkkijonossa)."""
     loydetty = ""
     for rivi in data.split(b"\n"):
         try:
