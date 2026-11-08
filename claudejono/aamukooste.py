@@ -222,9 +222,16 @@ def rivit(t):
     if t["pr"] is None:
         paatos_osat.append("PR-listaa ei saatu (GitHub-haku ep\u00e4onnistui)")
     else:
+        from agentti.aamupaketti import puuttuu_rivi
         n = len(t["pr"].get("tony", []))
-        paatos_osat.append(f"{n} PR:\u00e4\u00e4 mergattavaksi (kyll\u00e4/ei)" if n else "ei mergattavia PR:j\u00e4")
-        if t.get("pr_virheita"):
+        puuttuu = puuttuu_rivi(t["pr"].get("puuttuu"))
+        if n:
+            paatos_osat.append(f"{n} PR:\u00e4\u00e4 mergattavaksi (kyll\u00e4/ei)")
+        elif not puuttuu and not t.get("pr_virheita"):
+            paatos_osat.append("ei mergattavia PR:j\u00e4")   # nolla vain kun kaikki haut onnistuivat
+        if puuttuu:   # lahde + virhetyyppi + HTTP-tila: tieto puuttuu, ei aitoa nollaa
+            paatos_osat.append(puuttuu)
+        elif t.get("pr_virheita"):
             paatos_osat.append(f"PR-lista voi olla vajaa ({len(t['pr_virheita'])} hakuvirhett\u00e4, esim. {t['pr_virheita'][0]})")
         if t["pr"].get("automerge"):
             paatos_osat.append(f"{len(t['pr']['automerge'])} hoituu automergell\u00e4")

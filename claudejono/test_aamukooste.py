@@ -101,8 +101,8 @@ class Kooste(Pohja):
             raise OSError("verkko")
         t = self.keraa(hae=rikki)
         rivit = aamukooste.rivit(t)
-        self.assertIn("vajaa", rivit[0])
-        self.assertIn("OSError", rivit[0])
+        self.assertIn("tieto puuttuu: PR-lista OSError", rivit[0])
+        self.assertNotIn("ei mergattavia", rivit[0])   # puuttuva tieto ei ole aito nolla
 
     def test_puuttuva_yojono_ja_systemd_ei_kaada(self):
         t = aamukooste.keraa(self.repo, self.tmp / "ei-ole", NYT, self.hae, lambda: None)
