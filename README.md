@@ -79,8 +79,23 @@ Pohjan päälle on rakennettu osat, joilla agentit tekevät tarkistettavaa työt
 | Automerge | `tools/automerge.py` | Kytkee GitHubin automaattisen yhdistämisen (squash) PR:lle, kun kaikki `arvioi()`-funktion ehdot täyttyvät: saman repon tai botin forkin `yo/<nimi>`-haara, tiedosto- ja rivimäärän ylärajat (`MAX_TIEDOSTOA`, `MAX_RIVEJA`), ei rajattuja polkuja tai reposia (`RAJATUT`, `RAJATUT_REPOT`, `REPON_RAJATUT`), ei yksityisiä osoitteita lisätyillä riveillä ja riippumattoman tarkastajan hyväksyntä juuri tälle head-commitille. Rajatut (työnkulut, automergen omat säännöt, oikeudet, kulukatot, palomuuri, salaisuudet) yhdistää aina Tony. Rajatut polut määritellään kahdessa paikassa (`RAJATUT` tässä ja `suojattu()` tiedostossa `pr_kutsu.py`), ja luettelot ovat eri muotoisia. |
 | Mutanttitestaus | `tools/mutantit.py` | Muuttaa koodia pienin virhein (AST-mutantit) ja tarkistaa, että moduulin testit huomaavat sen. Selviytyjä = testeistä puuttuu tarkistus. Paikallisesti `python tools/mutantit.py agentti/kulu.py`; pitkä ajo GitHubissa: Actions → Mutantit → Run workflow. Vastaavat mutantit sallitaan `tools/mutantit.sallitut.txt`-tiedostossa perusteluineen. |
 | Käyttöönoton ero | `tools/kayttoonotto_ero.py` | Vain lukeva, mutta hakee verkosta: tekee tunnistautumattoman lukupyynnön GitHubin rajapintaan (`api.github.com`). 404 voi tarkoittaa tuntematonta commitia, yksityistä repoa tai väärää `--repo`-arvoa, ja viesti erottelee ne. Kertoo, montako committia ja mitkä PR:t käyttöönotettu kopio on GitHubin oletushaaraa jäljessä. Poistumiskoodi 0 ajan tasalla, 1 jäljessä, 2 tila ei selvinnyt. PR-numerot poimitaan vain GitHubin yhdistämisotsikoista. |
+| Ajurien päivitys | `isanta/paivita-ajurit.sh` | Päivittää CT115:n ajurit (`/opt/agentti-pohja` ja `/opt/yojono-ajuri`) GitHubin mainista yhdellä komennolla: varmuuskopio, testit uudella koodilla, atominen vaihto, savutesti ja automaattinen paluu vanhaan. Ks. osio [Ajurien päivitys](#ajurien-päivitys-ct115). |
 
 Periaate on sama kuin pohjassa: koodi on laki. Raja ei ole kehotteessa vaan tarkistuksessa, ja jokainen automaattinen muutos on katselmoitavissa PR:nä.
+
+## Ajurien päivitys (CT115)
+
+`isanta/paivita-ajurit.sh` vie yhdistetyt muutokset käyttöön kahteen kohteeseen: `/opt/agentti-pohja` (git-klooni: Claude-jonon kaistat, tarkastaja, aamukooste) ja `/opt/yojono-ajuri` (manifestikopio ilman `.git`-hakemistoa, sama muoto kuin `isanta/julkaise.sh` tekee). Skripti ajetaan CT115:ssa rootina. Se ei koske tilaan tai asetuksiin (`/var/lib/*`, `/etc/*`) eikä lue salaisuuksia.
+
+    bash paivita-ajurit.sh --kuiva     hakee mainin ja ajaa testit, ei vaihda mitään
+    bash paivita-ajurit.sh             päivitys
+    bash paivita-ajurit.sh --peruuta   palauttaa viimeisimmän ajon varmuuskopiot
+
+Kulku: esitarkistukset (root, lukko, paikalliset muutokset, levytila) → `git clone` mainista väliaikaishakemistoon → sisarhakemistot `<kohde>.uusi` → testit uudella koodilla (`set -o pipefail`, testivirhe keskeyttää ennen vaihtoa) → `claude-*`- ja `yojono*`-ajastimet pysäytetään ja odotetaan, että palvelut vapautuvat (`--odota SEK`, oletus 1800 s; aikaraja keskeyttää ennen vaihtoa) → vaihto kahdella `mv`-komennolla (`<kohde>` → `<kohde>.prev-<aika>`, `.uusi` → `<kohde>`) → savutesti (moduulien tuonti, `yojono tila`, manifestin tarkistus) → ajastimet takaisin. Jos savutesti epäonnistuu tai ajo keskeytetään vaihdon jälkeen, vanha koodi palautetaan automaattisesti (viallinen versio jää nimellä `.viallinen-<aika>`). Kohde, joka on jo uusimmassa commitissa, jätetään rauhaan, joten komento on idempotentti.
+
+Tulokset: loppurivi on aina `OK: …` tai `EPÄONNISTUI: …`; poistumiskoodi 0 = onnistui tai ajan tasalla, 1 = epäonnistui (tilanne ennallaan tai palautettu), 2 = esitarkistus esti. Loki: `/var/log/paivita-ajurit.log`. Vanhoja `.prev-*`-kansioita ei poisteta automaattisesti. Systemd-yksiköitä skripti ei asenna; jos mallit muuttuivat, tuloste kertoo sen.
+
+Oletustestit ovat samat moduulit kuin `isanta/julkaisu/yojono-ajuri.conf`-tiedostossa (koko sarja kaatuu CT115:n ympäristöeroihin) sekä Claude-jonon ja aamukoosteen testit. Ne voi vaihtaa muuttujilla `PAIVITA_TESTI_POHJA` ja `PAIVITA_TESTI_YOJONO`. Ensimmäisellä kerralla skriptiä ei ole vielä `/opt/agentti-pohja`ssa: lataa se mainista komennolla `curl -fsSL https://raw.githubusercontent.com/tonyweckstrom1987/agentti-pohja/main/isanta/paivita-ajurit.sh -o /root/paivita-ajurit.sh`, lue se läpi ja aja `bash /root/paivita-ajurit.sh --kuiva`. Seuraavat kerrat voi ajaa suoraan `/opt/agentti-pohja/isanta/paivita-ajurit.sh`. Aamukooste kertoo, kun jokin kohde on jäljessä mainista (`tools/kayttoonotto_ero.py`-vertailu).
 
 ## Koulun muistutukset
 
