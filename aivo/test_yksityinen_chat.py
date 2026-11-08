@@ -117,13 +117,68 @@ class YksityinenPalveluTesti(unittest.TestCase):
         self.assertNotIn("hiljaisuudesta", muisti)
         self.assertEqual(len(self.malli_kutsut), m)
 
-    def test_paatos_yksityisesta_menee_yksityiseen_muistiin(self):
+    def test_paatos_yksityisesta_menee_yksityiseen_muistiin_eika_julkaista(self):
         ev = self.kirjaudu()
         _, d = self.api(ev, "/api/uusi", {})
-        self.api(ev, "/api/viesti", {"keskustelu": d["id"], "teksti": "p\u00e4\u00e4t\u00e4n lep\u00e4\u00e4v\u00e4ni"})
-        s, _ = self.api(ev, "/api/paatos", {"keskustelu": d["id"], "indeksi": 0})
-        self.assertEqual(s, 200)
-        self.assertEqual(self.paatokset[-1], (self.tila.yks_muisti, "p\u00e4\u00e4t\u00e4n lep\u00e4\u00e4v\u00e4ni"))
+        _, v = self.api(ev, "/api/viesti", {"keskustelu": d["id"], "teksti": "p\u00e4\u00e4t\u00e4n lep\u00e4\u00e4v\u00e4ni"})
+        n = len(self.paatokset)
+        s, r = self.api(ev, "/api/paatos", {"keskustelu": d["id"], "indeksi": v["indeksi"]})
+        self.assertEqual((s, r["tila"]), (200, "ei-julkaistu"))
+        self.assertEqual(len(self.paatokset), n)         # tyokalutilan julkaisufunktiota ei kutsuttu
+        t = (Path(self.tila.yks_muisti) / chat.PAATOS_TIEDOSTO).read_text(encoding="utf-8")
+        self.assertIn("> p\u00e4\u00e4t\u00e4n lep\u00e4\u00e4v\u00e4ni", t)
+
+    def test_yksityinen_paatos_ei_aja_gitia(self):
+        with tempfile.TemporaryDirectory() as d:
+            def ei_saa_kutsua(*a, **k):
+                raise AssertionError("git-kutsu yksityisessa paatoksessa")
+            chat.kirjaa_paatos_yksityinen(d, "20261106-120000-abcdef01", "2026-11-06T12:00:00+00:00", "x")
+            chat.kirjaa_paatos(d, "20261106-120000-abcdef01", "2026-11-06T12:01:00+00:00", "y", suorita=ei_saa_kutsua,
+                               julkaise=False)
+
+    def test_palvelin_kertoo_viestin_indeksin_kun_edellinen_viesti_ei_tallentunut(self):
+        ev = self.kirjaudu()
+        _, d = self.api(ev, "/api/uusi", {})
+        idx = []
+        for i in range(3):
+            s, v = self.api(ev, "/api/viesti", {"keskustelu": d["id"], "teksti": "viesti %d" % i})
+            self.assertEqual(s, 200)
+            idx.append(v["indeksi"])
+        self.assertEqual(idx, [0, 2, 4])
+        # 502: Tonyn viesti tallentuu ja indeksi palautetaan; kirjaus osuu juuri siihen viestiin
+        def rikki(muisti, historia, ohjeet):
+            raise chat.ChatVirhe("malli kaatui")
+        vanha, self.tila.kysy_yks = self.tila.kysy_yks, rikki
+        try:
+            s, v = self.api(ev, "/api/viesti", {"keskustelu": d["id"], "teksti": "virheviesti"})
+        finally:
+            self.tila.kysy_yks = vanha
+        self.assertEqual((s, v["indeksi"]), (502, 6))
+        self.assertEqual(self.tila.yks.lue(d["id"])[6]["teksti"], "virheviesti")
+
+    def test_sivu_ei_arvaa_indeksia(self):
+        self.assertNotIn("n+=2", chat.HTML)
+        self.assertIn("j.indeksi", chat.HTML)
+
+    def test_keskustelu_ei_merkkijono_ei_kaada_yhteytta(self):
+        ev = self.kirjaudu()
+        for paha in (5, ["x"], {"a": 1}, None):
+            for polku, runko in (("/api/viesti", {"keskustelu": paha, "teksti": "x"}),
+                                 ("/api/paatos", {"keskustelu": paha, "indeksi": 0})):
+                s, v = self.api(ev, polku, runko)
+                self.assertEqual(s, 400, (polku, paha))
+                self.assertIn("virhe", v)
+
+    def test_liian_iso_runko_hylataan_eika_luo_keskustelua(self):
+        ev = self.kirjaudu()
+        c = http.client.HTTPConnection(ip(127, 0, 0, 1), self.portti, timeout=10)
+        n = len(list(Path(self.tila.yks.data).glob("*.jsonl")))
+        c.request("POST", "/api/uusi", body=b"{" + b" " * 30000 + b"}",
+                  headers={"Cookie": ev, "X-Aivo": "1", "Content-Type": "application/json"})
+        r = c.getresponse()
+        r.read()
+        self.assertEqual(r.status, 413)
+        self.assertEqual(len(list(Path(self.tila.yks.data).glob("*.jsonl"))), n)
 
     def test_tuntematon_tila_hylataan(self):
         s, _ = self.api(self.kirjaudu(), "/api/uusi", {"tila": "muu"})

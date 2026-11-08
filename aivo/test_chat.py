@@ -1,10 +1,13 @@
 import http.client
+import io
 import json
 import os
 import stat
+import sys
 import tempfile
 import threading
 import unittest
+import unittest.mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -180,6 +183,43 @@ class KirjastoTesti(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(chat.ChatVirhe):
                 chat.julkaise_kirjastoon(d, Path(d) / "a.md", feikki)
+
+    def test_julkaisun_epaonnistuessa_paatostiedosto_palautuu(self):
+        def feikki(kom, **kw):
+            if "get-url" in kom:
+                return SimpleNamespace(returncode=0, stdout="https://github.com/x/y.git\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout="true\n", stderr="")
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / chat.PAATOS_TIEDOSTO
+            with self.assertRaises(chat.ChatVirhe):
+                chat.kirjaa_paatos(d, "20261106-120000-abcdef01", "2026-11-06T12:00:00+00:00", "a", suorita=feikki)
+            self.assertFalse(p.exists())
+            chat.kirjaa_paatos(d, "20261106-120000-abcdef01", "2026-11-06T12:00:00+00:00", "vanha", julkaise=False)
+            vanha = p.read_text(encoding="utf-8")
+            with self.assertRaises(chat.ChatVirhe):
+                chat.kirjaa_paatos(d, "20261106-120000-abcdef01", "2026-11-06T12:01:00+00:00", "uusi", suorita=feikki)
+            self.assertEqual(p.read_text(encoding="utf-8"), vanha)
+
+    def test_samanaikaiset_kirjaukset_eivat_havita_toisiaan(self):
+        with tempfile.TemporaryDirectory() as d:
+            saikeet = [threading.Thread(target=chat.kirjaa_paatos, args=(d, "20261106-120000-abcdef01",
+                                        "2026-11-06T12:%02d:00+00:00" % i, "paatos-%02d" % i), kwargs={"julkaise": False})
+                       for i in range(30)]
+            for t in saikeet:
+                t.start()
+            for t in saikeet:
+                t.join()
+            teksti = (Path(d) / chat.PAATOS_TIEDOSTO).read_text(encoding="utf-8")
+            for i in range(30):
+                self.assertIn("> paatos-%02d" % i, teksti)
+
+    def test_host_vaatii_taydellisen_nimen(self):
+        for paha in (["--host", ".esimerkki.fi"], ["--host", ""]):
+            with tempfile.TemporaryDirectory() as d:
+                virhe = io.StringIO()
+                with unittest.mock.patch.object(sys, "stderr", virhe):
+                    self.assertEqual(chat.main(["palvele", "--salasana-tiedosto", d + "/ei-ole", "--data", d, "--kirjasto", d] + paha), 1)
+                self.assertIn("--host", virhe.getvalue())
 
     def test_keskustelun_tunniste_ei_paase_polkuun(self):
         with tempfile.TemporaryDirectory() as d:

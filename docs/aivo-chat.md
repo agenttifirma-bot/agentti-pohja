@@ -70,7 +70,7 @@ Ota ensin tilannekuva, jos palvelu asennetaan kontin sisään. Tämä ohje ei mu
    WorkingDirectory=/opt/agentti-pohja
    Environment=HOME=/var/lib/aivo PYTHONPATH=/opt/agentti-pohja
    Environment=AIVO_CLAUDE=/KOKO/POLKU/claude
-   ExecStart=/usr/bin/python3 -m aivo.chat palvele --host .ts.net
+   ExecStart=/usr/bin/python3 -m aivo.chat palvele --host TAILNET-NIMI
    Restart=on-failure
    NoNewPrivileges=true
    ProtectSystem=strict
@@ -81,7 +81,11 @@ Ota ensin tilannekuva, jos palvelu asennetaan kontin sisään. Tämä ohje ei mu
    WantedBy=multi-user.target
    ```
 
-   Vaihda `AIVO_CLAUDE` oikeaan polkuun (`command -v claude`). Sitten:
+   Vaihda `AIVO_CLAUDE` oikeaan polkuun (`command -v claude`) ja `TAILNET-NIMI` palvelun täydelliseen tailnet-nimeen (`tailscale status --self --json`, kenttä `DNSName`, ilman loppupistettä). `--host` vaatii täsmällisen nimen: jokerimerkintä (`.pääte`) hylätään käynnistyksessä, ja ilman `--host`-valitsinta sallitaan vain `localhost`. Tämä pienentää DNS-rebinding-riskiä, koska toisen tailnetin nimet eivät kelpaa.
+
+   **Huomio `NoNewPrivileges=true`:** se estää `sudo`-kutsun. Jos käytät yksityisen tilan ohjeen mukaista työkalukäyttäjää (`AIVO_TYOKALU_KAYTTAJA`, ks. `aivo-yksityinen.md`), poista rivi tästä yksiköstä, tai työkalukäyttäjän eristys ei toimi. Palvelun käyttäjälle on silloin kirjoitettava sudoers-rivi, joka sallii vain yhden komennon, esimerkiksi `aivo-yksityinen ALL=(aivo-tyokalu) NOPASSWD: /KOKO/POLKU/claude -p --output-format text --max-turns 1 --tools ""` (tiedosto `/etc/sudoers.d/aivo-tyokalu`, muokkaus komennolla `sudo visudo -f`). Sudoers on oikeusmuutos: Tony kirjoittaa sen itse.
+
+   Sitten:
 
    ```
    sudo systemctl daemon-reload && sudo systemctl enable --now aivo-chat

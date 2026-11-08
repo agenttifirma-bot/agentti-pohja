@@ -103,25 +103,29 @@ textarea{resize:none;height:3.2rem}button{font:inherit;padding:.5rem .9rem;borde
 <script>
 let kid=null;let nyt='yksityinen';const V=document.getElementById('viestit');
 const H={'Content-Type':'application/json','X-Aivo':'1'};
-function lisaa(rooli,teksti,idx){const d=document.createElement('div');d.className='v '+rooli;d.textContent=teksti;
- if(rooli==='tony'&&idx!==undefined){const b=document.createElement('button');b.textContent='Kirjaa p\u00e4\u00e4t\u00f6kseksi (sanasi sellaisenaan)';
-  b.onclick=async()=>{if(!confirm('Kirjataanko t\u00e4m\u00e4 viesti p\u00e4\u00e4t\u00f6skirjastoon sellaisenaan?'))return;
-   const r=await fetch('/api/paatos',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,indeksi:idx})});
-   b.textContent=r.ok?'Kirjattu':'Kirjaus ep\u00e4onnistui ('+r.status+')';b.disabled=true;};d.appendChild(b);}
+function lisaa(rooli,teksti){const d=document.createElement('div');d.className='v '+rooli;d.textContent=teksti;
  V.appendChild(d);V.scrollTop=V.scrollHeight;return d;}
+function painike(d,idx){const b=document.createElement('button');b.textContent='Kirjaa päätökseksi (sanasi sellaisenaan)';
+ b.onclick=async()=>{if(!confirm('Kirjataanko tämä viesti päätöskirjastoon sellaisenaan?'))return;
+  const r=await fetch('/api/paatos',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,indeksi:idx})});
+  b.textContent=r.ok?'Kirjattu':'Kirjaus epäonnistui ('+r.status+')';b.disabled=true;};d.appendChild(b);}
 async function aloita(){const r=await fetch('/api/uusi',{method:'POST',headers:H,body:JSON.stringify({tila:document.getElementById('tila').value})});
  if(r.status===401){location.href='/kirjaudu';return;}
- if(!r.ok){lisaa('aivo','Tilaa ei voi k\u00e4ytt\u00e4\u00e4 ('+r.status+')');return;}
- const j=await r.json();kid=j.id;nyt=j.tila;n=0;V.textContent='';}
-let n=0;document.getElementById('uusi').onclick=aloita;
-document.getElementById('tila').onchange=e=>{if(e.target.value==='tyokalu'&&!confirm('Ty\u00f6kalutilassa viestit kulkevat Clauden pilvipalveluun. Jatketaanko?')){e.target.value='yksityinen';return;}aloita();};
-document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();const t=document.getElementById('teksti');
- const s=t.value.trim();if(!s)return;t.value='';if(!kid)await aloita();
- const idx=n;n+=2;lisaa('tony',s,idx);const odota=lisaa('aivo','\u2026');
- try{const r=await fetch('/api/viesti',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,teksti:s})});
-  if(r.status===401){location.href='/kirjaudu';return;}
-  const j=await r.json();odota.textContent=j.vastaus||('Virhe: '+(j.virhe||r.status));}
- catch(x){odota.textContent='Yhteysvirhe';}};
+ if(!r.ok){lisaa('aivo','Tilaa ei voi käyttää ('+r.status+')');return;}
+ const j=await r.json();kid=j.id;nyt=j.tila;V.textContent='';}
+document.getElementById('uusi').onclick=aloita;
+document.getElementById('tila').onchange=e=>{if(e.target.value==='tyokalu'&&!confirm('Työkalutilassa viestit kulkevat Clauden pilvipalveluun. Jatketaanko?')){e.target.value='yksityinen';return;}aloita();};
+let lahetyksessa=false;
+document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();if(lahetyksessa)return;const t=document.getElementById('teksti');
+ const s=t.value.trim();if(!s)return;lahetyksessa=true;t.value='';
+ try{if(!kid)await aloita();if(!kid)return;
+  const oma=lisaa('tony',s);const odota=lisaa('aivo','…');
+  try{const r=await fetch('/api/viesti',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,teksti:s})});
+   if(r.status===401){location.href='/kirjaudu';return;}
+   const j=await r.json();odota.textContent=j.vastaus||('Virhe: '+(j.virhe||r.status));
+   if(Number.isInteger(j.indeksi))painike(oma,j.indeksi);}
+  catch(x){odota.textContent='Yhteysvirhe';}}
+ finally{lahetyksessa=false;}};
 aloita();
 </script></body></html>
 """
@@ -354,7 +358,7 @@ class Keskustelut:
         return kid
 
     def _polku(self, kid):
-        if not ID_RE.match(kid or ""):
+        if not isinstance(kid, str) or not ID_RE.match(kid):
             raise ChatVirhe("virheellinen keskustelun tunniste")
         return self.data / (kid + ".jsonl")
 
@@ -378,16 +382,36 @@ class Keskustelut:
         return [json.loads(r) for r in p.read_text(encoding="utf-8").splitlines() if r.strip()]
 
 
-def kirjaa_paatos(kirjasto, kid, aika, teksti, suorita=subprocess.run):
-    """Liittaa Tonyn sanat sellaisenaan paatoskirjastoon (lainauksena) ja julkaisee kirjaston Giteaan."""
+_PAATOS_LUKKO = threading.Lock()      # palvelin on saikeistetty: luku-muokkaus-kirjoitus ei saa lomittua
+
+
+def kirjaa_paatos(kirjasto, kid, aika, teksti, suorita=subprocess.run, julkaise=True):
+    """Liittaa Tonyn sanat sellaisenaan paatoskirjastoon (lainauksena). julkaise=True: commit ja push Giteaan
+    (vain kirjaston omille, sallituille etapalvelimille); julkaise=False: vain paikallinen tiedosto (yksityinen tila).
+    Jos julkaisu epaonnistuu, tiedosto palautetaan ennalleen eika paatos jaa puoliksi voimaan."""
     polku = Path(kirjasto) / PAATOS_TIEDOSTO
     polku.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     lainaus = "\n".join("> " + r for r in teksti.splitlines()) or "> "
     osa = ("\n\n## Keskustelusta %s (%s)\n\nTony sanoi sellaisenaan:\n\n%s\n\nL\u00e4hde: aivo-chat, keskustelu %s. "
            "Kirjattu Tonyn painalluksella; ei Aivon p\u00e4\u00e4telm\u00e4.\n" % (aika[:10], aika[11:16], lainaus, kid))
-    vanha = polku.read_text(encoding="utf-8") if polku.exists() else "# Aivon p\u00e4\u00e4t\u00f6skirjasto\n"
-    kirjoita_600(polku, vanha + osa)
-    return julkaise_kirjastoon(kirjasto, polku, suorita)
+    with _PAATOS_LUKKO:
+        vanha = polku.read_text(encoding="utf-8") if polku.exists() else None
+        kirjoita_600(polku, (vanha if vanha is not None else "# Aivon p\u00e4\u00e4t\u00f6skirjasto\n") + osa)
+        if not julkaise:
+            return "ei-julkaistu"
+        try:
+            return julkaise_kirjastoon(kirjasto, polku, suorita)
+        except BaseException:
+            if vanha is None:
+                polku.unlink(missing_ok=True)
+            else:
+                kirjoita_600(polku, vanha)
+            raise
+
+
+def kirjaa_paatos_yksityinen(kirjasto, kid, aika, teksti):
+    """Yksityisen tilan paatos: vain yksityiseen muistiin, ei koskaan gitiin eika etarepoon."""
+    return kirjaa_paatos(kirjasto, kid, aika, teksti, julkaise=False)
 
 
 # --- Palvelin -------------------------------------------------------------------------------------
@@ -416,7 +440,7 @@ class Tila:
     """Kaksi tilaa: "yksityinen" (oletus; paikallinen malli, oma muisti, ydinohjeet) ja "tyokalu" (Claude, kirjasto).
     Yksityinen tila on kaytossa vain, jos yks_data on annettu; sen kansioiden pitaa olla palvelun kayttajan 0700."""
 
-    def __init__(self, tiiviste, kirjasto, data, sallitut_hostit, kysy=kysy_claudelta, julkaise=kirjaa_paatos,
+    def __init__(self, tiiviste, kirjasto, data, sallitut_hostit, kysy=kysy_claudelta, julkaise=kirjaa_paatos, julkaise_yks=kirjaa_paatos_yksityinen,
                  yks_data=None, yks_muisti=None, ydinohjeet=None, ehdotukset=None,
                  malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None):
         self.tiiviste = tiiviste
@@ -426,6 +450,7 @@ class Tila:
         self.hostit = sallitut_hostit
         self.kysy = kysy
         self.julkaise = julkaise
+        self.julkaise_yks = julkaise_yks
         self.vastauslukko = threading.Lock()   # yksi Claude-kutsu kerrallaan
         self.yks = None
         if yks_data:
@@ -528,6 +553,9 @@ def tee_kasittelija(tila):
             if not self._muutos_ok():
                 return self._json(403, {"virhe": "kielletty"})
             raaka = self._runko()
+            if raaka is None:
+                self.close_connection = True         # lukematon runko jaa pistorasiaan
+                return self._json(413, {"virhe": "pyynto on liian suuri"})
             try:
                 d = json.loads(raaka or b"{}")
                 if not isinstance(d, dict):
@@ -574,17 +602,19 @@ def tee_kasittelija(tila):
             try:
                 tila.yks.lisaa(kid, "tony", teksti.strip())
                 historia = tila.yks.lue(kid)
+                oma_idx = len(historia) - 1          # palvelin kertoo Tonyn viestin paikan; selain ei arvaa
                 muisti, tiedostot = lue_muisti(tila.yks_muisti, yksityinen.MUISTI_YLARAJA,
                                                yksityinen.MUISTI_YLARAJA // 4, teksti)
                 try:
                     vastaus = tila.kysy_yks(muisti, historia, yksityinen.lue_ydinohjeet(tila.ydinohjeet))
                 except ChatVirhe as e:
-                    return self._json(502, {"virhe": str(e)})
+                    return self._json(502, {"virhe": str(e), "indeksi": oma_idx})
                 vastaus = yksityinen.irrota_ehdotukset(
                     vastaus, lambda n, t: yksityinen.tallenna_ehdotus(tila.ehdotukset, n, t))
                 vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
                 tila.yks.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus])
-                self._json(200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "tila": "yksityinen"})
+                self._json(200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "tila": "yksityinen",
+                                 "indeksi": oma_idx})
             finally:
                 tila.yks_vastauslukko.release()
 
@@ -601,14 +631,15 @@ def tee_kasittelija(tila):
             try:
                 tila.keskustelut.lisaa(kid, "tony", teksti.strip())
                 historia = tila.keskustelut.lue(kid)
+                oma_idx = len(historia) - 1
                 muisti, tiedostot = lue_muisti(tila.kirjasto)
                 try:
                     vastaus = tila.kysy(muisti, historia)
                 except ChatVirhe as e:
-                    return self._json(502, {"virhe": str(e)})
+                    return self._json(502, {"virhe": str(e), "indeksi": oma_idx})
                 vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
                 tila.keskustelut.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus])
-                self._json(200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn)})
+                self._json(200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "indeksi": oma_idx})
             finally:
                 tila.vastauslukko.release()
 
@@ -619,8 +650,10 @@ def tee_kasittelija(tila):
             if not isinstance(i, int) or not 0 <= i < len(historia) or historia[i]["rooli"] != "tony":
                 return self._json(400, {"virhe": "vain Tonyn viestin voi kirjata"})
             v = historia[i]
-            kirjasto = tila.yks_muisti if valittu == "yksityinen" else tila.kirjasto     # yksityinen paatos vain yksityiseen muistiin
-            tulos = tila.julkaise(kirjasto, kid, v["aika"], v["teksti"])
+            if valittu == "yksityinen":                  # yksityinen paatos vain yksityiseen muistiin, ei julkaisua
+                tulos = tila.julkaise_yks(tila.yks_muisti, kid, v["aika"], v["teksti"])
+            else:
+                tulos = tila.julkaise(tila.kirjasto, kid, v["aika"], v["teksti"])
             self._json(200, {"tila": tulos})
 
     return K
@@ -642,7 +675,7 @@ def main(argv=None):
     ap.add_argument("--osoite", default="127.0.0.1")
     ap.add_argument("--portti", type=int, default=int(os.environ.get("AIVO_CHAT_PORTTI", OLETUS_PORTTI)))
     ap.add_argument("--host", action="append", default=[],
-                    help="sallittu Host-nimi (esim. .ts.net tai taydellinen nimi); toistettava")
+                    help="sallittu taydellinen Host-nimi (palvelun oma tailnet-nimi); toistettava; ilman sita vain localhost")
     ap.add_argument("--yksityinen-data", default=os.environ.get("AIVO_YKSITYINEN_DATA"),
                     help="ottaa yksityisen tilan kayttoon; kansion pitaa kuulua palvelun kayttajalle (0700)")
     ap.add_argument("--yksityinen-muisti", default=os.environ.get("AIVO_YKSITYINEN_MUISTI"))
@@ -654,7 +687,10 @@ def main(argv=None):
         if a.komento == "aseta-salasana":
             aseta_salasana(a.salasana_tiedosto)
             return 0
-        hostit = a.host or [".ts.net"]
+        hostit = [h.strip().lower() for h in a.host]
+        if any(not h or h.startswith(".") for h in hostit):
+            raise ChatVirhe("--host vaatii taydellisen nimen (ei .paate-jokerimerkintaa)")
+        # ilman --host sallitaan vain localhost
         tila = Tila(lue_tiiviste(a.salasana_tiedosto), a.kirjasto, a.data, hostit, yks_data=a.yksityinen_data,
                     yks_muisti=a.yksityinen_muisti, ydinohjeet=a.ydinohjeet, ehdotukset=a.ehdotukset, malli_url=a.malli_url)
         palvelin = kaynnista(a.osoite, a.portti, tila)
