@@ -30,7 +30,22 @@ RIVI_YHT_MAX = 10   # A546: enintaan 10 rivi\u00e4 (aiemmin 5)
 SAANTOPAIVITYKSET = "saantopaivitykset.md"   # Aivon itse tekem\u00e4t s\u00e4\u00e4nt\u00f6p\u00e4ivitykset (A529): otsikot `## <pvm> ...`
 PAATOS_IKKUNA_PV = 7   # A490: avoin p\u00e4\u00e4t\u00f6s muistutetaan p\u00e4ivitt\u00e4in t\u00e4m\u00e4n ajan, ellei otsikossa ole suljettu-merkint\u00e4\u00e4
 PAATOS_RE = re.compile(r"(?i)aamulla ensin|p\u00e4\u00e4tett\u00e4v\u00e4|paatettava|kyll\u00e4/ei|kysymys")   # vain n\u00e4m\u00e4 otsikot ovat p\u00e4\u00e4t\u00f6spyynt\u00f6j\u00e4 (tonylle.md sis\u00e4lt\u00e4\u00e4 my\u00f6s tiedotteita)
-SULJETTU_RE = re.compile(r"(?i)\b(aiempi|tehty|hoidettu|vastattu|p\u00e4\u00e4tetty|paatetty|suljettu)\b")
+SULJETTU_SANAT = r"(?:aiempi|tehty|hoidettu|vastattu|p\u00e4\u00e4tetty|paatetty|suljettu)"
+SULJETTU_LOPUSSA_RE = re.compile(r"(?i)(?:^|[\s\[(:\-\u2013\u2014])" + SULJETTU_SANAT + r"[\s.!)\]]*$")      # otsikon lopussa (myos suluissa)
+SULJETTU_ALUSSA_RE = re.compile(r"(?i)^[\[(]\s*" + SULJETTU_SANAT + r"\s*[\])]|\b" + SULJETTU_SANAT + r"\s*:")     # [TEHTY] alussa tai TEHTY: (kaksoispiste = tilamerkinta)
+KIELTO_RE = re.compile(r"(?i)\b(ei|ole|viela|viel\u00e4|ilman)\s+(?:\w+\s+)?" + SULJETTU_SANAT + r"[\s.!)\]]*$")   # "ei ole tehty"
+
+
+def suljettu(otsikko):
+    """Otsikko on suljettu vain, jos sulkusana on tilamerkint\u00e4 otsikon alussa ([TEHTY], TEHTY:) tai lopussa
+    (\u2026 VASTATTU). Sana kesken otsikkoa ('aiempi korjaus rikki'), kielteinen muoto ('ei ole tehty') ja
+    kysymysmerkkiin p\u00e4\u00e4ttyv\u00e4 kysymys ('onko X tehty?') j\u00e4\u00e4v\u00e4t avoimiksi."""
+    o = " ".join((otsikko or "").split())
+    if SULJETTU_ALUSSA_RE.search(o):
+        return True
+    return bool(SULJETTU_LOPUSSA_RE.search(o)) and not KIELTO_RE.search(o)
+
+
 KULU_RIVI_MAX = 700   # kulutusrivi (mallit + viikko + Tonyn varaus) on pidempi kuin muut rivit
 MAX_MERGELINKKEJA = 4
 BUDJETTI_HALYTYS = 0.8   # nayttorajaus: kuukausikulu >= 80 % katosta nostetaan halytyksiin (ei muuta kattoa)
@@ -72,7 +87,7 @@ def lue_tulokset(repo, alku, loppu):
     return ulos
 
 
-def tonylle_uudet(repo, alku, tiedosto=None):
+def tonylle_uudet(repo, alku, tiedosto=None, koko=False):
     """tonylle.md:n kohdat (`## <pvm>[Thh:mm | klo hh.mm] ...`), jotka ovat alkua uudempia. Pelkka paiva lasketaan uudeksi,
     jos paiva >= alun paiva. Palauttaa listan (aika, loppuotsikko)."""
     p = Path(repo) / ajuri.JONO / (tiedosto or ajuri.TONYLLE)
@@ -94,14 +109,17 @@ def tonylle_uudet(repo, alku, tiedosto=None):
         except ValueError:
             continue
         if uusi:
-            ulos.append((aika, " ".join(m.group(8).split())[:60]))
+            otsikko = " ".join(m.group(8).split())
+            ulos.append((aika, otsikko if koko else otsikko[:60]))
     return ulos
 
 
 def avoimet_paatokset(repo, nyt):
     """tonylle.md:n kohdat viimeiselt\u00e4 PAATOS_IKKUNA_PV p\u00e4iv\u00e4lt\u00e4, joiden otsikossa ei ole suljettu-merkint\u00e4\u00e4 (TEHTY, HOIDETTU, VASTATTU, P\u00c4\u00c4TETTY).
     Vastauksen merkkaa Tony tai pilvi-Claude otsikkoon; ilman merkint\u00e4\u00e4 kohta muistutetaan joka aamu (A490)."""
-    return [(a, o) for a, o in tonylle_uudet(repo, nyt - timedelta(days=PAATOS_IKKUNA_PV)) if PAATOS_RE.search(o) and not (SULJETTU_RE.search(o) and "?" not in o)]   # kysymysmerkillinen otsikko on aina avoin ("onko X tehty?")
+    # sulkumerkinta tarkistetaan koko otsikosta (nayttoon leikataan 60 merkkiin vasta sen jalkeen)
+    return [(a, o[:60]) for a, o in tonylle_uudet(repo, nyt - timedelta(days=PAATOS_IKKUNA_PV), koko=True)
+            if PAATOS_RE.search(o) and not suljettu(o)]
 
 
 def yojono_tila(perus, nyt):

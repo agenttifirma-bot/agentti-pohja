@@ -169,6 +169,28 @@ class UusiMuoto(Kooste):
         self.kirjoita("tonylle.md", "## 2026-11-03T03:00+02:00 kysymys: onko X tehty?\n")
         self.assertEqual(len(aamukooste.avoimet_paatokset(self.repo, NYT)), 1)
 
+    def test_suljettu_tunnistaa_tilamerkinnan_ei_sanaa_kesken_otsikkoa(self):
+        for suljettu in ("kysymys: otetaanko X k\u00e4ytt\u00f6\u00f6n? VASTATTU", "kysymys: X [TEHTY]", "TEHTY: kysymys X",
+                         "[p\u00e4\u00e4tetty] kysymys X", "kysymys X (suljettu)", "AAMULLA ENSIN: Y - hoidettu"):
+            self.assertTrue(aamukooste.suljettu(suljettu), suljettu)
+        for avoin in ("kysymys: onko X tehty?", "AAMULLA ENSIN: varmuuskopiota ei ole tehty",
+                      "p\u00e4\u00e4tett\u00e4v\u00e4: aiempi korjaus rikki", "kysymys: ei viel\u00e4 tehty",
+                      "kysymys: tehty vai ei?", "AAMULLA ENSIN Z"):
+            self.assertFalse(aamukooste.suljettu(avoin), avoin)
+
+    def test_sulkusana_pitkan_otsikon_lopussa_toimii_vaikka_nayttorivi_leikataan(self):
+        otsikko = "kysymys: " + "pitka kuvaus " * 8 + "VASTATTU"
+        self.kirjoita("tonylle.md", "## 2026-11-03T03:00+02:00 %s\n## 2026-11-03T04:00+02:00 kysymys: onko X tehty?\n" % otsikko)
+        avoimet = aamukooste.avoimet_paatokset(self.repo, NYT)
+        self.assertEqual([o for _, o in avoimet], ["kysymys: onko X tehty?"])
+
+    def test_varaus_kysymys_sailyy_pitkien_otsikoiden_jalkeen(self):
+        otsikot = "".join("## 2026-11-03T0%d:00+02:00 kysymys: %s\n" % (i, "pitka otsikko " * 4) for i in range(1, 4))
+        self.kirjoita("tonylle.md", otsikot)
+        t = self.keraa()
+        t["varaus_kysymys"] = "kerro asetussivun luku (python3 -m claudejono.varaus kalibroi <luku>)"
+        self.assertIn("kalibroi <luku>", aamukooste.rivit(t)[0])
+
     def test_ei_laskuria_kun_kaikki_kohdat_ovat_paatoksia(self):
         self.kirjoita("tonylle.md", "## 2026-11-03T03:00+02:00 AAMULLA ENSIN Z\n")
         self.assertNotIn("muuta kohtaa", aamukooste.rivit(self.keraa())[0])
