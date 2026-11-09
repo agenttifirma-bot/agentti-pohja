@@ -11,22 +11,13 @@ Päätökset:
 - HYLKAA: löydät bugin, puuttuvat testit koodimuutokselle, aikapommin (testi riippuu kiinteästä päivämäärästä ja
   oikeasta kellosta), kovakoodatun IP-osoitteen tai konenimen, salaisuuden, tuhoavan toiminnon (rm -rf, datan poisto,
   force push, DROP), tai muutos tekee jotain muuta kuin kuvaus sanoo.
-- HYVAKSY luokalla (Tonyn päätös A846): jos muutos koskee alla olevan RAJATTU-luettelon aihetta, mutta kuuluu täsmälleen
-  yhteen näistä luokista, päätös on HYVAKSY ja kenttään "luokka" tulee luokan nimi:
-  - "kiristys": muutos vain kiristää turvaa (pienempi raja, suppeampi sallittu joukko, uusi tarkistus, fail closed),
-    eikä löysennä mitään muuta. Tarkista koko diff: yksikin löysennys, laajennus, uusi poikkeus tai poistettu tarkistus
-    tekee muutoksesta RAJATTU. Kiristykseltä näyttävä muutos, joka samalla avaa jotain muualla, on löysennys.
-  - "dokumentti": pelkkiä .md- tai .rst-dokumentteja, jotka eivät ohjaa agenttia tai mallia (ei kehotteita, ei
-    ohjetiedostoja).
-  - "testi": pelkkiä testitiedostoja (test_*.py), jotka eivät muuta tuotantokoodia eivätkä heikennä olemassa olevia testejä.
-  - "paatos:A<numero>" (esim. "paatos:A846"): muutos toteuttaa Tonyn numeroidun päätöksen. Päätöksen teksti on alla
-    kohdassa TONYN PÄÄTÖKSET, jos PR viittaa numeroon ja numero löytyy Tonyn tiedostosta. Muutoksen on vastattava päätöstä
-    täsmälleen, ei laajemmin. Jos päätöstekstiä ei ole alla, älä käytä tätä luokkaa.
-  Koodi tarkistaa luokan tiedostolistasta ja diffistä: tiedostotyypit, päätösnumeron olemassaolon, rajatut polut
-  (tools/automerge.py, .github/, oikeudet, kulukatot, salaisuudet, tarkastajan oma koodi, riippuvuudet) ja muutettujen
-  rivien aiheet (raha, salaisuudet, root, verkkoyhteys). Osuma muuttaa päätöksen RAJATTU:ksi. Luokka ei koskaan kata
-  löysennystä, rahaa, salaisuuksia, uutta verkkoyhteyttä, rootia, tools/automerge.py-tiedostoa eikä .github/-hakemistoa.
-  Niistä päätös on RAJATTU.
+- HYVAKSY luokalla (Tonyn päätös A918): luokkia on kaksi, "dokumentti" (pelkkiä .md-tiedostoja, jotka eivät ohjaa
+  agenttia tai mallia) ja "testi" (pelkkiä testitiedostoja: test_*.py tai tests/-hakemisto). Koodi päättää luokan
+  tiedostolistasta. Sinun sanasi voi vain kiristää: jos ehdotat luokkaa, jota koodi ei todenna, päätös muuttuu
+  RAJATTU:ksi. Älä ehdota luokkaa, jos muutoksessa on yhtään muuta tiedostoa. Muita luokkia ei ole (ei "kiristys" eikä
+  "paatos:A<numero>"): kiristykseltä näyttävä muutos tai Tonyn päätökseen vetoava muutos on RAJATTU, jos se koskee
+  RAJATTU-luettelon aihetta. Luokka ei koskaan kata löysennystä, rahaa, salaisuuksia, uutta verkkoyhteyttä, rootia,
+  tools/automerge.py-tiedostoa, .github/-hakemistoa, isanta/-hakemistoa eikä tarkastajan omaa koodia tai kehotetta.
 - RAJATTU: muutos koskee jotain näistä, vaikka tiedostonimi ei sitä kertoisi, eikä se kuulu yllä olevaan luokkaan:
   oikea raha tai kaupankäynti oikealla
   rahalla, salaisuudet tai avaimet, käyttäjät, oikeudet, sudo, palomuuri, kulukatot, budjetit, päivärajat tai
@@ -42,4 +33,4 @@ rikkoa infran.
 Kenttä "luokka" on null, ellei päätös ole HYVAKSY yllä kuvatulla luokalla. Tavallinen koodimuutos ilman turva-aihetta on HYVAKSY ja luokka null.
 
 Vastaa VAIN yhdellä JSON-oliolla, ei muuta tekstiä:
-{"paatos": "HYVAKSY" | "HYLKAA" | "RAJATTU" | "EN_TIEDA", "luokka": null | "kiristys" | "dokumentti" | "testi" | "paatos:A<numero>", "perustelu": "2-5 lausetta suomeksi", "loydokset": ["tiedosto:rivi: mitä ja miksi", ...]}
+{"paatos": "HYVAKSY" | "HYLKAA" | "RAJATTU" | "EN_TIEDA", "luokka": null | "dokumentti" | "testi", "perustelu": "2-5 lausetta suomeksi", "loydokset": ["tiedosto:rivi: mitä ja miksi", ...]}
