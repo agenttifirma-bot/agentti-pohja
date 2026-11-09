@@ -30,6 +30,32 @@ esac
 exit 0
 '''
 
+# Tekaistu mv: epaonnistuu, jos SIM/mv_vika:n jokin rivi "LAHDE-MALLI KOHDE-MALLI" (case-mallit) tasmaa; muuten oikea mv.
+MV = r'''#!/usr/bin/env bash
+args=(); for a in "$@"; do case "$a" in -*) ;; *) args+=("$a") ;; esac; done
+src=${args[0]:-}; dst=${args[1]:-}
+while read -r s d; do
+  [ -n "${s:-}" ] || continue
+  case "$src" in $s) case "$dst" in $d) exit 1 ;; esac ;; esac
+done < "$SIM/mv_vika" 2>/dev/null
+exec @MV@ "$@"
+'''
+# Tekaistu runuser: kirjaa kutsun ja hakemiston, ajaa komennon (ilman kayttajan vaihtoa); tekaistu chown vain kirjaa.
+RUNUSER = r'''#!/usr/bin/env bash
+echo "$* PWD=$PWD" >> "$SIM/runuser.log"
+[ "$1" = "-u" ] && shift 2 && [ "$1" = "--" ] && shift
+exec "$@"
+'''
+CHOWN = r'''#!/usr/bin/env bash
+echo "$*" >> "$SIM/chown.log"
+'''
+
+
+def testikayttaja():
+    import getpass
+    return getpass.getuser() if os.getuid() != 0 else "nobody"
+
+
 V1 = {
     "claudejono/__init__.py": "", "claudejono/ajuri.py": "VERSIO = 1\n", "claudejono/tarkastaja.py": "", "claudejono/aamukooste.py": "",
     "agentti/__init__.py": "", "agentti/pr_kutsu.py": "", "agentti/viikkoraportti.py": "",
@@ -52,6 +78,9 @@ class PaivitaAjuritTesti(unittest.TestCase):
         self.sim = self.tmp / "sim"; self.opt = self.tmp / "opt"
         self.sim.mkdir(); self.opt.mkdir()
         (self.sim / "systemctl").write_text(SYSTEMCTL); (self.sim / "systemctl").chmod(0o755)
+        (self.sim / "bin").mkdir()
+        for nimi, sisalto in (("mv", MV.replace("@MV@", shutil.which("mv"))), ("runuser", RUNUSER), ("chown", CHOWN)):
+            (self.sim / "bin" / nimi).write_text(sisalto); (self.sim / "bin" / nimi).chmod(0o755)
         (self.sim / "timers").write_text("claude-jono@1.timer loaded active waiting x\nyojono.timer loaded active waiting y\n")
         self.src = self.tmp / "src"; self.src.mkdir()
         self.git("init", "-q", "-b", "main", cwd=self.src)
@@ -84,7 +113,8 @@ class PaivitaAjuritTesti(unittest.TestCase):
 
     def aja(self, *arg, **lisa):
         self.kerta += 1
-        env = dict(os.environ, SIM=str(self.sim), PAIVITA_LAHDE=str(self.src), PAIVITA_POHJA=str(self.pohja),
+        env = dict(os.environ, SIM=str(self.sim), PATH=str(self.sim / "bin") + ":" + os.environ["PATH"],
+                   PAIVITA_LAHDE=str(self.src), PAIVITA_POHJA=str(self.pohja),
                    PAIVITA_YOJONO=str(self.yojono), PAIVITA_LOKI=str(self.tmp / "loki.log"), PAIVITA_LUKKO=str(self.tmp / "lukko"),
                    PAIVITA_SYSTEMCTL=str(self.sim / "systemctl"), PAIVITA_SALLI_EI_ROOT="1", PAIVITA_VAPAA_MB="1",
                    PAIVITA_SEURANTA_S="0", PAIVITA_TS="20261108-10%02d00" % self.kerta,
@@ -92,6 +122,9 @@ class PaivitaAjuritTesti(unittest.TestCase):
                    PAIVITA_SAVU_POHJA="claudejono.ajuri agentti.pr_kutsu", PAIVITA_SAVU_YOJONO="yojono.ajuri agentti.pr_kutsu")
         env.update(lisa)
         return aja("bash", str(SKRIPTI), *arg, cwd=self.tmp, env=env)
+
+    def mv_vika(self, *rivit):
+        (self.sim / "mv_vika").write_text("\n".join(rivit) + "\n")
 
     def loppurivi(self, r):
         return [x for x in r.stdout.splitlines() if x.strip()][-1]
@@ -296,6 +329,135 @@ class PaivitaAjuritTesti(unittest.TestCase):
 
     def test_tuntematon_valinta(self):
         self.assertEqual(self.aja("--ihme").returncode, 2)
+
+    # ---- testit ei rootina (korjaus 3) ------------------------------------------------
+    def test_testit_ajetaan_palvelukayttajana_puhtaassa_kopiossa(self):
+        self.commit({"claudejono/ajuri.py": "VERSIO = 2\n"}, "v2")
+        tmpd = self.tmp / "tmpd"; tmpd.mkdir()
+        r = self.aja(PAIVITA_TESTIKAYTTAJA=testikayttaja(), TMPDIR=str(tmpd))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        rivit = (self.sim / "runuser.log").read_text().splitlines()
+        self.assertEqual(len(rivit), 2)   # yksi per kohde
+        for rivi in rivit:
+            self.assertTrue(rivi.startswith("-u %s -- env -i HOME=" % testikayttaja()), rivi)
+            self.assertIn("-m unittest test.test_ok", rivi)
+            pwd = rivi.split("PWD=", 1)[1]
+            self.assertIn("/paivita-testi.", pwd)          # valiaikainen kopio, ei .uusi eika kohdehakemisto
+            self.assertFalse(pwd.startswith(str(self.opt)))
+        chown = (self.sim / "chown.log").read_text().splitlines()
+        self.assertEqual(len(chown), 2); self.assertTrue(all(testikayttaja() + ":" in c for c in chown), chown)
+        self.assertEqual(list(tmpd.iterdir()), [])         # testikopiot siivottu
+        self.assertEqual(self.jaannokset(), [])
+
+    def test_testivirhe_palvelukayttajan_ajossa_estaa_vaihdon(self):
+        self.commit({"test/test_ok.py": "import unittest\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        self.assertTrue(False)\n"}, "rikki")
+        r = self.aja(PAIVITA_TESTIKAYTTAJA=testikayttaja())
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("testit kaatuivat", self.loppurivi(r)); self.assertEnnallaan()
+
+    def test_oletuksena_ei_runuseria_kun_ei_roottina(self):
+        self.commit({"claudejono/ajuri.py": "VERSIO = 2\n"}, "v2")
+        self.assertEqual(self.aja().returncode, 0)
+        self.assertFalse((self.sim / "runuser.log").exists())
+
+    def test_testikayttajaa_ei_ole_estaa_ennen_muutoksia(self):
+        self.commit({"claudejono/ajuri.py": "VERSIO = 2\n"}, "v2")
+        r = self.aja(PAIVITA_TESTIKAYTTAJA="ei-ole-tata-kayttajaa-x")
+        self.assertEqual(r.returncode, 2, r.stdout); self.assertIn("testikayttajaa", r.stdout); self.assertEnnallaan()
+
+    def test_testikayttaja_ei_saa_olla_root(self):
+        self.commit({"claudejono/ajuri.py": "VERSIO = 2\n"}, "v2")
+        r = self.aja(PAIVITA_TESTIKAYTTAJA="root")
+        self.assertEqual(r.returncode, 2, r.stdout); self.assertIn("ei saa olla root", r.stdout); self.assertEnnallaan()
+
+    # ---- paluu_vanhaan: tila kohde kohteelta (korjaus 1) -----------------------------
+    def rikkinainen_paivitys(self):
+        """Uusi koodi menee testeista lapi mutta savutesti kaatuu: automaattinen paluu kaynnistyy."""
+        return self.commit({"agentti/pr_kutsu.py": "def (:\n"}, "rikki")
+
+    def test_paluu_ensimmaisen_kohteen_mv_epaonnistuu_toinen_palautuu(self):
+        self.rikkinainen_paivitys()
+        self.mv_vika("*agentti-pohja.prev-* */agentti-pohja")
+        r = self.aja()
+        self.assertEqual(r.returncode, 3, r.stdout)
+        self.assertIn("VIRHE: palautus epaonnistui: agentti-pohja", r.stdout)
+        self.assertIn("palautettu: yojono-ajuri <- yojono-ajuri.prev-", r.stdout)
+        self.assertNotIn("palautettu: agentti-pohja <-", r.stdout)   # vanha vika: tila ei saa vuotaa kohteelta toiselle
+        loppu = self.loppurivi(r)
+        self.assertTrue(loppu.startswith(EPA), loppu)
+        self.assertIn("PALAUTUS EPAONNISTUI (palautettu: yojono-ajuri; EI palautettu: agentti-pohja (kohde puuttuu", loppu)
+        self.assertEqual(self.yojono_commit(), self.v1); self.assertTrue(self.yojono_eheys())
+        self.assertFalse(self.pohja.exists())
+        self.assertEqual(len(list(self.opt.glob("agentti-pohja.prev-*"))), 1)
+        self.assertEqual(len(list(self.opt.glob("agentti-pohja.viallinen-*"))), 1)
+        self.assertAjastimetPalautettu()
+
+    def test_paluu_toisen_kohteen_mv_epaonnistuu_ensimmainen_on_palautettu(self):
+        self.rikkinainen_paivitys()
+        self.mv_vika("*yojono-ajuri.prev-* */yojono-ajuri")
+        r = self.aja()
+        self.assertEqual(r.returncode, 3, r.stdout)
+        self.assertIn("palautettu: agentti-pohja <- agentti-pohja.prev-", r.stdout)
+        self.assertNotIn("palautettu: yojono-ajuri <-", r.stdout)
+        self.assertIn("palautettu: agentti-pohja; EI palautettu: yojono-ajuri", self.loppurivi(r))
+        self.assertEqual(self.pohja_commit(), self.v1)
+        self.assertFalse(self.yojono.exists())
+
+    def test_paluu_kaikki_mv_epaonnistuvat_kertoo_ettei_mitaan_palautettu(self):
+        self.rikkinainen_paivitys()
+        self.mv_vika("*.prev-* *")
+        r = self.aja()
+        self.assertEqual(r.returncode, 3, r.stdout)
+        self.assertIn("palautettu: ei mitaan; EI palautettu: agentti-pohja", self.loppurivi(r))
+        self.assertIn("yojono-ajuri", self.loppurivi(r))
+
+    def test_paluu_uuden_asetus_epaonnistuu_vanha_palautuu_siirretysta_tilasta(self):
+        self.commit({"claudejono/ajuri.py": "VERSIO = 2\n"}, "v2")
+        self.mv_vika("*agentti-pohja.uusi */agentti-pohja")
+        r = self.aja()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("uuden asetus epaonnistui", self.loppurivi(r))
+        self.assertIn("palautettu: agentti-pohja <- agentti-pohja.prev-", r.stdout)
+        self.assertEnnallaan()
+
+    # ---- peruuta: osittainen palautus (korjaus 2) --------------------------------------
+    def paivitetty(self):
+        self.commit({"claudejono/ajuri.py": "VERSIO = 2\n", "yojono/ajuri.py": "VERSIO = 2\n"}, "v2")
+        r = self.aja()
+        self.assertEqual(r.returncode, 0, r.stdout)
+        return self.pohja_commit()
+
+    def test_peruuta_osittainen_palautus_oma_koodi_ja_tarkka_tila(self):
+        v2 = self.paivitetty()
+        self.mv_vika("*yojono-ajuri.prev-* */yojono-ajuri")
+        r = self.aja("--peruuta")
+        self.assertEqual(r.returncode, 3, r.stdout)
+        loppu = self.loppurivi(r)
+        self.assertTrue(loppu.startswith(EPA + ": osittainen palautus"), loppu)
+        self.assertIn("palautettu: agentti-pohja; EI palautettu: yojono-ajuri", loppu)
+        self.assertNotIn("esitarkistus", r.stdout)
+        self.assertEqual(self.pohja_commit(), self.v1)                 # palautettu
+        self.assertEqual(self.yojono_commit(), v2)                     # nykyinen koodi takaisin paikallaan
+        self.assertEqual(len(list(self.opt.glob("yojono-ajuri.prev-*"))), 1)
+        loki = self.ajastinloki()   # paivitys + peruutus: jokainen pysaytys on kaynnistetty takaisin
+        self.assertEqual(len([x for x in loki if x.startswith("stop ")]), len([x for x in loki if x.startswith("start ")]))
+
+    def test_peruuta_ensimmainen_epaonnistuu_mitaan_ei_palaudu_eika_toista_yriteta(self):
+        v2 = self.paivitetty()
+        self.mv_vika("*agentti-pohja.prev-* */agentti-pohja")
+        r = self.aja("--peruuta")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        loppu = self.loppurivi(r)
+        self.assertIn("mitaan ei palautettu", loppu); self.assertIn("yojono-ajuri (ei yritetty, ennallaan)", loppu)
+        self.assertEqual(self.pohja_commit(), v2); self.assertEqual(self.yojono_commit(), v2)
+
+    def test_peruuta_kohde_puuttuu_ilmoitetaan_selvasti(self):
+        self.paivitetty()
+        self.mv_vika("*agentti-pohja.prev-* */agentti-pohja", "*agentti-pohja.peruttu-* */agentti-pohja")
+        r = self.aja("--peruuta")
+        self.assertEqual(r.returncode, 3, r.stdout)
+        self.assertIn("KOHDE PUUTTUU", self.loppurivi(r)); self.assertIn("agentti-pohja.peruttu-", self.loppurivi(r))
+        self.assertFalse(self.pohja.exists())
 
 
 if __name__ == "__main__":

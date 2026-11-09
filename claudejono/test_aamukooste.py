@@ -194,6 +194,15 @@ class KayttoonottoEro(Pohja):
         self.assertIn("ei selvinnyt (OSError)", teksti)
         self.assertNotIn("salainen", teksti)
 
+    def test_ero_virheen_lyhyt_syy_nakyy_mutta_ei_poikkeuksen_teksti(self):
+        from tools import kayttoonotto_ero as ero
+
+        def rikki(commit):
+            raise ero.EroVirhe("salainen-polku /etc/x", "git: kopion omistaja ei tasmaa (safe.directory ei auttanut)")
+        teksti, _ = self.rivi(rikki)
+        self.assertIn("ei selvinnyt (EroVirhe: git: kopion omistaja ei tasmaa", teksti)
+        self.assertNotIn("salainen", teksti)
+
     def test_puuttuva_julkaisutieto_ei_kaada(self):
         (self.yojono_ajuri / ".julkaisu-tieto").unlink()
         self.assertIn("ei selvinnyt", self.rivi(self.vertailu(0))[0])

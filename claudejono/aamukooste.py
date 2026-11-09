@@ -181,8 +181,9 @@ def kayttoonotto_ero_rivi(pohja=OLETUS_POHJA, yojono_ajuri=OLETUS_YOJONO_AJURI, 
             if commit is None:
                 return "ajurien k\u00e4ytt\u00f6\u00f6noton tila ei selvinnyt (" + nimi + ")"
             kohteet.append((nimi,) + ero.tiivista(hae("agentti-pohja", commit, "main")))
-    except Exception as virhe:   # verkko- tai gitvirhe ei kaada koostetta; vain tyyppi nakyviin
-        return "ajurien k\u00e4ytt\u00f6\u00f6noton tila ei selvinnyt (" + type(virhe).__name__ + ")"
+    except Exception as virhe:   # verkko- tai gitvirhe ei kaada koostetta; vain tyyppi ja EroVirheen lyhyt syy nakyviin
+        syy = getattr(virhe, "lyhyt", None) if isinstance(virhe, ero.EroVirhe) else None
+        return "ajurien k\u00e4ytt\u00f6\u00f6noton tila ei selvinnyt (" + type(virhe).__name__ + (": " + syy if syy else "") + ")"
     jaljessa = [k for k in kohteet if k[1] or k[2]]
     if not jaljessa:
         return None
