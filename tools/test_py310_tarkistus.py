@@ -1,4 +1,7 @@
+import contextlib
+import io
 import os
+import sys
 import tempfile
 import unittest
 
@@ -52,6 +55,23 @@ class Py310Testit(unittest.TestCase):
         try:
             with tee("x = 1\n") as d:
                 self.assertEqual(t.main([d]), t.EI_TULKKIA)
+        finally:
+            t.OLETUS_HAKU = alku
+            if vanha is not None:
+                os.environ["PY310"] = vanha
+
+    def test_vaara_versio_ei_anna_ok(self):
+        with tee("x = 1\n") as d:
+            self.assertEqual(t.main(["--python", sys.executable, d]), t.EI_TULKKIA if sys.version_info[:2] != (3, 10) else 0)
+
+    def test_epavarma_tulostetaan(self):
+        vanha = os.environ.pop("PY310", None)
+        alku, t.OLETUS_HAKU = t.OLETUS_HAKU, "/olematon/*/python3.10"
+        try:
+            with tee("x = 1\n") as d, contextlib.redirect_stdout(io.StringIO()) as ulos:
+                t.main([d])
+            self.assertIn("EPAVARMA: python3.10 puuttuu", ulos.getvalue())
+            self.assertNotIn("OK", ulos.getvalue())
         finally:
             t.OLETUS_HAKU = alku
             if vanha is not None:
