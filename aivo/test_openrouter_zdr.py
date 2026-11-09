@@ -9,6 +9,40 @@ MSG = [{"role": "user", "content": "x"}]
 AIVO = Path(oz.__file__).resolve().parent
 
 
+class DataCollectionTesti(unittest.TestCase):
+    def test_deny_aina_mukana(self):
+        self.assertEqual(oz.rakenna_runko("m/x", MSG)["provider"]["data_collection"], "deny")
+        r = oz.rakenna_runko("m/x", MSG, provider={"order": ["a"], "data_collection": "deny"})
+        self.assertEqual(r["provider"], {"order": ["a"], "data_collection": "deny", "zdr": True})
+
+    def test_muu_runko_koskematta(self):
+        r = oz.rakenna_runko("m/x", MSG, provider={"order": ["a"]}, temperature=0)
+        self.assertEqual(r, {"model": "m/x", "messages": MSG, "temperature": 0,
+                             "provider": {"order": ["a"], "zdr": True, "data_collection": "deny"}})
+
+    def test_ohitusyritys_kaatuu(self):
+        for kw in ({"provider": {"data_collection": "allow"}},
+                   {"provider": {"data_collection": "DENY"}},
+                   {"provider": {"data_collection": None}},
+                   {"provider": {"Data_Collection": "allow"}},
+                   {"provider": {"DATA_COLLECTION": "deny"}},
+                   {"provider": {" data_collection ": "deny"}},
+                   {"provider": {"data_collection": "deny", "DATA_COLLECTION": "allow"}},
+                   {"data_collection": "deny"}, {"Data_Collection": "allow"}):
+            with self.subTest(kw=kw), self.assertRaises(oz.ZdrVirhe):
+                oz.rakenna_runko("m/x", MSG, **kw)
+
+    def test_syotetta_ei_muuteta(self):
+        prov = {"order": ["a"]}
+        oz.rakenna_runko("m/x", MSG, provider=prov)
+        self.assertEqual(prov, {"order": ["a"]})
+
+    def test_virhe_ei_vuoda_arvoa(self):
+        with self.assertRaises(oz.ZdrVirhe) as c:
+            oz.rakenna_runko("m/x", MSG, provider={"data_collection": "salainen-arvo"})
+        self.assertNotIn("salainen-arvo", str(c.exception))
+
+
 class ZdrTesti(unittest.TestCase):
     def test_zdr_aina_true(self):
         self.assertIs(oz.rakenna_runko("m/x", MSG)["provider"]["zdr"], True)

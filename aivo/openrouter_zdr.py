@@ -1,12 +1,16 @@
 """ZDR-pakotus OpenRouter-pyyntoihin (kompassi A831, A728).
 
 Puhdas funktio: rakentaa pyynnon rungon ja asettaa aina `provider.zdr = true`
-(nollassailytys). Ei verkkokutsua, ei avainten lukua. Mallia, osoitetta tai
+(nollassailytys) ja `provider.data_collection = "deny"`. Ei verkkokutsua, ei avainten lukua. Mallia, osoitetta tai
 avainta ei kovakoodata: ne tulevat kutsujalta.
 
 Saannot:
   * Kutsuja ei voi ohittaa zdr:aa (zdr=False, provider.zdr != True tai
     ylimaarainen `zdr`-avain) -> ZdrVirhe.
+  * Samassa kohdassa pakotetaan `provider.data_collection = "deny"` (A912): palveluntarjoaja
+    ei saa kayttaa dataa koulutukseen. Ohitusyritys (`"allow"`, iso avain, ylimaarainen
+    avain) -> ZdrVirhe. Taman moduulin kautta kulkevat kaikki henkilotietoa sisaltavat
+    pyynnot; muut pyynnot eivat kulje taman funktion kautta, joten niihin ei koske mikaan.
   * `yksityinen_chat=True` -> ZdrVirhe: yksityisen chatin sisalto ei koskaan lahde (A728).
   * Tata moduulia ei ole kytketty mihinkaan ajoon.
 """
@@ -22,6 +26,11 @@ class ZdrVirhe(ValueError):
 def _on_zdr_avain(avain: Any) -> bool:
     """Tosi, jos avain on 'zdr' kirjainkoosta ja ymparoivista valeista riippumatta."""
     return str(avain).strip().lower() == "zdr"
+
+
+def _on_dc_avain(avain: Any) -> bool:
+    """Tosi, jos avain on 'data_collection' kirjainkoosta ja ymparoivista valeista riippumatta."""
+    return str(avain).strip().lower() == "data_collection"
 
 
 # Avaimet, jotka funktio omistaa: kutsuja ei voi antaa niita lisaparametreina.
@@ -56,6 +65,8 @@ def rakenna_runko(
         raise ZdrVirhe("malli puuttuu")
     if any(_on_zdr_avain(k) for k in lisa):
         raise ZdrVirhe("zdr ei ole kutsujan asetettavissa")
+    if any(_on_dc_avain(k) for k in lisa):
+        raise ZdrVirhe("data_collection ei ole kutsujan asetettavissa")
     varatut = _VARATUT.intersection(lisa)
     if varatut:
         raise ZdrVirhe("varattu avain lisaparametreissa")
@@ -69,7 +80,10 @@ def rakenna_runko(
         for k, v in prov.items():
             if _on_zdr_avain(k) and not (k == "zdr" and v is True):
                 raise ZdrVirhe("provider.zdr pitaa olla True")
+            if _on_dc_avain(k) and not (k == "data_collection" and v == "deny"):
+                raise ZdrVirhe('provider.data_collection pitaa olla "deny"')
     prov["zdr"] = True
+    prov["data_collection"] = "deny"
     runko: dict[str, Any] = dict(lisa)
     runko["model"] = malli
     runko["messages"] = _viestit(viestit)
