@@ -47,45 +47,48 @@ class Pohja(unittest.TestCase):
 class Nimi(unittest.TestCase):
     def test_kelvolliset_ja_kelvottomat(self):
         self.assertTrue(ajuri.kelvollinen_nimi("2026-10-30-01-ideoi-korjaus.md"))
-        for n in ("../x.md", "2026-10-30-01-X.md", "2026-10-30-1-a.md", "a.md", "2026-10-30-01-a.txt", "2026-10-30-01-a b.md"):
+        self.assertTrue(ajuri.kelvollinen_nimi("2026-11-08-55-KIIRE-pr239-yhdista-main.md"))   # vika 8.11.: ohitettiin hiljaa
+        self.assertTrue(ajuri.kelvollinen_nimi("2026-10-30-01-X.md"))
+        for n in ("../x.md", "2026-10-30-01-a/b.md", "2026-10-30-01-a.b.md", "2026-10-30-01-a_b.md", "2026-10-30-01-\u00e4.md",
+                  "2026-10-30-1-a.md", "a.md", "2026-10-30-01-a.txt", "2026-10-30-01-a b.md"):
             self.assertFalse(ajuri.kelvollinen_nimi(n), n)
 
 
 class KelvotonNimi(Pohja):
-    """Vika 7.11.2026: tehtava 2026-11-07-33-KIIRE-... ohitettiin hiljaa 2,5 h, koska TEHTAVA_RE sallii vain pienet kirjaimet."""
+    """Vika 7.11.2026: tehtava 2026-11-07-33-KIIRE-... ohitettiin hiljaa 2,5 h. Isot kirjaimet kelpaavat 8.11. alkaen; muut kelvottomat nimet nostetaan nakyviin."""
 
     def test_kelvoton_loytyy_kelvollinen_ja_readme_eivat(self):
-        self.lisaa_tehtava("2026-11-07-33-KIIRE-poista.md")
+        self.lisaa_tehtava("2026-11-07-33-kiire poista.md")
         self.lisaa_tehtava("2026-11-07-34-ok.md")
         self.lisaa_tehtava("README.md")
-        self.assertEqual(ajuri.kelvottomat_tehtavat(self.repo), ["2026-11-07-33-KIIRE-poista.md"])
+        self.assertEqual(ajuri.kelvottomat_tehtavat(self.repo), ["2026-11-07-33-kiire poista.md"])
 
     def test_varoitus_kerran_per_nimi(self):
-        self.lisaa_tehtava("2026-11-07-33-KIIRE-poista.md")
+        self.lisaa_tehtava("2026-11-07-33-kiire poista.md")
         viestit = []
-        self.assertEqual(ajuri.varoita_kelvottomista(self.repo, self.tmp, viestit.append), ["2026-11-07-33-KIIRE-poista.md"])
+        self.assertEqual(ajuri.varoita_kelvottomista(self.repo, self.tmp, viestit.append), ["2026-11-07-33-kiire poista.md"])
         self.assertEqual(ajuri.varoita_kelvottomista(self.repo, self.tmp, viestit.append), [])
         self.assertEqual(len(viestit), 1)
         self.assertIn("OHITTAA", viestit[0])
-        self.lisaa_tehtava("2026-11-07-35-Toinen.md")
+        self.lisaa_tehtava("2026-11-07-35-toinen_x.md")
         ajuri.varoita_kelvottomista(self.repo, self.tmp, viestit.append)
         self.assertEqual(len(viestit), 2)
-        self.assertIn("2026-11-07-35-Toinen.md", viestit[1])
-        self.assertNotIn("KIIRE", viestit[1])
+        self.assertIn("2026-11-07-35-toinen_x.md", viestit[1])
+        self.assertNotIn("kiire poista", viestit[1])
 
     def test_rikkinainen_tilatiedosto_ei_kaada(self):
-        self.lisaa_tehtava("2026-11-07-33-KIIRE-poista.md")
+        self.lisaa_tehtava("2026-11-07-33-kiire poista.md")
         (self.tmp / ajuri.NIMIVAROITUKSET).write_text("{rikki")
         viestit = []
         self.assertEqual(len(ajuri.varoita_kelvottomista(self.repo, self.tmp, viestit.append)), 1)
 
     def test_ilman_lahettajaa_ei_mitaan(self):
-        self.lisaa_tehtava("2026-11-07-33-KIIRE-poista.md")
+        self.lisaa_tehtava("2026-11-07-33-kiire poista.md")
         self.assertEqual(ajuri.varoita_kelvottomista(self.repo, self.tmp, None), [])
         self.assertFalse((self.tmp / ajuri.NIMIVAROITUKSET).exists())
 
     def test_lahetysvirhe_ei_kaada_eika_kirjaa_tilaa(self):
-        self.lisaa_tehtava("2026-11-07-33-KIIRE-poista.md")
+        self.lisaa_tehtava("2026-11-07-33-kiire poista.md")
 
         def rikki(_):
             raise OSError("verkko alhaalla")
@@ -96,7 +99,7 @@ class KelvotonNimi(Pohja):
         self.assertEqual(len(ajuri.varoita_kelvottomista(self.repo, self.tmp, viestit.append)), 1)
 
     def test_aja_ajaa_kelvollisen_vaikka_lahetys_kaatuu(self):
-        self.lisaa_tehtava("2026-11-07-33-KIIRE-poista.md")
+        self.lisaa_tehtava("2026-11-07-33-kiire poista.md")
         self.lisaa_tehtava("2026-11-07-34-ok.md")
 
         def f(kom, **kw):
@@ -114,7 +117,7 @@ class KelvotonNimi(Pohja):
         self.assertFalse((self.tmp / ajuri.NIMIVAROITUKSET).exists())
 
     def test_aja_varoittaa_ja_ajaa_kelvollisen(self):
-        self.lisaa_tehtava("2026-11-07-33-KIIRE-poista.md")
+        self.lisaa_tehtava("2026-11-07-33-kiire poista.md")
         self.lisaa_tehtava("2026-11-07-34-ok.md")
 
         def f(kom, **kw):
@@ -122,7 +125,29 @@ class KelvotonNimi(Pohja):
         viestit = []
         viesti = ajuri.aja(self.repo, self.tmp, env={}, suorita=f, laheta=viestit.append)
         self.assertIn("2026-11-07-34-ok.md VALMIS", viesti)
-        self.assertTrue(any("OHITTAA" in v and "KIIRE" in v for v in viestit), viestit)
+        self.assertTrue(any("OHITTAA" in v and "kiire poista" in v for v in viestit), viestit)
+
+
+class IsotKirjaimet(Pohja):
+    """Vika 7.-8.11.2026: KIIRE-tehtavat 33, 13, 39 ja 55 seisoivat 1,5-2,7 h, koska kaava salli vain pienet kirjaimet."""
+
+    def test_kiire_tehtava_valitaan_ja_ei_varoitusta(self):
+        self.lisaa_tehtava("2026-11-08-55-KIIRE-pr239-yhdista-main.md")
+        self.lisaa_tehtava("2026-11-08-56-muu.md")
+        self.assertEqual(ajuri.seuraava_tehtava(self.repo).name, "2026-11-08-55-KIIRE-pr239-yhdista-main.md")
+        self.assertEqual(ajuri.kelvottomat_tehtavat(self.repo), [])
+
+    def test_slug_ei_riipu_kirjainkoosta(self):
+        self.assertEqual(ajuri.tehtavan_slug("2026-11-08-55-KIIRE-Korjaa.md"), "kiire-korjaa")
+        self.assertEqual(ajuri.tehtavan_slug("2026-11-08-02-auto-Nimi.md"), "nimi")
+        self.assertEqual(ajuri.tehtavan_slug("2026-11-08-02-AUTO-nimi.md"), "nimi")
+
+    def test_suodatus_tunnistaa_saman_nimen_eri_kirjainkoolla(self):
+        self.lisaa_tehtava("2026-11-08-55-KIIRE-korjaa.md", "# a\n\nyksi")
+        ok, hylatyt = ajuri.suodata_uudet(self.repo, [{"nimi": "kiire-korjaa", "sisalto": "# b\n\nkaksi"},
+                                                      {"nimi": "Uusi", "sisalto": "# c"}, {"nimi": "uusi", "sisalto": "# d"}])
+        self.assertEqual([t["nimi"] for t in ok], ["Uusi"])
+        self.assertEqual([h[0] for h in hylatyt], ["kiire-korjaa", "uusi"])
 
 
 class GitVirhe(Pohja):
@@ -140,7 +165,7 @@ class Valinta(Pohja):
     def test_vanhin_ilman_tulosta_ja_kelvoton_ohitetaan(self):
         self.lisaa_tehtava("2026-10-30-02-b.md")
         self.lisaa_tehtava("2026-10-30-01-a.md")
-        self.lisaa_tehtava("2026-10-29-01-HUONO.md")
+        self.lisaa_tehtava("2026-10-29-01-huono_nimi.md")
         (self.repo / ajuri.JONO / "tulokset").mkdir()
         (self.repo / ajuri.JONO / "tulokset" / "2026-10-30-01-a.md").write_text("tehty")
         self.assertEqual(ajuri.seuraava_tehtava(self.repo).name, "2026-10-30-02-b.md")
