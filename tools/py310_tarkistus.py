@@ -7,7 +7,8 @@ lausekkeessa kenoviiva, sallittu vasta 3.12:ssa, PEP 701).
 Kaytto: tools/py310_tarkistus.py [--python POLKU] [HAKEMISTO]   (oletus: nykyinen hakemisto)
 Tulkki: --python, muuten ympariston PY310, muuten /opt/agentscope/tyo/_apu/pythons/cpython-3.10*/bin/python3.10.
 Tuloste: yksi rivi per virhe, "tiedosto:rivi: virheen tyyppi". Virheviestin tekstia ei tulosteta.
-Poistumiskoodi: 0 kaikki kaantyy, 1 kaantovirhe, 3 3.10-tulkkia ei loydy, 2 muu virhe (esim. hakemistoa ei ole).
+Tulkin versio varmistetaan (oltava tasan 3.10). Muu versio tai puuttuva tulkki tulostaa "EPAVARMA: ..." eika koskaan "OK".
+Poistumiskoodi: 0 kaikki kaantyy, 1 kaantovirhe, 3 oikeaa 3.10-tulkkia ei loydy (EPAVARMA), 2 muu virhe (esim. hakemistoa ei ole).
 Vain stdlib. Tavukoodi ohjataan tilapaiseen hakemistoon, joten repoon ei jaa __pycache__-tiedostoja.
 """
 import argparse
@@ -33,6 +34,17 @@ def loyda_tulkki(polku=None):
         if e and os.path.isfile(e) and os.access(e, os.X_OK):
             return e
     return None
+
+
+def versio(tulkki):
+    """Palauttaa tulkin (major, minor) tai None, jos sita ei saa ajettua."""
+    try:
+        p = subprocess.run([tulkki, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+                           capture_output=True, text=True, timeout=30)
+        a, b = p.stdout.strip().split(".")
+        return int(a), int(b)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
 
 
 def jasenna(teksti):
@@ -74,7 +86,12 @@ def main(argv=None):
     a = ap.parse_args(argv)
     tulkki = loyda_tulkki(a.python)
     if not tulkki:
-        print("EI TULKKIA: Python 3.10 -tulkkia ei loytynyt (anna --python tai PY310). Tarkistusta ei tehty.")
+        print("EPAVARMA: python3.10 puuttuu (anna --python tai PY310). Tarkistusta ei tehty.")
+        return EI_TULKKIA
+    v = versio(tulkki)
+    if v != (3, 10):
+        print("EPAVARMA: tulkki ei ole 3.10 (versio %s). Tarkistusta ei tehty."
+              % ("%d.%d" % v if v else "tuntematon"))
         return EI_TULKKIA
     if not os.path.isdir(a.hakemisto):
         print("VIRHE: hakemistoa ei ole")
