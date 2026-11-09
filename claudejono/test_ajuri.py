@@ -826,6 +826,78 @@ class TulosPortti(Pohja):
         self.assertIn("EPAONNISTUI", ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_ITSESUUNNITTELU": "0"}, suorita=f))
 
 
+class DocsOhitusNakyviin(Pohja):
+    """Vika 9.11.2026: tehtava 31 kirjoitti seuranta.py:n ja testit docs-ulos/:iin; ajuri pudotti .py:t hiljaa ja tulos sanoi VALMIS."""
+
+    def aja_docs(self, tiedostot, tulos="Tehty.\n\nTodennettu k\u00e4yt\u00f6ss\u00e4: testit 27/27 l\u00e4pi"):
+        self.lisaa_tehtava("2026-11-03-01-a.md")
+
+        def f(kom, **kw):
+            ulos = Path(kw["cwd"]) / ajuri.DOCS_ULOS
+            for nimi, data in tiedostot.items():
+                (ulos / nimi).parent.mkdir(parents=True, exist_ok=True)
+                (ulos / nimi).write_text(data, encoding="utf-8")
+            return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": tulos}), "")
+        viesti = ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_ITSESUUNNITTELU": "0"}, suorita=f)
+        return viesti, (self.repo / ajuri.JONO / "tulokset" / "2026-11-03-01-a.md").read_text(encoding="utf-8")
+
+    def test_pudotettu_py_nakyy_ja_tila_kesken(self):
+        viesti, tulos = self.aja_docs({"claude-jono/tyokalut/seuranta.py": "print(1)\n",
+                                       "claude-jono/tyokalut/README.md": "ohje\n"})
+        self.assertIn("KESKEN", viesti)
+        self.assertIn("- Tila: KESKEN", tulos)
+        self.assertIn("`claude-jono/tyokalut/seuranta.py`: polku tai paate ei sallittu", tulos)
+        self.assertNotIn("README.md`", tulos)   # sallittu tiedosto ei ole ohitettujen listassa
+        self.assertTrue((self.repo / "claude-jono/tyokalut/README.md").exists())
+        self.assertFalse((self.repo / "claude-jono/tyokalut/seuranta.py").exists())
+        self.assertLess(tulos.index("## Huom: docs-ulos/"), tulos.index("Tehty."))   # alussa, ei katkea
+
+    def test_kaikki_sallittu_pysyy_valmiina(self):
+        viesti, tulos = self.aja_docs({"claude-jono/muistiot/m.md": "muistio\n"})
+        self.assertIn("- Tila: VALMIS", tulos)
+        self.assertNotIn("Huom: docs-ulos", tulos)
+        self.assertTrue((self.repo / "claude-jono/muistiot/m.md").exists())
+
+    def test_kesken_ilman_todennusta_saa_silti_huomion(self):
+        _, tulos = self.aja_docs({"claude-jono/kompassi.md": "x\n"}, tulos="Tehty.")
+        self.assertIn("- Tila: KESKEN", tulos)
+        self.assertIn("`claude-jono/kompassi.md`", tulos)
+
+    def test_poimi_ilmoittaa_syyt(self):
+        with tempfile.TemporaryDirectory() as d:
+            kaista, repo = Path(d) / "k", Path(d) / "repo"
+            repo.mkdir()
+            ulos = ajuri.valmistele_docs_ulos(kaista, {})
+            (ulos / "claude-jono").mkdir()
+            (ulos / "claude-jono" / "iso.md").write_text("x" * (ajuri.DOCS_MAX_TAVUA + 1))
+            (ulos / "claude-jono" / "b.md").write_bytes(b"\xff\xfe")
+            (ulos / "claude-jono" / "a.md").write_text("ok")
+            ohitetut = []
+            polut = ajuri.poimi_docs_ulos(kaista, repo, {}, ohitetut=ohitetut)
+            self.assertEqual(polut, [repo / "claude-jono/a.md"])
+            syyt = dict(ohitetut)
+            self.assertIn("tavua", syyt["claude-jono/iso.md"])
+            self.assertEqual(syyt["claude-jono/b.md"], "ei UTF-8")
+            self.assertNotIn("claude-jono/a.md", syyt)
+
+    def test_tiedostoraja_ilmoitetaan(self):
+        with tempfile.TemporaryDirectory() as d:
+            kaista, repo = Path(d) / "k", Path(d) / "repo"
+            repo.mkdir()
+            ulos = ajuri.valmistele_docs_ulos(kaista, {})
+            (ulos / "claude-jono").mkdir()
+            for i in range(ajuri.DOCS_MAX_TIEDOSTOJA + 2):
+                (ulos / "claude-jono" / f"m{i:02d}.md").write_text("x")
+            ohitetut = []
+            polut = ajuri.poimi_docs_ulos(kaista, repo, {}, ohitetut=ohitetut)
+            self.assertEqual(len(polut), ajuri.DOCS_MAX_TIEDOSTOJA)
+            self.assertEqual(len(ohitetut), 2)
+            self.assertTrue(all("tiedostoa" in syy for _, syy in ohitetut))
+
+    def test_huom_tyhja_ilman_ohitettuja(self):
+        self.assertEqual(ajuri.docs_ohitus_huom([]), "")
+
+
 class DocsKirjoitusTesti(unittest.TestCase):
     """Tonyn paatos 4.11.2026: agentit saavat kirjoittaa docs-repoon (ei Tonyn paatoksia eika jonon omia kansioita)."""
 
