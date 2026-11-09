@@ -22,8 +22,11 @@ Päätökset:
   - "paatos:A<numero>" (esim. "paatos:A846"): muutos toteuttaa Tonyn numeroidun päätöksen. Päätöksen teksti on alla
     kohdassa TONYN PÄÄTÖKSET, jos PR viittaa numeroon ja numero löytyy Tonyn tiedostosta. Muutoksen on vastattava päätöstä
     täsmälleen, ei laajemmin. Jos päätöstekstiä ei ole alla, älä käytä tätä luokkaa.
-  Koodi tarkistaa luokan (tiedostotyypit, päätösnumeron olemassaolon). Luokka ei koskaan kata: löysennystä, rahaa,
-  salaisuuksia, uutta verkkoyhteyttä, rootia, tools/automerge.py-tiedostoa eikä .github/-hakemistoa. Niistä päätös on RAJATTU.
+  Koodi tarkistaa luokan tiedostolistasta ja diffistä: tiedostotyypit, päätösnumeron olemassaolon, rajatut polut
+  (tools/automerge.py, .github/, oikeudet, kulukatot, salaisuudet, tarkastajan oma koodi, riippuvuudet) ja muutettujen
+  rivien aiheet (raha, salaisuudet, root, verkkoyhteys). Osuma muuttaa päätöksen RAJATTU:ksi. Luokka ei koskaan kata
+  löysennystä, rahaa, salaisuuksia, uutta verkkoyhteyttä, rootia, tools/automerge.py-tiedostoa eikä .github/-hakemistoa.
+  Niistä päätös on RAJATTU.
 - RAJATTU: muutos koskee jotain näistä, vaikka tiedostonimi ei sitä kertoisi, eikä se kuulu yllä olevaan luokkaan:
   oikea raha tai kaupankäynti oikealla
   rahalla, salaisuudet tai avaimet, käyttäjät, oikeudet, sudo, palomuuri, kulukatot, budjetit, päivärajat tai

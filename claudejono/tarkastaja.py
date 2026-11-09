@@ -67,6 +67,27 @@ DOKUMENTTI_RE = re.compile(r"\.(md|rst)\Z", re.IGNORECASE)
 # Dokumentteina ei kasitella tiedostoja, jotka ohjaavat agentteja tai mallia (kehotteet, ohjetiedostot).
 DOKUMENTTI_POIS_RE = re.compile(r"kehote|prompt|(^|/)claude\.md\Z|(^|/)\.claude/|(^|/)agents?\.md\Z", re.IGNORECASE)
 TESTI_RE = re.compile(r"(^|/)(test_[A-Za-z0-9_]+|[A-Za-z0-9_]+_test)\.py\Z")
+# Luokka ei koskaan kata naita (A846): koodi tarkistaa tiedostolistan ja diffin, ei luota mallin sanaan eika kehotteeseen.
+# Polut: automergen ja pr_kutsun rajatut (mm. tools/automerge.py, .github/, oikeudet, kulukatot, salaisuudet) seka
+# tarkastajan oma koodi ja kehote (muutos ei voi kelpuuttaa itse itseaan) ja riippuvuudet.
+LUOKKA_EI_POLUT_RE = re.compile(r"(^|/)\.github(/|\Z)|(^|/)automerge|(^|/)claudejono/tarkastaja"
+                                r"|(^|/)(requirements[^/]*\.txt|pyproject\.toml|setup\.(py|cfg)|package(-lock)?\.json|Pipfile[^/]*)\Z",
+                                re.IGNORECASE)
+# Diffin muutetut rivit (+/-): aiheet, joista paatos on aina Tonyn. Fail closed: osuma -> RAJATTU, myos vaaralla osumalla.
+# Sanaraja kirjaimina (ei \b), jotta MAX_EUROA ja GITHUB_TOKEN osuvat: alaviiva erottaa sanat.
+_ALKU, _LOPPU = r"(?<![A-Za-z])", r"(?![A-Za-z])"
+LUOKKA_EI_AIHEET = (
+    ("raha", re.compile(_ALKU + r"(raha|euro|eur" + _LOPPU + r"|usd" + _LOPPU + r"|kaupp|kaupan|salkku|saldo|budjet|maksu|hinta|"
+                        r"price|balance|wallet|order|trade|trading|binance|kraken|coinbase|stripe|paypal)|\u20ac|\$\s?\d",
+                        re.IGNORECASE)),
+    ("salaisuudet", re.compile(r"token|secret|salaisu|salasana|password|passwd|api_?key|private_?key|credential|"
+                               r"\.env" + _LOPPU + r"|holvi|authorization|bearer|ghp_|github_pat_|" + _ALKU + r"sk-", re.IGNORECASE)),
+    ("root", re.compile(_ALKU + r"(sudo|root" + _LOPPU + r"|su\s+-)|runuser|setuid|seteuid|setgid|chmod|chown|pkexec|/etc/",
+                        re.IGNORECASE)),
+    ("verkkoyhteys", re.compile(r"https?://|urllib|" + _ALKU + r"(requests" + _LOPPU + r"|socket|curl" + _LOPPU + r"|wget" + _LOPPU
+                                + r"|ssh" + _LOPPU + r"|nc\s|fetch\()|httpx|aiohttp|urlopen|http\.client|smtplib|ftplib|paramiko|"
+                                r"websocket", re.IGNORECASE)),
+)
 KAYTTAJA_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
@@ -215,15 +236,42 @@ def paatosrivit(teksti, polku):
     return ulos
 
 
-def tarkista_luokka(paatos, luokka, tiedostot, tunnetut):
-    """(paatos, luokka, syy). Vain HYVAKSYTTY voi saada luokan. Luokka, jota koodi ei voi todentaa (tiedostot, paatosnumero),
-    muuttaa paatoksen RAJATTU:ksi: Tony paattaa. tunnetut: paatosrivit()-tulos."""
+def _muutetut_rivit(patch):
+    return [r[1:] for r in (patch or "").splitlines() if r[:1] in "+-" and not r.startswith(("+++", "---"))]
+
+
+def luokan_esteet(tiedostot, repo=""):
+    """Syyt, joiden vuoksi mikaan luokka ei kelpaa (tyhja = ei esteita). Paatetaan tiedostolistasta ja diffista."""
+    esteet = []
+    for n in _nimet(tiedostot):
+        if LUOKKA_EI_POLUT_RE.search(n) or automerge.rajattu(repo, n) or pr_kutsu.suojattu(n):
+            esteet.append("rajattu polku %s" % n)
+    for t in tiedostot or []:
+        patch = t.get("patch")
+        if not isinstance(patch, str):
+            if int(t.get("changes") or 0) > 0:                 # GitHub jattaa patchin pois isoista ja binaaritiedostoista
+                esteet.append("diff puuttuu: %s" % t.get("filename"))
+            continue
+        rivit = "\n".join(_muutetut_rivit(patch))
+        for aihe, re_ in LUOKKA_EI_AIHEET:
+            if re_.search(rivit):
+                esteet.append("%s (%s)" % (aihe, t.get("filename")))
+    return esteet
+
+
+def tarkista_luokka(paatos, luokka, tiedostot, tunnetut, repo=""):
+    """(paatos, luokka, syy). Vain HYVAKSYTTY voi saada luokan. Luokka, jota koodi ei voi todentaa (tiedostot, diff,
+    paatosnumero), muuttaa paatoksen RAJATTU:ksi: Tony paattaa. tunnetut: paatosrivit()-tulos (vain Tonyn
+    paatostiedostosta loytyneet ja PR:ssa viitatut numerot). Kaikille luokille, myos kiristykselle, tarkistetaan
+    luokan_esteet(): rajatut polut, raha, salaisuudet, root ja verkkoyhteydet."""
     if paatos != "HYVAKSYTTY" or not luokka:
         return paatos, None, ""
     nimet = _nimet(tiedostot)
+    if not nimet:
+        return "RAJATTU", None, "luokka %s ei sovi tiedostoihin: ei tiedostoja" % _siivoa(luokka, 40)
     if luokka == "kiristys":
-        return paatos, luokka, ""
-    if luokka == "dokumentti":
+        pass
+    elif luokka == "dokumentti":
         huono = [n for n in nimet if not DOKUMENTTI_RE.search(n) or DOKUMENTTI_POIS_RE.search(n)]
     elif luokka == "testi":
         huono = [n for n in nimet if not TESTI_RE.search(n)]
@@ -233,9 +281,11 @@ def tarkista_luokka(paatos, luokka, tiedostot, tunnetut):
             return "RAJATTU", None, "tuntematon luokka"
         if m.group(1) not in tunnetut:
             return "RAJATTU", None, "paatosnumeroa %s ei loydy Tonyn paatostiedostosta" % m.group(1)
-        return paatos, luokka, ""
-    if not nimet or huono:
-        return "RAJATTU", None, "luokka %s ei sovi tiedostoihin: %s" % (luokka, _siivoa(", ".join(huono[:3]) or "ei tiedostoja", 150))
+    if luokka in ("dokumentti", "testi") and huono:
+        return "RAJATTU", None, "luokka %s ei sovi tiedostoihin: %s" % (luokka, _siivoa(", ".join(huono[:3]), 150))
+    esteet = luokan_esteet(tiedostot, repo)
+    if esteet:
+        return "RAJATTU", None, "luokka %s ei kata: %s" % (luokka, _siivoa(", ".join(esteet[:4]), 200))
     return paatos, luokka, ""
 
 
@@ -297,7 +347,7 @@ def tarkasta_pr(repo, nro, d, tunnus, env, suorita=subprocess.run, avaa=urllib.r
     except OSError as e:
         raise TarkastajaVirhe("tarkastajaa ei voitu kaynnistaa: " + type(e).__name__)
     paatos, perustelu, loydokset, luvut, luokka = tulkitse_luokalla(r.stdout, r.returncode)
-    paatos, luokka, syy = tarkista_luokka(paatos, luokka, tiedostot, tunnetut)
+    paatos, luokka, syy = tarkista_luokka(paatos, luokka, tiedostot, tunnetut, repo)
     if syy:
         perustelu = _siivoa("Luokkatarkistus: %s. %s" % (syy, perustelu), PERUSTELU_MAX)
     return paatos, perustelu, loydokset, luvut, malli, luokka

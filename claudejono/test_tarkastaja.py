@@ -451,6 +451,84 @@ class LuokkaTesti(unittest.TestCase):
         self.assertEqual(body.count("<!--"), 1)                      # vain koodin oma paatosmerkki
 
 
+def tied_patch(nimi, *lisatyt, poistetut=()):
+    patch = "@@ -1,2 +1,2 @@ def vanha_token():\n x = 1\n" + "".join("-%s\n" % r for r in poistetut) + "".join("+%s\n" % r for r in lisatyt)
+    return [{"filename": nimi, "status": "modified", "changes": len(lisatyt) + len(poistetut), "patch": patch}]
+
+
+class LuokkaOhitusTesti(unittest.TestCase):
+    """Tarkastajan loydos 8.11.2026: malli sanoo luokan, mutta diff koskee rajattua -> RAJATTU koodin paatoksella."""
+    TUNNETUT = {"A846": "- **A846 (x):** y"}
+    LUOKAT = ("kiristys", "paatos:A846", "testi", "dokumentti")
+
+    def tark(self, luokka, tiedostot, tunnetut=None):
+        return tk.tarkista_luokka("HYVAKSYTTY", luokka, tiedostot, self.TUNNETUT if tunnetut is None else tunnetut, "agentti-pohja")
+
+    def assertRajattu(self, luokka, tiedostot, sana):
+        p, l, syy = self.tark(luokka, tiedostot)
+        self.assertEqual((p, l), ("RAJATTU", None), (luokka, tiedostot))
+        self.assertIn(sana, syy, (luokka, syy))
+
+    def test_kiristys_ei_kata_rajattuja_polkuja(self):
+        for nimi in ("tools/automerge.py", "tools/automerge_apu.py", ".github/workflows/ci.yml", "x/.github/a.yml",
+                     "agentti/pr_kutsu.py", "claudejono/tarkastaja.py", "claudejono/tarkastaja-kehote.md",
+                     "agentti/rajat.py", "deploy/sudoers.d/x", "config/.env.malli", "nftables.conf", "requirements.txt",
+                     "pyproject.toml"):
+            for luokka in ("kiristys", "paatos:A846"):
+                self.assertRajattu(luokka, tied(nimi), "rajattu polku")
+
+    def test_rajattu_polku_myos_uudelleennimeamisen_lahteena(self):
+        t = [{"filename": "agentti/uusi.py", "previous_filename": "tools/automerge.py", "status": "renamed", "changes": 0}]
+        self.assertRajattu("kiristys", t, "rajattu polku")
+
+    def test_kiristys_ei_kata_aiheita_diffissa(self):
+        tapaukset = (
+            ("raha", ["MAX_EUROA = 5"]), ("raha", ["hinta = 3"]), ("raha", ["x = '\u20ac'"]), ("raha", ["kulu = '$ 5'"]),
+            ("raha", ["salkku.osta()"]), ("raha", ["client.create_order()"]),
+            ("salaisuudet", ["t = os.environ['GITHUB_TOKEN']"]), ("salaisuudet", ["open('.env')"]),
+            ("salaisuudet", ["k = 'ghp_abc'"]), ("salaisuudet", ["holvi.hae('x')"]), ("salaisuudet", ["API_KEY = x"]),
+            ("root", ["subprocess.run(['sudo', 'x'])"]), ("root", ["os.chmod(p, 0o777)"]), ("root", ["if user == 'root':"]),
+            ("root", ["open('/etc/passwd')"]), ("root", ["runuser -u x"]),
+            ("verkkoyhteys", ["import urllib.request"]), ("verkkoyhteys", ["requests.get(u)"]),
+            ("verkkoyhteys", ["u = 'https://example.com'"]), ("verkkoyhteys", ["import socket"]),
+            ("verkkoyhteys", ["os.system('curl x')"]), ("verkkoyhteys", ["import httpx"]),
+        )
+        for aihe, rivit in tapaukset:
+            for luokka in self.LUOKAT:
+                nimi = {"testi": "agentti/test_x.py", "dokumentti": "docs/a.md"}.get(luokka, "agentti/x.py")
+                self.assertRajattu(luokka, tied_patch(nimi, *rivit), aihe)
+
+    def test_poistettu_rivi_on_myos_muutos(self):
+        self.assertRajattu("kiristys", tied_patch("agentti/x.py", "pass", poistetut=["if not tarkista_token(t): raise X"]), "salaisuudet")
+
+    def test_hunk_otsikko_ja_kontekstirivit_eivat_ole_muutoksia(self):
+        # tied_patch-otsikossa ja kontekstirivilla on sana token, mutta muutetut rivit ovat puhtaita
+        self.assertEqual(self.tark("kiristys", tied_patch("agentti/x.py", "MAX = 3", poistetut=["MAX = 5"])),
+                         ("HYVAKSYTTY", "kiristys", ""))
+
+    def test_puuttuva_diff_on_rajattu(self):
+        t = [{"filename": "agentti/x.py", "status": "modified", "changes": 900}]
+        self.assertRajattu("kiristys", t, "diff puuttuu")
+        t = [{"filename": "agentti/x.py", "status": "modified", "changes": 2, "patch": None}]
+        self.assertRajattu("paatos:A846", t, "diff puuttuu")
+
+    def test_tuntematon_paatosnumero_on_rajattu_vaikka_diff_on_puhdas(self):
+        for luokka in ("paatos:A999", "paatos:A8460", "paatos:A84"):
+            p, l, syy = self.tark(luokka, tied("agentti/x.py"))
+            self.assertEqual((p, l), ("RAJATTU", None), luokka)
+            self.assertIn("ei loydy", syy)
+
+    def test_tyhja_tiedostolista_on_rajattu_kaikille(self):
+        for luokka in self.LUOKAT:
+            self.assertEqual(self.tark(luokka, [])[:2], ("RAJATTU", None), luokka)
+            self.assertEqual(self.tark(luokka, None)[:2], ("RAJATTU", None), luokka)
+
+    def test_esteet_aihe_kerran_per_tiedosto(self):
+        t = tied_patch("agentti/x.py", "a = token", "b = token")
+        self.assertEqual(tk.luokan_esteet(t), ["salaisuudet (agentti/x.py)"])
+        self.assertEqual(tk.luokan_esteet(tied_patch("agentti/x.py", "MAX = 3")), [])
+
+
 class LuokkaKierrosTesti(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.TemporaryDirectory()
@@ -513,6 +591,20 @@ class LuokkaKierrosTesti(unittest.TestCase):
         tulos, body = self.aja('{"paatos": "HYVAKSY", "perustelu": "ok"}', tied("agentti/x.py"))
         self.assertEqual(tulos, [{"repo": "agentti-pohja", "pr": 5, "tulos": "HYVAKSYTTY", "sha": SHA[:12]}])
         self.assertNotIn("luokka", body.replace("L\u00f6yd\u00f6kset", ""))
+
+    def test_kiristys_automergelle_kierroksella_on_rajattu(self):
+        # automerge.rakenne_syyt ohittaa jo rajatut polut ennen mallia; diffin aihe tarkistetaan luokassa
+        tulos, body = self.aja('{"paatos": "HYVAKSY", "luokka": "kiristys", "perustelu": "ok"}',
+                               tied_patch("agentti/x.py", "import urllib.request"))
+        self.assertEqual(tulos[0]["tulos"], "RAJATTU")
+        self.assertNotIn("luokka", tulos[0])
+        self.assertIn("paatos=RAJATTU -->", body)
+        self.assertIn("verkkoyhteys", body)
+
+    def test_paatosluokka_salaisuudella_kierroksella_on_rajattu(self):
+        tulos, _ = self.aja('{"paatos": "HYVAKSY", "luokka": "paatos:A846", "perustelu": "ok"}',
+                            tied_patch("agentti/x.py", "t = lue('token')"), body="Toteuttaa A846")
+        self.assertEqual(tulos[0]["tulos"], "RAJATTU")
 
     def test_kehote_kuvaa_luokat(self):
         k = tk.KEHOTE.read_text(encoding="utf-8")
