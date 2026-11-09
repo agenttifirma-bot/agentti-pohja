@@ -59,10 +59,21 @@ PAATOKSET = {"HYVAKSY": "HYVAKSYTTY", "HYLKAA": "HYLATTY", "RAJATTU": "RAJATTU",
 # Luokat kiristys ja paatos:A<nro> poistettu: kiristysta ei voi todentaa koodilla, eika agentin kirjoittamaan paatostiedostoon
 # voi luottaa. Ne jaavat Tonyn ryhmakyllille.
 LUOKAT = ("dokumentti", "testi")
-DOKUMENTTI_RE = re.compile(r"\.md\Z", re.IGNORECASE)
-# Dokumentteina ei kasitella tiedostoja, jotka ohjaavat agentteja tai mallia (kehotteet, ohjetiedostot).
-DOKUMENTTI_POIS_RE = re.compile(r"kehote|prompt|(^|/)claude\.md\Z|(^|/)\.claude/|(^|/)agents?\.md\Z", re.IGNORECASE)
+# Dokumentti = vain sallittujen polkujen .md-tiedostot (sallittujen lista, ei estolista): docs/-hakemisto (mika tahansa syvyys),
+# juuren README*.md ja juuren CHANGELOG.md. Kirjainkoko ratkaisee. Muut .md-tiedostot (MEMORY.md, SKILL.md, AGENTS.md, CLAUDE.md,
+# kehotteet, .claude/, claudejono/) eivat ole dokumentteja, koska agentit tai mallit lukevat ne ohjeina.
+DOKUMENTTI_SALLITUT_RE = re.compile(r"\A(docs/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.md|README[A-Za-z0-9._-]*\.md|CHANGELOG\.md)\Z")
+# Toinen lukko sallitun hakemiston sisalle (docs/ voi sisaltaa ohjetiedoston): nama nimet eivat koskaan ole dokumentteja.
+DOKUMENTTI_POIS_RE = re.compile(r"kehote|prompt|memory|skill|(^|/)claude[^/]*\.md\Z|(^|/)\.claude/|(^|/)agents?[^/]*\.md\Z|\.\.",
+                                re.IGNORECASE)
 TESTI_RE = re.compile(r"(^|/)(test_[A-Za-z0-9_]+|[A-Za-z0-9_]+_test)\.py\Z|(^|/)tests/(?:[^/]+/)*[^/]+\.py\Z")
+# Testiluokka ei kata testia, joka voi tuhota tai kaynnistaa jotain (A918, tarkennus): poisto, prosessit, verkko, dynaaminen
+# koodi. Fail closed: osuma -> ei luokkaa (ja mallin ehdottama testi-luokka -> RAJATTU). Tutkitaan muutetut ja kontekstirivit.
+TESTI_VAARAT_RE = re.compile(
+    r"\b(rmtree|unlink|rmdir|removedirs|rename|renames|truncate|system|popen|Popen|subprocess|shutil|socket|urllib|requests|httpx|"
+    r"aiohttp|ctypes|importlib|import_module|getattr|setattr|globals|vars|__import__|__builtins__|eval|exec|compile|fork|forkpty|"
+    r"kill|killpg|chmod|chown|execv\w*|spawn\w*|startfile)\b|\.remove\s*\(|\bos\s*\.\s*replace\b|\bfrom\s+os\s+import|"
+    r"\bimport\s+os\s+as\b", re.IGNORECASE)
 # Luokka ei koskaan kata naita (A918): koodi tarkistaa tiedostolistan ja diffin, ei luota mallin sanaan eika kehotteeseen.
 # Polut: automergen ja pr_kutsun rajatut (mm. tools/automerge.py, .github/, oikeudet, kulukatot, salaisuudet) seka
 # tarkastajan oma koodi ja kehote (muutos ei voi kelpuuttaa itse itseaan) ja riippuvuudet.
@@ -214,6 +225,23 @@ def _muutetut_rivit(patch):
     return [r[1:] for r in (patch or "").splitlines() if r[:1] in "+-" and not r.startswith(("+++", "---"))]
 
 
+def _patchin_rivit(patch):
+    """Muutetut ja kontekstirivit (ei hunk-otsikoita, ei tiedostootsikoita)."""
+    return [r[1:] for r in (patch or "").splitlines() if r[:1] in "+- " and not r.startswith(("+++", "---"))]
+
+
+def testin_vaarat(tiedostot):
+    """Syyt, joiden vuoksi testitiedosto ei kelpaa testiluokkaan (tuhoava tai prosesseja/verkkoa kayttava operaatio)."""
+    syyt = []
+    for t in tiedostot or []:
+        patch = t.get("patch")
+        if isinstance(patch, str):
+            m = TESTI_VAARAT_RE.search("\n".join(_patchin_rivit(patch)))
+            if m:
+                syyt.append("testissa vaarallinen operaatio %s (%s)" % (_siivoa(m.group(0), 30), t.get("filename")))
+    return syyt
+
+
 def luokan_esteet(tiedostot, repo=""):
     """Syyt, joiden vuoksi mikaan luokka ei kelpaa (tyhja = ei esteita). Paatetaan tiedostolistasta ja diffista."""
     esteet = []
@@ -235,32 +263,35 @@ def luokan_esteet(tiedostot, repo=""):
 
 def koodiluokka(tiedostot, repo=""):
     """'dokumentti', 'testi' tai None. Paatetaan pelkastaan tiedostolistasta ja diffista (koodi, ei malli):
-    dokumentti = kaikki tiedostot ovat .md-tiedostoja; testi = kaikki ovat testitiedostoja (test_*.py, *_test.py tai
-    tests/-hakemiston .py); kummassakaan ei saa olla rajattua polkua eika luokan_esteet()-osumaa. Sekamuutos -> None."""
+    dokumentti = kaikki tiedostot ovat sallittujen polkujen .md-tiedostoja (DOKUMENTTI_SALLITUT_RE); testi = kaikki ovat testitiedostoja (test_*.py, *_test.py tai
+    tests/-hakemiston .py) eika niissa ole tuhoavia operaatioita (testin_vaarat()); kummassakaan ei saa olla rajattua polkua eika luokan_esteet()-osumaa. Sekamuutos -> None."""
     nimet = _nimet(tiedostot)
     if not nimet or luokan_esteet(tiedostot, repo):
         return None
-    if all(DOKUMENTTI_RE.search(n) and not DOKUMENTTI_POIS_RE.search(n) for n in nimet):
+    if all(DOKUMENTTI_SALLITUT_RE.match(n) and not DOKUMENTTI_POIS_RE.search(n) for n in nimet):
         return "dokumentti"
-    if all(TESTI_RE.search(n) for n in nimet):
+    if all(TESTI_RE.search(n) for n in nimet) and not testin_vaarat(tiedostot):
         return "testi"
     return None
 
 
 def tarkista_luokka(paatos, luokka, tiedostot, repo=""):
-    """(paatos, luokka, syy). Luokan maaraa koodi (koodiluokka). Mallin sana on vain lisarajoitus: jos malli ehdottaa
-    luokkaa, jota koodi ei todenna samaksi, paatos muuttuu RAJATTU:ksi. Malli ei voi koskaan lisata tai loysata luokkaa.
+    """(paatos, luokka, syy). Luokan saa vain, kun malli ehdottaa sita JA koodi (koodiluokka) todentaa saman luokan.
+    Malli voi vain kiristaa: null -> ei luokkaa (paatos ennallaan); "RAJATTU" tai luokka, jota koodi ei todenna -> RAJATTU.
     Vain HYVAKSYTTY voi saada luokan."""
     if paatos != "HYVAKSYTTY":
         return paatos, None, ""
-    koodi = koodiluokka(tiedostot, repo)
-    if luokka and luokka != koodi:
-        if luokka not in LUOKAT:
-            return "RAJATTU", None, "tuntematon luokka"
-        esteet = luokan_esteet(tiedostot, repo)
-        syy = ", ".join(esteet[:4]) if esteet else "tiedostot eivat ole pelkkia %s-tiedostoja" % luokka
-        return "RAJATTU", None, "luokka %s ei sovi: %s" % (_siivoa(luokka, 40), _siivoa(syy, 200))
-    return paatos, koodi, ""
+    if luokka is None:
+        return paatos, None, ""
+    if luokka == "RAJATTU":
+        return "RAJATTU", None, "malli ehdotti luokaksi RAJATTU"
+    if luokka not in LUOKAT:
+        return "RAJATTU", None, "tuntematon luokka"
+    if koodiluokka(tiedostot, repo) == luokka:
+        return paatos, luokka, ""
+    esteet = luokan_esteet(tiedostot, repo) + (testin_vaarat(tiedostot) if luokka == "testi" else [])
+    syy = ", ".join(esteet[:4]) if esteet else "tiedostot eivat ole pelkkia %s-tiedostoja" % luokka
+    return "RAJATTU", None, "luokka %s ei sovi: %s" % (_siivoa(luokka, 40), _siivoa(syy, 200))
 
 
 def kommentti(paatos, sha, perustelu, loydokset, malli, luokka=None):

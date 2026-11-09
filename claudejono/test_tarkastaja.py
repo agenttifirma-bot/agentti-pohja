@@ -388,13 +388,44 @@ class LuokkaTesti(unittest.TestCase):
         self.assertFalse(hasattr(tk, "OLETUS_PAATOKSET"))
 
     def test_koodi_maaraa_dokumentin(self):
-        for nimet in (("docs/a.md",), ("README.md", "docs/b.md"), ("agentti/opas.MD",)):
+        for nimet in (("docs/a.md",), ("README.md", "docs/b.md"), ("docs/x/y/z.md",), ("CHANGELOG.md", "README-en.md")):
             self.assertEqual(self.koodi(*nimet), "dokumentti", nimet)
 
     def test_koodi_maaraa_testin(self):
         for nimet in (("test/test_x.py",), ("claudejono/test_ajuri.py", "tools/test_y.py"), ("tests/apu.py",),
                       ("tests/alikansio/data_apu.py",), ("agentti/ajo_test.py",)):
             self.assertEqual(self.koodi(*nimet), "testi", nimet)
+
+    def test_dokumentti_vain_sallituista_poluista(self):
+        for nimi in ("MEMORY.md", "SKILL.md", "AGENTS.md", "CLAUDE.md", "agents.md", "docs/MEMORY.md", "docs/SKILL.md",
+                     "docs/AGENTS.md", "docs/sub/CLAUDE.md", "docs/prompt.md", "docs/kehote.md", ".claude/a.md",
+                     "claudejono/ohje.md", "claudejono/tarkastaja-kehote.md", "agentti/opas.MD", "agentti/README.md",
+                     "opiskelu/a.md", "docs/a.MD", "docs/../x.md", "Docs/a.md", "docs/a.md.txt", "docs/.claude/a.md",
+                     "tools/README.md", "CHANGELOG.txt", "x/CHANGELOG.md", "muistio.md"):
+            self.assertIsNone(self.koodi(nimi), nimi)
+        self.assertIsNone(self.koodi("docs/a.md", "SKILL.md"))
+
+    def test_testi_tuhoavilla_operaatioilla_ei_saa_luokkaa(self):
+        for rivi in ("shutil.rmtree(d)", "os.remove(p)", "os.unlink(p)", "p.unlink()", "os.system('x')", "import subprocess",
+                     "subprocess.run(['ls'])", "from subprocess import run", "import socket", "import requests",
+                     "from urllib import request", "os.rmdir(d)", "os.popen('x')", "os.removedirs(d)", "from os import remove",
+                     "import os as o", "eval(s)", "getattr(os, n)(p)", "__import__('os')", "lst.remove(1)", "os.kill(1, 9)",
+                     "Path(d).rmdir()", "os.replace(a, b)", "os.chmod(p, 0)", "rmtree(d)", "popen(c)"):
+            t = tied_patch("test/test_x.py", rivi)
+            self.assertIsNone(tk.koodiluokka(t, "agentti-pohja"), rivi)
+            self.assertEqual(tk.tarkista_luokka("HYVAKSYTTY", "testi", t, "agentti-pohja")[:2], ("RAJATTU", None), rivi)
+
+    def test_testi_kontekstirivin_vaara_estaa_ja_hunk_otsikko_ei(self):
+        t = [{"filename": "test/test_x.py", "status": "modified", "changes": 1,
+              "patch": "@@ -1,2 +1,3 @@ def rmtree_apu():\n shutil.rmtree(d)\n+self.assertTrue(x)\n"}]
+        self.assertIsNone(tk.koodiluokka(t, "agentti-pohja"))
+        t = [{"filename": "test/test_x.py", "status": "modified", "changes": 1,
+              "patch": "@@ -1,2 +1,3 @@ def rmtree_apu():\n x = 1\n+self.assertTrue(x)\n"}]
+        self.assertEqual(tk.koodiluokka(t, "agentti-pohja"), "testi")
+
+    def test_vaaraton_testi_saa_luokan(self):
+        t = tied_patch("test/test_x.py", "def test_a(self):", "    self.assertEqual(f(1), 2)")
+        self.assertEqual(tk.tarkista_luokka("HYVAKSYTTY", "testi", t, "agentti-pohja"), ("HYVAKSYTTY", "testi", ""))
 
     def test_muu_ei_saa_luokkaa(self):
         for nimet in (("agentti/ajo.py",), ("docs/a.rst",), ("docs/a.txt",), ("test/data.json",), ("tests/data.json",),
@@ -411,16 +442,37 @@ class LuokkaTesti(unittest.TestCase):
         for nimi in (".github/test_x.py", "isanta/test_x.py", "tests/token.py", "claudejono/tarkastaja_test.py"):
             self.assertIsNone(self.koodi(nimi), nimi)
 
+    def test_importit_toimivat_automerge_rajattu_ja_pr_kutsu_suojattu(self):
+        # tools.automerge.rajattu ja agentti.pr_kutsu.suojattu ovat mukana luokan_esteet():ssa, kumpikin yksin riittaa
+        self.assertTrue(tk.automerge.rajattu("kauppatiimi", "docs/key.md"))
+        self.assertFalse(tk.pr_kutsu.suojattu("docs/key.md"))
+        self.assertFalse(tk.automerge.rajattu("agentti-pohja", "tests/varaus.py"))
+        self.assertTrue(tk.pr_kutsu.suojattu("tests/varaus.py"))
+        self.assertIsNone(tk.LUOKKA_EI_POLUT_RE.search("docs/key.md"))
+        self.assertIsNone(tk.LUOKKA_EI_POLUT_RE.search("tests/varaus.py"))
+        self.assertIsNone(tk.koodiluokka(tied("docs/key.md"), "kauppatiimi"))   # vain automerge.rajattu pysayttaa
+        self.assertIsNone(self.koodi("tests/varaus.py"))                 # vain pr_kutsu.suojattu pysayttaa
+        self.assertEqual(self.koodi("tests/apu.py"), "testi")
+        self.assertIsNone(tk.koodiluokka(tied("docs/key.md"), "kauppatiimi"))   # repokohtainen rajaus
+        self.assertEqual(tk.koodiluokka(tied("docs/key.md"), "agentti-pohja"), "dokumentti")
+
     def test_uudelleennimeaminen_rajatusta_polusta_ei_saa_luokkaa(self):
         t = [{"filename": "docs/a.md", "previous_filename": ".github/a.md", "status": "renamed", "changes": 0, "patch": ""}]
         self.assertIsNone(tk.koodiluokka(t, "agentti-pohja"))
         t = [{"filename": "test/test_x.py", "previous_filename": "agentti/x.py", "status": "renamed", "changes": 0, "patch": ""}]
         self.assertIsNone(tk.koodiluokka(t, "agentti-pohja"))
 
-    def test_koodi_antaa_luokan_vaikka_malli_ei_sano_mitaan(self):
-        self.assertEqual(self.tark(None, "docs/a.md"), ("HYVAKSYTTY", "dokumentti", ""))
-        self.assertEqual(self.tark(None, "test/test_x.py"), ("HYVAKSYTTY", "testi", ""))
+    def test_ilman_mallin_luokkaa_ei_luokkaa(self):
+        # malli voi vain kiristaa: null ei anna luokkaa, vaikka koodi sen todentaisi
+        self.assertEqual(self.tark(None, "docs/a.md"), ("HYVAKSYTTY", None, ""))
+        self.assertEqual(self.tark(None, "test/test_x.py"), ("HYVAKSYTTY", None, ""))
         self.assertEqual(self.tark(None, "agentti/x.py"), ("HYVAKSYTTY", None, ""))
+
+    def test_mallin_rajattu_luokka_kiristaa(self):
+        for nimi in ("docs/a.md", "test/test_x.py", "agentti/x.py"):
+            p, l, syy = self.tark("RAJATTU", nimi)
+            self.assertEqual((p, l), ("RAJATTU", None), nimi)
+            self.assertIn("RAJATTU", syy)
 
     def test_malli_ja_koodi_samaa_mielta(self):
         self.assertEqual(self.tark("dokumentti", "docs/a.md"), ("HYVAKSYTTY", "dokumentti", ""))
@@ -449,10 +501,6 @@ class LuokkaTesti(unittest.TestCase):
             self.assertEqual((p, l), ("RAJATTU", None), luokka)
         self.assertEqual(self.tark("kiristys", "docs/a.md")[:2], ("RAJATTU", None))
         self.assertIn("tuntematon", self.tark("kiristys", "agentti/x.py")[2])
-
-    def test_malli_ei_voi_kumota_koodin_luokkaa_nollalla(self):
-        # malli ei sano luokkaa mutta koodi todentaa: luokka tulee koodilta (malli voi vain kiristaa paatoksella)
-        self.assertEqual(self.tark(None, "docs/a.md")[1], "dokumentti")
 
     def test_vain_hyvaksytty_saa_luokan(self):
         for p in ("HYLATTY", "RAJATTU", "EN_TIEDA"):
@@ -534,9 +582,27 @@ class LuokkaKierrosTesti(unittest.TestCase):
             self.assertEqual((tulos[0]["tulos"], tulos[0]["luokka"]), ("HYVAKSYTTY", luokka))
             self.assertIn("luokka=%s -->" % luokka, body)
 
-    def test_koodi_antaa_luokan_kun_malli_jattaa_sen_nulliksi(self):
-        tulos, body = self.aja('{"paatos": "HYVAKSY", "perustelu": "ok"}', tied("docs/a.md"))
-        self.assertEqual((tulos[0]["tulos"], tulos[0]["luokka"]), ("HYVAKSYTTY", "dokumentti"))
+    def test_null_luokka_ei_anna_luokkaa_kierroksella(self):
+        for nimi in ("docs/a.md", "test/test_x.py"):
+            tulos, body = self.aja('{"paatos": "HYVAKSY", "luokka": null, "perustelu": "ok"}', tied(nimi))
+            self.assertEqual(tulos[0]["tulos"], "HYVAKSYTTY")
+            self.assertNotIn("luokka", tulos[0])
+            self.assertNotIn("riippumaton-tarkastus-luokka", body)
+
+    def test_mallin_rajattu_luokka_kierroksella_on_rajattu(self):
+        tulos, body = self.aja('{"paatos": "HYVAKSY", "luokka": "RAJATTU", "perustelu": "ok"}', tied("docs/a.md"))
+        self.assertEqual(tulos[0]["tulos"], "RAJATTU")
+        self.assertIn("paatos=RAJATTU -->", body)
+
+    def test_testi_tuhoavalla_operaatiolla_kierroksella_on_rajattu(self):
+        tulos, body = self.aja('{"paatos": "HYVAKSY", "luokka": "testi", "perustelu": "ok"}',
+                               tied_patch("test/test_x.py", "shutil.rmtree(d)"))
+        self.assertEqual(tulos[0]["tulos"], "RAJATTU")
+        self.assertIn("vaarallinen operaatio", body)
+
+    def test_skill_md_ei_ole_dokumentti_kierroksella(self):
+        tulos, body = self.aja('{"paatos": "HYVAKSY", "luokka": "dokumentti", "perustelu": "ok"}', tied("SKILL.md"))
+        self.assertEqual(tulos[0]["tulos"], "RAJATTU")
 
     def test_dokumenttiluokka_koodille_muuttuu_rajatuksi(self):
         tulos, body = self.aja('{"paatos": "HYVAKSY", "luokka": "dokumentti", "perustelu": "ok"}', tied("docs/a.md", "agentti/x.py"))

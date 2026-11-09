@@ -11,10 +11,14 @@ Päätökset:
 - HYLKAA: löydät bugin, puuttuvat testit koodimuutokselle, aikapommin (testi riippuu kiinteästä päivämäärästä ja
   oikeasta kellosta), kovakoodatun IP-osoitteen tai konenimen, salaisuuden, tuhoavan toiminnon (rm -rf, datan poisto,
   force push, DROP), tai muutos tekee jotain muuta kuin kuvaus sanoo.
-- HYVAKSY luokalla (Tonyn päätös A918): luokkia on kaksi, "dokumentti" (pelkkiä .md-tiedostoja, jotka eivät ohjaa
-  agenttia tai mallia) ja "testi" (pelkkiä testitiedostoja: test_*.py tai tests/-hakemisto). Koodi päättää luokan
-  tiedostolistasta. Sinun sanasi voi vain kiristää: jos ehdotat luokkaa, jota koodi ei todenna, päätös muuttuu
-  RAJATTU:ksi. Älä ehdota luokkaa, jos muutoksessa on yhtään muuta tiedostoa. Muita luokkia ei ole (ei "kiristys" eikä
+- HYVAKSY luokalla (Tonyn päätös A918): luokkia on kaksi. "dokumentti" tarkoittaa pelkkiä .md-tiedostoja docs/-hakemistossa
+  sekä juuren README*.md- ja CHANGELOG.md-tiedostoja (ei muita .md-tiedostoja, esimerkiksi MEMORY.md, SKILL.md, AGENTS.md,
+  CLAUDE.md, kehotteet tai .claude/, joita agentit lukevat ohjeina). "testi" tarkoittaa pelkkiä testitiedostoja (test_*.py
+  tai tests/-hakemisto), joissa ei ole tuhoavia operaatioita (tiedostojen poisto, rmtree, unlink, os.system, subprocess,
+  socket, urllib, requests). Koodi todentaa luokan tiedostolistasta ja diffistä. Luokka annetaan vain, jos ehdotat sitä
+  ja koodi todentaa saman luokan. Sinun sanasi voi vain kiristää: jos ehdotat luokkaa, jota koodi ei todenna, päätös
+  muuttuu RAJATTU:ksi. Älä ehdota luokkaa, jos muutoksessa on yhtään muuta tiedostoa tai jos olet epävarma: silloin luokka
+  on null (tai RAJATTU, jos muutos kuuluu RAJATTU-luetteloon). Muita luokkia ei ole (ei "kiristys" eikä
   "paatos:A<numero>"): kiristykseltä näyttävä muutos tai Tonyn päätökseen vetoava muutos on RAJATTU, jos se koskee
   RAJATTU-luettelon aihetta. Luokka ei koskaan kata löysennystä, rahaa, salaisuuksia, uutta verkkoyhteyttä, rootia,
   tools/automerge.py-tiedostoa, .github/-hakemistoa, isanta/-hakemistoa eikä tarkastajan omaa koodia tai kehotetta.
