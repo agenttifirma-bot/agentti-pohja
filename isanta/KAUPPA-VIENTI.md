@@ -1,0 +1,38 @@
+# Kauppadatan vienti (isännän cron)
+
+Isännän root kopioi kauppatiimin datan (vain luku) kontista CT119 konttiin CT115. Kopio on tuotannon päiväajon jälkeinen, ja `agentti/tilannekuva.py` tarkistaa sen tuoreuden. Tonyn päätös 9.11.2026 (A915): ajastus on versionhallinnassa, joten aikamuutokset kulkevat pull request -pyyntönä.
+
+| Tiedosto | Asennuskohde isännällä | Oikeudet |
+|---|---|---|
+| `isanta/kauppa-vienti.sh` | `/usr/local/sbin/kauppa-vienti.sh` | root:root 0755 |
+| `isanta/kauppa-vienti.cron` | `/etc/cron.d/kauppa-vienti` | root:root 0644 |
+
+Skripti on sisällöltään sama kuin aiempi käsin asennettu versio 2 (muuttumaton). Ajoaika on **10.47** (isännän paikallinen aika), aiemmin 06.17. Cron-tiedoston kentät: minuutti, tunti, kuukaudenpäivä, kuukausi, viikonpäivä, käyttäjä, komento.
+
+## Asennus (yksi komento, isännällä rootina)
+
+Aja tämän repon tuoreessa kloonissa (`main`, PR yhdistetty):
+
+```
+install -m 755 -o root -g root isanta/kauppa-vienti.sh /usr/local/sbin/kauppa-vienti.sh && install -m 644 -o root -g root isanta/kauppa-vienti.cron /etc/cron.d/kauppa-vienti
+```
+
+Komento korvaa saman nimisen vanhan cron-tiedoston, joten kaksoisajastusta ei synny. Mitään ei käynnistetä uudelleen: cron lukee `/etc/cron.d`-hakemiston itse.
+
+Tarkistus asennuksen jälkeen:
+
+```
+sha256sum isanta/kauppa-vienti.sh /usr/local/sbin/kauppa-vienti.sh && cat /etc/cron.d/kauppa-vienti
+```
+
+Odotettu: kaksi samaa tiivistettä (`dd9fde05847a…`) ja cron-rivi `47 10 * * * root sh /usr/local/sbin/kauppa-vienti.sh >>/var/log/kauppa-vienti.log 2>&1`. Seuraavana päivänä: `tail -3 /var/log/kauppa-vienti.log`, viimeinen rivi päättyy tekstiin `kauppa-vienti ok`.
+
+## Siirtymän varoitus on odotettu
+
+`KAUPPA_MAX_IKA_H` on 26 h. Vanha ajo oli 06.17 ja uusi 10.47, joten siirtymävälistä tulee 28,5 h, jos asennus tehdään vasta uuden ajoajan (10.47) jälkeen. Silloin tilannekuva näyttää yhden `VAROITUS: kauppadatan kopio on vanhentunut` -rivin noin klo 08.17–10.47 asennusta seuraavana päivänä. Se on odotettu eikä kerro viasta. Jos asennus tehdään ennen kello 10.47, väliä ei synny: saman päivän 06.17-ajo on jo tehty ja seuraava ajo tulee 4,5 tunnin päästä.
+
+Raja-arvoa ei muuteta tässä. Jos varoitusta ei haluta lainkaan, vaihtoehto on ajaa skripti käsin heti asennuksen jälkeen (`sh /usr/local/sbin/kauppa-vienti.sh`), jolloin kopio päivittyy ennen kuin ikä ylittää rajan. Pysyvä rajan nosto on kattoarvon kaltainen muutos ja jää Tonyn päätettäväksi.
+
+## Ajoaikaa muutettaessa
+
+Muuta vain `isanta/kauppa-vienti.cron`, avaa PR ja aja yllä oleva asennuskomento. Valitse aika, joka ei osu lauantain kauppa-ajoon (klo 10.00) eikä tuotannon päiväajoon. Testit tarkistavat rivin muodon.
