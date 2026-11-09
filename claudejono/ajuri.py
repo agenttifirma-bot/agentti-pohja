@@ -594,8 +594,11 @@ def valmistele_docs_ulos(kaista_hak, env):
     return ulos
 
 
-def poimi_docs_ulos(kaista_hak, repo, env, suorita=subprocess.run):
-    """Kopioi docs-ulos/:n sallitut tiedostot docs-repoon. Palauttaa kopioidut polut (repossa). Virheet: tyhja lista."""
+def poimi_docs_ulos(kaista_hak, repo, env, suorita=subprocess.run, ohitetut=None):
+    """Kopioi docs-ulos/:n sallitut tiedostot docs-repoon. Palauttaa kopioidut polut (repossa). Virheet: tyhja lista.
+    ohitetut (lista): tanne lisataan (polku, syy) jokaisesta tiedostosta, jota ei kopioitu. Vika 9.11.2026: tehtava 31
+    kirjoitti seuranta.py:n ja testit docs-ulos/:iin, ajuri pudotti .py-tiedostot hiljaa ja tulos sanoi VALMIS."""
+    ohitetut = [] if ohitetut is None else ohitetut
     ulos = Path(kaista_hak) / DOCS_ULOS
     if not ulos.is_dir():
         return []
@@ -606,31 +609,57 @@ def poimi_docs_ulos(kaista_hak, repo, env, suorita=subprocess.run):
     try:
         r = suorita(kom, capture_output=True, timeout=60, check=False)
         if r.returncode != 0 or len(r.stdout) > DOCS_MAX_TIEDOSTOJA * DOCS_MAX_TAVUA * 2:
+            ohitetut.append((DOCS_ULOS, "lukuvirhe tai liian suuri"))
             return []
         kopioidut = []
         with tarfile.open(fileobj=io.BytesIO(r.stdout)) as tf:
             for m in tf.getmembers():
                 suht = posixpath.normpath(m.name)
-                if not m.isreg() or m.size > DOCS_MAX_TAVUA or not vapaa_docs_polku(suht):
+                if m.isdir():
+                    continue
+                if len(kopioidut) >= DOCS_MAX_TIEDOSTOJA:
+                    ohitetut.append((suht, f"yli {DOCS_MAX_TIEDOSTOJA} tiedostoa"))
+                    continue
+                if not m.isreg():
+                    ohitetut.append((suht, "ei tavallinen tiedosto"))
+                    continue
+                if m.size > DOCS_MAX_TAVUA:
+                    ohitetut.append((suht, f"yli {DOCS_MAX_TAVUA} tavua"))
+                    continue
+                if not vapaa_docs_polku(suht):
+                    ohitetut.append((suht, "polku tai paate ei sallittu (sallitut: " + " ".join(DOCS_PAATTEET) + ")"))
                     continue
                 data = tf.extractfile(m).read()
                 try:
                     data.decode("utf-8")
                 except UnicodeDecodeError:
+                    ohitetut.append((suht, "ei UTF-8"))
                     continue
                 kohde = Path(repo) / suht
                 kohde.parent.mkdir(parents=True, exist_ok=True)
                 if kohde.is_symlink():
+                    ohitetut.append((suht, "kohde on symlinkki"))
                     continue
                 kohde.write_bytes(data)
                 kopioidut.append(kohde)
-                if len(kopioidut) >= DOCS_MAX_TIEDOSTOJA:
-                    break
         return kopioidut
-    except (OSError, subprocess.SubprocessError, tarfile.TarError):
+    except (OSError, subprocess.SubprocessError, tarfile.TarError) as virhe:
+        ohitetut.append((DOCS_ULOS, type(virhe).__name__))
         return []
     finally:
         shutil.rmtree(ulos, ignore_errors=True)
+
+
+def docs_ohitus_huom(ohitetut):
+    """Tuloksen alkuun (ei katkea TULOS_MAX_TAVUA-rajassa) liitettava huomautus docs-ulos/:sta pudotetuista tiedostoista (tyhja, jos ei pudotettu)."""
+    if not ohitetut:
+        return ""
+    rivit = [f"- `{polku}`: {syy}" for polku, syy in ohitetut[:DOCS_MAX_TIEDOSTOJA]]
+    if len(ohitetut) > DOCS_MAX_TIEDOSTOJA:
+        rivit.append(f"- ... ja {len(ohitetut) - DOCS_MAX_TIEDOSTOJA} muuta")
+    return ("## Huom: docs-ulos/ ohitti tiedostoja (ajuri)\n"
+            "Naita ei kopioitu docs-repoon, ja ne poistettiin. Tila on siksi KESKEN, vaikka agentti raportoi valmiin. "
+            "Koodi kuuluu PR:ksi koodirepoon (claudejono-pr).\n" + "\n".join(rivit) + "\n\n")
 
 
 def _tyonna(repo):
@@ -1053,8 +1082,11 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
         with git_lukko(tila) as odotus2:
             # Todennusportti koskee Claude-reitin tyota (koodi, PR:t); OpenRouter-rutiini (tiivistelmat, luokittelu) ei tuota todennusrivia.
             tila_nimi = "KESKEN" if ok and m.reitti == "claude" and not on_todennettu(teksti) else ("VALMIS" if ok else "EPAONNISTUI")
-            polku = kirjoita_tulos(repo, t.name, ok, teksti, tila=tila_nimi, malli=m.tunniste)
-            docs = poimi_docs_ulos(cwd, repo, env) if m.reitti == "claude" else []
+            ohitetut = []
+            docs = poimi_docs_ulos(cwd, repo, env, ohitetut=ohitetut) if m.reitti == "claude" else []
+            if ohitetut and tila_nimi == "VALMIS":
+                tila_nimi = "KESKEN"   # osa tyosta jai docs-repon ulkopuolelle; ei vaaraa valmista
+            polku = kirjoita_tulos(repo, t.name, ok, docs_ohitus_huom(ohitetut) + teksti, tila=tila_nimi, malli=m.tunniste)
             pushattu = julkaise(repo, [polku] + docs)
             if tila_nimi == "VALMIS" and m.reitti == "claude":
                 uudet, _ = suodata_opit(poimi_uusi_oppi(teksti))
