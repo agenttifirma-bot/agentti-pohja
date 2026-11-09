@@ -19,6 +19,20 @@ install -m 755 -o root -g root isanta/kauppa-vienti.sh /usr/local/sbin/kauppa-vi
 
 Komento korvaa saman nimisen vanhan cron-tiedoston, joten kaksoisajastusta ei synny. Mitään ei käynnistetä uudelleen: cron lukee `/etc/cron.d`-hakemiston itse.
 
+Käsiajo heti asennuksen jälkeen (Tonyn päätös 9.11.2026, A925). Sama komento kuin cron-rivillä, jotta kopio päivittyy eikä varoitus "kopio yli 26 h vanha" tule siirtymäpäivänä:
+
+```
+sh /usr/local/sbin/kauppa-vienti.sh >>/var/log/kauppa-vienti.log 2>&1
+```
+
+Todennus CT115:ssä (PAIVITETTY-tiedoston aikaleima):
+
+```
+cat /var/lib/claude-jono/kauppa/PAIVITETTY
+```
+
+Odotettu: yksi rivi, jonka aikaleima on käsiajon hetki (muoto `2026-11-09T11:02:41+02:00`, ero nykyhetkeen alle minuutti). Jos aikaleima on vanha, katso `tail -3 /var/log/kauppa-vienti.log` isännällä.
+
 Tarkistus asennuksen jälkeen:
 
 ```
