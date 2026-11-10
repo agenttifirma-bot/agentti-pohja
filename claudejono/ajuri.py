@@ -525,9 +525,8 @@ def _raportti_kelpaa(teksti, viimeinen=True):
     return viimeinen and _on_json_olio(teksti)
 
 
-def _viimeinen_raportti(stdout):
-    """Viimeinen paaagentin (parent_tool_use_id puuttuu tai null) assistant-tekstiviesti stream-json-tulosteesta, joka on loppuraportti; muuten None.
-    Tausta: taustatehtavan ilmoitus raportin jalkeen tuottaa lyhyen jalkiviestin, joka korvasi raportin result-kentassa."""
+def _paaagentin_tekstit(stdout):
+    """Paaagentin (parent_tool_use_id puuttuu tai null) assistant-tekstiviestit stream-json-tulosteesta jarjestyksessa."""
     tekstit = []
     for rivi in str(stdout).splitlines():
         try:
@@ -546,6 +545,13 @@ def _viimeinen_raportti(stdout):
         teksti = "\n".join(osat).strip()
         if teksti:
             tekstit.append(teksti)
+    return tekstit
+
+
+def _viimeinen_raportti(stdout):
+    """Viimeinen paaagentin assistant-tekstiviesti stream-json-tulosteesta, joka on loppuraportti; muuten None.
+    Tausta: taustatehtavan ilmoitus raportin jalkeen tuottaa lyhyen jalkiviestin, joka korvasi raportin result-kentassa."""
+    tekstit = _paaagentin_tekstit(stdout)
     loyto = None
     for i, teksti in enumerate(tekstit):
         if _raportti_kelpaa(teksti, viimeinen=(i == len(tekstit) - 1)):
@@ -772,6 +778,19 @@ def jasenna_suunnitelma(teksti):
     return {"tehtavat": ok, "tonylle": tonylle[:3000]}
 
 
+def suunnitelma_tulosteesta(stdout, teksti):
+    """Itsesuunnittelun suunnitelma: ensin tulkitse-funktion teksti, sitten paaagentin viimeisin viesti, josta suunnitelma jasentyy.
+    Tausta (#264): jalkiviesti ("ok") JSON-vastauksen perassa jattaa tekstiksi vain result-kentan. Alitehtavien viestit eivat kelpaa."""
+    suunn = jasenna_suunnitelma(teksti)
+    if suunn is not None:
+        return suunn
+    for t in reversed(_paaagentin_tekstit(stdout)):
+        suunn = jasenna_suunnitelma(t)
+        if suunn is not None:
+            return suunn
+    return None
+
+
 def tulosten_maara(repo):
     hak = Path(repo) / JONO / "tulokset"
     return sum(1 for _ in hak.glob("*.md")) if hak.is_dir() else 0
@@ -966,7 +985,7 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None, kaista=1):
     except subprocess.TimeoutExpired:
         kirjaa_suunnittelu(tyohak, repo, nyt, 0)
         return "jono tyhja (suunnittelu: aikakatkaisu)"
-    suunn = jasenna_suunnitelma(teksti) if ok else None
+    suunn = suunnitelma_tulosteesta(r.stdout, teksti) if ok else None
     if suunn is None:
         kirjaa_suunnittelu(tyohak, repo, nyt, 0)
         return "jono tyhja (suunnittelu ei tuottanut kelvollista JSONia)"

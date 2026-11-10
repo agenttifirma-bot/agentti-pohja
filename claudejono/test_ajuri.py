@@ -245,6 +245,45 @@ class TulkintaVirta(unittest.TestCase):
         self.assertEqual(kulutus.claude_luvut(_virta(_viesti("x"), loppu)), {"tokenit_in": 3, "usd": 0.5})
 
 
+class SuunnitelmaJalkiviesti(unittest.TestCase):
+    """#264: itsesuunnittelun JSON-vastaus, jonka perassa on jalkiviesti ("ok")."""
+    SUUNN = json.dumps({"tehtavat": [{"nimi": "korjaa-x", "sisalto": "# X\nTavoite: yllapito"}], "tonylle": "T"})
+    LOPPU = {"type": "result", "subtype": "success", "is_error": False, "result": "ok"}
+
+    def test_ketju_tulkitse_jasenna_menettaa_suunnitelman_jalkiviestissa(self):
+        # #264:n karjen kaytos: tulkitse palauttaa result-kentan ("ok"), josta ei saa suunnitelmaa
+        ulos = _virta({"type": "system"}, _viesti(self.SUUNN), _viesti("ok"), self.LOPPU)
+        ok, teksti = ajuri.tulkitse(ulos, 0)
+        self.assertEqual((ok, teksti), (True, "ok"))
+        self.assertIsNone(ajuri.jasenna_suunnitelma(teksti))
+
+    def test_suunnitelma_loytyy_jalkiviestista_huolimatta(self):
+        ulos = _virta({"type": "system"}, _viesti(self.SUUNN), _viesti("ok"), self.LOPPU)
+        ok, teksti = ajuri.tulkitse(ulos, 0)
+        suunn = ajuri.suunnitelma_tulosteesta(ulos, teksti)
+        self.assertEqual([t["nimi"] for t in suunn["tehtavat"]], ["korjaa-x"])
+        self.assertEqual(suunn["tonylle"], "T")
+
+    def test_vertailu_json_viimeisena_viestina(self):
+        ulos = _virta(_viesti("Mietin."), _viesti(self.SUUNN), dict(self.LOPPU, result=self.SUUNN))
+        ok, teksti = ajuri.tulkitse(ulos, 0)
+        self.assertEqual((ok, teksti), (True, self.SUUNN))
+        self.assertEqual([t["nimi"] for t in ajuri.jasenna_suunnitelma(teksti)["tehtavat"]], ["korjaa-x"])
+        self.assertEqual(ajuri.suunnitelma_tulosteesta(ulos, teksti), ajuri.jasenna_suunnitelma(teksti))
+
+    def test_alitehtavan_json_ei_kelpaa_suunnitelmaksi(self):
+        ali = dict(_viesti(self.SUUNN), parent_tool_use_id="toolu_1")
+        ulos = _virta(ali, _viesti("ok"), self.LOPPU)
+        ok, teksti = ajuri.tulkitse(ulos, 0)
+        self.assertIsNone(ajuri.suunnitelma_tulosteesta(ulos, teksti))
+
+    def test_viimeisin_paaagentin_json_voittaa(self):
+        vanha = json.dumps({"tehtavat": [{"nimi": "vanha", "sisalto": "# V\nTavoite: yllapito"}]})
+        ulos = _virta(_viesti(vanha), _viesti(self.SUUNN), _viesti("ok"), self.LOPPU)
+        suunn = ajuri.suunnitelma_tulosteesta(ulos, ajuri.tulkitse(ulos, 0)[1])
+        self.assertEqual([t["nimi"] for t in suunn["tehtavat"]], ["korjaa-x"])
+
+
 class Komento(unittest.TestCase):
     def test_lupatila_vain_jos_asetettu(self):
         self.assertNotIn("--permission-mode", ajuri.claude_komento("k", {}))
@@ -409,6 +448,17 @@ class Itsesuunnittelu(Pohja):
         v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli("{}", kutsut), nyt=self.nyt())
         self.assertIn("paivaraja", v)
         self.assertEqual(kutsut, [])
+
+    def test_jalkiviesti_ei_hukkaa_suunnitelmaa(self):
+        vastaus = json.dumps({"tehtavat": [{"nimi": "korjaa-x", "sisalto": "# X\n\nTavoite: yllapito"}], "tonylle": ""})
+        ulos = _virta(_viesti(vastaus), _viesti("ok"),
+                      {"type": "result", "subtype": "success", "is_error": False, "result": "ok"})
+
+        def f(kom, **kw):
+            return subprocess.CompletedProcess(kom, 0, ulos, "")
+        v = ajuri.suunnittele(self.repo, self.tmp, {}, f, nyt=self.nyt())
+        self.assertNotIn("ei tuottanut", v)
+        self.assertIn("claude-jono/tehtavat/2026-10-30-01-auto-korjaa-x.md", self.origin_tiedostot())
 
     def test_virheellinen_json_ei_luo_mitaan(self):
         v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli("ei jsonia"), nyt=self.nyt())
