@@ -17,7 +17,8 @@
 # ymparistomuuttujia. Poistumiskoodi: 0 = OK tai ajan tasalla, 1 = epaonnistui (tilanne ennallaan tai palautettu),
 # 2 = esitarkistus esti (mitaan ei muutettu), 3 = palautus jai kesken tai epaonnistui (osa kohteista ei ole palautunut:
 # loppurivi kertoo tarkan tilan kohde kohteelta, tarkista kasin).
-# Testit ajetaan EI rootina: uusi koodi kopioidaan valiaikaishakemistoon ja testit ajetaan palvelukayttajana (runuser).
+# Uuden koodin testit JA savutesti (import, `yojono tila`) ajetaan EI rootina: testit valiaikaiskopiossa, savutesti vaihdetussa
+# kohteessa, molemmat palvelukayttajana (runuser, env -i).
 # Loppurivi on aina "OK: ..." tai "EPAONNISTUI: ...". Loki: /var/log/paivita-ajurit.log
 # =============================================================================
 set -u -o pipefail
@@ -233,7 +234,8 @@ tee_staging() {
 
 aja_testit() {                          # set -o pipefail: tee/tail ei peita testikomennon virhetta
   # Uuden koodin testit eivat aja rootina: koodi kopioidaan valiaikaishakemistoon, jonka omistaa TESTIKAYTTAJA, ja testit
-  # ajetaan hanen oikeuksillaan puhtaalla ymparistolla (env -i). Root ei suorita uuden mainin koodia.
+  # ajetaan hanen oikeuksillaan puhtaalla ymparistolla (env -i). Savutesti (savutesti_kohde) ajaa vaihdon jalkeen saman
+  # uuden koodin myos palvelukayttajana (aja_kayttajana), joten root ei suorita uuden mainin koodia missaan vaiheessa.
   local k d mods rc kopio etuliite=()
   [ -n "$TESTIKAYTTAJA" ] && etuliite=(runuser -u "$TESTIKAYTTAJA" --)
   TESTIHAK=$(mktemp -d "${TMPDIR:-/tmp}/paivita-testi.XXXXXX") || vika_esi "testihakemistoa ei voi luoda"
@@ -271,14 +273,27 @@ odota_hiljaisuutta() {
   done
 }
 
+# Ajaa komennon hakemistossa $1 palvelukayttajana (TESTIKAYTTAJA, runuser + env -i), ei rootina: savutesti suorittaa
+# vaihdetun uuden koodin (import ja `yojono tila`), joten sita ei saa ajaa root-oikeuksin. Ilman TESTIKAYTTAJAa
+# (vain testit, ei-root-ajo) komento ajetaan nykyisena kayttajana.
+aja_kayttajana() {                      # $1 = hakemisto, loput = komento
+  local hakem=$1 koti; shift
+  if [ -n "$TESTIKAYTTAJA" ]; then
+    koti=$(getent passwd "$TESTIKAYTTAJA" | cut -d: -f6); [ -d "${koti:-}" ] || koti=/nonexistent
+    ( cd "$hakem" && runuser -u "$TESTIKAYTTAJA" -- env -i HOME="$koti" PATH="$PATH" LC_ALL=C.UTF-8 "$@" )
+  else
+    ( cd "$hakem" && "$@" )
+  fi
+}
+
 savutesti_kohde() {                     # $1 = kohde
   local k=$1 d mods
   d=$(koodi_kansio "$k")
   [ "$k" = pohja ] && mods=$SAVU_POHJA || mods=$SAVU_YOJONO
   local m code=""; for m in $mods; do code+="import $m;"; done
-  ( cd "$d" && $PYTHON -B -c "$code" ) >/dev/null 2>&1 || { info "savutesti (tuonti) kaatui: $(nimi "$k")"; return 1; }
+  aja_kayttajana "$d" $PYTHON -B -c "$code" >/dev/null 2>&1 || { info "savutesti (tuonti) kaatui: $(nimi "$k")"; return 1; }
   if [ "$k" = yojono ] && [ -n "$TERVEYS_YOJONO" ]; then
-    ( cd "$d" && timeout 60 $PYTHON -B -m $TERVEYS_YOJONO ) >/dev/null 2>&1 || { info "savutesti (terveyskomento) kaatui: $(nimi "$k")"; return 1; }
+    aja_kayttajana "$d" timeout 60 $PYTHON -B -m $TERVEYS_YOJONO >/dev/null 2>&1 || { info "savutesti (terveyskomento) kaatui: $(nimi "$k")"; return 1; }
   fi
   if [ "$k" = yojono ]; then
     ( cd "$d" && sha256sum -c --quiet .julkaisu-manifesti >/dev/null 2>&1 ) || { info "manifesti ei tasmaa: $(nimi "$k")"; return 1; }

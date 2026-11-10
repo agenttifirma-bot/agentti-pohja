@@ -43,6 +43,8 @@ exec @MV@ "$@"
 # Tekaistu runuser: kirjaa kutsun ja hakemiston, ajaa komennon (ilman kayttajan vaihtoa); tekaistu chown vain kirjaa.
 RUNUSER = r'''#!/usr/bin/env bash
 echo "$* PWD=$PWD" >> "$SIM/runuser.log"
+# runuser_vika: jos tiedosto on, komento joka sisaltaa sen tekstin epaonnistuu (savutestin virheen simulointi)
+[ -f "$SIM/runuser_vika" ] && case "$*" in *"$(cat "$SIM/runuser_vika")"*) exit 1 ;; esac
 [ "$1" = "-u" ] && shift 2 && [ "$1" = "--" ] && shift
 exec "$@"
 '''
@@ -336,7 +338,7 @@ class PaivitaAjuritTesti(unittest.TestCase):
         tmpd = self.tmp / "tmpd"; tmpd.mkdir()
         r = self.aja(PAIVITA_TESTIKAYTTAJA=testikayttaja(), TMPDIR=str(tmpd))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        rivit = (self.sim / "runuser.log").read_text().splitlines()
+        rivit = [x for x in (self.sim / "runuser.log").read_text().splitlines() if "-m unittest" in x]
         self.assertEqual(len(rivit), 2)   # yksi per kohde
         for rivi in rivit:
             self.assertTrue(rivi.startswith("-u %s -- env -i HOME=" % testikayttaja()), rivi)
@@ -348,6 +350,27 @@ class PaivitaAjuritTesti(unittest.TestCase):
         self.assertEqual(len(chown), 2); self.assertTrue(all(testikayttaja() + ":" in c for c in chown), chown)
         self.assertEqual(list(tmpd.iterdir()), [])         # testikopiot siivottu
         self.assertEqual(self.jaannokset(), [])
+
+    def test_savutesti_ajetaan_palvelukayttajana_ei_rootina(self):
+        self.commit({"claudejono/ajuri.py": "VERSIO = 2\n"}, "v2")
+        r = self.aja(PAIVITA_TESTIKAYTTAJA=testikayttaja())
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        rivit = [x for x in (self.sim / "runuser.log").read_text().splitlines() if "-m unittest" not in x]
+        tuonnit = [x for x in rivit if "-B -c import " in x]
+        self.assertEqual(len(tuonnit), 2, rivit)               # tuonti kummassakin kohteessa
+        self.assertEqual(len([x for x in rivit if "-m yojono tila" in x]), 1, rivit)   # terveyskomento (yojono)
+        self.assertEqual(len(rivit), 3, rivit)
+        for rivi in rivit:
+            self.assertTrue(rivi.startswith("-u %s -- env -i HOME=" % testikayttaja()), rivi)
+            self.assertTrue(rivi.split("PWD=", 1)[1].startswith(str(self.opt)), rivi)   # vaihdettu kohde, ei testikopio
+
+    def test_savutestin_virhe_palvelukayttajana_palauttaa_vanhan(self):
+        self.commit({"claudejono/ajuri.py": "VERSIO = 2\n"}, "v2")
+        (self.sim / "runuser_vika").write_text("-B -c import")
+        r = self.aja(PAIVITA_TESTIKAYTTAJA=testikayttaja())
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("savutesti", r.stdout); self.assertIn("vanha koodi palautettu", self.loppurivi(r))
+        self.assertEqual(self.pohja_commit(), self.v1); self.assertTrue(self.yojono_eheys())
 
     def test_testivirhe_palvelukayttajan_ajossa_estaa_vaihdon(self):
         self.commit({"test/test_ok.py": "import unittest\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        self.assertTrue(False)\n"}, "rikki")
