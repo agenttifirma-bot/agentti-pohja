@@ -41,11 +41,13 @@ sha256sum isanta/kauppa-vienti.sh /usr/local/sbin/kauppa-vienti.sh && cat /etc/c
 
 Odotettu: kaksi samaa tiivistettä (`dd9fde05847a…`) ja cron-rivi `47 10 * * * root sh /usr/local/sbin/kauppa-vienti.sh >>/var/log/kauppa-vienti.log 2>&1`. Seuraavana päivänä: `tail -3 /var/log/kauppa-vienti.log`, viimeinen rivi päättyy tekstiin `kauppa-vienti ok`.
 
-## Siirtymän varoitus on odotettu
+## Siirtymän varoitus ja käsiajo
 
-`KAUPPA_MAX_IKA_H` on 26 h. Vanha ajo oli 06.17 ja uusi 10.47, joten siirtymävälistä tulee 28,5 h, jos asennus tehdään vasta uuden ajoajan (10.47) jälkeen. Silloin tilannekuva näyttää yhden `VAROITUS: kauppadatan kopio on vanhentunut` -rivin noin klo 08.17–10.47 asennusta seuraavana päivänä. Se on odotettu eikä kerro viasta. Jos asennus tehdään ennen kello 10.47, väliä ei synny: saman päivän 06.17-ajo on jo tehty ja seuraava ajo tulee 4,5 tunnin päästä.
+`KAUPPA_MAX_IKA_H` on 26 h. Vanha ajo oli 06.17 ja uusi 10.47, joten siirtymävälistä tulee 28,5 h, jos kopiota ei päivitetä ennen uutta ajoaikaa. Siksi aja vientiskripti käsin heti asennuksen jälkeen ja ennen kello 10.47 (komento yllä, Tonyn päätös A925). Silloin kopio päivittyy ennen kuin ikä ylittää rajan, eikä varoitusta tule.
 
-Raja-arvoa ei muuteta tässä. Jos varoitusta ei haluta lainkaan, vaihtoehto on ajaa skripti käsin heti asennuksen jälkeen (`sh /usr/local/sbin/kauppa-vienti.sh`), jolloin kopio päivittyy ennen kuin ikä ylittää rajan. Pysyvä rajan nosto on kattoarvon kaltainen muutos ja jää Tonyn päätettäväksi.
+Jos käsiajo jää tekemättä, tilannekuva näyttää yhden `VAROITUS: kauppadatan kopio on vanhentunut` -rivin. Se on odotettu eikä kerro viasta, ja se poistuu seuraavasta ajosta (10.47).
+
+Raja-arvoa ei muuteta tässä. Pysyvä rajan nosto on kattoarvon kaltainen muutos ja jää Tonyn päätettäväksi.
 
 ## Ajoaikaa muutettaessa
 
