@@ -6,7 +6,7 @@ Ajetaan isannalla rootina (systemd-ajastin claude-tarkastaja.timer). Yksi kierro
   2. ohittaa PR:t, jotka eivat muutenkaan kelpaa automergeen (tools/automerge.rakenne_syyt: rajatut, koko, osoitteet)
      tai joiden head-commit on jo tarkastettu. Rakennesyysta ohitettu PR kirjataan lokiin kerran per head-commit
      (tulos OHITETTU ja syyt), jotta lokista nakee, miksi PR odottaa Tonya.
-  3. hakee diffin, ja malli (valitse_malli: sonnet pieniin ei-rajattuihin, muuten Opus) arvioi sen ERILLISENA kayttajana (CLAUDEJONO_TARKASTAJA_KAYTTAJA, ei agentin
+  3. hakee diffin, ja malli (oletus Opus; vain asetus auto ottaa kayttoon valitse_malli:n: sonnet pieniin ei-rajattuihin, muuten Opus) arvioi sen ERILLISENA kayttajana (CLAUDEJONO_TARKASTAJA_KAYTTAJA, ei agentin
      kayttaja eika root) ilman tyokaluja: --tools "" ja --strict-mcp-config, kehote stdinista
   4. kirjoittaa PR:aan kommentin, jonka lopussa on merkki
      <!-- riippumaton-tarkastus v1 sha=<head> paatos=HYVAKSYTTY|HYLATTY|RAJATTU|EN_TIEDA -->
@@ -205,6 +205,12 @@ OPUS_POLUT = re.compile(r"(^|/)(tools/|agentti/|isanta/|hiekkalaatikko/|systemd/
                         r"(^|/)(tarkastaja|automerge|pr_kutsu)[a-z_.-]*\.(py|md|sh)\Z", re.I)
 OPUS_REPOT = ("kauppatiimi",)
 SALAINEN_LISATTY_RE = re.compile(r"^\+.*(secret|token|passw|api[_-]?key|private[_-]?key|credential|BEGIN [A-Z ]*KEY)", re.I | re.M)
+# Sanalista ei riita: salaisuus voi olla ilman avainsanaa. Siksi lisatyilta riveilta etsitaan myos tunnettuja tunnisteen alkuja ja
+# pitkia sekamerkkisia jonoja (kirjaimia ja numeroita, ei vali-, kauttaviiva- eika pistemerkkeja). Vaarat halytykset maksavat vain opuksen.
+SALAINEN_MUOTO_RE = re.compile(
+    r"^\+.*(\b(ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9]{10,}|github_pat_|\bsk-[A-Za-z0-9_-]{10,}|\bxox[a-z]-|\bAKIA[0-9A-Z]{8,}|\bAIza[0-9A-Za-z_-]{10,}|"
+    r"\beyJ[A-Za-z0-9_-]{10,}|(?<![A-Za-z0-9+/=_-])(?=[A-Za-z0-9+_=-]*[A-Za-z])(?=[A-Za-z0-9+_=-]*[0-9])[A-Za-z0-9+_=-]{24,}(?![A-Za-z0-9+/=_-]))",
+    re.M)
 
 
 def valitse_malli(repo, tiedostot, diff_teksti=""):
@@ -233,17 +239,17 @@ def valitse_malli(repo, tiedostot, diff_teksti=""):
                 return VAHVA_MALLI, "rajattu tai herkka polku"
     if rivit > KEVYT_MAX_RIVEJA:
         return VAHVA_MALLI, "iso muutos (%d rivia)" % rivit
-    if SALAINEN_LISATTY_RE.search(diff_teksti or ""):
-        return VAHVA_MALLI, "lisatyilla riveilla salaisuuteen viittaava sana"
+    if SALAINEN_LISATTY_RE.search(diff_teksti or "") or SALAINEN_MUOTO_RE.search(diff_teksti or ""):
+        return VAHVA_MALLI, "lisatyilla riveilla salaisuuteen viittaava sana tai salaisuuden nakoinen jono"
     return KEVYT_MALLI, "pieni ja ei-rajattu (%d rivia)" % rivit
 
 
 def tarkastus_komento(env, valittu=None):
-    """valittu = valitse_malli():n malli. CLAUDEJONO_TARKASTAJA_MALLI=opus|sonnet pakottaa mallin kaikille; auto tai puuttuu -> valittu (ilman sita opus)."""
+    """valittu = valitse_malli():n malli. CLAUDEJONO_TARKASTAJA_MALLI=opus|sonnet pakottaa mallin kaikille; oletus (arvo puuttuu) on opus; vain eksplisiittinen auto ottaa valinnan kayttoon (ilman valintaa opus)."""
     kayttaja = env.get("CLAUDEJONO_TARKASTAJA_KAYTTAJA", "")
     if not KAYTTAJA_RE.match(kayttaja) or kayttaja == "root" or kayttaja == env.get("CLAUDEJONO_KAYTTAJA"):
         raise TarkastajaVirhe("CLAUDEJONO_TARKASTAJA_KAYTTAJA puuttuu tai on sama kuin agentin kayttaja tai root")
-    asetus = env.get("CLAUDEJONO_TARKASTAJA_MALLI", "auto")
+    asetus = env.get("CLAUDEJONO_TARKASTAJA_MALLI", VAHVA_MALLI)
     if asetus not in ("opus", "sonnet", "auto"):
         raise TarkastajaVirhe("CLAUDEJONO_TARKASTAJA_MALLI ei kelpaa")
     malli = valittu if asetus == "auto" and valittu in ("opus", "sonnet") else (VAHVA_MALLI if asetus == "auto" else asetus)

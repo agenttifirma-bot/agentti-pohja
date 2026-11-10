@@ -179,13 +179,35 @@ class MallinValintaTesti(unittest.TestCase):
         self.assertEqual(self.malli([pieni()], diff="+++ b/x\n+API_KEY = 'x'\n"), "opus")
         self.assertEqual(self.malli([pieni()], diff="+++ b/x\n-token = 1\n+hei\n"), "sonnet")   # poistettu rivi ei laukaise
 
+    def test_salaisuuden_nakoinen_jono_ilman_avainsanaa_antaa_opuksen(self):
+        for rivi in ("+x = 'ghp_abcdefghijklmnop1234'", "+AKIAIOSFODNN7EXAMPLE", "+v = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4'", "+eyJhbGciOiJIUzI1NiJ9abc",
+                     "+k = 'sk-abcdefghijkl'", "+h = 'dGVzdDEyMzQ1Njc4OTBhYmNkZWZnaA=='"):
+            with self.subTest(rivi=rivi):
+                self.assertEqual(self.malli([pieni()], diff="+++ b/x\n" + rivi + "\n"), "opus")
+        for rivi in ("+nimi = 'pitka_snake_case_funktion_nimi_ilman_numeroita'", "+polku = 'docs/muutokset/aamupaketti-hakuvirhe2.md'",
+                     "+Tama on tavallinen lause numero 5 ja pitka.", "-ghp_abcdefghijklmnop1234"):
+            with self.subTest(rivi=rivi):
+                self.assertEqual(self.malli([pieni()], diff="+++ b/x\n" + rivi + "\n"), "sonnet")
+
+    def test_oletus_on_opus_ilman_asetusta_ja_palvelumallissa(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        api = Feikki([pr_olio()], [pieni()], [])
+        ajot = []
+        tk.kierros(dict(ENV, CLAUDEJONO_TILA=d.name), "t", avaa=api,
+                   suorita=lambda kom, **kw: ajot.append(kom) or SimpleNamespace(returncode=0, stdout=claude_ulos('{"paatos": "HYVAKSY"}'), stderr=""))
+        self.assertEqual(ajot[0][ajot[0].index("--model") + 1], "opus")
+        mall = (Path(tk.__file__).parent / "systemd" / "claude-tarkastaja.service.mall").read_text()
+        self.assertIn("Environment=CLAUDEJONO_TARKASTAJA_MALLI=opus\n", mall)
+
     def test_komento_kayttaa_valittua_mallia_ja_pakotus_voittaa(self):
-        self.assertEqual(tk.tarkastus_komento(ENV, "sonnet")[3], "sonnet")
-        self.assertEqual(tk.tarkastus_komento(ENV)[3], "opus")                       # ei valintaa -> opus
-        self.assertEqual(tk.tarkastus_komento(ENV, "haiku")[3], "opus")              # tuntematon valinta -> opus
+        auto = dict(ENV, CLAUDEJONO_TARKASTAJA_MALLI="auto")
+        self.assertEqual(tk.tarkastus_komento(ENV, "sonnet")[3], "opus")             # oletus on opus: valinta ei ole kaytossa ilman asetusta
+        self.assertEqual(tk.tarkastus_komento(auto, "sonnet")[3], "sonnet")
+        self.assertEqual(tk.tarkastus_komento(auto)[3], "opus")                      # ei valintaa -> opus
+        self.assertEqual(tk.tarkastus_komento(auto, "haiku")[3], "opus")             # tuntematon valinta -> opus
         self.assertEqual(tk.tarkastus_komento(dict(ENV, CLAUDEJONO_TARKASTAJA_MALLI="opus"), "sonnet")[3], "opus")
-        self.assertEqual(tk.tarkastus_komento(dict(ENV, CLAUDEJONO_TARKASTAJA_MALLI="auto"), "sonnet")[3], "sonnet")
-        kom = tk.tarkastus_komento(ENV, "sonnet")[0]
+        kom = tk.tarkastus_komento(auto, "sonnet")[0]
         self.assertEqual(kom[kom.index("--model") + 1], "sonnet")
         self.assertEqual(kom[kom.index("--tools") + 1], "")                           # tyokalut pysyvat pois
 
@@ -199,7 +221,7 @@ class MallinValintaTesti(unittest.TestCase):
             ajot.append(kom)
             return SimpleNamespace(returncode=0, stdout=claude_ulos('{"paatos": "HYVAKSY", "perustelu": "ok"}'), stderr="")
 
-        tk.kierros(dict(ENV, CLAUDEJONO_TILA=d.name), "t", suorita=suorita, avaa=api)
+        tk.kierros(dict(ENV, CLAUDEJONO_TILA=d.name, CLAUDEJONO_TARKASTAJA_MALLI="auto"), "t", suorita=suorita, avaa=api)
         self.assertEqual(ajot[0][ajot[0].index("--model") + 1], "sonnet")
         self.assertIn("Riippumaton tarkastus (sonnet)", api.postit[0][1]["body"])
         self.assertEqual(json.loads((Path(d.name) / "kulutus.jsonl").read_text())["malli"], "sonnet")
@@ -209,7 +231,7 @@ class MallinValintaTesti(unittest.TestCase):
         self.addCleanup(d.cleanup)
         api = Feikki([pr_olio()], [pieni("docs/a.md", muutos=400)], [])
         ajot = []
-        tk.kierros(dict(ENV, CLAUDEJONO_TILA=d.name), "t", avaa=api,
+        tk.kierros(dict(ENV, CLAUDEJONO_TILA=d.name, CLAUDEJONO_TARKASTAJA_MALLI="auto"), "t", avaa=api,
                    suorita=lambda kom, **kw: ajot.append(kom) or SimpleNamespace(returncode=0, stdout=claude_ulos('{"paatos": "HYVAKSY"}'), stderr=""))
         self.assertEqual(ajot[0][ajot[0].index("--model") + 1], "opus")
 

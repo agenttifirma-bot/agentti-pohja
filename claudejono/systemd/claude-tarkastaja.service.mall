@@ -13,7 +13,7 @@ Environment=CLAUDEJONO_TILA=/var/lib/claude-jono
 Environment=CLAUDEJONO_KAYTTAJA=claudejono
 Environment=CLAUDEJONO_TARKASTAJA_KAYTTAJA=tarkastaja
 Environment=CLAUDEJONO_CLAUDE=/var/lib/tarkastaja/.local/bin/claude
-Environment=CLAUDEJONO_TARKASTAJA_MALLI=auto
+Environment=CLAUDEJONO_TARKASTAJA_MALLI=opus
 Environment=CLAUDEJONO_TARKASTAJA_TUNNUS=/etc/claudejono-pr/token
 Environment=CLAUDEJONO_TARKASTUS_REPOT=agentti-pohja,mcp-model-router,ai-pr-reviewer-action,mcp-doctor,kauppatiimi,llm-cassette,llm-stopcheck,evalkit,ideapankki
 EnvironmentFile=-/etc/claude-jono/asetukset.env
