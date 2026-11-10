@@ -489,7 +489,7 @@ def _lue_istuntoloki(koti, istunto):
     O_NOFOLLOW-lipulla edellisen kautta (ei symlinkkeja), ja tiedosto ei saa olla kova linkki tai ylisuuri."""
     fds = []
     try:
-        fds.append(os.open(str(koti), os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC))
+        fds.append(os.open(str(koti), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC))   # koti itse ei saa olla symlinkki
         for osa in (".claude", "projects"):
             fds.append(_avaa_hakemisto_ilman_linkkeja(fds[-1], osa))
         projektit = fds[-1]
@@ -519,23 +519,27 @@ def _lue_istuntoloki(koti, istunto):
 
 
 def _etsi_raportti(data, istunto):
-    """Uusin paasession assistant-viesti, jonka tekstissa on otsikkorivi RAPORTTI_MERKKI. Jaetaan vain rivinvaihdosta
-    (str.splitlines() katkaisisi myos U+2028/U+2029/U+0085, jotka JSON sallii merkkijonossa)."""
+    """Paasession uusin assistant-viesti, jonka tekstissa on otsikkorivi RAPORTTI_MERKKI, mutta vain jos istunto
+    paattyi siihen: jos agentti kutsui raportin jalkeen tyokalua (jatkoi tyota), raportti on vanhentunut ja
+    palautetaan tyhja. Raportin omassa viestissa saa olla tyokutsu (taustatehtavan kaynnistys).
+    Jaetaan vain rivinvaihdosta (str.splitlines() katkaisisi myos U+2028/U+2029/U+0085, jotka JSON sallii)."""
     loydetty = ""
+    vanhentunut = False
     for rivi in data.split(b"\n"):
         try:
             d = json.loads(rivi.decode("utf-8", "replace"))
             if d.get("type") != "assistant" or d.get("isSidechain") or d.get("sessionId") != istunto:
                 continue
-            for osa in d["message"]["content"]:
-                if osa.get("type") != "text":
-                    continue
-                teksti = osa.get("text")
-                if isinstance(teksti, str) and RAPORTTI_OTSIKKO_RE.search(teksti):
-                    loydetty = teksti
+            osat = [o for o in d["message"]["content"] if isinstance(o, dict)]
+            raportit = [o["text"] for o in osat if o.get("type") == "text" and isinstance(o.get("text"), str)
+                        and RAPORTTI_OTSIKKO_RE.search(o["text"])]
+            if raportit:
+                loydetty, vanhentunut = raportit[-1], False
+            elif any(o.get("type") == "tool_use" for o in osat):
+                vanhentunut = True
         except Exception:  # yksi rikkinainen rivi ei esta muiden lukua
             continue
-    return loydetty
+    return "" if vanhentunut else loydetty
 
 
 def palauta_raportti(teksti, stdout, koti):

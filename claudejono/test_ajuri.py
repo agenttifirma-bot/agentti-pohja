@@ -681,6 +681,15 @@ class TestRaportinPalautus(Pohja):
         p.write_text("\n".join(rivit) + "\n", encoding="utf-8")
         return p
 
+    @staticmethod
+    def tanaan_nimi():
+        """Tehtavan nimi ajonhetken paivasta: testit eivat sido kiinteaan paivamaaraan."""
+        return datetime.now().strftime("%Y-%m-%d") + "-01-a.md"
+
+    def tyokutsu(self):
+        return self.viesti("", message={"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t2", "name": "Bash", "input": {}}]})
+
     def viesti(self, teksti, **muut):
         d = {"type": "assistant", "sessionId": self.ISTUNTO, "isSidechain": False,
              "message": {"role": "assistant", "content": [{"type": "text", "text": teksti}]}}
@@ -785,6 +794,24 @@ class TestRaportinPalautus(Pohja):
         (ulko / f"{self.ISTUNTO}.jsonl").write_text(self.viesti(self.RAPORTTI) + "\n", encoding="utf-8")
         return self.tmp / "ulko"
 
+    def test_koti_symlinkkina_torjutaan(self):
+        self.loki([self.viesti(self.RAPORTTI)])                       # oikea loki hakemistossa koti
+        (self.tmp / "koti").rename(self.tmp / "oikea")
+        (self.tmp / "koti").symlink_to(self.tmp / "oikea")            # muuten kelvollinen, mutta koti on symlinkki
+        self.assertEqual(self.palauta(), "jalkikommentti")
+
+    def test_vanhentunut_raportti_ei_palaudu_jos_tyo_jatkui(self):
+        self.loki([self.viesti(self.RAPORTTI), self.tyokutsu(), self.viesti("jalkikommentti")])
+        self.assertEqual(self.palauta(), "jalkikommentti")
+
+    def test_raportti_palautuu_kun_sen_jalkeen_vain_tekstia(self):
+        self.loki([self.tyokutsu(), self.viesti(self.RAPORTTI), self.viesti("a"), self.viesti("b")])
+        self.assertTrue(self.palauta().startswith(self.RAPORTTI))
+
+    def test_uusi_raportti_tyokutsun_jalkeen_kelpaa(self):
+        self.loki([self.viesti("vanha\n" + self.RAPORTTI), self.tyokutsu(), self.viesti("uusi\n" + self.RAPORTTI)])
+        self.assertTrue(self.palauta().startswith("uusi\n"))
+
     def test_symlinkki_polun_keskella_torjutaan_dotclaude(self):
         ulko = self._salainen_loki()
         koti = self.tmp / "koti"
@@ -827,18 +854,20 @@ class TestRaportinPalautus(Pohja):
             ajuri.ISTUNTOLOKI_MAX_TAVUA = vanha
 
     def test_koko_ajo_kirjoittaa_palautetun_raportin_ja_tilan(self):
-        self.lisaa_tehtava("2026-11-04-01-a.md")
+        nimi = self.tanaan_nimi()
+        self.lisaa_tehtava(nimi)
         koti = self.tmp / "koti"
         self.loki([self.viesti(self.RAPORTTI), self.viesti("jalkikommentti")])
         ajuri.aja(self.repo, self.tmp, env={"HOME": str(koti)},
                   suorita=lambda kom, **kw: subprocess.CompletedProcess(kom, 0, self.stdout("jalkikommentti"), ""))
-        tulos = (self.repo / ajuri.JONO / "tulokset" / "2026-11-04-01-a.md").read_text(encoding="utf-8")
+        tulos = (self.repo / ajuri.JONO / "tulokset" / nimi).read_text(encoding="utf-8")
         self.assertIn("Tila: VALMIS", tulos)
         self.assertIn("Iso raportti", tulos)
 
-    def test_tuloksen_2026_11_06_20_muoto_taustailmoituksen_jalkeen(self):
+    def test_raportti_taustailmoituksen_jalkeen_palautuu(self):
         """Raportti on omassa viestissaan, sen jalkeen tulee taustatehtavan ilmoitus ja vain lyhyt jalkikommentti."""
-        self.lisaa_tehtava("2026-11-06-20-a.md")
+        nimi = self.tanaan_nimi()
+        self.lisaa_tehtava(nimi)
         koti = self.tmp / "koti"
         sekaviesti = self.viesti("", message={"role": "assistant", "content": [
             {"type": "thinking", "thinking": "mietin"},
@@ -849,7 +878,7 @@ class TestRaportinPalautus(Pohja):
         self.loki([sekaviesti, ilmoitus, self.viesti("Taustatehtava valmistui, ei muuta.")])
         ajuri.aja(self.repo, self.tmp, env={"HOME": str(koti)},
                   suorita=lambda kom, **kw: subprocess.CompletedProcess(kom, 0, self.stdout("Taustatehtava valmistui, ei muuta."), ""))
-        tulos = (self.repo / ajuri.JONO / "tulokset" / "2026-11-06-20-a.md").read_text(encoding="utf-8")
+        tulos = (self.repo / ajuri.JONO / "tulokset" / nimi).read_text(encoding="utf-8")
         self.assertIn("Tila: VALMIS", tulos)
         self.assertIn("Todennettu kaytossa: testi", tulos)
         self.assertIn("## Tonylle opittavaa", tulos)
