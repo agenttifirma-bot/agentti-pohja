@@ -5,7 +5,9 @@ Peruste: tulos 2026-11-08-33. Koodi meni lapi 3.13:lla, mutta 3.10 kaatui jo tuo
 lausekkeessa kenoviiva, sallittu vasta 3.12:ssa, PEP 701).
 
 Kaytto: tools/py310_tarkistus.py [--python POLKU] [HAKEMISTO]   (oletus: nykyinen hakemisto)
-Tulkki: --python, muuten ympariston PY310, muuten /opt/agentscope/tyo/_apu/pythons/cpython-3.10*/bin/python3.10.
+Tulkki: --python, muuten ympariston PY310, muuten pysyva /opt/python310 (uv-asennus UV_PYTHON_INSTALL_DIR=/opt/python310),
+muuten varapolku /opt/agentscope/tyo/_apu/pythons/cpython-3.10*/bin/python3.10. Ajuri ei valita PY310:ta agentille
+(lapsen ymparisto on rajattu), joten pysyva oletuspolku on se, joka toimii agentin ajossa.
 Tuloste: yksi rivi per virhe, "tiedosto:rivi: virheen tyyppi". Virheviestin tekstia ei tulosteta.
 Tulkin versio varmistetaan (oltava tasan 3.10). Muu versio tai puuttuva tulkki tulostaa "EPAVARMA: ..." eika koskaan "OK".
 Poistumiskoodi: 0 kaikki kaantyy, 1 kaantovirhe, 3 oikeaa 3.10-tulkkia ei loydy (EPAVARMA), 2 muu virhe (esim. hakemistoa ei ole).
@@ -19,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 
+PYSYVA_HAUT = ["/opt/python310/bin/python3.10", "/opt/python310/cpython-3.10*/bin/python3.10"]
 OLETUS_HAKU = "/opt/agentscope/tyo/_apu/pythons/cpython-3.10*/bin/python3.10"
 EI_TULKKIA = 3
 POISTETUT = r"[\\/](\.git|\.venv|venv|node_modules|__pycache__)[\\/]"
@@ -29,7 +32,8 @@ TIEDOSTO_VIRHE_RE = re.compile(r"^\*\*\* Error compiling '(.+)'")
 
 def loyda_tulkki(polku=None):
     ehdokkaat = [polku, os.environ.get("PY310")]
-    ehdokkaat += sorted(glob.glob(OLETUS_HAKU), reverse=True)
+    for haku in PYSYVA_HAUT + [OLETUS_HAKU]:
+        ehdokkaat += sorted(glob.glob(haku), reverse=True)
     for e in ehdokkaat:
         if e and os.path.isfile(e) and os.access(e, os.X_OK):
             return e
