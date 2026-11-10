@@ -1,3 +1,4 @@
+import copy
 import io
 import json
 import subprocess
@@ -436,6 +437,25 @@ class Avaa422Testi(unittest.TestCase):
         self.assertEqual(self.tila()["pvm"], (self.nyt + timedelta(hours=14)).date().isoformat())
         self.assertTrue(self.tila().get("avaa_422"))
         self.assertEqual(self.avauskutsut(api), [])
+
+    def test_kuiva_ajo_ei_muokkaa_tilaa(self):
+        vanha = self.nyt.timestamp() - 25 * 3600                  # tauko loppunut
+        tuore = self.nyt.timestamp() - 3600
+        tila = {"pvm": "2026-11-07", "avattu": 0, "per_pr": {},
+                "avaa_422": {"agentti-pohja/korjaus/vanha": vanha, "agentti-pohja/korjaus/tuore": tuore}}
+        ennen = copy.deepcopy(tila)
+        api = self.api()
+        tehty = tk.avaa_puuttuvat(self.env, "t", tila, avaa=api, kuiva=True, nyt=self.nyt)
+        self.assertEqual(tila, ennen)
+        self.assertEqual(tehty[0]["tulos"], "avattaisiin")        # vanhentunut merkinta ei estanyt haaraa
+        self.assertEqual([k for k in api.kutsut if k[0] == "POST"], [])
+
+    def test_kuiva_ajo_ei_poista_viimeista_merkintaa(self):
+        vanha = self.nyt.timestamp() - 25 * 3600
+        tila = {"pvm": "2026-11-07", "avattu": 0, "per_pr": {}, "avaa_422": {"muu/korjaus/x": vanha}}
+        ennen = copy.deepcopy(tila)
+        tk.avaa_puuttuvat(self.env, "t", tila, avaa=self.api(), kuiva=True, nyt=self.nyt)
+        self.assertEqual(tila, ennen)
 
 
 class VirheNakyvyys(unittest.TestCase):

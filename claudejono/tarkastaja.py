@@ -294,7 +294,9 @@ def avaa_puuttuvat(env, tunnus, tila, avaa=urllib.request.urlopen, kuiva=False, 
                         pysaytetyt[avain] = nyt_s
                     tehty.append({"repo": repo, "haara": nimi, "tulos": "virhe", "syy": str(e)[:200]})
     finally:
-        if pysaytetyt:
+        if kuiva:
+            pass                                                       # kuiva-ajo ei muokkaa kutsujan tilaa (vanhentuneet merkinnat jaavat)
+        elif pysaytetyt:
             tila["avaa_422"] = pysaytetyt
         else:
             tila.pop("avaa_422", None)                                 # viimeinen merkinta poistui: ei tyhjaa avainta
