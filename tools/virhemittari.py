@@ -212,9 +212,6 @@ def luokittele_ajo(tila, teksti):
     return None
 
 
-TULOSNIMI_RE = re.compile(r"^# Tulos:\s*(\S+)", re.M)
-
-
 def laske(loki_teksti, tulokset, nyt, tehtavat=None, tarkastukset=None):
     """tulokset: [teksti]; tehtavat: [date] (None = ei tietoa); tarkastukset: {tulosnimi: tarkastusteksti} (valmis.py).
     Palauttaa (rivit, tilastot); rivit = viikkojarjestyksessa dictit.
@@ -241,7 +238,10 @@ def laske(loki_teksti, tulokset, nyt, tehtavat=None, tarkastukset=None):
             r["tunnit"].append(h)
         n_loki += 1
     n_ajot = n_luettu = n_rikki = 0
-    for teksti in tulokset:
+    for kohde in tulokset:
+        # Avain on tulostiedoston nimi (sama kuin tarkastus-tiedoston pohja ja aamukoosteen p.name).
+        # Pelkka teksti on sallittu (ei avainta -> ei voi paattaa toimimattomaksi).
+        tulosnimi, teksti = kohde if isinstance(kohde, tuple) else (None, kohde)
         t = lue_tulos(teksti)
         if not t:
             continue
@@ -249,8 +249,7 @@ def laske(loki_teksti, tulokset, nyt, tehtavat=None, tarkastukset=None):
         luokka = luokittele_ajo(t[0], t[2])
         rikki = False
         if luokka is None and t[0] == "VALMIS":
-            nimi = TULOSNIMI_RE.search(t[2])
-            rikki = bool(nimi) and valmis.toimimaton(tarkastukset.get(nimi.group(1)))
+            rikki = tulosnimi is not None and valmis.toimimaton(tarkastukset.get(tulosnimi))
             if rikki:
                 luokka = "1"   # tehty != toimii
         if luokka is None:
@@ -389,7 +388,8 @@ def main(argv=None):
         nyt = parse_paiva(a.nyt) if a.nyt else datetime.date.today()
         d = Path(a.docs)
         loki = (d / "virheloki.md").read_text(encoding="utf-8")
-        tulokset = [p.read_text(encoding="utf-8", errors="replace") for p in sorted((d / "tulokset").glob("*.md"))]
+        tulokset = [(p.name, p.read_text(encoding="utf-8", errors="replace"))
+                    for p in sorted((d / "tulokset").glob("*.md")) if not p.name.endswith(valmis.PAATE)]
         tehtavat = lue_tehtavat(d / "tehtavat") if (d / "tehtavat").is_dir() else None
         tarkastukset = {p.name[:-len(valmis.PAATE)] + ".md": p.read_text(encoding="utf-8", errors="replace")
                         for p in (d / "tulokset").glob("*" + valmis.PAATE)}

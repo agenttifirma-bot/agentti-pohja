@@ -302,7 +302,9 @@ def rivit(t):
     paatokset = "P\u00e4\u00e4t\u00f6kset sinulle: " + ", ".join(paatos_osat) + "."
 
     ilman = sum(1 for r in t["tulokset"] if r["tila"] == "KESKEN" and r.get("ajurin_tila") == "VALMIS")
-    osat = [f"{len(t['tulokset'])} jonotulosta ({nimet['VALMIS']} valmis, {str(nimet['KESKEN']) + ' kesken' + (f' (heist\u00e4 {ilman} ilman tarkastajan merkint\u00e4\u00e4)' if ilman else '') + ', ' if nimet['KESKEN'] else ''}{nimet['EPAONNISTUI']} ep\u00e4onnistui, {nimet['HYLATTY']} hyl\u00e4tty)"]
+    ilman_osa = f" (heist\u00e4 {ilman} ilman tarkastajan merkint\u00e4\u00e4)" if ilman else ""
+    kesken_osa = f"{nimet['KESKEN']} kesken{ilman_osa}, " if nimet["KESKEN"] else ""
+    osat = [f"{len(t['tulokset'])} jonotulosta ({nimet['VALMIS']} valmis, {kesken_osa}{nimet['EPAONNISTUI']} ep\u00e4onnistui, {nimet['HYLATTY']} hyl\u00e4tty)"]
     if t["uudet_prt"]:
         nayta = ", ".join(t["uudet_prt"][:4]) + (f" (+{len(t['uudet_prt']) - 4})" if len(t["uudet_prt"]) > 4 else "")
         osat.append("PR:t " + nayta)
