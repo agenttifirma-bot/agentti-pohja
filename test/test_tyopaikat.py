@@ -117,6 +117,64 @@ class EiSoviTest(unittest.TestCase):
             self.assertFalse(os.path.exists(tila))
 
 
+class EiSoviTiedostoTest(unittest.TestCase):
+    def _kirjoita(self, d, data, nimi="e.json"):
+        polku = os.path.join(d, nimi)
+        with open(polku, "w", encoding="utf-8") as f:
+            f.write(data if isinstance(data, str) else json.dumps(data))
+        return polku
+
+    def test_repon_tiedosto_sisaltaa_iceyen(self):
+        lista = t.lataa_ei_sovi()
+        self.assertIn({"yritys": "iceye", "otsikko": "intern lab", "syy": "A904: korkeakouluvaatimus"}, lista)
+        self.assertEqual(t.ei_sovi_syy({"yritys": "ICEYE", "otsikko": "Intern Lab 2027"}, lista),
+                         "A904: korkeakouluvaatimus")
+
+    def test_puuttuva_tiedosto_antaa_tyhjan(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(t.lataa_ei_sovi(os.path.join(d, "ei-ole.json")), [])
+
+    def test_rikkinainen_tiedosto_antaa_tyhjan(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(t.lataa_ei_sovi(self._kirjoita(d, "{rikki")), [])
+            self.assertEqual(t.lataa_ei_sovi(self._kirjoita(d, {"ei_sovi": "x"}, "b.json")), [])
+            self.assertEqual(t.lataa_ei_sovi(self._kirjoita(d, {"ei_sovi": [1, {"yritys": "a"}]}, "c.json")), [{"yritys": "a"}])
+
+    def test_yhdistaminen_molemmat_lahteet(self):
+        repo = [{"yritys": "iceye", "otsikko": "intern lab", "syy": "repo"}]
+        isanta = [{"yritys": "muu", "otsikko": "harkka", "syy": "isanta"}]
+        y = t.yhdista_ei_sovi(repo, isanta)
+        self.assertEqual({r["syy"] for r in y}, {"repo", "isanta"})
+        self.assertEqual(t.ei_sovi_syy({"yritys": "ICEYE", "otsikko": "Intern Lab"}, y), "repo")
+        self.assertEqual(t.ei_sovi_syy({"yritys": "Muu", "otsikko": "Harkka"}, y), "isanta")
+
+    def test_isannan_asetus_voittaa(self):
+        repo = [{"yritys": "iceye", "otsikko": "Intern Lab", "syy": "repo"}]
+        isanta = [{"yritys": "ICEYE", "otsikko": "intern lab", "syy": "isanta"}]
+        y = t.yhdista_ei_sovi(repo, isanta)
+        self.assertEqual(y, isanta)
+
+    def test_yhdista_ilman_isantaa(self):
+        repo = [{"yritys": "a", "otsikko": "b"}]
+        self.assertEqual(t.yhdista_ei_sovi(repo, None), repo)
+
+    def test_main_kayttaa_repon_listaa(self):
+        with tempfile.TemporaryDirectory() as d:
+            ase = self._kirjoita(d, {"lahteet": [{"tyyppi": "greenhouse", "nimi": "ICEYE", "tunnus": "iceye"}],
+                                     "hakusanat": ["intern"]})
+            kaytetty = {}
+            alkup_aja, alkup_avaa = t.aja, t._avaa
+            def aja_mock(asetukset, tila, **kw):
+                kaytetty.update(asetukset)
+                return [], []
+            t.aja = aja_mock
+            try:
+                self.assertEqual(t.main(["--asetukset", ase, "--tila", os.path.join(d, "n.json")]), 0)
+            finally:
+                t.aja = alkup_aja
+            self.assertTrue(any(r.get("yritys") == "iceye" for r in kaytetty["ei_sovi"]))
+
+
 class LukuTest(unittest.TestCase):
     def test_lahteet(self):
         self.assertEqual(len(t.lue_greenhouse("g", GH)), 2)

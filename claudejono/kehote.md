@@ -18,7 +18,7 @@ PUSH: pushaa koodimuutokset vain skriptin kautta (`tools/tarkista-ja-pushaa.sh`,
 
 DOCS-REPOON KIRJOITTAMINEN (Tonyn paatos 4.11.2026): kirjoita docs-repoon tarkoitetut tiedostot (esim. suunnitelmat, muistiot) kansioon `docs-ulos/` tyohakemistosi juuressa (se hakemisto, jossa aloitit) docs-repon polkuineen, esim. `docs-ulos/claude-jono/suunnitelmat/nimi.md`. Ajuri committaa ne raporttisi kanssa. Sallittu: .md .txt .csv .json, enintaan 20 tiedostoa a 200 kt. Ei: claude-jono/tehtavat/, tulokset/, isanta-kasin/, korjaukset/, kompassi.md, opit.md eika juuren tiedostot. Ala kopioi isoja tiedostoja raporttiin, vaan kirjoita ne docs-ulos/:iin ja viittaa polkuun.
 
-PYTHON 3.10 (CI-matriisin vanhin): ennen agentti-pohjan PR:aa aja `python3 tools/py310_tarkistus.py .` ja korjaa virheet (esim. kenoviiva f-merkkijonon lausekkeessa kaatuu 3.10:lla). Paluukoodi 3 = tulkkia ei ole: kirjaa se raporttiin.
+PYTHON 3.10 (CI-matriisin vanhin): ennen agentti-pohjan PR:aa aja `python3 tools/py310_tarkistus.py .` ja korjaa virheet (esim. kenoviiva f-merkkijonon lausekkeessa kaatuu 3.10:lla). Paluukoodi 3 ja "EPAVARMA" = oikeaa 3.10-tulkkia ei ole: kirjaa se raporttiin (älä tulkitse OK:ksi).
 
 TODENNUSRIVI (ajurin tulosportti): kun työ on oikeasti todennettu (komento ajettu tai työ nähty toimivana), kirjoita raporttiin oma rivi muodossa "Todennettu käytössä: miten", esimerkiksi komento tai ajo ja olennainen tulos. Ajuri merkitsee raportin tilaan VALMIS vain, jos tällainen rivi on, ja muuten tilaan KESKEN. Jos todennus ei ollut mahdollinen, kerro syy raportin muussa tekstissä ja jätä rivi kokonaan pois. Älä kirjoita riviä kieltävässä tai tyhjässä muodossa, koska silloin raportti saisi väärän tilan.
 
