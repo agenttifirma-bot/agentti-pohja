@@ -447,6 +447,13 @@ class LuokkaTesti(unittest.TestCase):
         for nimi in (".github/test_x.py", "isanta/test_x.py", "tests/token.py", "claudejono/tarkastaja_test.py"):
             self.assertIsNone(self.koodi(nimi), nimi)
 
+    @unittest.skipUnless(hasattr(tk.automerge, "TESTI_VAARAT_RE"), "automergen luokantodennus ei ole viela paahaarassa")
+    def test_automergen_luokkasaannot_ovat_samat_kuin_tarkastajan(self):
+        for nimi in ("DOKUMENTTI_SALLITUT_RE", "DOKUMENTTI_POIS_RE", "TESTI_RE", "TESTI_VAARAT_RE"):
+            a, b = getattr(tk, nimi), getattr(tk.automerge, nimi)
+            self.assertEqual((a.pattern, a.flags), (b.pattern, b.flags), nimi)
+        self.assertEqual(tk.LUOKAT, tk.automerge.LUOKAT)
+
     def test_importit_toimivat_automerge_rajattu_ja_pr_kutsu_suojattu(self):
         # tools.automerge.rajattu ja agentti.pr_kutsu.suojattu ovat mukana luokan_esteet():ssa, kumpikin yksin riittaa
         self.assertTrue(tk.automerge.rajattu("kauppatiimi", "docs/key.md"))
