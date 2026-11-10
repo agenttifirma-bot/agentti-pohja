@@ -77,6 +77,17 @@ class Kooste(Pohja):
         self.assertIn("https://github.com/tonyweckstrom1987/agentti-pohja/pull/9", linkit)
         self.assertIn("tonylle.md", linkit)
 
+    def test_aivo_valmius_kerrotaan_heti_kun_kaikki_ruudut_rastitettu(self):
+        self.assertNotIn("Aivo on valmis", aamukooste.muotoile(self.keraa()))      # tiedostoa ei ole
+        osa = "- [x] a\n- [x] b\n- [x] c\n- [x] d\n"
+        self.kirjoita("aivo-valmius.md", osa + "- [ ] e\n")
+        self.assertNotIn("Aivo on valmis", aamukooste.muotoile(self.keraa()))      # yksi ruutu auki
+        rivit_ennen = len(aamukooste.muotoile(self.keraa()).split("\n\nLinkit:\n")[0].splitlines())
+        self.kirjoita("aivo-valmius.md", osa + "- [x] e\n")
+        teksti = aamukooste.muotoile(self.keraa())
+        self.assertIn("Aivo on valmis OpenRouteriin", teksti)
+        self.assertEqual(len(teksti.split("\n\nLinkit:\n")[0].splitlines()), rivit_ennen)   # rivimaara ei kasva
+
     def test_ikkuna_rajaa_vanhat_pois(self):
         t = self.keraa()
         self.assertEqual(sorted(r["nimi"][:13] for r in t["tulokset"]), ["2026-11-02-01", "2026-11-02-02"])

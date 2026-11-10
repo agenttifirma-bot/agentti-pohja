@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import ajuri, kaistamittaus, kulutus, vaiteportti, varaus
+from . import aivo_arvio, ajuri, kaistamittaus, kulutus, vaiteportti, varaus
 
 TZ = ZoneInfo("Europe/Helsinki")
 OLETUS_REPO = "/var/lib/claude-jono/docs"
@@ -196,12 +196,16 @@ def keraa(repo, perus, nyt, hae=None, yksikot=None):
         varaus_rivi, varaus_kysymys = varaus.aamukooste_osa(tila, os.environ, nyt)
     except Exception:
         pass
+    try:
+        aivo_valmis = aivo_arvio.valmius_taynna(repo)
+    except Exception:
+        aivo_valmis = False
     from . import tarkastaja
     try:   # tarkastajan ja PR-avaajan viat nakyviin; puuttuva loki ei kaada koostetta
         tarkastaja_virheet = tarkastaja.virheet_lokista(Path(repo).parent, alku)
     except Exception:
         tarkastaja_virheet = []
-    return {"nyt": nyt, "tarkastaja_virheet": tarkastaja_virheet, "kaistat": kaistat, "kulutus": kulutus_teksti, "varaus": varaus_rivi, "varaus_kysymys": varaus_kysymys, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku), "paatokset": avoimet_paatokset(repo, nyt), "saannot": tonylle_uudet(repo, alku, SAANTOPAIVITYKSET),
+    return {"nyt": nyt, "aivo_valmis": aivo_valmis, "tarkastaja_virheet": tarkastaja_virheet, "kaistat": kaistat, "kulutus": kulutus_teksti, "varaus": varaus_rivi, "varaus_kysymys": varaus_kysymys, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku), "paatokset": avoimet_paatokset(repo, nyt), "saannot": tonylle_uudet(repo, alku, SAANTOPAIVITYKSET),
             "pr": pr_ryhmat, "pr_virheita": virheet, "yojono": yojono_tila(perus, nyt),
             "yksikot": (yksikot or rikkinaiset_yksikot)(), "vaiteportti": vaiteportti.puutteet(repo)}
 
@@ -235,6 +239,8 @@ def rivit(t):
             paatos_osat.append(f"PR-lista voi olla vajaa ({len(t['pr_virheita'])} hakuvirhett\u00e4, esim. {t['pr_virheita'][0]})")
         if t["pr"].get("automerge"):
             paatos_osat.append(f"{len(t['pr']['automerge'])} hoituu automergell\u00e4")
+    if t.get("aivo_valmis"):   # Tony 7.11.2026: kerro HETI, kun kaikki aivo-valmius.md:n kohdat t\u00e4yttyv\u00e4t
+        paatos_osat.insert(0, "Aivo on valmis OpenRouteriin ja itsekehitykseen: kaikki aivo-valmius.md:n kohdat t\u00e4yttyv\u00e4t")
     avoimet = t.get("paatokset") or []
     muut = [k for k in (t.get("tonylle") or []) if k not in avoimet]   # ei hiljaa katoavia kohtia: avainsanaan osumattomat vain laskurina
     if muut:
