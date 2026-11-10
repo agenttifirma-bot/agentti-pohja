@@ -294,18 +294,37 @@ def tehtavan_kaista(polku, kaistoja=KAISTOJA_MAX):
 PRIORITEETTI_RE = re.compile(r"^[ \t#*_>-]*PRIORITEETTI[ \t]+(\d{1,3})\b", re.MULTILINE)
 
 
+AJURIN_TEHTAVAVIESTIT = ("claude-jono: itsesuunnittelu", "claude-jono: toistuva tehtava")   # ajurin omat julkaise()-viestit tehtavatiedostoille
+
+
+def ajurin_kirjoittama(polku):
+    """Onko ajuri (itsesuunnittelu tai toistuva tehtava) kirjoittanut tiedoston? Kirjoittaja luetaan gitista: tiedoston lisanneen
+    commitin viesti on ajurin oma. Tiedoston nimi ei ratkaise. Gitin virhe tulkitaan ajurin tiedostoksi (turvallinen suunta:
+    prioriteettia ei huomioida). Git-historiaton (ei commitoitu) tiedosto ei ole ajurin."""
+    p = Path(polku)
+    try:
+        r = subprocess.run(["git", "-C", str(p.parent), "log", "--diff-filter=A", "--format=%s", "-1", "--", p.name],
+                           capture_output=True, text=True, check=False, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if r.returncode != 0:
+        return True
+    return r.stdout.strip().startswith(AJURIN_TEHTAVAVIESTIT)
+
+
 def tehtavan_prioriteetti(polku):
-    """Tonyn nimeama `PRIORITEETTI n` -otsikko (pienempi ensin). Ei otsikkoa = jonon loppuun (None).
-    Vain Tonyn ja pilvi-Clauden lisaamat tehtavat: itsesuunnittelun `-auto-` tehtavat eivat voi nostaa itseaan jonon karkeen."""
-    if "-auto-" in Path(polku).name:
-        return None
+    """Tonyn tai pilvi-Clauden nimeama `PRIORITEETTI n` -otsikko (pienempi ensin). Ei otsikkoa = jonon loppuun (None).
+    Ajurin kirjoittamat tiedostot (itsesuunnittelu, toistuvat) eivat voi nostaa itseaan jonon karkeen: kirjoittaja
+    tarkistetaan gitista, ja `-auto-` nimessa on lisasuoja. Git kysytaan vain, jos tiedostossa on prioriteettirivi."""
     try:
         with open(polku, "rb") as f:
             teksti = f.read(KAISTARIVI_LUKU_MAX).decode("utf-8", "replace")
     except OSError:
         return None
     m = PRIORITEETTI_RE.search(teksti)
-    return int(m.group(1)) if m else None
+    if not m or "-auto-" in Path(polku).name or ajurin_kirjoittama(polku):
+        return None
+    return int(m.group(1))
 
 
 def odottavat_tehtavat(repo):
@@ -908,7 +927,7 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None, kaista=1):
         return f"itsesuunnittelu pysaytetty (laatuotos): {pysaytys}"
     avoimia = len(odottavat_tehtavat(repo))
     if avoimia >= JONO_MAX_AVOIMIA:
-        return f"jono tyhja (itsesuunnittelu ohitettu: avoimia tehtavia {avoimia} >= {JONO_MAX_AVOIMIA})"
+        return f"jono taynna (itsesuunnittelu ohitettu: avoimia tehtavia {avoimia} >= {JONO_MAX_AVOIMIA})"
     tilaa = min(AUTO_PER_AJO, AUTO_MAX_PAIVA - auto_tanaan(repo, pvm), JONO_MAX_AVOIMIA - avoimia)
     if tilaa <= 0:
         return "jono tyhja (itsesuunnittelun paivaraja taynna)"
@@ -965,7 +984,7 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None, kaista=1):
         kirjaa_suunnittelu(tyohak, repo, nyt, len([p for p in polut if p.name != TONYLLE]))
         if not polut:
             return "jono tyhja (ei uusia tehtavia)"
-        julkaise(repo, polut, f"claude-jono: itsesuunnittelu {len([p for p in polut if p.name != TONYLLE])} tehtavaa")
+        julkaise(repo, polut, f"{AJURIN_TEHTAVAVIESTIT[0]} {len([p for p in polut if p.name != TONYLLE])} tehtavaa")
     viesti = "claude-jono: itsesuunnittelu -> " + ", ".join(p.name for p in polut)
     if laheta:
         laheta(viesti)
@@ -993,7 +1012,7 @@ def luo_toistuvat(repo, tyohak, nyt=None):
                      encoding="utf-8")
         polut.append(p)
     if polut:
-        julkaise(repo, polut, "claude-jono: toistuva tehtava " + ", ".join(p.name for p in polut))
+        julkaise(repo, polut, AJURIN_TEHTAVAVIESTIT[1] + " " + ", ".join(p.name for p in polut))
     return polut
 
 
