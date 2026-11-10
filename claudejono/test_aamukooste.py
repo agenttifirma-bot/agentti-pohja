@@ -118,7 +118,7 @@ class Kooste(Pohja):
         self.assertEqual(tilat["2026-11-02-01"], "VALMIS")   # tarkastettu
         self.assertEqual(tilat["2026-11-02-03"], "KESKEN")   # ei merkintaa
         self.assertEqual(tilat["2026-11-02-02"], "EPAONNISTUI")
-        rivi = aamukooste.rivit(t)[0]
+        rivi = next(r for r in aamukooste.rivit(t) if "jonotulosta" in r)
         self.assertIn("1 valmis, 1 kesken (heist\u00e4 1 ilman tarkastajan merkint\u00e4\u00e4)", rivi)
 
     def test_tarkastus_ilman_todistetta_tai_samalta_mallilta_ei_kelpaa(self):
