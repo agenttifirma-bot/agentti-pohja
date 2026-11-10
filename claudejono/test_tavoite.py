@@ -168,5 +168,58 @@ class AivoArvio(unittest.TestCase):
         self.assertFalse(aivo_arvio.arvioi_varjossa(self.tila, Path(self.tila) / "puuttuu.md", lambda s: (True, "x")))
 
 
+class AivoKytkenta(unittest.TestCase):
+    """Vika 10.11.2026 (#251): main() ei antanut aja():lle arvioijaa, joten varjotila ei kaynnistynyt koskaan."""
+
+    def test_main_kytkee_arvioijan_aja_funktiolle(self):
+        from unittest import mock
+        from claudejono import ajuri
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d) / "docs"
+            repo.mkdir()
+            with mock.patch.dict("os.environ", {"CLAUDEJONO_REPO": str(repo), "CLAUDEJONO_TYOHAK": d, "CLAUDEJONO_KAISTOJA": "1"}), \
+                 mock.patch.object(ajuri, "aja", return_value="ok") as aja_mock:
+                self.assertEqual(ajuri.main(["ajo"]), 0)
+            arvioija = aja_mock.call_args.kwargs.get("aivo_arvioija")
+            self.assertTrue(callable(arvioija))
+
+    def _vastaus(self, result, koodi=0):
+        from types import SimpleNamespace
+        return SimpleNamespace(stdout=json.dumps({"result": result, "subtype": "success"}), returncode=koodi)
+
+    def test_arvioija_kutsuu_claudea_ilman_tyokaluja_ja_tulkitsee_vastauksen(self):
+        from claudejono import ajuri
+        kutsut = []
+
+        def suorita(kom, **kw):
+            kutsut.append((kom, kw))
+            return self._vastaus('{"kylla": true, "syy": "tukee portfoliota"}')
+        arvioi = ajuri.aivo_arvioija({"CLAUDEJONO_CLAUDE": "claude"}, suorita)
+        self.assertEqual(arvioi("# tehtava"), (True, "tukee portfoliota"))
+        kom, kw = kutsut[0]
+        self.assertEqual(kom[kom.index("--tools") + 1], "")      # ei tyokaluja
+        self.assertEqual(kom[kom.index("--model") + 1], "sonnet")  # Clauden tyokalutila, ei OpenRouter/LiteLLM
+        self.assertNotIn("LITELLM", " ".join(kw["env"]))
+        self.assertIn("# tehtava", kw["input"])
+
+    def test_arvioija_virheet_nostetaan_ja_varjotila_nielee_ne(self):
+        from claudejono import ajuri
+        tila = tempfile.mkdtemp()
+        t = kirj(tila, "2026-11-10-01-a.md", "# tehtava")
+        for result, koodi in (("ei jsonia", 0), ('{"kylla": "joo"}', 0), ('{"kylla": true}', 1)):
+            arvioi = ajuri.aivo_arvioija({}, lambda kom, r=result, k=koodi, **kw: self._vastaus(r, k))
+            with self.assertRaises(ajuri.JonoVirhe):
+                arvioi("x")
+            self.assertFalse(aivo_arvio.arvioi_varjossa(tila, t, arvioi))
+        self.assertEqual(aivo_arvio.arviot(tila), {})
+        ok = ajuri.aivo_arvioija({}, lambda kom, **kw: self._vastaus('{"kylla": false, "syy": "ei"}'))
+        self.assertTrue(aivo_arvio.arvioi_varjossa(tila, t, ok))
+        self.assertEqual(aivo_arvio.arviot(tila)[t.name]["kylla"], False)
+
+    def test_systemd_malli_kolme_kaistaa(self):
+        teksti = (Path(__file__).parent / "systemd" / "claude-jono@.service.mall").read_text()
+        self.assertIn("Environment=CLAUDEJONO_KAISTOJA=3", teksti)
+
+
 if __name__ == "__main__":
     unittest.main()
