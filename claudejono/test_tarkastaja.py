@@ -393,8 +393,13 @@ class LuokkaTesti(unittest.TestCase):
 
     def test_koodi_maaraa_testin(self):
         for nimet in (("test/test_x.py",), ("claudejono/test_ajuri.py", "tools/test_y.py"), ("tests/apu.py",),
-                      ("tests/alikansio/data_apu.py",), ("agentti/ajo_test.py",)):
+                      ("tests/alikansio/data_apu.py",)):
             self.assertEqual(self.koodi(*nimet), "testi", nimet)
+
+    def test_ajo_test_py_ei_ole_testiluokkaa(self):
+        # kehote ja koodi sopivat yhteen: vain test_*.py ja tests/ (suppeampi valinta, #255)
+        for nimi in ("agentti/ajo_test.py", "test/ajo_test.py", "ajo_test.py"):
+            self.assertIsNone(self.koodi(nimi), nimi)
 
     def test_dokumentti_vain_sallituista_poluista(self):
         for nimi in ("MEMORY.md", "SKILL.md", "AGENTS.md", "CLAUDE.md", "agents.md", "docs/MEMORY.md", "docs/SKILL.md",

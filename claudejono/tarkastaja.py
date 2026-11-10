@@ -66,7 +66,7 @@ DOKUMENTTI_SALLITUT_RE = re.compile(r"\A(docs/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-
 # Toinen lukko sallitun hakemiston sisalle (docs/ voi sisaltaa ohjetiedoston): nama nimet eivat koskaan ole dokumentteja.
 DOKUMENTTI_POIS_RE = re.compile(r"kehote|prompt|memory|skill|(^|/)claude[^/]*\.md\Z|(^|/)\.claude/|(^|/)agents?[^/]*\.md\Z|\.\.",
                                 re.IGNORECASE)
-TESTI_RE = re.compile(r"(^|/)(test_[A-Za-z0-9_]+|[A-Za-z0-9_]+_test)\.py\Z|(^|/)tests/(?:[^/]+/)*[^/]+\.py\Z")
+TESTI_RE = re.compile(r"(^|/)test_[A-Za-z0-9_]+\.py\Z|(^|/)tests/(?:[^/]+/)*[^/]+\.py\Z")
 # Testiluokka ei kata testia, joka voi tuhota tai kaynnistaa jotain (A918, tarkennus): poisto, prosessit, verkko, dynaaminen
 # koodi. Fail closed: osuma -> ei luokkaa (ja mallin ehdottama testi-luokka -> RAJATTU). Tutkitaan muutetut ja kontekstirivit.
 TESTI_VAARAT_RE = re.compile(
@@ -263,7 +263,7 @@ def luokan_esteet(tiedostot, repo=""):
 
 def koodiluokka(tiedostot, repo=""):
     """'dokumentti', 'testi' tai None. Paatetaan pelkastaan tiedostolistasta ja diffista (koodi, ei malli):
-    dokumentti = kaikki tiedostot ovat sallittujen polkujen .md-tiedostoja (DOKUMENTTI_SALLITUT_RE); testi = kaikki ovat testitiedostoja (test_*.py, *_test.py tai
+    dokumentti = kaikki tiedostot ovat sallittujen polkujen .md-tiedostoja (DOKUMENTTI_SALLITUT_RE); testi = kaikki ovat testitiedostoja (test_*.py tai
     tests/-hakemiston .py) eika niissa ole tuhoavia operaatioita (testin_vaarat()); kummassakaan ei saa olla rajattua polkua eika luokan_esteet()-osumaa. Sekamuutos -> None."""
     nimet = _nimet(tiedostot)
     if not nimet or luokan_esteet(tiedostot, repo):
