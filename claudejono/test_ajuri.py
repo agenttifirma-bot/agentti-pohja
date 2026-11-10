@@ -955,7 +955,7 @@ class TestRaportinPalautus(Pohja):
 
     def test_koko_ajo_kirjoittaa_palautetun_raportin_ja_tilan(self):
         nimi = self.tanaan_nimi()
-        self.lisaa_tehtava(nimi)
+        self.lisaa_tehtava(nimi, "tee jotain\n\nTavoite: yllapito\n")
         koti = self.tmp / "koti"
         self.loki([self.viesti(self.RAPORTTI), self.viesti("jalkikommentti")])
         ajuri.aja(self.repo, self.tmp, env={"HOME": str(koti)},
@@ -967,7 +967,7 @@ class TestRaportinPalautus(Pohja):
     def test_raportti_taustailmoituksen_jalkeen_palautuu(self):
         """Raportti on omassa viestissaan, sen jalkeen tulee taustatehtavan ilmoitus ja vain lyhyt jalkikommentti."""
         nimi = self.tanaan_nimi()
-        self.lisaa_tehtava(nimi)
+        self.lisaa_tehtava(nimi, "tee jotain\n\nTavoite: yllapito\n")
         koti = self.tmp / "koti"
         sekaviesti = self.viesti("", message={"role": "assistant", "content": [
             {"type": "thinking", "thinking": "mietin"},
