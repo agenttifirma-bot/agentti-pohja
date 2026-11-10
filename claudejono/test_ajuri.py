@@ -209,7 +209,28 @@ class TulkintaVirta(unittest.TestCase):
         self.assertEqual(ajuri.tulkitse(json.dumps(loppu), 0), (True, "vastaus"))
         # itsesuunnittelun JSON-olio kelpaa raportiksi
         vastaus = '{"tehtavat": []}'
-        self.assertEqual(ajuri.tulkitse(_virta(_viesti(vastaus), _viesti("ok"), self.LOPPU), 0), (True, vastaus))
+        self.assertEqual(ajuri.tulkitse(_virta(_viesti(vastaus), self.LOPPU), 0), (True, vastaus))
+
+    def test_vanha_valivaiheen_json_ei_kelpaa_istunnon_jatkuttua(self):
+        vastaus = '{"tehtavat": []}'
+        ulos = _virta(_viesti(vastaus), _viesti("ok"), self.LOPPU)
+        self.assertIsNone(ajuri._viimeinen_raportti(ulos))
+        self.assertEqual(ajuri.tulkitse(ulos, 0), (True, self.LOPPU["result"]))   # paluu result-kenttaan
+        # otsikollinen raportti sailyy, vaikka valissa oli JSON ja perassa jalkiviesti
+        ulos = _virta(_viesti(self.RAPORTTI), _viesti(vastaus), _viesti("ok"), self.LOPPU)
+        self.assertEqual(ajuri._viimeinen_raportti(ulos), self.RAPORTTI)
+        # JSON viimeisena paaagentin viestina voittaa edelleen aiemman raportin
+        self.assertEqual(ajuri._viimeinen_raportti(_virta(_viesti(self.RAPORTTI), _viesti(vastaus))), vastaus)
+
+    def test_alitehtavan_viestit_suodatetaan(self):
+        ali = dict(_viesti(self.RAPORTTI + " ALI"), parent_tool_use_id="toolu_1")
+        self.assertIsNone(ajuri._viimeinen_raportti(_virta(ali)))
+        # alitehtavan viesti ei syrjayta paaagentin raporttia eika tee JSONista valivaihetta
+        ulos = _virta(_viesti('{"a": 1}'), ali, self.LOPPU)
+        self.assertEqual(ajuri._viimeinen_raportti(ulos), '{"a": 1}')
+        ulos = _virta(_viesti(self.RAPORTTI), ali, dict(_viesti("jalki"), parent_tool_use_id="toolu_2"), self.LOPPU)
+        self.assertEqual(ajuri._viimeinen_raportti(ulos), self.RAPORTTI)
+        self.assertEqual(ajuri._viimeinen_raportti(_virta(dict(_viesti(self.RAPORTTI), parent_tool_use_id=None))), self.RAPORTTI)
 
     def test_lukukelvoton_virta_epaonnistuu(self):
         self.assertFalse(ajuri.tulkitse("roskaa\nvaan roskaa\n", 0)[0])

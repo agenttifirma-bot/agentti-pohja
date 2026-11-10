@@ -510,20 +510,25 @@ def luo_kaistan_tyohak(tyohak, kaista, env):
 RAPORTTI_OTSIKKO = "## Tonylle opittavaa"
 
 
-def _raportti_kelpaa(teksti):
-    """Loppuraportti: sisaltaa lopetusotsikon, tai on JSON-olio (itsesuunnittelun vastaus)."""
-    if RAPORTTI_OTSIKKO in teksti:
-        return True
+def _on_json_olio(teksti):
     try:
         return isinstance(json.loads(teksti), dict)
     except ValueError:
         return False
 
 
+def _raportti_kelpaa(teksti, viimeinen=True):
+    """Loppuraportti: sisaltaa lopetusotsikon, tai on JSON-olio (itsesuunnittelun vastaus).
+    JSON-olio kelpaa vain, jos se on paaagentin viimeinen tekstiviesti (viimeinen=True): istunnon jatkuessa se oli valivaihe."""
+    if RAPORTTI_OTSIKKO in teksti:
+        return True
+    return viimeinen and _on_json_olio(teksti)
+
+
 def _viimeinen_raportti(stdout):
-    """Viimeinen assistant-tekstiviesti stream-json-tulosteesta, joka on loppuraportti; muuten None.
+    """Viimeinen paaagentin (parent_tool_use_id puuttuu tai null) assistant-tekstiviesti stream-json-tulosteesta, joka on loppuraportti; muuten None.
     Tausta: taustatehtavan ilmoitus raportin jalkeen tuottaa lyhyen jalkiviestin, joka korvasi raportin result-kentassa."""
-    loyto = None
+    tekstit = []
     for rivi in str(stdout).splitlines():
         try:
             o = json.loads(rivi)
@@ -531,13 +536,19 @@ def _viimeinen_raportti(stdout):
             continue
         if not isinstance(o, dict) or o.get("type") != "assistant":
             continue
+        if o.get("parent_tool_use_id") is not None:
+            continue   # alitehtavan (aliagentin) viesti, ei paaagentin loppuraportti
         viesti = o.get("message")
         sisalto = viesti.get("content") if isinstance(viesti, dict) else None
         if not isinstance(sisalto, list):
             continue
         osat = [b.get("text") for b in sisalto if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)]
         teksti = "\n".join(osat).strip()
-        if teksti and _raportti_kelpaa(teksti):
+        if teksti:
+            tekstit.append(teksti)
+    loyto = None
+    for i, teksti in enumerate(tekstit):
+        if _raportti_kelpaa(teksti, viimeinen=(i == len(tekstit) - 1)):
             loyto = teksti
     return loyto
 
