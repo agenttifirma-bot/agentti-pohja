@@ -149,6 +149,10 @@ class KayttoonottoEro(Pohja):
     def setUp(self):
         super().setUp()
         import subprocess
+        # tunnuspolku vaihdetaan olemattomaan valiaikaispolkuun: testi ei saa lukea oikeaa lukutunnusta
+        env = mock.patch.dict(os.environ, {"GITHUB_LUKU_TUNNUS_POLKU": str(Path(self.tmp) / "ei-tunnusta.token")})
+        env.start()
+        self.addCleanup(env.stop)
         self.pohja = Path(self.tmp) / "pohja"
         self.pohja.mkdir()
         for komento in (["init", "-q", "-b", "main"], ["-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "a"]):

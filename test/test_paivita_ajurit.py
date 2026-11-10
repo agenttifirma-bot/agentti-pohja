@@ -48,6 +48,16 @@ echo "$* PWD=$PWD" >> "$SIM/runuser.log"
 [ "$1" = "-u" ] && shift 2 && [ "$1" = "--" ] && shift
 exec "$@"
 '''
+# Tekaistu git: kirjaa kutsut. Jos SIM/git_vika:ssa on alikomento (rev-parse tai status) ja kutsu kohdistuu pohjakoprioon
+# (-C $POHJA), kayttaytyy kuin omistajaristiriita: "dubious ownership", poistumiskoodi 128, EI safe.directory-ohitusta.
+GIT = r'''#!/usr/bin/env bash
+echo "$*" >> "$SIM/git.log"
+vika=$(cat "$SIM/git_vika" 2>/dev/null)
+if [ -n "$vika" ]; then
+  case " $* " in *" -C $POHJA_POLKU "*"$vika "*) echo "fatal: detected dubious ownership in repository at '$POHJA_POLKU'" >&2; exit 128 ;; esac
+fi
+exec @GIT@ "$@"
+'''
 CHOWN = r'''#!/usr/bin/env bash
 echo "$*" >> "$SIM/chown.log"
 '''
@@ -81,7 +91,7 @@ class PaivitaAjuritTesti(unittest.TestCase):
         self.sim.mkdir(); self.opt.mkdir()
         (self.sim / "systemctl").write_text(SYSTEMCTL); (self.sim / "systemctl").chmod(0o755)
         (self.sim / "bin").mkdir()
-        for nimi, sisalto in (("mv", MV.replace("@MV@", shutil.which("mv"))), ("runuser", RUNUSER), ("chown", CHOWN)):
+        for nimi, sisalto in (("mv", MV.replace("@MV@", shutil.which("mv"))), ("runuser", RUNUSER), ("chown", CHOWN), ("git", GIT.replace("@GIT@", shutil.which("git")))):
             (self.sim / "bin" / nimi).write_text(sisalto); (self.sim / "bin" / nimi).chmod(0o755)
         (self.sim / "timers").write_text("claude-jono@1.timer loaded active waiting x\nyojono.timer loaded active waiting y\n")
         self.src = self.tmp / "src"; self.src.mkdir()
@@ -116,7 +126,7 @@ class PaivitaAjuritTesti(unittest.TestCase):
     def aja(self, *arg, **lisa):
         self.kerta += 1
         env = dict(os.environ, SIM=str(self.sim), PATH=str(self.sim / "bin") + ":" + os.environ["PATH"],
-                   PAIVITA_LAHDE=str(self.src), PAIVITA_POHJA=str(self.pohja),
+                   PAIVITA_LAHDE=str(self.src), PAIVITA_POHJA=str(self.pohja), POHJA_POLKU=str(self.pohja),
                    PAIVITA_YOJONO=str(self.yojono), PAIVITA_LOKI=str(self.tmp / "loki.log"), PAIVITA_LUKKO=str(self.tmp / "lukko"),
                    PAIVITA_SYSTEMCTL=str(self.sim / "systemctl"), PAIVITA_SALLI_EI_ROOT="1", PAIVITA_VAPAA_MB="1",
                    PAIVITA_SEURANTA_S="0", PAIVITA_TS="20261108-10%02d00" % self.kerta,
@@ -377,6 +387,32 @@ class PaivitaAjuritTesti(unittest.TestCase):
         r = self.aja(PAIVITA_TESTIKAYTTAJA=testikayttaja())
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("testit kaatuivat", self.loppurivi(r)); self.assertEnnallaan()
+
+    def assertEiGitVirhetta(self, r):
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("VIRHE: git", r.stdout); self.assertIn("dubious ownership", r.stdout)
+        self.assertIn("ajoa ei jatketa", self.loppurivi(r)); self.assertEnnallaan()
+
+    def test_rev_parse_virhe_pysayttaa_eika_jatka_puhtaana(self):
+        self.commit({"claudejono/ajuri.py": "VERSIO = 2\n"}, "v2")
+        (self.sim / "git_vika").write_text("rev-parse")
+        self.assertEiGitVirhetta(self.aja())
+
+    def test_status_virhe_pysayttaa_eika_jatka_puhtaana(self):
+        self.commit({"claudejono/ajuri.py": "VERSIO = 2\n"}, "v2")
+        (self.sim / "git_vika").write_text("status")
+        self.assertEiGitVirhetta(self.aja())
+
+    def test_pohjan_git_luku_kayttaa_safe_directorya_vain_taman_polulle(self):
+        self.commit({"claudejono/ajuri.py": "VERSIO = 2\n"}, "v2")
+        r = self.aja()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        kutsut = (self.sim / "git.log").read_text().splitlines()
+        pohjan = [k for k in kutsut if " -C %s " % self.pohja in " " + k + " "]
+        self.assertTrue(any("rev-parse" in k for k in pohjan) and any("status" in k for k in pohjan), pohjan)
+        for k in pohjan:
+            self.assertTrue(k.startswith("-c safe.directory=%s -C %s " % (self.pohja, self.pohja)), k)
+        self.assertEqual([k for k in kutsut if "safe.directory" in k and k not in pohjan], [])   # ei muualla
 
     def test_oletuksena_ei_runuseria_kun_ei_roottina(self):
         self.commit({"claudejono/ajuri.py": "VERSIO = 2\n"}, "v2")

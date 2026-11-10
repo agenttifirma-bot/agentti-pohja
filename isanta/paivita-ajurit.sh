@@ -154,9 +154,13 @@ poistuessa() {                          # odottamaton poistuminen (esim. set -u)
 }
 
 # ---- tarkistukset ------------------------------------------------------------------
+# Rootina ajettava luku: safe.directory vain taman kohteen tarkalle polulle (ei jokerimerkkia, ei gitin asetuksiin).
+# Virheita ei niella: esitarkistukset() pysayttaa ajon, jos rev-parse tai status epaonnistuu.
+pohja_git() { git -c "safe.directory=$POHJA" -C "$POHJA" "$@"; }
+git_vika() { info "VIRHE: $*"; vika_esi "${1%% epaonnistui*} epaonnistui, ajoa ei jatketa; mitaan ei muutettu"; }
 nykyinen_commit() {
   case "$1" in
-    pohja) git -C "$POHJA" rev-parse HEAD 2>/dev/null ;;
+    pohja) pohja_git rev-parse HEAD ;;
     yojono) sed -n 's/^commit=//p' "$YOJONO/.julkaisu-tieto" 2>/dev/null | head -1 ;;
   esac
 }
@@ -170,6 +174,9 @@ esitarkistukset() {
     command -v runuser >/dev/null || vika_esi "runuser puuttuu (testit ajetaan ei-rootina)"
   fi
   [ -d "$POHJA/.git" ] || vika_esi "$POHJA ei ole git-klooni"
+  local pohja_head
+  pohja_head=$(pohja_git rev-parse HEAD 2>&1) && [ "${#pohja_head}" = 40 ] \
+    || git_vika "git rev-parse epaonnistui kohteessa $POHJA (esim. dubious ownership): ${pohja_head:0:200}"
   [ -f "$YOJONO/.julkaisu-manifesti" ] || vika_esi "$YOJONO:ssa ei ole .julkaisu-manifestia (ensiasennus tehdaan isanta/julkaise.sh:lla)"
   if [ "$PERUUTA" = 0 ]; then
     local k d
@@ -178,7 +185,10 @@ esitarkistukset() {
       [ -e "$d.uusi" ] && vika_esi "edellisen ajon jaannos $d.uusi: tarkista ja poista kasin"
     done
     if [ "$SALLI_LIKAINEN" = 0 ]; then
-      [ -z "$(git -C "$POHJA" status --porcelain --untracked-files=no 2>/dev/null)" ] \
+      local pohja_tila
+      pohja_tila=$(pohja_git status --porcelain --untracked-files=no 2>&1) \
+        || git_vika "git status epaonnistui kohteessa $POHJA (esim. dubious ownership): ${pohja_tila:0:200}"
+      [ -z "$pohja_tila" ] \
         || vika_esi "$POHJA:ssa on paikallisia muutoksia (git status); vanha kopio sailyisi .prev-kansiossa, ohita vain tarkoituksella: --salli-likainen"
       ( cd "$YOJONO" && sha256sum -c --quiet .julkaisu-manifesti >/dev/null 2>&1 ) \
         || vika_esi "$YOJONO poikkeaa manifestistaan (paikallisia muutoksia?); ohita vain tarkoituksella: --salli-likainen"
