@@ -1,6 +1,8 @@
 import http.client
 import json
 import stat
+import re
+import socket
 import tempfile
 import threading
 import time
@@ -215,13 +217,98 @@ class KaynnistysTesti(unittest.TestCase):
             with self.assertRaises(chat.ChatVirhe):
                 chat.Tila(chat.tiivista_salasana(SAL), d, d, [TS], yks_data=d + "/y", malli_url="http://example.com")
 
-    def test_tyokalukayttaja_lisaa_sudo_etuliitteen(self):
+    def test_suora_polku_ei_sisalla_sudoa(self):
         kom = []
 
         def suorita(k, **kw):
             kom.extend(k)
             return SimpleNamespace(returncode=0, stdout="ok")
-        chat.kysy_claudelta("m", [{"rooli": "tony", "teksti": "x"}], suorita, env={"AIVO_TYOKALU_KAYTTAJA": "aivo-tyokalu"})
-        self.assertEqual(kom[:5], ["sudo", "-n", "-u", "aivo-tyokalu", "--"])
+        chat.kysy_claudelta("m", [{"rooli": "tony", "teksti": "x"}], suorita, env={})
+        self.assertNotIn("sudo", kom)
         self.assertIn("--tools", kom)
 
+    def test_vanha_sudo_asetus_kieltaytyy(self):
+        def suorita(k, **kw):
+            raise AssertionError("ei saa ajaa")
+        with self.assertRaises(chat.ChatVirhe):
+            chat.kysy_claudelta("m", [{"rooli": "tony", "teksti": "x"}], suorita, env={"AIVO_TYOKALU_KAYTTAJA": "aivo-tyokalu"})
+
+    def _palvelin(self, polku, vastaa):
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(polku)
+        srv.listen(1)
+        saatu = []
+
+        def ajo():
+            c, _ = srv.accept()
+            with c:
+                data = b""
+                while True:
+                    o = c.recv(4096)
+                    if not o:
+                        break
+                    data += o
+                saatu.append(data)
+                try:
+                    c.sendall(vastaa)
+                except OSError:
+                    pass
+        t = threading.Thread(target=ajo, daemon=True)
+        t.start()
+        self.addCleanup(srv.close)
+        return saatu, t
+
+    def test_socket_valittaa_syotteen_ja_vastauksen(self):
+        with tempfile.TemporaryDirectory() as d:
+            polku = d + "/t.sock"
+            saatu, t = self._palvelin(polku, "Kyll\u00e4, t\u00e4m\u00e4 on keksitty vastaus.\n".encode("utf-8"))
+
+            def suorita(*a, **k):
+                raise AssertionError("socket-polussa ei kaynnisteta aliprosessia")
+            v = chat.kysy_claudelta("keksitty muisti", [{"rooli": "tony", "teksti": "moi"}], suorita,
+                                    env={"AIVO_TYOKALU_SOCKET": polku})
+            t.join(5)
+            self.assertEqual(v, "Kyll\u00e4, t\u00e4m\u00e4 on keksitty vastaus.")
+            self.assertIn(b"Tony: moi", saatu[0])
+
+    def test_socket_tyhja_vastaus_ja_puuttuva_socket_ovat_virheita(self):
+        with tempfile.TemporaryDirectory() as d:
+            polku = d + "/t.sock"
+            _, t = self._palvelin(polku, b"  \n")
+            with self.assertRaises(chat.ChatVirhe):
+                chat.kysy_claudelta("m", [{"rooli": "tony", "teksti": "x"}], env={"AIVO_TYOKALU_SOCKET": polku})
+            t.join(5)
+            with self.assertRaises(chat.ChatVirhe) as ctx:
+                chat.kysy_claudelta("m", [{"rooli": "tony", "teksti": "x"}], env={"AIVO_TYOKALU_SOCKET": d + "/ei.sock"})
+            self.assertNotIn(d, str(ctx.exception))      # virheessa vain tyyppi, ei polkua
+
+    def test_socket_liian_pitka_vastaus_hylataan(self):
+        with tempfile.TemporaryDirectory() as d:
+            polku = d + "/t.sock"
+            self._palvelin(polku, b"x" * (chat.VASTAUS_YLARAJA + 70000))
+            with self.assertRaises(chat.ChatVirhe):
+                chat.kysy_claudelta("m", [{"rooli": "tony", "teksti": "x"}], env={"AIVO_TYOKALU_SOCKET": polku})
+
+
+class OhjeenRajatTesti(unittest.TestCase):
+    """Ohje ei saa ohjata heikentamaan suojauksia (A929)."""
+
+    def setUp(self):
+        self.ohje = (Path(__file__).resolve().parent.parent / "docs" / "aivo-chat.md").read_text(encoding="utf-8")
+
+    def test_ei_sudoers_nopasswd_eika_nnp_poistoa(self):
+        self.assertNotIn("NOPASSWD", self.ohje)
+        self.assertNotIn("poista rivi", self.ohje)
+
+    def test_jokaisessa_service_lohkossa_nnp_paalla(self):
+        lohkot = re.findall(r"\[Service\](.*?)```", self.ohje, re.S)
+        self.assertGreaterEqual(len(lohkot), 2)
+        for l in lohkot:
+            self.assertRegex(l, r"NoNewPrivileges=(yes|true)")
+
+    def test_tyokaluyksikon_komento_on_kiintea(self):
+        m = re.search(r"aivo-tyokalu@\.service`:.*?ExecStart=(.*?)\n", self.ohje, re.S)
+        self.assertIsNotNone(m)
+        self.assertIn('--tools ""', m.group(1))
+        self.assertNotRegex(m.group(1), r"[*$;|&]|%[iIfFhH]")      # ei jokereita eika sijaismerkkeja
+        self.assertIn("SocketMode=0600", self.ohje)

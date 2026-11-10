@@ -83,7 +83,52 @@ Ota ensin tilannekuva, jos palvelu asennetaan kontin sisään. Tämä ohje ei mu
 
    Vaihda `AIVO_CLAUDE` oikeaan polkuun (`command -v claude`) ja `TAILNET-NIMI` palvelun täydelliseen tailnet-nimeen (`tailscale status --self --json`, kenttä `DNSName`, ilman loppupistettä). `--host` vaatii täsmällisen nimen: jokerimerkintä (`.pääte`) hylätään käynnistyksessä, ja ilman `--host`-valitsinta sallitaan vain `localhost`. Tämä pienentää DNS-rebinding-riskiä, koska toisen tailnetin nimet eivät kelpaa.
 
-   **Huomio `NoNewPrivileges=true`:** se estää `sudo`-kutsun. Jos käytät yksityisen tilan ohjeen mukaista työkalukäyttäjää (`AIVO_TYOKALU_KAYTTAJA`, ks. `aivo-yksityinen.md`), poista rivi tästä yksiköstä, tai työkalukäyttäjän eristys ei toimi. Palvelun käyttäjälle on silloin kirjoitettava sudoers-rivi, joka sallii vain yhden komennon, esimerkiksi `aivo-yksityinen ALL=(aivo-tyokalu) NOPASSWD: /KOKO/POLKU/claude -p --output-format text --max-turns 1 --tools ""` (tiedosto `/etc/sudoers.d/aivo-tyokalu`, muokkaus komennolla `sudo visudo -f`). Sudoers on oikeusmuutos: Tony kirjoittaa sen itse.
+   **`NoNewPrivileges=true` pysyy.** Jos käytät yksityisen tilan ohjeen mukaista työkalukäyttäjää (`aivo-tyokalu`), ei tarvita `sudoa` eikä sudoers-riviä. Työkalutilan `claude` ajetaan erillisenä systemd-palveluna omana käyttäjänään, ja chat-palvelu puhuu sille unix-socketin kautta. Ohje on kohdassa 5b. Jos et käytä työkalukäyttäjää, jätä `AIVO_TYOKALU_SOCKET` asettamatta, jolloin `claude` ajetaan suoraan `aivo-yksityinen`-käyttäjänä.
+
+5b. **Työkalutila omana käyttäjänään (ei sudoa).** Kaksi tiedostoa. Komento on kiinteä yksikkötiedostossa: chat-palvelu voi lähettää socketille vain tekstiä, ei valitsimia eikä komentoja.
+
+   `/etc/systemd/system/aivo-tyokalu.socket`:
+
+   ```
+   [Unit]
+   Description=Aivon tyokalutilan Claude-socket
+
+   [Socket]
+   ListenStream=/run/aivo-tyokalu.sock
+   Accept=yes
+   MaxConnections=2
+   SocketUser=aivo-yksityinen
+   SocketGroup=aivo-yksityinen
+   SocketMode=0600
+
+   [Install]
+   WantedBy=sockets.target
+   ```
+
+   `/etc/systemd/system/aivo-tyokalu@.service`:
+
+   ```
+   [Unit]
+   Description=Aivon tyokalutilan Claude (yksi kutsu)
+
+   [Service]
+   User=aivo-tyokalu
+   Environment=HOME=/var/lib/aivo-tyokalu
+   StandardInput=socket
+   StandardOutput=socket
+   StandardError=journal
+   ExecStart=/KOKO/POLKU/claude -p --output-format text --max-turns 1 --tools ""
+   RuntimeMaxSec=250
+   NoNewPrivileges=yes
+   ProtectSystem=strict
+   ReadWritePaths=/var/lib/aivo-tyokalu
+   PrivateTmp=yes
+   PrivateDevices=yes
+   ```
+
+   Komento on koko polulla (`command -v claude`). Sitten `sudo systemctl daemon-reload && sudo systemctl enable --now aivo-tyokalu.socket`, ja chat-palvelun yksikköön rivi `Environment=AIVO_TYOKALU_SOCKET=/run/aivo-tyokalu.sock`. Vain `aivo-yksityinen` pääsee socketille (tila 0600). Vanha `AIVO_TYOKALU_KAYTTAJA`-asetus on poistettu: koodi kieltäytyy käynnistämästä kutsua, jos se on asetettu, jotta eristys ei heikkene huomaamatta.
+
+   Tarkistus: `sudo -u aivo-yksityinen python3 -c "import socket;s=socket.socket(socket.AF_UNIX);s.connect('/run/aivo-tyokalu.sock');s.sendall(b'sano kyllä');s.shutdown(socket.SHUT_WR);print(s.recv(200))"` tulostaa vastauksen. Toisena käyttäjänä (`sudo -u nobody ...`) yhteys antaa `PermissionError`.
 
    Sitten:
 
