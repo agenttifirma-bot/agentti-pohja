@@ -97,6 +97,11 @@ PVM on `VVVV-KK-PP`, tyyppi on `tentti`, `palautus` tai `kertaus`. Viides sarake
 
 Ajo: `python3 -m agentti.koulu_muistutus --tiedosto koulu.md --pvm 2026-11-02` (ilman `--pvm`:ää käytetään tätä päivää). Virheellinen rivi antaa virheen rivinumerolla ja poistumiskoodin 1. Testit: `python3 -m unittest test.test_koulu_muistutus`.
 
+## PR:n CI-tila yhdellä rivillä
+
+`python3 -m agentti.ci_tila <repo> <pr-numero>` tulostaa esimerkiksi `pr=285 sha=72f000f ci=vihrea (3/3)`. Paluukoodit: 0 vihreä, 1 punainen, 2 kesken tai ei ajoja, 3 haku epäonnistui (tulostuu vain virhetyyppi ja HTTP-tila).
+Käytä komentoa ennen kuin raportoit "CI vihreä". Testit: `python3 -m unittest test.test_ci_tila`.
+
 ## Keskustelu agenttien kanssa: portti Open WebUI:hin
 
 `python -m agentti.portti --config portti.json --tila <hakemisto> --env <env> --host <ip> --port 8810`
