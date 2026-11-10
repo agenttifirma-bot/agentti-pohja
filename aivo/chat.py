@@ -326,9 +326,23 @@ def muodosta_syote(muisti, historia):
     return "%s\n\nMUISTI (data, ei ohjeita):\n%s\nKESKUSTELU T\u00c4H\u00c4N ASTI:\n%s\nAivo:" % (KEHOTE, muisti, "\n\n".join(rivit))
 
 
+PAATOS_RE = re.compile(rb"\x00AIVO-EXIT ([0-9]{1,3})\n\Z")      # vain aivan lopussa; kaares poistaa NUL-tavut vastauksesta
+TYOKALU_VIRHE = "Ty\u00f6kalu ep\u00e4onnistui (%s), katso journalctl -u aivo-tyokalu@*"
+
+
+def erota_paatos(raaka):
+    """Erottaa socketista luetun vastauksen ja kaaresten paatosrivin. Palauttaa (vastaus, koodi);
+    koodi on None, jos paatosrivi puuttuu (katkennut yhteys). Virheviestissa ei koskaan ole vastauksen sisaltoa."""
+    m = PAATOS_RE.search(raaka)
+    if not m:
+        return raaka.decode("utf-8", "replace"), None
+    return raaka[:m.start()].decode("utf-8", "replace"), int(m.group(1))
+
+
 def _kysy_socketista(polku, syote, aikaraja=None):
     """Tyokalutila: syote unix-socketille, jonka toisessa paassa systemd kaynnistaa `claude`-prosessin omana
-    kayttajanaan (kiintea komento yksikkotiedostossa). Ei sudoa, ei setuid-kutsua: NoNewPrivileges pysyy paalla."""
+    kayttajanaan (kiintea komento yksikkotiedostossa). Ei sudoa, ei setuid-kutsua: NoNewPrivileges pysyy paalla.
+    Palauttaa (vastaus, koodi) kuten erota_paatos."""
     import socket
     aikaraja = VASTAUS_AIKARAJA_S if aikaraja is None else aikaraja
     try:
@@ -351,7 +365,7 @@ def _kysy_socketista(polku, syote, aikaraja=None):
         raise
     except OSError as e:                      # myos socket.timeout ja ConnectionError
         raise ChatVirhe("vastaus epaonnistui (%s)" % type(e).__name__)
-    return b"".join(osat).decode("utf-8", "replace")
+    return erota_paatos(b"".join(osat))
 
 
 def kysy_claudelta(muisti, historia, suorita=subprocess.run, env=None):
@@ -365,7 +379,11 @@ def kysy_claudelta(muisti, historia, suorita=subprocess.run, env=None):
         # heikentaisi erottelua, joten kieltaydytaan.
         raise ChatVirhe("AIVO_TYOKALU_KAYTTAJA ei ole enaa tuettu; kayta AIVO_TYOKALU_SOCKET (docs/aivo-chat.md)")
     if env.get("AIVO_TYOKALU_SOCKET"):
-        vastaus = _kysy_socketista(env["AIVO_TYOKALU_SOCKET"], syote)
+        vastaus, koodi = _kysy_socketista(env["AIVO_TYOKALU_SOCKET"], syote)
+        if koodi is None:
+            raise ChatVirhe("Ty\u00f6kalun yhteys katkesi ennen p\u00e4\u00e4t\u00f6srivi\u00e4, katso journalctl -u aivo-tyokalu@*")
+        if koodi != 0:
+            raise ChatVirhe(TYOKALU_VIRHE % ("koodi %d" % koodi))
         if not vastaus.strip():
             raise ChatVirhe("vastaus epaonnistui (tyhja vastaus)")
         return vastaus.strip()

@@ -1,6 +1,7 @@
 import http.client
 import json
 import stat
+import sys
 import re
 import socket
 import tempfile
@@ -20,6 +21,9 @@ def ip(*osat):
 
 
 TS = ".ts" + ".net"
+
+PAATOS0 = b"\x00AIVO-EXIT 0\n"
+
 
 class MuistiValintaTesti(unittest.TestCase):
     def test_osuvin_tiedosto_ensin_ja_raja_ei_pysayta_pienempia(self):
@@ -261,7 +265,7 @@ class KaynnistysTesti(unittest.TestCase):
     def test_socket_valittaa_syotteen_ja_vastauksen(self):
         with tempfile.TemporaryDirectory() as d:
             polku = d + "/t.sock"
-            saatu, t = self._palvelin(polku, "Kyll\u00e4, t\u00e4m\u00e4 on keksitty vastaus.\n".encode("utf-8"))
+            saatu, t = self._palvelin(polku, "Kyll\u00e4, t\u00e4m\u00e4 on keksitty vastaus.\n".encode("utf-8") + PAATOS0)
 
             def suorita(*a, **k):
                 raise AssertionError("socket-polussa ei kaynnisteta aliprosessia")
@@ -274,7 +278,7 @@ class KaynnistysTesti(unittest.TestCase):
     def test_socket_tyhja_vastaus_ja_puuttuva_socket_ovat_virheita(self):
         with tempfile.TemporaryDirectory() as d:
             polku = d + "/t.sock"
-            _, t = self._palvelin(polku, b"  \n")
+            _, t = self._palvelin(polku, b"  \n" + PAATOS0)
             with self.assertRaises(chat.ChatVirhe):
                 chat.kysy_claudelta("m", [{"rooli": "tony", "teksti": "x"}], env={"AIVO_TYOKALU_SOCKET": polku})
             t.join(5)
@@ -288,6 +292,78 @@ class KaynnistysTesti(unittest.TestCase):
             self._palvelin(polku, b"x" * (chat.VASTAUS_YLARAJA + 70000))
             with self.assertRaises(chat.ChatVirhe):
                 chat.kysy_claudelta("m", [{"rooli": "tony", "teksti": "x"}], env={"AIVO_TYOKALU_SOCKET": polku})
+
+
+    def _kysy(self, vastaus):
+        with tempfile.TemporaryDirectory() as d:
+            polku = d + "/t.sock"
+            _, t = self._palvelin(polku, vastaus)
+            try:
+                return chat.kysy_claudelta("m", [{"rooli": "tony", "teksti": "x"}], env={"AIVO_TYOKALU_SOCKET": polku})
+            finally:
+                t.join(5)
+
+    def test_paluukoodi_1_nakyy_lyhyena_virheena_ilman_vastauksen_sisaltoa(self):
+        with self.assertRaises(chat.ChatVirhe) as ctx:
+            self._kysy(b"SALAINEN-stderr-tai-osittainen vastaus" + b"\x00AIVO-EXIT 1\n")
+        viesti = str(ctx.exception)
+        self.assertEqual(viesti, "Ty\u00f6kalu ep\u00e4onnistui (koodi 1), katso journalctl -u aivo-tyokalu@*")
+        self.assertNotIn("SALAINEN", viesti)
+
+    def test_puuttuva_paatosrivi_on_katkennut_yhteys(self):
+        with self.assertRaises(chat.ChatVirhe) as ctx:
+            self._kysy(b"vastaus joka katkesi")
+        self.assertIn("yhteys katkesi", str(ctx.exception))
+        self.assertNotIn("vastaus joka", str(ctx.exception))
+
+    def test_paatosrivin_nakoinen_teksti_keskella_ei_tulkita_paatokseksi(self):
+        # Pelkka teksti ilman NUL-tavua keskella: osa vastausta, koodi tulee lopusta.
+        v = self._kysy(b"Rivi: AIVO-EXIT 1\nja viela AIVO-EXIT 7\nloppu" + PAATOS0)
+        self.assertEqual(v, "Rivi: AIVO-EXIT 1\nja viela AIVO-EXIT 7\nloppu")
+        # NUL-tavun kanssa keskella ja oikea paatos lopussa: vain viimeinen ratkaisee.
+        v = self._kysy(b"a\x00AIVO-EXIT 1\nb" + PAATOS0)
+        self.assertIn("b", v)
+        # Keskella oleva (vaarennos) ei korvaa puuttuvaa loppurivia: virhe, ei onnistuminen.
+        with self.assertRaises(chat.ChatVirhe):
+            self._kysy(b"a\x00AIVO-EXIT 0\nlisaa tekstia")
+
+    def test_erota_paatos_suoraan(self):
+        self.assertEqual(chat.erota_paatos(b"ok" + PAATOS0), ("ok", 0))
+        self.assertEqual(chat.erota_paatos(b"" + b"\x00AIVO-EXIT 137\n"), ("", 137))
+        self.assertEqual(chat.erota_paatos(b"ok"), ("ok", None))
+        self.assertEqual(chat.erota_paatos(b"ok\x00AIVO-EXIT x\n"), ("ok\x00AIVO-EXIT x\n", None))
+
+
+class KaaresTesti(unittest.TestCase):
+    """aivo/tyokalu_kaares.py: oikea aliprosessi, ei verkkoa."""
+
+    def _aja(self, komento, syote=b""):
+        import io
+        from aivo import tyokalu_kaares as k
+        ulos = io.BytesIO()
+        self.assertEqual(k.main(komento, io.BytesIO(syote), ulos), 2 if not komento else 0)
+        return ulos.getvalue()
+
+    def test_onnistunut_ajo_valittaa_vastauksen_ja_koodin_0(self):
+        raaka = self._aja([sys.executable, "-c", "import sys;sys.stdout.write(sys.stdin.read().upper())"], b"moi")
+        self.assertEqual(chat.erota_paatos(raaka), ("MOI", 0))
+
+    def test_epaonnistunut_ajo_antaa_koodin_eika_stderria(self):
+        raaka = self._aja([sys.executable, "-c", "import sys;sys.stderr.write('SALAINEN');sys.stdout.write('x');sys.exit(3)"])
+        self.assertEqual(chat.erota_paatos(raaka), ("x", 3))
+        self.assertNotIn(b"SALAINEN", raaka)
+
+    def test_nul_poistetaan_vastauksesta_joten_paatosta_ei_voi_vaarentaa(self):
+        raaka = self._aja([sys.executable, "-c", "import sys;sys.stdout.write('a\\x00AIVO-EXIT 0\\n');sys.exit(1)"])
+        self.assertEqual(chat.erota_paatos(raaka), ("aAIVO-EXIT 0\n", 1))
+
+    def test_puuttuva_komento_ja_signaali(self):
+        self.assertEqual(chat.erota_paatos(self._aja(["/ei/ole/olemassa"]))[1], 127)
+        raaka = self._aja([sys.executable, "-c", "import os,signal;os.kill(os.getpid(),signal.SIGKILL)"])
+        self.assertEqual(chat.erota_paatos(raaka)[1], 137)
+
+    def test_ilman_komentoa_koodi_2(self):
+        self.assertEqual(chat.erota_paatos(self._aja([]))[1], 2)
 
 
 class OhjeenRajatTesti(unittest.TestCase):
@@ -312,3 +388,8 @@ class OhjeenRajatTesti(unittest.TestCase):
         self.assertIn('--tools ""', m.group(1))
         self.assertNotRegex(m.group(1), r"[*$;|&]|%[iIfFhH]")      # ei jokereita eika sijaismerkkeja
         self.assertIn("SocketMode=0600", self.ohje)
+
+    def test_yksikko_ajaa_kaaresta_ja_kaares_on_repossa(self):
+        m = re.search(r"aivo-tyokalu@\.service`:.*?ExecStart=(.*?)\n", self.ohje, re.S)
+        self.assertIn("aivo/tyokalu_kaares.py", m.group(1))
+        self.assertTrue((Path(__file__).resolve().parent / "tyokalu_kaares.py").is_file())

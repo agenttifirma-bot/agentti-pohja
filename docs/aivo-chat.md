@@ -117,7 +117,7 @@ Ota ensin tilannekuva, jos palvelu asennetaan kontin sisään. Tämä ohje ei mu
    StandardInput=socket
    StandardOutput=socket
    StandardError=journal
-   ExecStart=/KOKO/POLKU/claude -p --output-format text --max-turns 1 --tools ""
+   ExecStart=/usr/bin/python3 /KOKO/POLKU/aivo/tyokalu_kaares.py /KOKO/POLKU/claude -p --output-format text --max-turns 1 --tools ""
    RuntimeMaxSec=250
    NoNewPrivileges=yes
    ProtectSystem=strict
@@ -125,6 +125,8 @@ Ota ensin tilannekuva, jos palvelu asennetaan kontin sisään. Tämä ohje ei mu
    PrivateTmp=yes
    PrivateDevices=yes
    ```
+
+   `tyokalu_kaares.py` ajaa saman kiinteän `claude`-komennon ja lisää vastauksen perään päätösrivin `\x00AIVO-EXIT <koodi>`. Chat näyttää nollasta poikkeavasta koodista lyhyen virheen (`Työkalu epäonnistui (koodi 1), katso journalctl -u aivo-tyokalu@*`) tyhjän vastauksen sijaan. Puuttuva päätösrivi (katkennut yhteys, aikaraja) raportoidaan myös virheenä. `claude`:n stderr jää lokiin eikä kulje socketin yli. Kääreskripti ei saa olla `aivo-tyokalu`-käyttäjän kirjoitettavissa (omistajaksi root). Päivitys: vanha yksikkö ilman käärettä antaa nyt aina virheen, koska päätösrivi puuttuu.
 
    Komento on koko polulla (`command -v claude`). Sitten `sudo systemctl daemon-reload && sudo systemctl enable --now aivo-tyokalu.socket`, ja chat-palvelun yksikköön rivi `Environment=AIVO_TYOKALU_SOCKET=/run/aivo-tyokalu.sock`. Vain `aivo-yksityinen` pääsee socketille (tila 0600). Vanha `AIVO_TYOKALU_KAYTTAJA`-asetus on poistettu: koodi kieltäytyy käynnistämästä kutsua, jos se on asetettu, jotta eristys ei heikkene huomaamatta.
 
