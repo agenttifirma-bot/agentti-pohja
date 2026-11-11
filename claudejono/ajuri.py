@@ -571,23 +571,33 @@ def _etsi_raportti(data, istunto):
     """Paasession uusin assistant-viesti, jonka tekstissa on otsikkorivi RAPORTTI_MERKKI, mutta vain jos istunto
     paattyi siihen: jos agentti kutsui raportin jalkeen tyokalua (jatkoi tyota), raportti on vanhentunut ja
     palautetaan tyhja. Raportin omassa viestissa saa olla tyokutsu (taustatehtavan kaynnistys).
+    Claude Code kirjoittaa yhden viestin lohkot (thinking, text, tool_use) erillisille JSONL-riveille samalla
+    message.id:lla, joten rivit ryhmitellaan message.id:n mukaan ennen vanhentumistarkistusta.
     Jaetaan vain rivinvaihdosta (str.splitlines() katkaisisi myos U+2028/U+2029/U+0085, jotka JSON sallii)."""
-    loydetty = ""
-    vanhentunut = False
-    for rivi in data.split(b"\n"):
+    viestit = {}   # message.id -> (raporttitekstit, onko tyokutsu); dict sailyttaa ensiesiintymisjarjestyksen
+    for n, rivi in enumerate(data.split(b"\n")):
         try:
             d = json.loads(rivi.decode("utf-8", "replace"))
             if d.get("type") != "assistant" or d.get("isSidechain") or d.get("sessionId") != istunto:
                 continue
-            osat = [o for o in d["message"]["content"] if isinstance(o, dict)]
+            viesti = d["message"]
+            osat = [o for o in viesti["content"] if isinstance(o, dict)]
             raportit = [o["text"] for o in osat if o.get("type") == "text" and isinstance(o.get("text"), str)
                         and RAPORTTI_OTSIKKO_RE.search(o["text"])]
-            if raportit:
-                loydetty, vanhentunut = raportit[-1], False
-            elif any(o.get("type") == "tool_use" for o in osat):
-                vanhentunut = True
+            tyokutsu = any(o.get("type") == "tool_use" for o in osat)
+            mid = viesti.get("id")
+            avain = ("id", mid) if isinstance(mid, str) and mid else ("rivi", n)   # ilman id:ta rivi on oma viestinsa
+            vanhat_r, vanha_t = viestit.get(avain, ([], False))
+            viestit[avain] = (vanhat_r + raportit, vanha_t or tyokutsu)
         except Exception:  # yksi rikkinainen rivi ei esta muiden lukua
             continue
+    loydetty = ""
+    vanhentunut = False
+    for raportit, tyokutsu in viestit.values():
+        if raportit:
+            loydetty, vanhentunut = raportit[-1], False
+        elif tyokutsu:
+            vanhentunut = True
     return "" if vanhentunut else loydetty
 
 

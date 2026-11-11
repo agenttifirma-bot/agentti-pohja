@@ -796,6 +796,11 @@ class TestRaportinPalautus(Pohja):
         d.update(muut)
         return json.dumps(d)
 
+    def lohko(self, mid, **lohko):
+        """Yksi sisaltolohko omalla JSONL-rivillaan: Claude Code kirjoittaa saman viestin lohkot erillisille riveille samalla message.id:lla."""
+        return json.dumps({"type": "assistant", "sessionId": self.ISTUNTO, "isSidechain": False,
+                           "message": {"id": mid, "role": "assistant", "content": [lohko]}})
+
     def stdout(self, teksti="Lopullinen raportti on aiemmassa viestissani."):
         return json.dumps({"subtype": "success", "result": teksti, "session_id": self.ISTUNTO})
 
@@ -912,6 +917,29 @@ class TestRaportinPalautus(Pohja):
         self.loki([self.viesti("vanha\n" + self.RAPORTTI), self.tyokutsu(), self.viesti("uusi\n" + self.RAPORTTI)])
         self.assertTrue(self.palauta().startswith("uusi\n"))
 
+    def test_monirivinen_viesti_raportti_ja_tyokutsu_samalla_id_ei_vanhene(self):
+        """Oikea lokimuoto: thinking, text (raportti) ja tool_use omilla riveillaan samalla message.id:lla."""
+        data = "\n".join([self.lohko("m1", type="thinking", thinking="x"),
+                          self.lohko("m1", type="text", text=self.RAPORTTI),
+                          self.lohko("m1", type="tool_use", id="t1", name="Bash", input={})]).encode()
+        self.assertEqual(ajuri._etsi_raportti(data, self.ISTUNTO), self.RAPORTTI)
+
+    def test_monirivinen_viesti_tyokutsu_ennen_tekstia_samalla_id_ei_vanhene(self):
+        data = "\n".join([self.lohko("m1", type="tool_use", id="t1", name="Bash", input={}),
+                          self.lohko("m1", type="text", text=self.RAPORTTI)]).encode()
+        self.assertEqual(ajuri._etsi_raportti(data, self.ISTUNTO), self.RAPORTTI)
+
+    def test_monirivinen_raportti_vanhenee_kun_eri_id_tyokutsu_seuraa(self):
+        data = "\n".join([self.lohko("m1", type="text", text=self.RAPORTTI),
+                          self.lohko("m2", type="tool_use", id="t2", name="Bash", input={})]).encode()
+        self.assertEqual(ajuri._etsi_raportti(data, self.ISTUNTO), "")
+
+    def test_monirivinen_viesti_palautuu_palauta_raportin_kautta(self):
+        self.loki([self.lohko("m1", type="text", text=self.RAPORTTI),
+                   self.lohko("m1", type="tool_use", id="t1", name="Bash", input={}),
+                   self.viesti("jalkikommentti")])
+        self.assertTrue(self.palauta().startswith(self.RAPORTTI))
+
     def test_symlinkki_polun_keskella_torjutaan_dotclaude(self):
         ulko = self._salainen_loki()
         koti = self.tmp / "koti"
@@ -969,13 +997,12 @@ class TestRaportinPalautus(Pohja):
         nimi = self.tanaan_nimi()
         self.lisaa_tehtava(nimi, "tee jotain\n\nTavoite: yllapito\n")
         koti = self.tmp / "koti"
-        sekaviesti = self.viesti("", message={"role": "assistant", "content": [
-            {"type": "thinking", "thinking": "mietin"},
-            {"type": "text", "text": self.RAPORTTI},
-            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]})
+        sekaviesti = [self.lohko("msg_01", type="thinking", thinking="mietin"),
+                      self.lohko("msg_01", type="text", text=self.RAPORTTI),
+                      self.lohko("msg_01", type="tool_use", id="t1", name="Bash", input={})]
         ilmoitus = json.dumps({"type": "user", "sessionId": self.ISTUNTO,
                                "message": {"role": "user", "content": "<task-notification>valmis</task-notification>"}})
-        self.loki([sekaviesti, ilmoitus, self.viesti("Taustatehtava valmistui, ei muuta.")])
+        self.loki([*sekaviesti, ilmoitus, self.viesti("Taustatehtava valmistui, ei muuta.")])
         ajuri.aja(self.repo, self.tmp, env={"HOME": str(koti)},
                   suorita=lambda kom, **kw: subprocess.CompletedProcess(kom, 0, self.stdout("Taustatehtava valmistui, ei muuta."), ""))
         tulos = (self.repo / ajuri.JONO / "tulokset" / nimi).read_text(encoding="utf-8")
