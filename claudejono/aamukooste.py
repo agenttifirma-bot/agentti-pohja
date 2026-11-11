@@ -68,7 +68,7 @@ def lue_tulokset(repo, alku, loppu):
     ulos = []
     if not hak.is_dir():
         return ulos
-    for p in sorted(hak.glob("*.md")):
+    for p in valmis.tulostiedostot(hak):   # sama suodatin kuin virhemittarilla: *.tarkastus.md ei ole jonotulos
         try:
             teksti = p.read_text(encoding="utf-8", errors="replace")
         except OSError:

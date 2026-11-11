@@ -258,7 +258,7 @@ def main(argv=None):
         d = Path(a.docs)
         loki = (d / "virheloki.md").read_text(encoding="utf-8")
         tulokset = [(p.name, p.read_text(encoding="utf-8", errors="replace"))
-                    for p in sorted((d / "tulokset").glob("*.md")) if not p.name.endswith(valmis.PAATE)]
+                    for p in valmis.tulostiedostot(d / "tulokset")]
         tarkastukset = {p.name[:-len(valmis.PAATE)] + ".md": p.read_text(encoding="utf-8", errors="replace")
                         for p in (d / "tulokset").glob("*" + valmis.PAATE)}
         rivit, tilastot = laske(loki, tulokset, nyt, tarkastukset)
