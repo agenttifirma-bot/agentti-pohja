@@ -28,6 +28,31 @@ class Valmis(unittest.TestCase):
         self.assertFalse(valmis.toimimaton(OK))
         self.assertFalse(valmis.toimimaton("- Toimii k\u00e4yt\u00f6ss\u00e4: ei\n"))   # ilman todistetta ei lasketa
 
+    def test_malliperhe_normalisoi_nimimuodot(self):
+        for nimi in ("opus", "Opus", "claude-opus-5-5", "anthropic/claude-opus-5-5", "opus-istunto-7", "`opus`"):
+            self.assertEqual(valmis.malliperhe(nimi), "opus", nimi)
+        for nimi in ("", None, "-", "5-5", "  "):
+            self.assertEqual(valmis.malliperhe(nimi), "", nimi)
+
+    def test_puuttuva_malli_on_epavarma(self):
+        self.assertFalse(valmis.kelvollinen("# Tulos: a\n\n- Tila: VALMIS\n", OK))
+        self.assertFalse(valmis.kelvollinen("# Tulos: a\n\n- Malli: -\n", OK))
+
+    def test_eri_muotoinen_sama_malli_ei_ole_riippumaton(self):
+        tulos = TULOS.replace("sonnet", "claude-opus-5-5")
+        self.assertFalse(valmis.kelvollinen(tulos, OK))   # tarkastaja 'opus'
+        self.assertTrue(valmis.kelvollinen(tulos, OK.replace("opus", "claude-sonnet-5-5")))
+
+    def test_tulostiedostot_ohittaa_tarkastukset(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            for n in ("a.md", "a.tarkastus.md", "b.md", "c.txt"):
+                (Path(d) / n).write_text("x", encoding="utf-8")
+            self.assertEqual([p.name for p in valmis.tulostiedostot(d)], ["a.md", "b.md"])
+        self.assertTrue(valmis.on_tarkastustiedosto("a.tarkastus.md"))
+        self.assertFalse(valmis.on_tarkastustiedosto("a.md"))
+
     def test_polku(self):
         self.assertEqual(valmis.tarkastuspolku("/x", "2026-11-05-17.md").name, "2026-11-05-17.tarkastus.md")
 
