@@ -168,6 +168,66 @@ class AivoArvio(unittest.TestCase):
         self.assertFalse(aivo_arvio.arvioi_varjossa(self.tila, Path(self.tila) / "puuttuu.md", lambda s: (True, "x")))
 
 
+class AivoTurva(unittest.TestCase):
+    """#288 tarkastajan loydokset: ymparisto, virhejarjestys, kayton kirjaus."""
+
+    class R:
+        def __init__(self, rc, out):
+            self.returncode, self.stdout, self.stderr = rc, out, ""
+
+    def test_ymparisto_on_allowlist_eika_valita_salaisuutta(self):
+        env = {"PATH": "/usr/bin", "HOME": "/h", "LANG": "C", "SALAINEN_X": "arvo", "CLAUDEJONO_LITELLM_AVAIN": "a",
+               "GIT_SSH_COMMAND": "x", "CLAUDE_CONFIG_DIR": "/c", "CLAUDE_MUU": "y"}
+        _, alaenv, _ = ajuri.aivo_komento(env)
+        self.assertEqual(alaenv, {"PATH": "/usr/bin", "HOME": "/h", "LANG": "C", "CLAUDE_CONFIG_DIR": "/c"})
+        self.assertNotIn("SALAINEN_X", alaenv)
+
+    def test_ymparisto_kayttajatilassa_ei_valita_salaisuutta(self):
+        _, alaenv, _ = ajuri.aivo_komento({"CLAUDEJONO_KAYTTAJA": "claudejono", "SALAINEN_X": "arvo"})
+        self.assertNotIn("SALAINEN_X", alaenv)
+
+    def _arvioi(self, rc, out):
+        return ajuri.aivo_arvioija({}, suorita=lambda *a, **k: self.R(rc, out))("teksti")
+
+    def test_tyhja_stdout_on_jonovirhe(self):
+        for rc in (0, 1):
+            with self.assertRaises(ajuri.JonoVirhe):
+                self._arvioi(rc, "")
+
+    def test_returncode_tarkistetaan_ennen_jsonia(self):
+        with self.assertRaises(ajuri.JonoVirhe) as e:
+            self._arvioi(2, "ei jsonia")
+        self.assertIn("paluukoodi 2", str(e.exception))
+
+    def test_ei_json_tuloste_ja_rikkinainen_vastaus_ovat_jonovirhe(self):
+        for out in ("roskaa", json.dumps({"result": "{rikki"}), json.dumps({"result": "ei oliota"})):
+            with self.assertRaises(ajuri.JonoVirhe):
+                self._arvioi(0, out)
+
+    def test_hyva_vastaus_kay(self):
+        out = json.dumps({"is_error": False, "result": '{"kylla": true, "syy": "ok"}'})
+        self.assertEqual(self._arvioi(0, out), (True, "ok"))
+
+    def test_kaytto_kirjataan_onnistumisesta_ja_virheesta(self):
+        tila = tempfile.mkdtemp()
+        t = kirj(tila, "a.md", "x")
+
+        def rikki(s):
+            raise RuntimeError("x")
+        self.assertTrue(aivo_arvio.arvioi_varjossa(tila, t, lambda s: (True, "ok")))
+        self.assertFalse(aivo_arvio.arvioi_varjossa(tila, kirj(tila, "b.md", "x"), rikki))
+        n, ok, kesto = aivo_arvio.kaytto(tila)
+        self.assertEqual((n, ok), (2, 1))
+        self.assertGreaterEqual(kesto, 0)
+        self.assertIn("2 arviointiajoa (1 onnistui)", aivo_arvio.viikkoosio(tila))
+
+    def test_ei_paivarajaa(self):
+        tila = tempfile.mkdtemp()
+        for i in range(350):
+            aivo_arvio.arvioi_varjossa(tila, kirj(tila, f"t{i}.md", "x"), lambda s: (True, "ok"))
+        self.assertEqual(aivo_arvio.kaytto(tila)[0], 350)
+
+
 class AivoKytkenta(unittest.TestCase):
     """Vika 10.11.2026 (#251): main() ei antanut aja():lle arvioijaa, joten varjotila ei kaynnistynyt koskaan."""
 
