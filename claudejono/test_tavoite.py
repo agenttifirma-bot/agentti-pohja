@@ -258,7 +258,7 @@ class AivoKytkenta(unittest.TestCase):
         self.assertEqual(arvioi("# tehtava"), (True, "tukee portfoliota"))
         kom, kw = kutsut[0]
         self.assertEqual(kom[kom.index("--tools") + 1], "")      # ei tyokaluja
-        self.assertEqual(kom[kom.index("--model") + 1], "sonnet")  # Clauden tyokalutila, ei OpenRouter/LiteLLM
+        self.assertEqual(kom[kom.index("--model") + 1], "opus")  # Clauden tyokalutila (A952), ei OpenRouter/LiteLLM
         self.assertNotIn("LITELLM", " ".join(kw["env"]))
         self.assertIn("# tehtava", kw["input"])
 
