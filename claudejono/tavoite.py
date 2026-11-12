@@ -107,12 +107,13 @@ def kaistan_jarjestys(kaista, kaistoja, aivo_odottaa):
 def valitse(odottavat, kaista, kaistoja, ohitettu=None):
     """odottavat = [(polku, kiinnitetty_kaista)] vanhin ensin. Palauttaa jarjestetyn listan polkuja, jotka kaista saa ottaa:
     ensin kaistalle kiinnitetyt (`Kaista: N` ylittaa osuudet, ja on Tonyn nimenomainen paatos), sitten tavoiteosuuden mukaan.
-    `ohitettu(polku, peruste)` kutsutaan tehtavalle, jota ei aloiteta (puuttuva tavoite)."""
+    `ohitettu(polku, peruste)` kutsutaan tehtavalle, jota ei aloiteta (puuttuva tavoite), mutta vain jos tehtava kuuluu talle
+    kaistalle (vapaa tai kiinnitetty juuri tahan): toiselle kaistalle kiinnitetyn hylkayksen kirjaa sen oma kaista."""
     luokat = []
     for p, pin in odottavat:
         tav, peruste = luokittele(p)
         if tav is None:
-            if ohitettu:
+            if ohitettu and (pin is None or pin == kaista):
                 ohitettu(p, peruste)
             continue
         luokat.append((p, pin, tav))

@@ -1,4 +1,8 @@
 """Tavoiteportin aanekas hylkays (PR #287:n korvaaja) ja tools/tarkista_tehtava.py."""
+import contextlib
+import fcntl
+import io
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -77,7 +81,7 @@ class Hylkaystulos(unittest.TestCase):
         self.assertIsNone(ajuri.varaa_seuraava(repo, tila, 1))
         self.assertTrue(tulos(repo).exists())
 
-    def test_julkaisu_kutsutaan_lukon_jalkeen_ja_virhe_ei_kaada(self):
+    def test_julkaisu_kutsutaan_poistuttaessa_ja_virhe_ei_kaada(self):
         kutsut = []
         vanha = ajuri.julkaise
         ajuri.julkaise = lambda r, p, v=None: kutsut.append(p) or (_ for _ in ()).throw(ajuri.JonoVirhe("x"))
@@ -117,6 +121,97 @@ class Tyokalu(unittest.TestCase):
         (h / NIMI).write_text("Tavoite: aivo\n")
         (h / "2026-11-12-02-b.md").write_text("x\n")
         self.assertEqual(tarkista_tehtava.main([str(h / NIMI), str(h / "2026-11-12-02-b.md")]), 1)
+
+
+class KaistanOmistus(unittest.TestCase):
+    """PR #295, tarkastus (ajuri.py:384): hylkaystuloksen kirjoittaa vain kaista, jolle tehtava kuuluu."""
+
+    def test_toiselle_kaistalle_kiinnitettya_ei_kirjata(self):
+        repo, tila = pystyta("Kaista: 3\nTavoite: rahaa\n")
+        h = []
+        self.assertIsNone(ajuri.varaa_seuraava(repo, tila, 1, kaistoja=3, hylatyt=h))
+        self.assertIsNone(ajuri.varaa_seuraava(repo, tila, 2, kaistoja=3, hylatyt=h))
+        self.assertEqual(h, [])
+        self.assertFalse(tulos(repo).exists())
+        self.assertFalse((tila / tavoite.HYLKAYSLOKI).exists())
+        self.assertIsNone(ajuri.varaa_seuraava(repo, tila, 3, kaistoja=3, hylatyt=h))
+        self.assertEqual(h, [tulos(repo)])
+        self.assertIn("- Tila: EPAONNISTUI", tulos(repo).read_text(encoding="utf-8"))
+
+    def test_kaistojen_ulkopuolinen_kiinnitys_on_vapaa_eika_jaa_hiljaiseksi(self):
+        repo, tila = pystyta("Kaista: 3\nTavoite: rahaa\n")
+        h = []
+        ajuri.varaa_seuraava(repo, tila, 1, kaistoja=2, hylatyt=h)
+        self.assertEqual(h, [tulos(repo)])
+
+    def test_valitse_kutsuu_ohitettua_vain_omalle(self):
+        h = Path(tempfile.mkdtemp())
+        a, b, c = (h / "2026-11-12-01-a.md", h / "2026-11-12-02-b.md", h / "2026-11-12-03-c.md")
+        for p in (a, b, c):
+            p.write_text("Tavoite: rahaa\n", encoding="utf-8")
+        ohit = []
+        tavoite.valitse([(a, 3), (b, None), (c, 1)], 1, 3, ohitettu=lambda q, s: ohit.append(q.name))
+        self.assertEqual(ohit, [b.name, c.name])
+        ohit.clear()
+        tavoite.valitse([(a, 3), (b, None), (c, 1)], 3, 3, ohitettu=lambda q, s: ohit.append(q.name))
+        self.assertEqual(ohit, [a.name, b.name])
+
+
+def _git(hak, *a):
+    subprocess.run(["git", "-C", str(hak), *a], check=True, capture_output=True, text=True)
+
+
+class JulkaisuLukonSisalla(unittest.TestCase):
+    """PR #295, tarkastus (ajuri.py:1112): hylkaystuloksen commit + push tehdaan git-lukon sisalla (oikea git, bare-origin)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        origin = self.tmp / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+        self.repo = self.tmp / "docs"
+        subprocess.run(["git", "clone", "-q", str(origin), str(self.repo)], check=True, capture_output=True)
+        _git(self.repo, "config", "user.email", "t@t")
+        _git(self.repo, "config", "user.name", "t")
+        _git(self.repo, "checkout", "-q", "-b", "main")
+        t = self.repo / "claude-jono" / "tehtavat" / NIMI
+        t.parent.mkdir(parents=True)
+        t.write_text("Tavoite: rahaa\n", encoding="utf-8")
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "-q", "-m", "alku")
+        _git(self.repo, "push", "-q", "origin", "main")
+
+    def lukko_vapaa(self):
+        """Uusi avoin tiedosto = eri flock-kuvaus: jos lukko on pidossa (myos samassa prosessissa), LOCK_NB epaonnistuu."""
+        with open(self.tmp / ajuri.GIT_LUKKO, "a") as f:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return False
+            fcntl.flock(f, fcntl.LOCK_UN)
+            return True
+
+    def test_julkaisu_lukon_sisalla(self):
+        havainnot = []
+        alkuperainen = ajuri.julkaise
+
+        def vakoja(repo, polut, viesti=None):
+            havainnot.append(self.lukko_vapaa())
+            return alkuperainen(repo, polut, viesti)
+        ajuri.julkaise = vakoja
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                viesti = ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_ITSESUUNNITTELU": "0"},
+                                   suorita=lambda *a, **k: self.fail("tehtavaa ei saa ajaa"))
+        finally:
+            ajuri.julkaise = alkuperainen
+        self.assertEqual(viesti, "jono tyhja")
+        self.assertEqual(havainnot, [False])   # lukko oli pidossa julkaisun aikana
+        loki = subprocess.run(["git", "-C", str(self.repo), "log", "-1", "--format=%s", "origin/main"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(loki, "claude-jono: tavoiteportti hylkasi tehtavan")
+        tila = subprocess.run(["git", "-C", str(self.repo), "status", "--porcelain"], capture_output=True, text=True, check=True).stdout
+        self.assertEqual(tila, "")
+        self.assertTrue(self.lukko_vapaa())
 
 
 if __name__ == "__main__":

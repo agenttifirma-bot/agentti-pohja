@@ -386,7 +386,8 @@ def varaa_seuraava(repo, tila, kaista, nyt=None, vanhenee_s=OLETUS_AIKARAJA_S + 
 
 @contextlib.contextmanager
 def _hylkayksen_julkaisu(repo, hylatyt):
-    """Poistuttaessa (myos varhaisella paluulla) commitoi ja pushaa tavoiteportin hylkaystulokset. Virhe ei kaada ajoa."""
+    """Poistuttaessa (myos varhaisella paluulla) commitoi ja pushaa tavoiteportin hylkaystulokset. Virhe ei kaada ajoa.
+    Kaytetaan git_lukon SISALLA (aja), jotta tuloksen kirjoitus ja julkaisu ovat saman lukon alla."""
     try:
         yield
     finally:
@@ -1110,7 +1111,9 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
 
     # Valinta + varaus yhden lyhyen git-lukon sisalla: pull, tulosten tarkistus ja atominen varaus eivat lomitu toisen kaistan kanssa.
     hylatyt = []
-    with _hylkayksen_julkaisu(repo, hylatyt), git_lukko(tila) as odotus:   # julkaisu vasta lukon vapautuksen jalkeen
+    # Hylkaystulosten julkaisu (commit + push) tehdaan viela taman lukon sisalla (lukko on sisakkain uudelleenkaytettava):
+    # muuten toisen kaistan pull --rebase voisi lomittua kirjoitetun tuloksen ja sen commitin valiin (PR #295, tarkastus).
+    with git_lukko(tila) as odotus, _hylkayksen_julkaisu(repo, hylatyt):
         git(repo, "pull", "-q", "--rebase", "origin", "main")
         varoita_kelvottomista(repo, tila, laheta)   # muuten vaarin nimetty tehtava jaa jonoon nakymatta
         if env.get("CLAUDEJONO_ITSESUUNNITTELU", "1") == "1" and env.get("CLAUDEJONO_TOISTUVAT") == "1":
