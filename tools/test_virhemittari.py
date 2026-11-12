@@ -89,8 +89,8 @@ class ValmisRikkiTesti(unittest.TestCase):
     def test_valmis_joka_todettiin_toimimattomaksi_lasketaan(self):
         nyt = datetime.date(2026, 11, 5)
         tulokset = [("2026-11-02-01-a.md", self.TULOS % "a"), ("2026-11-02-02-b.md", self.TULOS % "b")]
-        rivit, t = vm.laske("", tulokset, nyt, {"2026-11-02-01-a.md": self.RIKKI,
-                                                "2026-11-02-02-b.md": self.RIKKI.replace(": ei", ": kyll\u00e4")})
+        rivit, t = vm.laske("", tulokset, nyt, tarkastukset={"2026-11-02-01-a.md": self.RIKKI,
+                                                                "2026-11-02-02-b.md": self.RIKKI.replace(": ei", ": kyll\u00e4")})
         self.assertEqual(t["valmis_rikki"], 1)
         self.assertEqual(sum(r["valmis_rikki"] for _, r in rivit), 1)
         self.assertEqual(sum(r["luokat"]["1"] for _, r in rivit), 1)
@@ -101,7 +101,7 @@ class ValmisRikkiTesti(unittest.TestCase):
 
     def test_osiossa_sarake(self):
         rivit, t = vm.laske("", [("2026-11-02-01-a.md", self.TULOS % "a")], datetime.date(2026, 11, 5),
-                            {"2026-11-02-01-a.md": self.RIKKI})
+                            tarkastukset={"2026-11-02-01-a.md": self.RIKKI})
         self.assertIn("VALMIS, my\u00f6hemmin toimimaton", "\n".join(vm.muodosta_osio(rivit, t, datetime.date(2026, 11, 5))))
 
     def test_main_polku_tiedostonimi_ja_otsikko_eroavat(self):
