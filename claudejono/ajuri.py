@@ -351,17 +351,50 @@ def varoita_kelvottomista(repo, tila, laheta):
     return uudet
 
 
-def varaa_seuraava(repo, tila, kaista, nyt=None, vanhenee_s=OLETUS_AIKARAJA_S + VARAUS_MARGINAALI_S, kaistoja=KAISTOJA_MAX, ohita=None):
+def kirjaa_hylkaystulos(repo, tila, polku, peruste, hylatyt=None):
+    """Tavoiteportin hylkays nakyviin: tulostiedosto `- Tila: EPAONNISTUI` + syy, kerran per tehtava (olemassa olevaa tulosta ei
+    ylikirjoiteta, ja tulos poistaa tehtavan jonosta). Tehtavaa ei ajeta. Kirjattu polku lisataan listaan `hylatyt` julkaisua varten."""
+    kohde = Path(repo) / JONO / "tulokset" / polku.name
+    tavoite.kirjaa_hylkays(tila, polku.name, peruste)
+    if kohde.exists():
+        return None
+    try:
+        p = kirjoita_tulos(repo, polku.name, False, "Tehtavaa ei ajettu: tavoiteportti hylkasi sen.\n\n- Syy: " + peruste + "\n"
+                           "- Korjaus: lisaa tehtavan alkuun rivi `Tavoite: portfolio|ansainta|Aivo|yllapito` ja luo tehtava uudella nimella.",
+                           tila="EPAONNISTUI")
+    except OSError as virhe:
+        print(f"kirjaa_hylkaystulos: {type(virhe).__name__}", file=sys.stderr)
+        return None
+    if hylatyt is not None:
+        hylatyt.append(p)
+    return p
+
+
+def varaa_seuraava(repo, tila, kaista, nyt=None, vanhenee_s=OLETUS_AIKARAJA_S + VARAUS_MARGINAALI_S, kaistoja=KAISTOJA_MAX, ohita=None,
+                   hylatyt=None):
     """Valinta: 1) kaistalle kiinnitetyt (`Kaista: N`) vanhin ensin, 2) vapaat vanhin ensin. Toisen kaistan kiinnittamiin ei
     kosketa eika toisen kaistan varaamiin. Varaa valitun. None jos ei ole.
     ohita(polku) -> True ohittaa tehtavan (esim. Claude-reitti, kun Tonyn varaus tai kayttoraja estaa sen)."""
     odottavat = [(p, tehtavan_kaista(p, kaistoja)) for p in odottavat_tehtavat(repo)]
     # Tavoitesidonta (A840): ilman Tavoite-rivia ei aloiteta (kirjaus), ja kaistan tavoiteosuus ratkaisee jarjestyksen (tavoite.py).
-    jarjestys = tavoite.valitse(odottavat, kaista, kaistoja, ohitettu=lambda p, peruste: tavoite.kirjaa_hylkays(tila, p.name, peruste))
+    jarjestys = tavoite.valitse(odottavat, kaista, kaistoja, ohitettu=lambda p, peruste: kirjaa_hylkaystulos(repo, tila, p, peruste, hylatyt))
     for p in jarjestys:
         if not (ohita and ohita(p)) and varaa(tila, p.name, kaista, nyt, vanhenee_s):
             return p
     return None
+
+
+@contextlib.contextmanager
+def _hylkayksen_julkaisu(repo, hylatyt):
+    """Poistuttaessa (myos varhaisella paluulla) commitoi ja pushaa tavoiteportin hylkaystulokset. Virhe ei kaada ajoa."""
+    try:
+        yield
+    finally:
+        if hylatyt:
+            try:
+                julkaise(repo, list(hylatyt), "claude-jono: tavoiteportti hylkasi tehtavan")
+            except Exception as virhe:
+                print(f"hylkaystulosten julkaisu epaonnistui ({type(virhe).__name__})", file=sys.stderr)
 
 
 def lue_opit(repo):
@@ -1076,12 +1109,13 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
         return False
 
     # Valinta + varaus yhden lyhyen git-lukon sisalla: pull, tulosten tarkistus ja atominen varaus eivat lomitu toisen kaistan kanssa.
-    with git_lukko(tila) as odotus:
+    hylatyt = []
+    with _hylkayksen_julkaisu(repo, hylatyt), git_lukko(tila) as odotus:   # julkaisu vasta lukon vapautuksen jalkeen
         git(repo, "pull", "-q", "--rebase", "origin", "main")
         varoita_kelvottomista(repo, tila, laheta)   # muuten vaarin nimetty tehtava jaa jonoon nakymatta
         if env.get("CLAUDEJONO_ITSESUUNNITTELU", "1") == "1" and env.get("CLAUDEJONO_TOISTUVAT") == "1":
             luo_toistuvat(repo, tyohak)   # toistuvat (esim. viikon optimointikierros) vain kun palvelu kytkee ne paalle
-        t = varaa_seuraava(repo, tila, kaista, vanhenee_s=vanhenee, kaistoja=kaistojen_maara(env), ohita=ohita)
+        t = varaa_seuraava(repo, tila, kaista, vanhenee_s=vanhenee, kaistoja=kaistojen_maara(env), ohita=ohita, hylatyt=hylatyt)
         suunnittelu = False
         if t is None:
             if ohitettu:
