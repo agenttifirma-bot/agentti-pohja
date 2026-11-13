@@ -14,7 +14,11 @@
 #
 # Periaate: koodi vaihdetaan sisarhakemisto + mv -menetelmalla (polut ennallaan). Tila ja konfiguraatio
 # (/var/lib/*, /etc/*) eivat ole kohteissa eika muutu. Ei salaisuuksia: skripti ei lue .env-tiedostoja eika tulosta
-# ymparistomuuttujia. Poistumiskoodi: 0 = OK tai ajan tasalla, 1 = epaonnistui (tilanne ennallaan tai palautettu), 2 = esitarkistus esti.
+# ymparistomuuttujia. Poistumiskoodi: 0 = OK tai ajan tasalla, 1 = epaonnistui (tilanne ennallaan tai palautettu),
+# 2 = esitarkistus esti (mitaan ei muutettu), 3 = palautus jai kesken tai epaonnistui (osa kohteista ei ole palautunut:
+# loppurivi kertoo tarkan tilan kohde kohteelta, tarkista kasin).
+# Uuden koodin testit JA savutesti (import, `yojono tila`) ajetaan EI rootina: testit valiaikaiskopiossa, savutesti vaihdetussa
+# kohteessa, molemmat palvelukayttajana (runuser, env -i).
 # Loppurivi on aina "OK: ..." tai "EPAONNISTUI: ...". Loki: /var/log/paivita-ajurit.log
 # =============================================================================
 set -u -o pipefail
@@ -32,6 +36,9 @@ ODOTA_S=${PAIVITA_ODOTA_S:-1800}
 SEURANTA_S=${PAIVITA_SEURANTA_S:-5}
 VAPAA_MB=${PAIVITA_VAPAA_MB:-300}
 SALLI_EI_ROOT=${PAIVITA_SALLI_EI_ROOT:-0}      # vain testeja varten
+# Kayttaja, jona uuden mainin testit ajetaan (rootina ei koskaan). Oletus rootina ajettaessa: claudejono.
+TESTIKAYTTAJA=${PAIVITA_TESTIKAYTTAJA:-}
+[ -n "$TESTIKAYTTAJA" ] || { [ "$(id -u)" = 0 ] && TESTIKAYTTAJA=claudejono; }
 ASETUKSET=${PAIVITA_ASETUKSET:-/etc/claude-jono/asetukset.env}   # systemd EnvironmentFile; luetaan vain avain CLAUDEJONO_KOEPAIVA
 POIS_YOJONO=".github"                          # sama kuin julkaisu/yojono-ajuri.conf POIS
 # Testit ajetaan puretussa uudessa kopiossa ennen vaihtoa. Koko sarja kaatuu CT115:ssa ymparistoeroihin (root, node
@@ -45,6 +52,8 @@ TERVEYS_YOJONO=${PAIVITA_TERVEYS_YOJONO:-yojono tila}   # python3 -B -m <tama>; 
 KUIVA=0; PERUUTA=0; SALLI_LIKAINEN=0
 TS=${PAIVITA_TS:-$(date +%Y%m%d-%H%M%S)}
 T=""                                   # valiaikaishakemisto (testilokit, manifesti)
+TESTIHAK=""                            # testikopiot (omistaja: TESTIKAYTTAJA); erillaan $T:sta, jotta kayttaja paasee sisaan
+PALAUTETTU=(); EI_PALAUTETTU=()        # palautuksen tila kohde kohteelta (paluu_vanhaan, peruuta)
 KLOONI=""                              # puhdas klooni uuteen committiin
 UUSI_COMMIT=""
 AJASTIMET_PYSAYTETTY=()
@@ -80,23 +89,40 @@ siivoa() {                              # staging-kansiot ja valiaikaiset; ei ko
     [ -n "${UUSI[$k]:-}" ] && [ -d "${UUSI[$k]}" ] && [ "${VAIHE[$k]:-}" != vaihdettu ] && rm -rf -- "${UUSI[$k]}"
   done
   [ -n "$KLOONI" ] && [ -d "$KLOONI" ] && rm -rf -- "$KLOONI"
+  [ -n "$TESTIHAK" ] && [ -d "$TESTIHAK" ] && rm -rf -- "$TESTIHAK"
   [ -n "$T" ] && [ -d "$T" ] && rm -rf -- "$T"
   return 0
 }
 
-paluu_vanhaan() {                       # palauttaa jokaisen jo siirretyn kohteen vanhan koodin
-  local k d ok=0
+paluu_vanhaan() {                       # palauttaa jokaisen jo siirretyn kohteen vanhan koodin; tila kirjataan kohde kohteelta
+  local k d kok rc=0
+  PALAUTETTU=(); EI_PALAUTETTU=()
   for k in "${KOHTEET[@]}"; do
-    d=$(koodi_kansio "$k")
+    d=$(koodi_kansio "$k"); kok=0                 # kok nollataan joka kohteelle: yhden kohteen virhe ei leimaa toista
     case "${VAIHE[$k]:-}" in
-      vaihdettu) mv -T -- "$d" "$d.viallinen-$TS" && mv -T -- "${PREV[$k]}" "$d" || ok=1 ;;
-      siirretty) mv -T -- "${PREV[$k]}" "$d" || ok=1 ;;      # vanha oli jo siirretty pois, uutta ei ehditty asettaa
+      vaihdettu)
+        if mv -T -- "$d" "$d.viallinen-$TS"; then
+          mv -T -- "${PREV[$k]}" "$d" || { kok=1; EI_PALAUTETTU+=("$(nimi "$k") (kohde puuttuu; vanha koodi: ${PREV[$k]}, viallinen uusi: $d.viallinen-$TS)"); }
+        else
+          kok=1; EI_PALAUTETTU+=("$(nimi "$k") (uutta ei saatu pois paikaltaan; vanha koodi: ${PREV[$k]})")
+        fi ;;
+      siirretty)                                  # vanha oli jo siirretty pois, uutta ei ehditty asettaa
+        mv -T -- "${PREV[$k]}" "$d" || { kok=1; EI_PALAUTETTU+=("$(nimi "$k") (kohde puuttuu; vanha koodi: ${PREV[$k]})"); } ;;
       *) continue ;;
     esac
-    [ "$ok" = 0 ] && VAIHE[$k]=""
-    info "palautettu: $(nimi "$k") <- ${PREV[$k]##*/}"
+    if [ "$kok" = 0 ]; then
+      VAIHE[$k]=""; PALAUTETTU+=("$(nimi "$k")")
+      info "palautettu: $(nimi "$k") <- ${PREV[$k]##*/}"
+    else
+      rc=1; info "VIRHE: palautus epaonnistui: ${EI_PALAUTETTU[-1]}"
+    fi
   done
-  return "$ok"
+  return "$rc"
+}
+palautuksen_tila() {                    # yksi rivi: mika palautui ja mika ei
+  local p="${PALAUTETTU[*]:-}" e="" x
+  for x in "${EI_PALAUTETTU[@]:-}"; do [ -n "$x" ] && e+="${e:+; }$x"; done
+  echo "palautettu: ${p:-ei mitaan}; EI palautettu: ${e:-ei mitaan}"
 }
 
 # Koepaivan asetus (A905): tulostaa vain avaimen CLAUDEJONO_KOEPAIVA arvon, ei muita rivejä eikä kirjoita mitaan.
@@ -131,21 +157,29 @@ vika_vaihdossa() {                      # virhe vaihdon aikana tai jalkeen: pala
   if paluu_vanhaan; then
     if savutesti_kaikki palautus; then lopeta 1 "$viesti; vanha koodi palautettu ja savutesti OK"
     else lopeta 1 "$viesti; vanha koodi palautettu, mutta savutesti EI mennyt lapi: tarkista kasin"; fi
-  else lopeta 1 "$viesti; PALAUTUS EPAONNISTUI, tarkista kasin (.prev-$TS)"; fi
+  else lopeta 3 "$viesti; PALAUTUS EPAONNISTUI ($(palautuksen_tila)); tarkista kasin"; fi
 }
 keskeytys() { info "keskeytys vastaanotettu"; if [ "$vaihto_alkanut" = 1 ]; then vika_vaihdossa "keskeytetty"; else lopeta 1 "keskeytetty ennen vaihtoa, mitaan ei muutettu"; fi; }
 vaihto_alkanut=0
 poistuessa() {                          # odottamaton poistuminen (esim. set -u): siivous ja paluu vanhaan
   [ "$LOPETETTU" = 1 ] && return
   info "odottamaton poistuminen"
-  [ "$vaihto_alkanut" = 1 ] && paluu_vanhaan
+  local rc=0
+  if [ "$vaihto_alkanut" = 1 ] && ! paluu_vanhaan; then
+    rc=3; info "VIRHE: odottamattoman poistumisen palautus jai kesken ($(palautuksen_tila)); tarkista kasin"
+  fi
   siivoa; palauta_ajastimet
+  [ "$rc" = 0 ] || exit "$rc"
 }
 
 # ---- tarkistukset ------------------------------------------------------------------
+# Rootina ajettava luku: safe.directory vain taman kohteen tarkalle polulle (ei jokerimerkkia, ei gitin asetuksiin).
+# Virheita ei niella: esitarkistukset() pysayttaa ajon, jos rev-parse tai status epaonnistuu.
+pohja_git() { git -c "safe.directory=$POHJA" -C "$POHJA" "$@"; }
+git_vika() { info "VIRHE: $*"; vika_esi "${1%% epaonnistui*} epaonnistui, ajoa ei jatketa; mitaan ei muutettu"; }
 nykyinen_commit() {
   case "$1" in
-    pohja) git -C "$POHJA" rev-parse HEAD 2>/dev/null ;;
+    pohja) pohja_git rev-parse HEAD ;;
     yojono) sed -n 's/^commit=//p' "$YOJONO/.julkaisu-tieto" 2>/dev/null | head -1 ;;
   esac
 }
@@ -153,7 +187,15 @@ esitarkistukset() {
   [ "$SALLI_EI_ROOT" = 1 ] || [ "$(id -u)" = 0 ] || vika_esi "aja rootina (sudo)"
   command -v git >/dev/null && command -v "$PYTHON" >/dev/null && command -v sha256sum >/dev/null && command -v flock >/dev/null \
     || vika_esi "tyokalu puuttuu (git, python3, sha256sum tai flock)"
+  if [ -n "$TESTIKAYTTAJA" ]; then
+    id -u -- "$TESTIKAYTTAJA" >/dev/null 2>&1 || vika_esi "testikayttajaa $TESTIKAYTTAJA ei ole (testit ajetaan ei-rootina)"
+    [ "$(id -u -- "$TESTIKAYTTAJA")" != 0 ] || vika_esi "testikayttaja ei saa olla root"
+    command -v runuser >/dev/null || vika_esi "runuser puuttuu (testit ajetaan ei-rootina)"
+  fi
   [ -d "$POHJA/.git" ] || vika_esi "$POHJA ei ole git-klooni"
+  local pohja_head
+  pohja_head=$(pohja_git rev-parse HEAD 2>&1) && [ "${#pohja_head}" = 40 ] \
+    || git_vika "git rev-parse epaonnistui kohteessa $POHJA (esim. dubious ownership): ${pohja_head:0:200}"
   [ -f "$YOJONO/.julkaisu-manifesti" ] || vika_esi "$YOJONO:ssa ei ole .julkaisu-manifestia (ensiasennus tehdaan isanta/julkaise.sh:lla)"
   if [ "$PERUUTA" = 0 ]; then
     local k d
@@ -162,7 +204,10 @@ esitarkistukset() {
       [ -e "$d.uusi" ] && vika_esi "edellisen ajon jaannos $d.uusi: tarkista ja poista kasin"
     done
     if [ "$SALLI_LIKAINEN" = 0 ]; then
-      [ -z "$(git -C "$POHJA" status --porcelain --untracked-files=no 2>/dev/null)" ] \
+      local pohja_tila
+      pohja_tila=$(pohja_git status --porcelain --untracked-files=no 2>&1) \
+        || git_vika "git status epaonnistui kohteessa $POHJA (esim. dubious ownership): ${pohja_tila:0:200}"
+      [ -z "$pohja_tila" ] \
         || vika_esi "$POHJA:ssa on paikallisia muutoksia (git status); vanha kopio sailyisi .prev-kansiossa, ohita vain tarkoituksella: --salli-likainen"
       ( cd "$YOJONO" && sha256sum -c --quiet .julkaisu-manifesti >/dev/null 2>&1 ) \
         || vika_esi "$YOJONO poikkeaa manifestistaan (paikallisia muutoksia?); ohita vain tarkoituksella: --salli-likainen"
@@ -217,11 +262,23 @@ tee_staging() {
 }
 
 aja_testit() {                          # set -o pipefail: tee/tail ei peita testikomennon virhetta
-  local k d mods rc
+  # Uuden koodin testit eivat aja rootina: koodi kopioidaan valiaikaishakemistoon, jonka omistaa TESTIKAYTTAJA, ja testit
+  # ajetaan hanen oikeuksillaan puhtaalla ymparistolla (env -i). Savutesti (savutesti_kohde) ajaa vaihdon jalkeen saman
+  # uuden koodin myos palvelukayttajana (aja_kayttajana), joten root ei suorita uuden mainin koodia missaan vaiheessa.
+  local k d mods rc kopio etuliite=()
+  [ -n "$TESTIKAYTTAJA" ] && etuliite=(runuser -u "$TESTIKAYTTAJA" --)
+  TESTIHAK=$(mktemp -d "${TMPDIR:-/tmp}/paivita-testi.XXXXXX") || vika_esi "testihakemistoa ei voi luoda"
+  chmod 755 "$TESTIHAK"
   for k in "${KOHTEET[@]}"; do
     d=${UUSI[$k]}; [ "$k" = pohja ] && mods=$TESTI_POHJA || mods=$TESTI_YOJONO
-    info "testit: $(nimi "$k") ($mods)"
-    ( cd "$d" && $PYTHON -B -m unittest $mods ) 2>&1 | tee "$T/testi-$k.log" | tail -n 4
+    kopio="$TESTIHAK/$k"
+    cp -a -- "$d" "$kopio" || vika_esi "testikopion teko epaonnistui ($(nimi "$k")); mitaan ei vaihdettu"
+    if [ -n "$TESTIKAYTTAJA" ]; then
+      chown -R -h -- "$TESTIKAYTTAJA": "$kopio" || vika_esi "testikopion omistajan vaihto epaonnistui ($(nimi "$k")); mitaan ei vaihdettu"
+    fi
+    info "testit: $(nimi "$k") ($mods) kayttajana ${TESTIKAYTTAJA:-$(id -un)}"
+    ( cd "$kopio" && ${etuliite[@]+"${etuliite[@]}"} env -i HOME="$kopio" PATH="$PATH" LC_ALL=C.UTF-8 \
+        $PYTHON -B -m unittest $mods ) 2>&1 | tee "$T/testi-$k.log" | tail -n 4
     rc=${PIPESTATUS[0]}
     if [ "$rc" != 0 ]; then
       grep -E '^(FAIL|ERROR):' "$T/testi-$k.log" | head -5
@@ -245,14 +302,27 @@ odota_hiljaisuutta() {
   done
 }
 
+# Ajaa komennon hakemistossa $1 palvelukayttajana (TESTIKAYTTAJA, runuser + env -i), ei rootina: savutesti suorittaa
+# vaihdetun uuden koodin (import ja `yojono tila`), joten sita ei saa ajaa root-oikeuksin. Ilman TESTIKAYTTAJAa
+# (vain testit, ei-root-ajo) komento ajetaan nykyisena kayttajana.
+aja_kayttajana() {                      # $1 = hakemisto, loput = komento
+  local hakem=$1 koti; shift
+  if [ -n "$TESTIKAYTTAJA" ]; then
+    koti=$(getent passwd "$TESTIKAYTTAJA" | cut -d: -f6); [ -d "${koti:-}" ] || koti=/nonexistent
+    ( cd "$hakem" && runuser -u "$TESTIKAYTTAJA" -- env -i HOME="$koti" PATH="$PATH" LC_ALL=C.UTF-8 "$@" )
+  else
+    ( cd "$hakem" && "$@" )
+  fi
+}
+
 savutesti_kohde() {                     # $1 = kohde
   local k=$1 d mods
   d=$(koodi_kansio "$k")
   [ "$k" = pohja ] && mods=$SAVU_POHJA || mods=$SAVU_YOJONO
   local m code=""; for m in $mods; do code+="import $m;"; done
-  ( cd "$d" && $PYTHON -B -c "$code" ) >/dev/null 2>&1 || { info "savutesti (tuonti) kaatui: $(nimi "$k")"; return 1; }
+  aja_kayttajana "$d" $PYTHON -B -c "$code" >/dev/null 2>&1 || { info "savutesti (tuonti) kaatui: $(nimi "$k")"; return 1; }
   if [ "$k" = yojono ] && [ -n "$TERVEYS_YOJONO" ]; then
-    ( cd "$d" && timeout 60 $PYTHON -B -m $TERVEYS_YOJONO ) >/dev/null 2>&1 || { info "savutesti (terveyskomento) kaatui: $(nimi "$k")"; return 1; }
+    aja_kayttajana "$d" timeout 60 $PYTHON -B -m $TERVEYS_YOJONO >/dev/null 2>&1 || { info "savutesti (terveyskomento) kaatui: $(nimi "$k")"; return 1; }
   fi
   if [ "$k" = yojono ]; then
     ( cd "$d" && sha256sum -c --quiet .julkaisu-manifesti >/dev/null 2>&1 ) || { info "manifesti ei tasmaa: $(nimi "$k")"; return 1; }
@@ -305,13 +375,35 @@ peruuta() {                             # --peruuta: viimeisin .prev-* takaisin
     [ $((SECONDS - alku)) -ge "$ODOTA_S" ] && vika_esi "palvelut kaynnissa (${busy}); mitaan ei palautettu"
     sleep "$SEURANTA_S"
   done
+  # Palautus kohde kohteelta. Ensimmaisen virheen jalkeen ei yriteta enaa muita: tila pysyy mahdollisimman selvana.
+  local puuttuu=0 virhe=""
+  PALAUTETTU=(); EI_PALAUTETTU=()
   for k in "${KOHTEET[@]}"; do
     d=$(koodi_kansio "$k")
-    mv -T -- "$d" "$d.peruttu-$TS" || vika_esi "siirto epaonnistui ($(nimi "$k"))"
-    mv -T -- "${PREV[$k]}" "$d" || { mv -T -- "$d.peruttu-$TS" "$d"; vika_esi "palautus epaonnistui ($(nimi "$k"))"; }
-    info "palautettu: $(nimi "$k") <- ${PREV[$k]##*/} (nykyinen talteen: $(basename "$d").peruttu-$TS)"
+    if [ -n "$virhe" ]; then EI_PALAUTETTU+=("$(nimi "$k") (ei yritetty, ennallaan)"); continue; fi
+    if ! mv -T -- "$d" "$d.peruttu-$TS"; then
+      virhe=1; EI_PALAUTETTU+=("$(nimi "$k") (nykyisen siirto epaonnistui, ennallaan)"); info "VIRHE: peruutus epaonnistui: $(nimi "$k")"; continue
+    fi
+    if mv -T -- "${PREV[$k]}" "$d"; then
+      PALAUTETTU+=("$(nimi "$k")")
+      info "palautettu: $(nimi "$k") <- ${PREV[$k]##*/} (nykyinen talteen: $(basename "$d").peruttu-$TS)"
+    else
+      virhe=1
+      if mv -T -- "$d.peruttu-$TS" "$d"; then
+        EI_PALAUTETTU+=("$(nimi "$k") (varmuuskopion asetus epaonnistui; nykyinen koodi takaisin paikallaan, ${PREV[$k]##*/} jai)")
+      else
+        puuttuu=1; EI_PALAUTETTU+=("$(nimi "$k") (KOHDE PUUTTUU; nykyinen koodi: $d.peruttu-$TS, vanha koodi: ${PREV[$k]})")
+      fi
+      info "VIRHE: peruutus epaonnistui: ${EI_PALAUTETTU[-1]}"
+    fi
   done
   vaihto_alkanut=0
+  if [ -n "$virhe" ]; then
+    if [ "${#PALAUTETTU[@]}" -gt 0 ] || [ "$puuttuu" = 1 ]; then
+      lopeta 3 "osittainen palautus, tarkista kasin: $(palautuksen_tila)"
+    fi
+    lopeta 1 "peruutus epaonnistui, mitaan ei palautettu ($(palautuksen_tila))"
+  fi
   savutesti_kaikki palautus || lopeta 1 "palautettu, mutta savutesti EI mennyt lapi: tarkista kasin"
   lopeta 0 "peruutettu: agentti-pohja $(lyhyt "$(nykyinen_commit pohja)"), yojono-ajuri $(lyhyt "$(nykyinen_commit yojono)")"
 }
