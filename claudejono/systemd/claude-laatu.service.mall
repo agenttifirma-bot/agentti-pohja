@@ -1,0 +1,19 @@
+# Mallitiedosto: ei asenna mitaan. Asennus README.md:n osion "Itsekehittyva silmukka" mukaan (Tonyn paatos 2.11.2026).
+[Unit]
+Description=Claude-jono: paivittainen laatuotos (riippumaton tarkastaja, vain lukutyokalut)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/agentti-pohja
+Environment=CLAUDEJONO_REPO=/var/lib/claude-jono/docs
+Environment=CLAUDEJONO_TYOHAK=/opt/agentscope
+Environment=CLAUDEJONO_KAYTTAJA=claudejono
+Environment=CLAUDEJONO_CLAUDE=/var/lib/claudejono/.local/bin/claude
+Environment=CLAUDEJONO_LUPATILA=auto
+Environment="GIT_SSH_COMMAND=ssh -i /etc/claude-jono/deploy_key -o IdentitiesOnly=yes"
+EnvironmentFile=-/etc/yojono/telegram.env
+ExecStart=/usr/bin/python3 -B -m claudejono laatu
+TimeoutStartSec=1800
+PrivateTmp=true
