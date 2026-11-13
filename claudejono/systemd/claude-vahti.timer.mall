@@ -1,0 +1,12 @@
+# Mallitiedosto: ei asenna mitaan.
+[Unit]
+Description=Jonon vahti 15 min valein
+
+[Timer]
+OnCalendar=*:0/15
+# Ei Persistent: kun kone kaynnistyy, seuraava ajo tulee 15 min sisalla
+Persistent=false
+Unit=claude-vahti.service
+
+[Install]
+WantedBy=timers.target
