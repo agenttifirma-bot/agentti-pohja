@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import ajuri, kaistamittaus, kulutus, vaiteportti, varaus
+from . import aivo_arvio, ajuri, kaistamittaus, kulutus, vaiteportti, varaus
 
 TZ = ZoneInfo("Europe/Helsinki")
 OLETUS_REPO = "/var/lib/claude-jono/docs"
@@ -155,8 +155,49 @@ def rikkinaiset_yksikot(suorita=subprocess.run):
     return [rivi.split()[0] for rivi in r.stdout.splitlines() if rivi.strip()]
 
 
-def keraa(repo, perus, nyt, hae=None, yksikot=None):
-    """Kokoaa kooste-aineiston. `hae` = GitHub-haku (testeissa tekaistu), `yksikot` = failed-yksikoiden lahde."""
+OLETUS_POHJA = "/opt/agentti-pohja"
+OLETUS_YOJONO_AJURI = "/opt/yojono-ajuri"
+
+
+def kayttoonotto_ero_rivi(pohja=OLETUS_POHJA, yojono_ajuri=OLETUS_YOJONO_AJURI, hae_vertailu=None, suorita=subprocess.run):
+    """Teksti, jos mainissa on ajureihin viela ottamattomia yhdistettyja muutoksia; None, jos kaikki ovat ajan tasalla.
+
+    Vertailu on tools/kayttoonotto_ero.py:n (GitHub compare). agentti-pohjan commit luetaan gitista, yojono-ajurin
+    (ei .git-hakemistoa) tiedostosta .julkaisu-tieto. Verkkovirhe palauttaa tekstin 'ei selvinnyt', ei poikkeusta."""
+    try:
+        from tools import kayttoonotto_ero as ero
+    except ImportError:
+        return None
+    hae = hae_vertailu or ero.hae_vertailu
+    kohteet = []   # (nimi, jaljessa, omia, pr)
+    try:
+        commitit = {"agentti-pohja": ero.paikallinen_commit(pohja, suorita=suorita)}
+        try:
+            tieto = (Path(yojono_ajuri) / ".julkaisu-tieto").read_text(encoding="utf-8")
+            commitit["y\u00f6jono-ajuri"] = next(r[7:].strip() for r in tieto.splitlines() if r.startswith("commit="))
+        except (OSError, StopIteration):
+            commitit["y\u00f6jono-ajuri"] = None
+        for nimi, commit in commitit.items():
+            if commit is None:
+                return "ajurien k\u00e4ytt\u00f6\u00f6noton tila ei selvinnyt (" + nimi + ")"
+            kohteet.append((nimi,) + ero.tiivista(hae("agentti-pohja", commit, "main")))
+    except Exception as virhe:   # verkko- tai gitvirhe ei kaada koostetta; vain tyyppi ja EroVirheen lyhyt syy nakyviin
+        syy = getattr(virhe, "lyhyt", None) if isinstance(virhe, ero.EroVirhe) else None
+        return "ajurien k\u00e4ytt\u00f6\u00f6noton tila ei selvinnyt (" + type(virhe).__name__ + (": " + syy if syy else "") + ")"
+    jaljessa = [k for k in kohteet if k[1] or k[2]]
+    if not jaljessa:
+        return None
+    pr = []
+    for k in jaljessa:
+        pr += [n for n in k[3] if n not in pr]
+    osat = ", ".join(f"{k[0]} {k[1]} committia" for k in jaljessa)
+    return f"ajurit j\u00e4ljess\u00e4 mainista: {osat}" + (" (PR " + ", ".join(f"#{n}" for n in pr[:5]) + (" ..." if len(pr) > 5 else "") + ")" if pr else "") \
+        + "; p\u00e4ivit\u00e4 komennolla paivita-ajurit.sh"
+
+
+def keraa(repo, perus, nyt, hae=None, yksikot=None, ero=None):
+    """Kokoaa kooste-aineiston. `hae` = GitHub-haku (testeissa tekaistu), `yksikot` = failed-yksikoiden lahde,
+    `ero` = kayttoonoton eron lahde (kutsuttava, palauttaa tekstin tai None; oletuksena ei hae mitaan)."""
     from agentti import aamupaketti
     alku = nyt - timedelta(hours=IKKUNA_H)
     tulokset = lue_tulokset(repo, alku, nyt)
@@ -196,14 +237,22 @@ def keraa(repo, perus, nyt, hae=None, yksikot=None):
         varaus_rivi, varaus_kysymys = varaus.aamukooste_osa(tila, os.environ, nyt)
     except Exception:
         pass
+    try:
+        aivo_valmis = aivo_arvio.valmius_taynna(repo)
+    except Exception:
+        aivo_valmis = False
     from . import tarkastaja
     try:   # tarkastajan ja PR-avaajan viat nakyviin; puuttuva loki ei kaada koostetta
         tarkastaja_virheet = tarkastaja.virheet_lokista(Path(repo).parent, alku)
     except Exception:
         tarkastaja_virheet = []
-    return {"nyt": nyt, "tarkastaja_virheet": tarkastaja_virheet, "kaistat": kaistat, "kulutus": kulutus_teksti, "varaus": varaus_rivi, "varaus_kysymys": varaus_kysymys, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku), "paatokset": avoimet_paatokset(repo, nyt), "saannot": tonylle_uudet(repo, alku, SAANTOPAIVITYKSET),
+    try:   # ajurien jaljessaolo mainista: vain pyydettaessa, virhe ei kaada koostetta
+        ero_teksti = ero() if ero else None
+    except Exception:
+        ero_teksti = None
+    return {"nyt": nyt, "aivo_valmis": aivo_valmis, "tarkastaja_virheet": tarkastaja_virheet, "kaistat": kaistat, "kulutus": kulutus_teksti, "varaus": varaus_rivi, "varaus_kysymys": varaus_kysymys, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku), "paatokset": avoimet_paatokset(repo, nyt), "saannot": tonylle_uudet(repo, alku, SAANTOPAIVITYKSET),
             "pr": pr_ryhmat, "pr_virheita": virheet, "yojono": yojono_tila(perus, nyt),
-            "yksikot": (yksikot or rikkinaiset_yksikot)(), "vaiteportti": vaiteportti.puutteet(repo)}
+            "yksikot": (yksikot or rikkinaiset_yksikot)(), "vaiteportti": vaiteportti.puutteet(repo), "ero": ero_teksti}
 
 
 def _lyhenna(teksti, raja=RIVI_MAX):
@@ -235,6 +284,8 @@ def rivit(t):
             paatos_osat.append(f"PR-lista voi olla vajaa ({len(t['pr_virheita'])} hakuvirhett\u00e4, esim. {t['pr_virheita'][0]})")
         if t["pr"].get("automerge"):
             paatos_osat.append(f"{len(t['pr']['automerge'])} hoituu automergell\u00e4")
+    if t.get("aivo_valmis"):   # Tony 7.11.2026: kerro HETI, kun kaikki aivo-valmius.md:n kohdat t\u00e4yttyv\u00e4t
+        paatos_osat.insert(0, "Aivo on valmis OpenRouteriin ja itsekehitykseen: kaikki aivo-valmius.md:n kohdat t\u00e4yttyv\u00e4t")
     avoimet = t.get("paatokset") or []
     muut = [k for k in (t.get("tonylle") or []) if k not in avoimet]   # ei hiljaa katoavia kohtia: avainsanaan osumattomat vain laskurina
     if muut:
@@ -242,6 +293,8 @@ def rivit(t):
     # kalibrointipyynt\u00f6 ennen vapaamittaisia otsikoita: _lyhenna leikkaa rivin lopusta, joten pyynt\u00f6 ei saa j\u00e4\u00e4d otsikoiden taakse
     if t.get("varaus_kysymys"):
         paatos_osat.append(t["varaus_kysymys"])
+    if t.get("ero"):   # ajurit jaljessa mainista
+        paatos_osat.append(t["ero"])
     if avoimet:
         paatos_osat.append(f"{len(avoimet)} avointa kohtaa tonylle.md:ss\u00e4 (muistutus p\u00e4ivitt\u00e4in): " + "; ".join(f"{a.day}.{a.month}. {o}".strip() for a, o in avoimet[:2]))
     paatokset = "P\u00e4\u00e4t\u00f6kset sinulle: " + ", ".join(paatos_osat) + "."
@@ -324,7 +377,7 @@ def main(argv=None):
     nyt = datetime.fromisoformat(a.nyt) if a.nyt else datetime.now(TZ)
     if nyt.tzinfo is None:
         nyt = nyt.replace(tzinfo=TZ)
-    teksti = muotoile(keraa(a.repo, a.yojono, nyt))
+    teksti = muotoile(keraa(a.repo, a.yojono, nyt, ero=kayttoonotto_ero_rivi))
     print(teksti)
     if a.laheta:
         from yojono.ajuri import laheta_telegram
