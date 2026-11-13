@@ -65,6 +65,16 @@ class LokiTesti(unittest.TestCase):
         m = vm.lue_loki("- 31.2.2026 \u2014 virheellinen\n- 12.11.2026 \u2014 ok\n")
         self.assertEqual([p.isoformat() for p, _ in m], ["2026-11-12"])
 
+    def test_mahdoton_paivamaara_ei_vuoda_runkoa_edelliseen_merkintaan(self):
+        loki = ("- 2026-11-01: ensimm\u00e4inen\n"
+                "- 31.2.2026 \u2014 virheellinen\n  virheellisen runkorivi\n"
+                "## 30.2.2026 \u2013 mahdoton osio\n- Mit\u00e4: x\n"
+                "- 12.11.2026 \u2014 ok\n")
+        m = vm.lue_loki(loki)
+        self.assertEqual([p.isoformat() for p, _ in m], ["2026-11-01", "2026-11-12"])
+        self.assertNotIn("runkorivi", m[0][1])
+        self.assertNotIn("mahdoton", m[1][1])
+
     def test_luokittelematon_ei_arvaa(self):
         self.assertEqual(vm.luokittele_loki("- 2026-11-02: Jokin tuntematon virhe"), "?")
 
