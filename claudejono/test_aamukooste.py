@@ -144,6 +144,116 @@ class Kooste(Pohja):
         self.assertIs(m.call_args.kwargs.get("pakota"), True)
 
 
+class KayttoonottoEro(Pohja):
+    """Aamukooste kertoo, kun mainissa on ajureihin ottamattomia yhdistettyja muutoksia (tools/kayttoonotto_ero.py)."""
+    def setUp(self):
+        super().setUp()
+        import subprocess
+        # tunnuspolku vaihdetaan olemattomaan valiaikaispolkuun: testi ei saa lukea oikeaa lukutunnusta
+        env = mock.patch.dict(os.environ, {"GITHUB_LUKU_TUNNUS_POLKU": str(Path(self.tmp) / "ei-tunnusta.token")})
+        env.start()
+        self.addCleanup(env.stop)
+        self.pohja = Path(self.tmp) / "pohja"
+        self.pohja.mkdir()
+        for komento in (["init", "-q", "-b", "main"], ["-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "a"]):
+            subprocess.run(["git", "-C", str(self.pohja)] + komento, check=True, capture_output=True)
+        self.yojono_ajuri = Path(self.tmp) / "yojono-ajuri"
+        self.yojono_ajuri.mkdir()
+        (self.yojono_ajuri / ".julkaisu-tieto").write_text("kohde=yojono-ajuri\ncommit=" + "a" * 40 + "\n")
+
+    def rivi(self, vertailu):
+        kutsut = []
+
+        def hae(repo, commit, haara):
+            kutsut.append(commit)
+            return vertailu(commit) if callable(vertailu) else vertailu
+        teksti = aamukooste.kayttoonotto_ero_rivi(str(self.pohja), str(self.yojono_ajuri), hae_vertailu=hae)
+        return teksti, kutsut
+
+    @staticmethod
+    def vertailu(jaljessa, *otsikot):
+        return {"ahead_by": jaljessa, "behind_by": 0, "commits": [{"commit": {"message": o}} for o in otsikot]}
+
+    def test_jaljessa_kertoo_maarat_ja_prt(self):
+        teksti, kutsut = self.rivi(self.vertailu(3, "Merge pull request #251 from x/y", "muu", "Merge pull request #242 from x/z"))
+        self.assertIn("agentti-pohja 3 committia", teksti)
+        self.assertIn("y\u00f6jono-ajuri 3 committia", teksti)
+        self.assertIn("#251, #242", teksti)
+        self.assertIn("paivita-ajurit.sh", teksti)
+        self.assertEqual(len(kutsut), 2)
+        self.assertEqual(kutsut[1], "a" * 40)   # yojonon commit luetaan .julkaisu-tieto-tiedostosta
+
+    def test_ajan_tasalla_ei_tulosta_mitaan(self):
+        self.assertIsNone(self.rivi(self.vertailu(0))[0])
+
+    def test_vain_toinen_jaljessa(self):
+        teksti, _ = self.rivi(lambda commit: self.vertailu(2 if commit == "a" * 40 else 0))
+        self.assertIn("y\u00f6jono-ajuri 2 committia", teksti)
+        self.assertNotIn("agentti-pohja 2", teksti)
+
+    def test_verkkovirhe_nakyy_vain_tyyppina(self):
+        def rikki(commit):
+            raise OSError("salainen-osoite.invalid")
+        teksti, _ = self.rivi(rikki)
+        self.assertIn("ei selvinnyt (OSError)", teksti)
+        self.assertNotIn("salainen", teksti)
+
+    def test_ero_virheen_lyhyt_syy_nakyy_mutta_ei_poikkeuksen_teksti(self):
+        from tools import kayttoonotto_ero as ero
+
+        def rikki(commit):
+            raise ero.EroVirhe("salainen-polku /etc/x", "git: kopion omistaja ei tasmaa (safe.directory ei auttanut)")
+        teksti, _ = self.rivi(rikki)
+        self.assertIn("ei selvinnyt (EroVirhe: git: kopion omistaja ei tasmaa", teksti)
+        self.assertNotIn("salainen", teksti)
+
+    def test_puuttuva_julkaisutieto_ei_kaada(self):
+        (self.yojono_ajuri / ".julkaisu-tieto").unlink()
+        self.assertIn("ei selvinnyt", self.rivi(self.vertailu(0))[0])
+
+    def test_ei_git_kopiota_ei_kaada(self):
+        teksti = aamukooste.kayttoonotto_ero_rivi(str(self.tmp) + "/ei-ole", str(self.yojono_ajuri), hae_vertailu=lambda *a: self.vertailu(0))
+        self.assertIn("ei selvinnyt", teksti)
+
+    def test_vertailuun_valitetaan_pelkka_reponimi_ja_url_on_omistaja_repo(self):
+        """hae_vertailu lisaa omistajan itse: valitetyn repon pitaa olla pelkka nimi, muuten URL olisi omistaja/omistaja/repo."""
+        from tools import kayttoonotto_ero as ero
+        valitetut, urlit = [], []
+
+        class Vastaus:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return b'{"ahead_by": 0, "behind_by": 0, "commits": []}'
+
+        def avaa(pyynto, timeout=None):
+            urlit.append(pyynto.full_url)
+            return Vastaus()
+
+        def hae(repo, commit, haara):
+            valitetut.append(repo)
+            return ero.hae_vertailu(repo, commit, haara, avaa=avaa)
+        aamukooste.kayttoonotto_ero_rivi(str(self.pohja), str(self.yojono_ajuri), hae_vertailu=hae)
+        self.assertEqual(set(valitetut), {"agentti-pohja"})
+        self.assertTrue(all("/" not in r for r in valitetut))
+        self.assertEqual(len(urlit), 2)
+        for url in urlit:
+            self.assertTrue(url.startswith("https://api.github.com/repos/tonyweckstrom1987/agentti-pohja/compare/"), url)
+
+    def test_rivi_nakyy_tarvitaan_rivilla(self):
+        t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [], ero=lambda: "ajurit j\u00e4ljess\u00e4 mainista: testi")
+        self.assertIn("ajurit j\u00e4ljess\u00e4 mainista: testi", aamukooste.rivit(t)[0])
+
+    def test_oletuksena_ei_hae_eroa_eika_nayta_rivia(self):
+        t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [])
+        self.assertIsNone(t["ero"])
+        self.assertNotIn("ajurit", aamukooste.rivit(t)[0])
+
+    def test_ero_virhe_ei_kaada_koostetta(self):
+        def rikki():
+            raise RuntimeError("x")
+        self.assertIsNone(aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [], ero=rikki)["ero"])
+
+
 class UusiMuoto(Kooste):
     load_tests = None
     def test_suljettu_paatos_ei_muistuteta_ja_avoin_muistutetaan_seuraavanakin_paivana(self):
@@ -216,7 +326,6 @@ class UusiMuoto(Kooste):
 
     def test_yli_kymmenen_rivia_ei_tule(self):
         self.assertLessEqual(len(aamukooste.muotoile(self.keraa()).split("\n\nLinkit:\n")[0].splitlines()), 10)
-
 
 class TarkastajaVirheet(Pohja):
     def aineisto(self):

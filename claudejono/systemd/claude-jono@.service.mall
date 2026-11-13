@@ -11,7 +11,7 @@ Type=oneshot
 WorkingDirectory=/opt/agentti-pohja
 Environment=CLAUDEJONO_REPO=/var/lib/claude-jono/docs
 Environment=CLAUDEJONO_TYOHAK=/opt/agentscope
-Environment=CLAUDEJONO_KAISTOJA=2
+Environment=CLAUDEJONO_KAISTOJA=3
 Environment=CLAUDEJONO_TOISTUVAT=1
 Environment=CLAUDEJONO_KAYTTAJA=claudejono
 Environment=CLAUDEJONO_CLAUDE=/var/lib/claudejono/.local/bin/claude

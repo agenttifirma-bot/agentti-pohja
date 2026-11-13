@@ -11,10 +11,12 @@ import json
 import os
 import random
 import sys
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 TIEDOSTO = "aivo-arviot.jsonl"
+KAYTTO_TIEDOSTO = "aivo-kaytto.jsonl"   # kayton seuranta: yksi rivi per arviointiyritys (ei paivarajaa, Tony 11.11. A943)
 SYY_MAX = 300
 OTOS_OLETUS = 5
 VAHIMMAIS_LAHTOTASOON = 20   # aivo-valmius.md: vahintaan 20 arvioitua paatosta
@@ -46,6 +48,34 @@ def _liita(tila, d):
         f.write(json.dumps(d, ensure_ascii=False) + "\n")
 
 
+def kirjaa_kaytto(tila, tehtava, kesto_s, ok, nyt=None):
+    """Kirjaa arvioinnin keston ja onnistumisen; viikkoraportti summaa nama. Ei salaisuuksia: vain nimi, kesto, ok."""
+    nyt = nyt or datetime.now().astimezone()
+    d = {"aika": nyt.isoformat(timespec="seconds"), "tehtava": tehtava, "kesto_s": round(float(kesto_s), 2), "ok": bool(ok)}
+    fd = os.open(Path(tila) / KAYTTO_TIEDOSTO, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(json.dumps(d, ensure_ascii=False) + "\n")
+
+
+def kaytto(tila, alkaen=None):
+    """(arvioita, onnistuneita, kesto yhteensa s) rivit, joiden aika >= alkaen (datetime tai None = kaikki)."""
+    p = Path(tila) / KAYTTO_TIEDOSTO
+    n = ok = 0
+    kesto = 0.0
+    if p.is_file():
+        for r in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                d = json.loads(r)
+                if alkaen is not None and datetime.fromisoformat(d["aika"]) < alkaen:
+                    continue
+                kesto += float(d["kesto_s"])
+                n += 1
+                ok += 1 if d.get("ok") is True else 0
+            except (ValueError, KeyError, TypeError):
+                continue
+    return n, ok, round(kesto, 2)
+
+
 def arviot(tila):
     """{tehtava: {"kylla": bool, "syy": str, "tony": bool|None}}"""
     ulos = {}
@@ -73,7 +103,13 @@ def arvioi_varjossa(tila, tehtava_polku, arvioija, nyt=None):
         if nimi in arviot(tila):
             return False
         teksti = Path(tehtava_polku).read_bytes()[:20000].decode("utf-8", "replace")
-        kylla, syy = arvioija(teksti)
+        alku = time.monotonic()
+        try:
+            kylla, syy = arvioija(teksti)
+        except Exception:
+            kirjaa_kaytto(tila, nimi, time.monotonic() - alku, False, nyt)
+            raise
+        kirjaa_kaytto(tila, nimi, time.monotonic() - alku, isinstance(kylla, bool), nyt)
         if not isinstance(kylla, bool):
             return False
         kirjaa_arvio(tila, nimi, kylla, syy, nyt)
@@ -112,6 +148,8 @@ def viikkoosio(tila, n=OTOS_OLETUS, rng=None):
              f"Arvioituja yhteens\u00e4 {yht}; Tony on tarkistanut {tark}; osumia {osumia}; osumaprosentti "
              + (f"{pros} %." if pros is not None else "ei viel\u00e4 laskettavissa.")
              + f" L\u00e4ht\u00f6tason raja: v\u00e4hint\u00e4\u00e4n {VAHIMMAIS_LAHTOTASOON} arvioitua p\u00e4\u00e4t\u00f6st\u00e4."]
+    k_n, k_ok, k_s = kaytto(tila, datetime.now().astimezone() - timedelta(days=7))
+    rivit += ["", f"K\u00e4ytt\u00f6 viimeiset 7 vrk: {k_n} arviointiajoa ({k_ok} onnistui), kesto yhteens\u00e4 {k_s} s."]
     o = otos(tila, n, rng)
     if not o:
         rivit += ["", "Tarkistettavia arvioita ei ole (arvioija ei ole viel\u00e4 kytketty tai kaikki on tarkistettu)."]
