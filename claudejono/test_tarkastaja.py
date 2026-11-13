@@ -162,18 +162,80 @@ class KierrosTesti(unittest.TestCase):
         self.assertEqual(kw["timeout"], tk.AIKARAJA_S)
         rivi = json.loads((Path(self.d.name) / "kulutus.jsonl").read_text())
         self.assertEqual((rivi["laji"], rivi["malli"], rivi["tehtava"]), ("tarkastus", "opus", "agentti-pohja#5"))
-        self.assertIn('"tulos": "HYVAKSYTTY"', (Path(self.d.name) / tk.LOKI).read_text())
+        loki = (Path(self.d.name) / tk.LOKI).read_text()
+        self.assertIn('"tulos": "HYVAKSYTTY"', loki)
+        self.assertNotIn("OHITETTU", loki)
 
     def test_rajattu_ja_jo_tarkastettu_ohitetaan_ilman_mallia(self):
         valmis = {"user": {"login": "agenttifirma-bot"}, "body": tk.kommentti("HYLATTY", SHA, "", [], "opus")}
-        for prt, tied, komm in (([pr_olio()], [tiedosto(".github/workflows/ci.yml")], []),
-                                ([pr_olio()], [tiedosto()], [valmis]),
-                                ([pr_olio(draft=True)], [tiedosto()], []),
-                                ([pr_olio(sha="kelvoton")], [tiedosto()], [])):
+        for prt, tied, komm, tulokset in (([pr_olio()], [tiedosto(".github/workflows/ci.yml")], [], ["OHITETTU"]),
+                                          ([pr_olio()], [tiedosto()], [valmis], []),
+                                          ([pr_olio(nro=6, draft=True)], [tiedosto()], [], ["OHITETTU"]),
+                                          ([pr_olio(sha="kelvoton")], [tiedosto()], [], [])):
             api = Feikki(prt, tied, komm)
-            self.assertEqual(tk.kierros(self.env, "t", suorita=self.suorita(), avaa=api), [])
+            self.assertEqual([r["tulos"] for r in tk.kierros(self.env, "t", suorita=self.suorita(), avaa=api)], tulokset)
             self.assertEqual(api.postit, [])
         self.assertEqual(self.ajot, [])
+
+    def lokirivit(self):
+        polku = Path(self.d.name) / tk.LOKI
+        return [json.loads(r) for r in polku.read_text().splitlines()] if polku.exists() else []
+
+    def ohitettava_kierros(self, sha=SHA):
+        api = Feikki([pr_olio(sha=sha, draft=True)], [tiedosto()], [])
+        tulos = tk.kierros(self.env, "t", suorita=self.suorita(), avaa=api, nyt=datetime(2026, 11, 6, 8, 0).astimezone())
+        self.assertEqual(api.postit, [])
+        return tulos
+
+    def test_ohitus_kirjataan_lokiin_syineen(self):
+        self.ohitettava_kierros()
+        rivi = self.lokirivit()[0]
+        self.assertEqual(sorted(rivi), ["aika", "pr", "repo", "sha", "syyt", "tulos"])
+        self.assertEqual((rivi["repo"], rivi["pr"], rivi["tulos"], rivi["sha"]), ("agentti-pohja", 5, "OHITETTU", SHA[:12]))
+        self.assertIn("luonnos", rivi["syyt"])
+
+    def test_ohitus_samalla_shalla_kirjataan_kerran_uusi_sha_uudelleen(self):
+        self.assertEqual(len(self.ohitettava_kierros()), 1)
+        self.assertEqual(self.ohitettava_kierros(), [])
+        self.assertEqual(len(self.lokirivit()), 1)
+        self.assertEqual(len(self.ohitettava_kierros(sha="d" * 40)), 1)
+        self.assertEqual([r["sha"] for r in self.lokirivit()], [SHA[:12], "d" * 12])
+
+    def test_ohitus_ei_kuluta_tarkastusta(self):
+        self.ohitettava_kierros()
+        tila = json.loads((Path(self.d.name) / tk.TILA_TIEDOSTO).read_text())
+        self.assertEqual((tila["maara"], tila["per_pr"]), (0, {}))
+        self.assertEqual(self.ajot, [])
+        self.assertFalse((Path(self.d.name) / "kulutus.jsonl").exists())
+
+    def test_ohitus_kirjataan_vaikka_paivaraja_on_taynna(self):
+        tulos = tk.kierros(dict(self.env, CLAUDEJONO_TARKASTUS_MAX_PAIVA="0"), "t", suorita=self.suorita(),
+                           avaa=Feikki([pr_olio(draft=True)], [tiedosto()], []))
+        self.assertEqual([r["tulos"] for r in tulos], ["OHITETTU"])
+        self.assertEqual(self.ajot, [])
+
+    def test_kuiva_ei_kirjaa_ohitusta(self):
+        tulos = tk.kierros(self.env, "t", suorita=self.suorita(), avaa=Feikki([pr_olio(draft=True)], [tiedosto()], []), kuiva=True)
+        self.assertEqual(tulos[0]["tulos"], "OHITETTU")
+        self.assertEqual(self.lokirivit(), [])
+
+    def test_roskainen_loki_ei_kaada_ja_muut_tulokset_eivat_esta_kirjausta(self):
+        muu = {"repo": "agentti-pohja", "pr": 5, "tulos": "HYLATTY", "sha": SHA[:12]}
+        (Path(self.d.name) / tk.LOKI).write_bytes(b"roskaa\n[1]\n\xff\xfe\n" + json.dumps(muu).encode() + b"\n")
+        self.assertEqual([r["tulos"] for r in self.ohitettava_kierros()], ["OHITETTU"])
+
+    def test_ohitusrivin_syyt_rajataan(self):
+        syyt = ["<!-- x -->" + "a" * 500 + "\n"] + ["s"] * (tk.OHITUS_SYITA_MAX + 2)
+        rivi = tk.ohitusrivi("r", 1, SHA, syyt)
+        self.assertEqual(len(rivi["syyt"]), tk.OHITUS_SYITA_MAX + 1)
+        self.assertLessEqual(len(rivi["syyt"][0]), tk.OHITUS_SYY_MAX)
+        self.assertNotIn("<!--", rivi["syyt"][0])
+        self.assertEqual(rivi["syyt"][-1], "+3 muuta syyta")
+
+    def test_ohitus_ei_nouse_virheisiin(self):
+        self.ohitettava_kierros()
+        self.assertEqual(len(self.lokirivit()), 1)
+        self.assertEqual(tk.virheet_lokista(self.d.name, datetime(2026, 1, 1).astimezone()), [])
 
     def test_uusi_commit_tarkastetaan_uudelleen(self):
         vanha = {"user": {"login": "agenttifirma-bot"}, "body": tk.kommentti("HYLATTY", "d" * 40, "", [], "opus")}
@@ -268,6 +330,38 @@ class PrAvaajaTesti(unittest.TestCase):
         self.assertEqual(api.postit, [])
         api = self.api()
         self.assertEqual(tk.kierros(dict(self.env, CLAUDEJONO_PR_AVAAJA="0"), "t", avaa=api), [])
+
+
+class VirheNakyvyys(unittest.TestCase):
+    def test_github_syy_mukana_virheessa(self):
+        runko = json.dumps({"message": "Validation Failed", "errors": [{"message": "No commits between main and x <!-- y -->"}]}).encode()
+
+        def avaa(req, timeout=None):
+            raise urllib.error.HTTPError(req.full_url, 422, "x", {}, io.BytesIO(runko))
+        with self.assertRaises(tk.TarkastajaVirhe) as c:
+            tk._pyynto(tk.API + "/repos/o/r/pulls", "salainen", avaa=avaa)
+        viesti = str(c.exception)
+        self.assertIn("HTTP 422: /repos/o/r/pulls", viesti)
+        self.assertIn("No commits between", viesti)
+        self.assertNotIn("<!--", viesti)
+        self.assertNotIn("salainen", viesti)
+
+    def test_lukematon_virherunko_ei_kaada(self):
+        def avaa(req, timeout=None):
+            raise urllib.error.HTTPError(req.full_url, 500, "x", {}, None)
+        with self.assertRaisesRegex(tk.TarkastajaVirhe, r"HTTP 500: /a$"):
+            tk._pyynto(tk.API + "/a", "t", avaa=avaa)
+
+    def test_virheet_lokista_rajaa_ajan_ja_sietaa_roskan(self):
+        with tempfile.TemporaryDirectory() as d:
+            alku = datetime.fromisoformat("2026-11-04T06:00:00+02:00")
+            rivit = [{"tulos": "virhe", "aika": "2026-11-04T05:00:00+02:00", "syy": "vanha"},
+                     {"tulos": "avattu", "aika": "2026-11-04T07:00:00+02:00"},
+                     {"tulos": "virhe", "aika": "2026-11-04T08:00:00+02:00", "syy": "uusi"},
+                     {"tulos": "virhe"}]
+            (Path(d) / tk.LOKI).write_text("\n".join(json.dumps(r) for r in rivit) + "\nroskaa\n[1]\n")
+            self.assertEqual([r["syy"] for r in tk.virheet_lokista(d, alku)], ["uusi"])
+            self.assertEqual(tk.virheet_lokista(d + "/ei", alku), [])
 
 
 class TilaTesti(unittest.TestCase):
