@@ -6,6 +6,12 @@ claude-jono/tulostaulu.md:n osion "Virhemittari" viikkotaulukolla: viikko, virhe
 ja toistuiko sama juurisyy. Sama juurisyy kahtena perakkaisena viikkona -> korjausehdotus koodiin;
 kolmantena -> Tonylle (A8).
 
+Lisamittarit (Tonyn paatos 11.11.2026, A941), jotka luetaan virhelokin vakiokentista; puuttuva kentta = "tuntematon":
+  Tapahtui: VVVV-KK-PP HH:MM ja Havaittu: VVVV-KK-PP HH:MM  -> havaitsemisaika tunteina (viikon mediaani)
+  Havaitsija: Tony / tarkastaja / testi/CI / agentti itse
+  Ehkaisy: koodi / ohje / ei viela  -> lasketaan vain toistuneista juurisyista (luokat 1-3, ks. toisto)
+Virheet per 10 tehtavaa: viikon virheet / viikon tehtavat (tehtavat/PVM-*.md) * 10.
+
 Luokittelu ei arvaa: merkinta, jonka luokkaa ei nae saantotaulusta (LOKI_SAANNOT), merkinnan omasta
 tunnisteesta "(juurisyy N)" tai ajon tekstista, on "luokittelematon".
 
@@ -63,6 +69,11 @@ LOKI_SAANNOT = (
     ("Toinen aikapommi", "4"),        # sama
 )
 TUNNISTE_RE = re.compile(r"\(juurisyy ([1-4])\)")
+TUNTEMATON = "tuntematon"
+HAVAITSIJAT = ("Tony", "tarkastaja", "testi/CI", "agentti itse", TUNTEMATON)
+EHKAISYT = ("koodi", "ohje", "ei viel\u00e4", TUNTEMATON)
+AIKA_RE = (r"(?:(\d{4})-(\d{2})-(\d{2})|(\d{1,2})\.(\d{1,2})\.(\d{4}))"
+           r"(?:[ T]|,? klo )(\d{1,2})[:.](\d{2})")
 
 
 def parse_paiva(teksti):
@@ -130,6 +141,76 @@ def lue_loki(teksti):
     return [(p, t) for p, t in merkinnat if p]
 
 
+def _kentta(teksti, nimi):
+    """Merkinnan vakiokentan arvo ('Nimi: arvo' rivin tai lauseen sisalla, lihavointi sallittu) tai None."""
+    m = re.search(r"(?im)\b" + nimi + r":\**\s*([^\n]+)", teksti)
+    return m.group(1).strip() if m else None
+
+
+def parse_aika(teksti):
+    """'2026-11-09 12:30', '2026-11-09T12:30' tai '9.11.2026 klo 12.30' -> datetime; muuten None (pelkka paiva ei riita)."""
+    m = re.match(AIKA_RE, (teksti or "").strip())
+    if not m:
+        return None
+    try:
+        if m.group(1):
+            paiva = datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        else:
+            paiva = datetime.date(int(m.group(6)), int(m.group(5)), int(m.group(4)))
+        return datetime.datetime.combine(paiva, datetime.time(int(m.group(7)), int(m.group(8))))
+    except ValueError:
+        return None
+
+
+def havaitsemisaika_h(teksti):
+    """Tunnit Tapahtui-kentasta Havaittu-kenttaan; None jos jompikumpi puuttuu tai jarjestys on virheellinen."""
+    a = parse_aika(_kentta(teksti, "Tapahtui"))
+    b = parse_aika(_kentta(teksti, "Havaittu"))
+    if not a or not b or b < a:
+        return None
+    return (b - a).total_seconds() / 3600.0
+
+
+def havaitsija(teksti):
+    arvo = (_kentta(teksti, "Havaitsija") or "").lower()
+    if arvo.startswith("tony"):
+        return "Tony"
+    if arvo.startswith("tarkastaja"):
+        return "tarkastaja"
+    if arvo.startswith(("testi", "ci")):
+        return "testi/CI"
+    if arvo.startswith(("agentti", "itse", "claude", "pilvi")):
+        return "agentti itse"
+    return TUNTEMATON
+
+
+def ehkaisy(teksti):
+    arvo = (_kentta(teksti, "Ehk[a\u00e4]isy") or "").lower()
+    for nimi in EHKAISYT[:3]:
+        if re.match(re.escape(nimi).replace("\u00e4", "[a\u00e4]") + r"\b", arvo):
+            return nimi
+    return TUNTEMATON
+
+
+def mediaani(luvut):
+    luvut = sorted(luvut)
+    if not luvut:
+        return None
+    k = len(luvut) // 2
+    return luvut[k] if len(luvut) % 2 else (luvut[k - 1] + luvut[k]) / 2.0
+
+
+def lue_tehtavat(hakemisto):
+    """Tehtavatiedostojen paivat: tehtavat/VVVV-KK-PP-*.md (README ja muut ohitetaan)."""
+    paivat = []
+    for p in sorted(Path(hakemisto).glob("*.md")):
+        m = re.match(r"(\d{4}-\d{2}-\d{2})-", p.name)
+        paiva = parse_paiva(m.group(1)) if m else None
+        if paiva:
+            paivat.append(paiva)
+    return paivat
+
+
 def lue_tulos(teksti):
     """(tila, aika-date, runko) tulostiedoston otsikkoriveilta; None jos tilaa tai aikaa ei loydy."""
     tila = re.search(r"^- Tila: (\S+)", teksti, re.M)
@@ -160,19 +241,29 @@ def luokittele_ajo(tila, teksti):
     return None
 
 
-def laske(loki_teksti, tulokset, nyt):
-    """tulokset: [teksti]. Palauttaa (rivit, tilastot); rivit = viikkojarjestyksessa dictit."""
+def laske(loki_teksti, tulokset, nyt, tehtavat=None):
+    """tulokset: [teksti]; tehtavat: [date] (None = ei tietoa). Palauttaa (rivit, tilastot);
+    rivit = viikkojarjestyksessa dictit."""
     viikot = {}
 
     def rivi(v):
-        return viikot.setdefault(v, {"loki": 0, "ajot": 0, "odottaa": 0, "vakavia": 0, "luokat": dict.fromkeys(LUOKAT, 0)})
+        return viikot.setdefault(v, {
+            "loki": 0, "ajot": 0, "odottaa": 0, "vakavia": 0, "luokat": dict.fromkeys(LUOKAT, 0), "merkinnat": [],
+            "tunnit": [], "kuka": dict.fromkeys(HAVAITSIJAT, 0), "ehkaisy": dict.fromkeys(EHKAISYT, 0),
+            "tehtavia": 0 if tehtavat is not None else None})
 
     n_loki = 0
     for paiva, teksti in lue_loki(loki_teksti):
         r = rivi(viikko(paiva))
         r["loki"] += 1
-        r["luokat"][luokittele_loki(teksti)] += 1
+        luokka = luokittele_loki(teksti)
+        r["luokat"][luokka] += 1
         r["vakavia"] += 1 if VAKAVUUS_RE.search(teksti) else 0
+        r["merkinnat"].append((luokka, ehkaisy(teksti)))
+        r["kuka"][havaitsija(teksti)] += 1
+        h = havaitsemisaika_h(teksti)
+        if h is not None:
+            r["tunnit"].append(h)
         n_loki += 1
     n_ajot = n_luettu = 0
     for teksti in tulokset:
@@ -189,7 +280,10 @@ def laske(loki_teksti, tulokset, nyt):
             continue
         r["ajot"] += 1
         r["luokat"][luokka] += 1
+        r["kuka"][TUNTEMATON] += 1  # ajurin tilasta ei nay, kuka virheen havaitsi
         n_ajot += 1
+    for paiva in tehtavat or []:
+        rivi(viikko(paiva))["tehtavia"] += 1
     # Kaikki viikot ensimmaisesta nykyiseen, myos tyhjat.
     if viikot:
         ensin = min(viikot)
@@ -203,18 +297,36 @@ def laske(loki_teksti, tulokset, nyt):
     for i, v in enumerate(jarj):
         viikot[v]["yht"] = viikot[v]["loki"] + viikot[v]["ajot"]
         viikot[v]["toisto"] = toisto(viikot, jarj, i)
+        viikot[v]["mediaani_h"] = mediaani(viikot[v]["tunnit"])
+        viikot[v]["per10"] = (viikot[v]["yht"] * 10.0 / viikot[v]["tehtavia"]
+                              if viikot[v]["tehtavia"] else None)
+        for luokka in toistuneet(viikot, jarj, i):
+            for l, e in viikot[v]["merkinnat"]:
+                if l == luokka:
+                    viikot[v]["ehkaisy"][e] += 1
     return [(v, viikot[v]) for v in jarj], {"loki": n_loki, "ajot": n_ajot, "tulostiedostoa": n_luettu}
+
+
+def putki(viikot, jarj, i, luokka):
+    """Montako perakkaista viikkoa (viikkoon i asti) luokassa on virheita."""
+    n = 0
+    j = i
+    while j >= 0 and viikot[jarj[j]]["luokat"][luokka] > 0:
+        n += 1
+        j -= 1
+    return n
+
+
+def toistuneet(viikot, jarj, i):
+    """Luokat 1-3, joiden juurisyy toistui viikolla i (vahintaan kaksi perakkaista viikkoa)."""
+    return [k for k in ("1", "2", "3") if putki(viikot, jarj, i, k) >= 2]
 
 
 def toisto(viikot, jarj, i):
     """Toistuiko juurisyy 1-3 edellisella viikolla (kaksi perakkaista) tai jo kolmannen kerran (A8)."""
     osat = []
     for luokka in ("1", "2", "3"):
-        n = 0
-        j = i
-        while j >= 0 and viikot[jarj[j]]["luokat"][luokka] > 0:
-            n += 1
-            j -= 1
+        n = putki(viikot, jarj, i, luokka)
         if n == 2:
             osat.append("kyll\u00e4: luokka %s kahtena viikkona, tee korjausehdotus koodiin" % luokka)
         elif n >= 3:
@@ -231,10 +343,19 @@ def viikko_nimi(v, nyt):
     return nimi
 
 
+def luku(x):
+    """Desimaaliluku suomalaisittain (pilkku, yksi desimaali); None -> tuntematon."""
+    return TUNTEMATON if x is None else ("%.1f" % x).replace(".", ",")
+
+
 def muodosta_osio(rivit, tilastot, nyt):
     ot = ["Viikko", "Virheit\u00e4", "Virhelokissa", "Ajoissa (EP\u00c4ONNISTUI/KESKEN)", "Vakavia (lokissa)", "Odottaa (ei virhe)"]
     ot += [LUOKKA_OTSIKOT[k] for k in LUOKAT]
     ot.append("Toistuiko sama juurisyy")
+    ot += ["Toistuneet: ehk\u00e4isy " + e for e in EHKAISYT]
+    ot.append("Havaitsemisaika, mediaani (h)")
+    ot += ["Havaitsija: " + k for k in HAVAITSIJAT]
+    ot += ["Teht\u00e4vi\u00e4", "Virheit\u00e4 / 10 teht\u00e4v\u00e4\u00e4"]
     out = ["Luvut tuottaa `tools/virhemittari.py` (ajo sunnuntaisin ennen viikkokatsausta). Viikko = ISO-viikko; "
            "tulokset viikotetaan tulostiedoston ajan mukaan.", "",
            "| " + " | ".join(ot) + " |", "|" + "---|" * len(ot)]
@@ -242,6 +363,10 @@ def muodosta_osio(rivit, tilastot, nyt):
         solut = [viikko_nimi(v, nyt), str(r["yht"]), str(r["loki"]), str(r["ajot"]), str(r["vakavia"]), str(r["odottaa"])]
         solut += [str(r["luokat"][k]) for k in LUOKAT]
         solut.append(r["toisto"])
+        solut += [str(r["ehkaisy"][e]) for e in EHKAISYT]
+        solut.append(luku(r["mediaani_h"]))
+        solut += [str(r["kuka"][k]) for k in HAVAITSIJAT]
+        solut += ["?" if r["tehtavia"] is None else str(r["tehtavia"]), luku(r["per10"])]
         out.append("| " + " | ".join(solut) + " |")
     out += ["",
             "Luokitus: virhelokin merkinn\u00e4t `virheiden-ehkaisy.md`:n kolmen juurisyyn mukaan; jos luokkaa ei n\u00e4e, "
@@ -249,6 +374,12 @@ def muodosta_osio(rivit, tilastot, nyt):
             "KESKEN-syyt `odottaa-yhdistamista` ja `odottaa-kayttoonottoa` n\u00e4kyv\u00e4t omassa sarakkeessaan eiv\u00e4tk\u00e4 ole virheit\u00e4. "
             "Vakavia = virhelokin merkinn\u00e4t, joissa on rivi `Vakavuus: vakava` (ei arvata). EP\u00c4ONNISTUI aikakatkaisun tai kierrosrajan takia on luokka 4. Sama juurisyy "
             "kahtena viikkona: korjausehdotus koodiin; kolmantena: Tonylle (A8).",
+            "",
+            "Lis\u00e4mittarit (Tonyn p\u00e4\u00e4t\u00f6s 11.11.2026): ehk\u00e4isy (koodi/ohje/ei viel\u00e4) lasketaan vain toistuneiden "
+            "juurisyiden (luokat 1\u20133) virhelokimerkinn\u00f6ist\u00e4, havaitsemisaika on viikon mediaani virhelokin kentist\u00e4 Tapahtui ja Havaittu, "
+            "havaitsija tulee kent\u00e4st\u00e4 Havaitsija ja teht\u00e4v\u00e4m\u00e4\u00e4r\u00e4 `tehtavat/`-hakemiston tiedostoista (p\u00e4iv\u00e4 nimen alussa). "
+            "Puuttuva kentt\u00e4 on \"tuntematon\"; vanhoja merkint\u00f6j\u00e4 ei ole muutettu. Ajojen (EP\u00c4ONNISTUI/KESKEN) havaitsijaa ei tiedet\u00e4, "
+            "joten ne lasketaan tuntemattomiin.",
             "",
             "Todennettu k\u00e4yt\u00f6ss\u00e4: skripti ajettu %s oikeaa dataa vastaan, luettu %d virhelokimerkint\u00e4\u00e4 ja "
             "%d tulostiedostoa (joista %d virheit\u00e4: EP\u00c4ONNISTUI tai KESKEN ilman odottava-syyt\u00e4)."
@@ -278,7 +409,8 @@ def main(argv=None):
         d = Path(a.docs)
         loki = (d / "virheloki.md").read_text(encoding="utf-8")
         tulokset = [p.read_text(encoding="utf-8", errors="replace") for p in sorted((d / "tulokset").glob("*.md"))]
-        rivit, tilastot = laske(loki, tulokset, nyt)
+        tehtavat = lue_tehtavat(d / "tehtavat") if (d / "tehtavat").is_dir() else None
+        rivit, tilastot = laske(loki, tulokset, nyt, tehtavat)
         osio = muodosta_osio(rivit, tilastot, nyt)
         if a.kirjoita or a.ulos:
             uusi = korvaa_osio((d / "tulostaulu.md").read_text(encoding="utf-8"), osio)
