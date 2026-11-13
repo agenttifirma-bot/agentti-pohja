@@ -1,3 +1,4 @@
+import contextlib
 import io
 import os
 import json
@@ -46,8 +47,107 @@ class Pohja(unittest.TestCase):
 class Nimi(unittest.TestCase):
     def test_kelvolliset_ja_kelvottomat(self):
         self.assertTrue(ajuri.kelvollinen_nimi("2026-10-30-01-ideoi-korjaus.md"))
-        for n in ("../x.md", "2026-10-30-01-X.md", "2026-10-30-1-a.md", "a.md", "2026-10-30-01-a.txt", "2026-10-30-01-a b.md"):
+        self.assertTrue(ajuri.kelvollinen_nimi("2026-11-08-55-KIIRE-pr239-yhdista-main.md"))   # vika 8.11.: ohitettiin hiljaa
+        self.assertTrue(ajuri.kelvollinen_nimi("2026-10-30-01-X.md"))
+        for n in ("../x.md", "2026-10-30-01-a/b.md", "2026-10-30-01-a.b.md", "2026-10-30-01-a_b.md", "2026-10-30-01-\u00e4.md",
+                  "2026-10-30-1-a.md", "a.md", "2026-10-30-01-a.txt", "2026-10-30-01-a b.md"):
             self.assertFalse(ajuri.kelvollinen_nimi(n), n)
+
+
+class KelvotonNimi(Pohja):
+    """Vika 7.11.2026: tehtava 2026-11-07-33-KIIRE-... ohitettiin hiljaa 2,5 h. Isot kirjaimet kelpaavat 8.11. alkaen; muut kelvottomat nimet nostetaan nakyviin."""
+
+    def test_kelvoton_loytyy_kelvollinen_ja_readme_eivat(self):
+        self.lisaa_tehtava("2026-11-07-33-kiire poista.md")
+        self.lisaa_tehtava("2026-11-07-34-ok.md")
+        self.lisaa_tehtava("README.md")
+        self.assertEqual(ajuri.kelvottomat_tehtavat(self.repo), ["2026-11-07-33-kiire poista.md"])
+
+    def test_varoitus_kerran_per_nimi(self):
+        self.lisaa_tehtava("2026-11-07-33-kiire poista.md")
+        viestit = []
+        self.assertEqual(ajuri.varoita_kelvottomista(self.repo, self.tmp, viestit.append), ["2026-11-07-33-kiire poista.md"])
+        self.assertEqual(ajuri.varoita_kelvottomista(self.repo, self.tmp, viestit.append), [])
+        self.assertEqual(len(viestit), 1)
+        self.assertIn("OHITTAA", viestit[0])
+        self.lisaa_tehtava("2026-11-07-35-toinen_x.md")
+        ajuri.varoita_kelvottomista(self.repo, self.tmp, viestit.append)
+        self.assertEqual(len(viestit), 2)
+        self.assertIn("2026-11-07-35-toinen_x.md", viestit[1])
+        self.assertNotIn("kiire poista", viestit[1])
+
+    def test_rikkinainen_tilatiedosto_ei_kaada(self):
+        self.lisaa_tehtava("2026-11-07-33-kiire poista.md")
+        (self.tmp / ajuri.NIMIVAROITUKSET).write_text("{rikki")
+        viestit = []
+        self.assertEqual(len(ajuri.varoita_kelvottomista(self.repo, self.tmp, viestit.append)), 1)
+
+    def test_ilman_lahettajaa_ei_mitaan(self):
+        self.lisaa_tehtava("2026-11-07-33-kiire poista.md")
+        self.assertEqual(ajuri.varoita_kelvottomista(self.repo, self.tmp, None), [])
+        self.assertFalse((self.tmp / ajuri.NIMIVAROITUKSET).exists())
+
+    def test_lahetysvirhe_ei_kaada_eika_kirjaa_tilaa(self):
+        self.lisaa_tehtava("2026-11-07-33-kiire poista.md")
+
+        def rikki(_):
+            raise OSError("verkko alhaalla")
+        self.assertEqual(ajuri.varoita_kelvottomista(self.repo, self.tmp, rikki), [])
+        self.assertEqual(ajuri.varoita_kelvottomista(self.repo, self.tmp, lambda _: False), [])
+        self.assertFalse((self.tmp / ajuri.NIMIVAROITUKSET).exists())
+        viestit = []
+        self.assertEqual(len(ajuri.varoita_kelvottomista(self.repo, self.tmp, viestit.append)), 1)
+
+    def test_aja_ajaa_kelvollisen_vaikka_lahetys_kaatuu(self):
+        self.lisaa_tehtava("2026-11-07-33-kiire poista.md")
+        self.lisaa_tehtava("2026-11-07-34-ok.md")
+
+        def f(kom, **kw):
+            return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": "r\nTodennettu kaytossa: testi"}), "")
+
+        muut = []
+
+        def rikki(teksti):   # vain nimivaroitus kaatuu; muut viestit kulkevat (testataan, ettei varoitus esta ajoa)
+            if "OHITTAA" in teksti:
+                raise RuntimeError("telegram alhaalla")
+            muut.append(teksti)
+        with contextlib.redirect_stderr(io.StringIO()):
+            viesti = ajuri.aja(self.repo, self.tmp, env={}, suorita=f, laheta=rikki)
+        self.assertIn("2026-11-07-34-ok.md VALMIS", viesti)
+        self.assertFalse((self.tmp / ajuri.NIMIVAROITUKSET).exists())
+
+    def test_aja_varoittaa_ja_ajaa_kelvollisen(self):
+        self.lisaa_tehtava("2026-11-07-33-kiire poista.md")
+        self.lisaa_tehtava("2026-11-07-34-ok.md")
+
+        def f(kom, **kw):
+            return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": "r\nTodennettu kaytossa: testi"}), "")
+        viestit = []
+        viesti = ajuri.aja(self.repo, self.tmp, env={}, suorita=f, laheta=viestit.append)
+        self.assertIn("2026-11-07-34-ok.md VALMIS", viesti)
+        self.assertTrue(any("OHITTAA" in v and "kiire poista" in v for v in viestit), viestit)
+
+
+class IsotKirjaimet(Pohja):
+    """Vika 7.-8.11.2026: KIIRE-tehtavat 33, 13, 39 ja 55 seisoivat 1,5-2,7 h, koska kaava salli vain pienet kirjaimet."""
+
+    def test_kiire_tehtava_valitaan_ja_ei_varoitusta(self):
+        self.lisaa_tehtava("2026-11-08-55-KIIRE-pr239-yhdista-main.md")
+        self.lisaa_tehtava("2026-11-08-56-muu.md")
+        self.assertEqual(ajuri.seuraava_tehtava(self.repo).name, "2026-11-08-55-KIIRE-pr239-yhdista-main.md")
+        self.assertEqual(ajuri.kelvottomat_tehtavat(self.repo), [])
+
+    def test_slug_ei_riipu_kirjainkoosta(self):
+        self.assertEqual(ajuri.tehtavan_slug("2026-11-08-55-KIIRE-Korjaa.md"), "kiire-korjaa")
+        self.assertEqual(ajuri.tehtavan_slug("2026-11-08-02-auto-Nimi.md"), "nimi")
+        self.assertEqual(ajuri.tehtavan_slug("2026-11-08-02-AUTO-nimi.md"), "nimi")
+
+    def test_suodatus_tunnistaa_saman_nimen_eri_kirjainkoolla(self):
+        self.lisaa_tehtava("2026-11-08-55-KIIRE-korjaa.md", "# a\n\nyksi")
+        ok, hylatyt = ajuri.suodata_uudet(self.repo, [{"nimi": "kiire-korjaa", "sisalto": "# b\n\nkaksi"},
+                                                      {"nimi": "Uusi", "sisalto": "# c"}, {"nimi": "uusi", "sisalto": "# d"}])
+        self.assertEqual([t["nimi"] for t in ok], ["Uusi"])
+        self.assertEqual([h[0] for h in hylatyt], ["kiire-korjaa", "uusi"])
 
 
 class GitVirhe(Pohja):
@@ -65,7 +165,7 @@ class Valinta(Pohja):
     def test_vanhin_ilman_tulosta_ja_kelvoton_ohitetaan(self):
         self.lisaa_tehtava("2026-10-30-02-b.md")
         self.lisaa_tehtava("2026-10-30-01-a.md")
-        self.lisaa_tehtava("2026-10-29-01-HUONO.md")
+        self.lisaa_tehtava("2026-10-29-01-huono_nimi.md")
         (self.repo / ajuri.JONO / "tulokset").mkdir()
         (self.repo / ajuri.JONO / "tulokset" / "2026-10-30-01-a.md").write_text("tehty")
         self.assertEqual(ajuri.seuraava_tehtava(self.repo).name, "2026-10-30-02-b.md")
@@ -228,10 +328,10 @@ class Itsesuunnittelu(Pohja):
         (self.repo / ajuri.JONO / "tulokset" / "2026-10-30-01-a.md").write_text("ok")
         git(self.repo, "add", "-A"); git(self.repo, "commit", "-q", "-m", "t"); git(self.repo, "push", "-q", "origin", "main")
         vastaus = json.dumps({"tehtavat": [
-            {"nimi": "korjaa-x", "sisalto": "# X\n\nValmis kun: x"},
+            {"nimi": "korjaa-x", "sisalto": "# X\n\nTavoite: yllapito\nValmis kun: x"},
             {"nimi": "HUONO NIMI", "sisalto": "y"},
-            {"nimi": "toinen", "sisalto": "# Y"},
-            {"nimi": "kolmas", "sisalto": "# Z"}], "tonylle": "Nosta katto?"})
+            {"nimi": "toinen", "sisalto": "# Y\nTavoite: yllapito"},
+            {"nimi": "kolmas", "sisalto": "# Z\nTavoite: yllapito"}], "tonylle": "Nosta katto?"})
         v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli("Tassa:\n" + vastaus), nyt=self.nyt())
         self.assertIn("itsesuunnittelu", v)
         tied = self.origin_tiedostot()
@@ -307,7 +407,7 @@ class Itsesuunnittelu(Pohja):
 
     def test_tehtavia_tuottanut_kierros_ei_aloita_taukoa(self):
         kutsut = []
-        f = self.malli(json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A"}], "tonylle": ""}), kutsut)
+        f = self.malli(json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A\nTavoite: yllapito"}], "tonylle": ""}), kutsut)
         ajuri.suunnittele(self.repo, self.tmp, {}, f, nyt=self.nyt())
         ajuri.suunnittele(self.repo, self.tmp, {}, f, nyt=self.nyt())
         self.assertEqual(len(kutsut), 2)
@@ -374,7 +474,7 @@ class TonylleKirjoitus(Pohja):
         self.assertFalse((self.repo / ajuri.JONO / ajuri.TONYLLE).exists())
 
     def test_tonylle_ja_tehtava_samassa_commitissa(self):
-        vastaus = json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A"}], "tonylle": "kysymys"})
+        vastaus = json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A\nTavoite: yllapito"}], "tonylle": "kysymys"})
         v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli(vastaus), nyt=self.nyt())
         self.assertEqual(v, "claude-jono: itsesuunnittelu -> 2026-10-30-01-auto-a.md, tonylle.md")
         self.assertEqual(self.origin_tiedostot(), ["claude-jono/tehtavat/2026-10-30-01-auto-a.md", "claude-jono/tonylle.md"])
@@ -501,7 +601,7 @@ class JulkaisuPushVirhe(Pohja):
     def test_suunnittele_pushin_epaonnistuessa_ei_kaadu(self):
         # Nykytoiminta: julkaise()n paluuarvoa ei lueta, joten viesti ei kerro epaonnistumisesta (ks. PR:n kuvaus).
         self.hylkaa_pushit()
-        vastaus = json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A"}], "tonylle": ""})
+        vastaus = json.dumps({"tehtavat": [{"nimi": "a", "sisalto": "# A\nTavoite: yllapito"}], "tonylle": ""})
 
         def f(kom, **kw):
             return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": vastaus}), "")
@@ -749,6 +849,78 @@ class TulosPortti(Pohja):
         self.lisaa_tehtava("2026-11-03-02-b.md")
         f, _ = self.suorita({"subtype": "error", "result": "x"}, koodi=1)
         self.assertIn("EPAONNISTUI", ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_ITSESUUNNITTELU": "0"}, suorita=f))
+
+
+class DocsOhitusNakyviin(Pohja):
+    """Vika 9.11.2026: tehtava 31 kirjoitti seuranta.py:n ja testit docs-ulos/:iin; ajuri pudotti .py:t hiljaa ja tulos sanoi VALMIS."""
+
+    def aja_docs(self, tiedostot, tulos="Tehty.\n\nTodennettu k\u00e4yt\u00f6ss\u00e4: testit 27/27 l\u00e4pi"):
+        self.lisaa_tehtava("2026-11-03-01-a.md")
+
+        def f(kom, **kw):
+            ulos = Path(kw["cwd"]) / ajuri.DOCS_ULOS
+            for nimi, data in tiedostot.items():
+                (ulos / nimi).parent.mkdir(parents=True, exist_ok=True)
+                (ulos / nimi).write_text(data, encoding="utf-8")
+            return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": tulos}), "")
+        viesti = ajuri.aja(self.repo, self.tmp, env={"CLAUDEJONO_ITSESUUNNITTELU": "0"}, suorita=f)
+        return viesti, (self.repo / ajuri.JONO / "tulokset" / "2026-11-03-01-a.md").read_text(encoding="utf-8")
+
+    def test_pudotettu_py_nakyy_ja_tila_kesken(self):
+        viesti, tulos = self.aja_docs({"claude-jono/tyokalut/seuranta.py": "print(1)\n",
+                                       "claude-jono/tyokalut/README.md": "ohje\n"})
+        self.assertIn("KESKEN", viesti)
+        self.assertIn("- Tila: KESKEN", tulos)
+        self.assertIn("`claude-jono/tyokalut/seuranta.py`: polku tai paate ei sallittu", tulos)
+        self.assertNotIn("README.md`", tulos)   # sallittu tiedosto ei ole ohitettujen listassa
+        self.assertTrue((self.repo / "claude-jono/tyokalut/README.md").exists())
+        self.assertFalse((self.repo / "claude-jono/tyokalut/seuranta.py").exists())
+        self.assertLess(tulos.index("## Huom: docs-ulos/"), tulos.index("Tehty."))   # alussa, ei katkea
+
+    def test_kaikki_sallittu_pysyy_valmiina(self):
+        viesti, tulos = self.aja_docs({"claude-jono/muistiot/m.md": "muistio\n"})
+        self.assertIn("- Tila: VALMIS", tulos)
+        self.assertNotIn("Huom: docs-ulos", tulos)
+        self.assertTrue((self.repo / "claude-jono/muistiot/m.md").exists())
+
+    def test_kesken_ilman_todennusta_saa_silti_huomion(self):
+        _, tulos = self.aja_docs({"claude-jono/kompassi.md": "x\n"}, tulos="Tehty.")
+        self.assertIn("- Tila: KESKEN", tulos)
+        self.assertIn("`claude-jono/kompassi.md`", tulos)
+
+    def test_poimi_ilmoittaa_syyt(self):
+        with tempfile.TemporaryDirectory() as d:
+            kaista, repo = Path(d) / "k", Path(d) / "repo"
+            repo.mkdir()
+            ulos = ajuri.valmistele_docs_ulos(kaista, {})
+            (ulos / "claude-jono").mkdir()
+            (ulos / "claude-jono" / "iso.md").write_text("x" * (ajuri.DOCS_MAX_TAVUA + 1))
+            (ulos / "claude-jono" / "b.md").write_bytes(b"\xff\xfe")
+            (ulos / "claude-jono" / "a.md").write_text("ok")
+            ohitetut = []
+            polut = ajuri.poimi_docs_ulos(kaista, repo, {}, ohitetut=ohitetut)
+            self.assertEqual(polut, [repo / "claude-jono/a.md"])
+            syyt = dict(ohitetut)
+            self.assertIn("tavua", syyt["claude-jono/iso.md"])
+            self.assertEqual(syyt["claude-jono/b.md"], "ei UTF-8")
+            self.assertNotIn("claude-jono/a.md", syyt)
+
+    def test_tiedostoraja_ilmoitetaan(self):
+        with tempfile.TemporaryDirectory() as d:
+            kaista, repo = Path(d) / "k", Path(d) / "repo"
+            repo.mkdir()
+            ulos = ajuri.valmistele_docs_ulos(kaista, {})
+            (ulos / "claude-jono").mkdir()
+            for i in range(ajuri.DOCS_MAX_TIEDOSTOJA + 2):
+                (ulos / "claude-jono" / f"m{i:02d}.md").write_text("x")
+            ohitetut = []
+            polut = ajuri.poimi_docs_ulos(kaista, repo, {}, ohitetut=ohitetut)
+            self.assertEqual(len(polut), ajuri.DOCS_MAX_TIEDOSTOJA)
+            self.assertEqual(len(ohitetut), 2)
+            self.assertTrue(all("tiedostoa" in syy for _, syy in ohitetut))
+
+    def test_huom_tyhja_ilman_ohitettuja(self):
+        self.assertEqual(ajuri.docs_ohitus_huom([]), "")
 
 
 class DocsKirjoitusTesti(unittest.TestCase):
