@@ -188,7 +188,7 @@ class AjuriYhteysTesti(Pohja):
 
     def test_ajo_antaa_virheopit_mallille(self):
         self.kirjoita_loki(VANHA + uusi(saanto="aikapommi ei saa palata", koskee="claudejono/laatu.py"))
-        self.lisaa_tehtava("2026-11-08-01-a.md", "Muuta claudejono/laatu.py")
+        self.lisaa_tehtava("2026-11-08-01-a.md", "Muuta claudejono/laatu.py\nTavoite: yllapito")
         nahty = []
 
         def f(kom, **kw):
@@ -261,7 +261,7 @@ class AjuriYhteysTesti(Pohja):
             ajuri.AUTO_PER_AJO = vanha
 
     def _aja_ja_laske_luonnit(self, env, nro="01"):
-        self.lisaa_tehtava(f"2026-11-08-{nro}-a.md", "Kirjoita opas")
+        self.lisaa_tehtava(f"2026-11-08-{nro}-a.md", "Kirjoita opas\nTavoite: yllapito")
         kutsut = []
         with mock.patch.object(ajuri, "luo_ehkaisytehtavat", lambda *a, **k: kutsut.append(1) or []):
             ajuri.aja(self.repo, self.tmp, env=env, suorita=lambda kom, **kw: subprocess.CompletedProcess(
