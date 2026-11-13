@@ -10,6 +10,7 @@ Kaytto:
 Ilman --laheta tulostetaan vain osumat. Vain stdlib. Virheista tulostetaan vain tyypin nimi."""
 import argparse
 import json
+import os
 import re
 import sys
 import urllib.request
@@ -26,6 +27,7 @@ MAX_AJOSSA = 40
 NAYTETYT_MAX = 5000
 UA = "agentti-tyopaikat/1 (henkilokohtainen seuranta; ei massahakua)"
 LAHTEET = ("greenhouse", "lever", "ashby", "rss")
+EI_SOVI_TIEDOSTO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tyopaikat_ei_sovi.json")
 SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
 
 
@@ -98,6 +100,34 @@ def ei_sovi_syy(ilmoitus, ei_sovi=()):
     if any(_sana_re(l).search(teksti) for l in KORKEAKOULULAUSEET):
         return "ei sovi: korkeakouluvaatimus"
     return None
+
+
+def lataa_ei_sovi(polku=None):
+    """Lukee versionhallinnassa olevan ei_sovi-listan ({"ei_sovi": [...]}). Puuttuva tai rikkinainen tiedosto
+    antaa tyhjan listan (virheesta vain tyyppi stderriin, ajo jatkuu)."""
+    polku = polku or EI_SOVI_TIEDOSTO
+    try:
+        with open(polku, encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError) as e:
+        print("ei_sovi-tiedosto: %s" % type(e).__name__, file=sys.stderr)
+        return []
+    lista = data.get("ei_sovi") if isinstance(data, dict) else None
+    return [r for r in lista if isinstance(r, dict)] if isinstance(lista, list) else []
+
+
+def _ei_sovi_avain(r):
+    return (laskosta(r.get("yritys", "")), laskosta(r.get("otsikko", "")))
+
+
+def yhdista_ei_sovi(repo, isanta):
+    """Yhdistaa repon ja isannan listat. Isannan asetus voittaa: jos sama yritys+otsikko on molemmissa, kaytetaan
+    isannan rivia (esim. eri syy). Isannan rivit tulevat ensin."""
+    isanta = [r for r in (isanta or []) if isinstance(r, dict)]
+    avaimet = {_ei_sovi_avain(r) for r in isanta}
+    return isanta + [r for r in (repo or []) if _ei_sovi_avain(r) not in avaimet]
 
 
 def hae_json(osoite, avaa=None):
@@ -264,6 +294,9 @@ def main(argv=None):
         print("asetukset: %s" % type(e).__name__, file=sys.stderr)
         return 2
     hylatyt = []
+    asetukset = dict(asetukset)
+    lista = asetukset.get("ei_sovi")
+    asetukset["ei_sovi"] = yhdista_ei_sovi(lataa_ei_sovi(), lista if isinstance(lista, list) else [])
     osumat, virheet = aja(asetukset, a.tila, laheta=a.laheta, hylatyt=hylatyt)
     for i in osumat:
         print("%s | %s | %s" % (i["yritys"], i["otsikko"], i["osoite"]))

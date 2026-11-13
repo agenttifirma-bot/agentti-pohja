@@ -70,7 +70,7 @@ systemctl disable --now claude-jono.timer
 systemctl enable --now claude-jono@1.timer claude-jono@2.timer claude-kaistamittaus.timer
 systemctl list-timers 'claude-*'
 ```
-Kolmas kaista (vasta mittausdatan jälkeen): vaihda `Environment=CLAUDEJONO_KAISTOJA=2` arvoon 3 tiedostossa `/etc/systemd/system/claude-jono@.service`, `systemctl daemon-reload` ja `systemctl enable --now claude-jono@3.timer`.
+Mallissa on `Environment=CLAUDEJONO_KAISTOJA=3` (jos isännän tiedostossa on vielä 2, vaihda se arvoon 3 tiedostossa `/etc/systemd/system/claude-jono@.service`, `systemctl daemon-reload` ja `systemctl enable --now claude-jono@3.timer`).
 Peruutus: `systemctl disable --now claude-jono@2.timer claude-jono@3.timer`; kaista 1 jatkaa yksin. Täysi paluu vanhaan: `systemctl disable --now claude-jono@1.timer` ja `systemctl enable --now claude-jono.timer`.
 
 Muistin lisäys (CT115, `pct set`) tehdään erikseen Tonyn toimesta hostilta; ajuri ei koske siihen. Kaksi rinnakkaista `claude -p` -ajoa kuluttaa muistia ja tilauksen käyttörajaa kaksinkertaisesti, ja mittaus kertoo, kumpi rajoittaa.

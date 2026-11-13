@@ -1,8 +1,11 @@
 import io
 import json
+import os
 import subprocess
+import tempfile
 import unittest
 import urllib.error
+from unittest import mock
 
 from tools import kayttoonotto_ero as k
 
@@ -109,6 +112,104 @@ class Testit(unittest.TestCase):
         koodi, ulos = aja(avaaja({}), suorita=huono)
         self.assertEqual(koodi, 2)
         self.assertIn("safe.directory", ulos)
+
+
+TUNNUS = "x" * 30   # tekaistu, ei oikea
+
+
+class Lukutunnus(unittest.TestCase):
+    """Vain luku -tunnus kaytetaan, jos tiedosto on olemassa (A744); muuten pyynto on tunnistautumaton."""
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="ero-testi-")
+        self.addCleanup(subprocess.run, ["rm", "-rf", self.tmp])
+        self.polku = os.path.join(self.tmp, "github-luku.token")
+
+    def ymparisto(self, polku):
+        return mock.patch.dict(os.environ, {"GITHUB_LUKU_TUNNUS_POLKU": polku})
+
+    def kirjaaja(self, virhe401=False):
+        pyynnot = []
+
+        def avaa(pyynto, timeout=None):
+            pyynnot.append(pyynto)
+            if virhe401 and pyynto.get_header("Authorization"):
+                raise urllib.error.HTTPError(pyynto.full_url, 401, "x", {}, None)
+            return Vastaus(json.dumps({"ahead_by": 0, "behind_by": 0, "commits": []}).encode())
+        return avaa, pyynnot
+
+    def test_tunnus_lisataan_kun_tiedosto_on(self):
+        with open(self.polku, "w") as f:
+            f.write(TUNNUS + "\n")
+        avaa, pyynnot = self.kirjaaja()
+        with self.ymparisto(self.polku):
+            k.hae_vertailu("agentti-pohja", SHA, "main", avaa=avaa)
+            k.repo_nakyy("agentti-pohja", avaa=avaa)
+        self.assertEqual(len(pyynnot), 2)
+        for p in pyynnot:
+            self.assertEqual(p.get_header("Authorization"), "Bearer " + TUNNUS)
+            self.assertTrue(p.full_url.startswith("https://api.github.com/"))
+
+    def test_ilman_tiedostoa_pyynto_on_tunnistautumaton(self):
+        avaa, pyynnot = self.kirjaaja()
+        with self.ymparisto(os.path.join(self.tmp, "ei-ole")):
+            k.hae_vertailu("agentti-pohja", SHA, "main", avaa=avaa)
+        self.assertIsNone(pyynnot[0].get_header("Authorization"))
+
+    def test_hylatty_tunnus_toistetaan_ilman_tunnusta(self):
+        with open(self.polku, "w") as f:
+            f.write(TUNNUS)
+        avaa, pyynnot = self.kirjaaja(virhe401=True)
+        with self.ymparisto(self.polku):
+            self.assertEqual(k.hae_vertailu("agentti-pohja", SHA, "main", avaa=avaa)["ahead_by"], 0)
+        self.assertEqual([bool(p.get_header("Authorization")) for p in pyynnot], [True, False])
+
+    def test_tunnus_ei_nay_virheessa(self):
+        with open(self.polku, "w") as f:
+            f.write(TUNNUS)
+
+        def avaa(pyynto, timeout=None):
+            raise urllib.error.HTTPError(pyynto.full_url, 403, "x", {}, None)
+        with self.ymparisto(self.polku):
+            with self.assertRaises(k.EroVirhe) as e:
+                k.hae_vertailu("agentti-pohja", SHA, "main", avaa=avaa)
+        self.assertNotIn(TUNNUS, str(e.exception) + e.exception.lyhyt)
+        self.assertEqual(e.exception.lyhyt, "GitHub HTTP 403")
+
+
+class DubiousOwnership(unittest.TestCase):
+    """Eri kayttajan omistama kopio: yksi toisto `-c safe.directory=<vain tama polku>`, ei globaalia asetusta."""
+    DUBIOUS = "fatal: detected dubious ownership in repository at '/x'"
+
+    def test_toisto_safe_directoryn_kanssa(self):
+        kutsut = []
+
+        def suorita(komento, **kw):
+            kutsut.append(komento)
+            if "safe.directory=" + os.path.realpath("/x") in komento:
+                return subprocess.CompletedProcess(komento, 0, stdout=SHA + "\n", stderr="")
+            return subprocess.CompletedProcess(komento, 128, stdout="", stderr=self.DUBIOUS)
+        self.assertEqual(k.paikallinen_commit("/x", suorita=suorita), SHA)
+        self.assertEqual(len(kutsut), 2)
+        self.assertNotIn("safe.directory=*", " ".join(kutsut[1]))
+        self.assertNotIn("config", kutsut[1])   # ei kirjoiteta gitin asetuksiin
+
+    def test_muu_git_virhe_ei_toisteta(self):
+        kutsut = []
+
+        def suorita(komento, **kw):
+            kutsut.append(komento)
+            return subprocess.CompletedProcess(komento, 128, stdout="", stderr="fatal: not a git repository")
+        with self.assertRaises(k.EroVirhe) as e:
+            k.paikallinen_commit("/x", suorita=suorita)
+        self.assertEqual(len(kutsut), 1)
+        self.assertEqual(e.exception.lyhyt, "git: kopio ei ole luettava")
+
+    def test_toisto_epaonnistuu_kertoo_syyn(self):
+        def suorita(komento, **kw):
+            return subprocess.CompletedProcess(komento, 128, stdout="", stderr=self.DUBIOUS)
+        with self.assertRaises(k.EroVirhe) as e:
+            k.paikallinen_commit("/x", suorita=suorita)
+        self.assertIn("omistaja", e.exception.lyhyt)
 
 
 if __name__ == "__main__":
