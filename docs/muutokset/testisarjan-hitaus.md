@@ -1,0 +1,1 @@
+- testit: koko sarja nopeutui (1873 -> 1874 testia; ks. PR-kuvaus). test_julkaise injektoi JULKAISU_TS-kellon eika enaa nuku sekuntirajoja, test_ajuri ei enaa tee oikeita GitHub-kutsuja (paivita_opit ja laheta_aamupaketti mockattu), test_hiekkalaatikko odottaa lipputiedostoa sleep 5:n sijaan. +1 testi (oikea kello kattaa date-oletuksen). Tuotantokoodi ennallaan.
