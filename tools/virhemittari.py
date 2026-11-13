@@ -98,11 +98,11 @@ def luokittele_loki(teksti):
 
 
 def lue_loki(teksti):
-    """[(date, merkinnan_teksti)]: rivit '- PVM ...' ja osiot '## P.K.VVVV: otsikko' runkoineen."""
+    """[(date, merkinnan_teksti)]: rivit '- VVVV-KK-PP ...' ja '- P.K.VVVV [klo HH.MM] ...' sek\u00e4 osiot '## P.K.VVVV: otsikko' runkoineen."""
     merkinnat = []
     nykyinen = None
     for rivi in teksti.splitlines():
-        alku = re.match(r"- (\d{4}-\d{2}-\d{2})\b", rivi)
+        alku = re.match(r"- (\d{4}-\d{2}-\d{2}|\d{1,2}\.\d{1,2}\.\d{4})\b", rivi)
         osio = re.match(r"## (\d{1,2}\.\d{1,2}\.\d{4})\b", rivi)
         if alku or osio:
             if nykyinen:
