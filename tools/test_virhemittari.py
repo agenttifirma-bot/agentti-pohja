@@ -51,6 +51,20 @@ class LokiTesti(unittest.TestCase):
         m = vm.lue_loki("- 2026-11-01: a\n- 2026-11-02 klo 10.00: b\n")
         self.assertEqual([p.isoformat() for p, _ in m], ["2026-11-01", "2026-11-02"])
 
+    def test_luettelorivin_pkvvvv_kulkee_paivamaaramuunnoksen_lapi(self):
+        loki = ("- 3.11.2026 klo 6.50 \u2014 ensimm\u00e4inen\n"
+                "- 12.11.2026 \u2014 kaksinumeroinen p\u00e4iv\u00e4\n"
+                "- 1.12.2026: yksinumeroinen\n")
+        m = vm.lue_loki(loki)
+        self.assertEqual([p.isoformat() for p, _ in m], ["2026-11-03", "2026-11-12", "2026-12-01"])
+        self.assertTrue(m[0][1].startswith("- 3.11.2026"))
+
+    def test_mahdoton_paivamaara_ohitetaan_eika_kaada(self):
+        self.assertIsNone(vm.parse_paiva("31.2.2026"))
+        self.assertIsNone(vm.parse_paiva("2026-02-30"))
+        m = vm.lue_loki("- 31.2.2026 \u2014 virheellinen\n- 12.11.2026 \u2014 ok\n")
+        self.assertEqual([p.isoformat() for p, _ in m], ["2026-11-12"])
+
     def test_luokittelematon_ei_arvaa(self):
         self.assertEqual(vm.luokittele_loki("- 2026-11-02: Jokin tuntematon virhe"), "?")
 

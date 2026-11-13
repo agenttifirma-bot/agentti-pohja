@@ -71,14 +71,19 @@ AIKA_RE = (r"(?:(\d{4})-(\d{2})-(\d{2})|(\d{1,2})\.(\d{1,2})\.(\d{4}))"
 
 
 def parse_paiva(teksti):
-    """'2026-11-02' tai '4.11.2026' -> date; muuten None."""
+    """'2026-11-02' tai '4.11.2026' -> date; muuten (my\u00f6s mahdoton p\u00e4iv\u00e4, esim. 31.2.2026) None."""
     m = re.match(r"(\d{4})-(\d{2})-(\d{2})", teksti)
     if m:
-        return datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-    m = re.match(r"(\d{1,2})\.(\d{1,2})\.(\d{4})", teksti)
-    if m:
-        return datetime.date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
-    return None
+        vkp = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    else:
+        m = re.match(r"(\d{1,2})\.(\d{1,2})\.(\d{4})", teksti)
+        if not m:
+            return None
+        vkp = (int(m.group(3)), int(m.group(2)), int(m.group(1)))
+    try:
+        return datetime.date(*vkp)
+    except ValueError:
+        return None
 
 
 def viikko(paiva):
