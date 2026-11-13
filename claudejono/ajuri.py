@@ -355,16 +355,16 @@ def kirjaa_hylkaystulos(repo, tila, polku, peruste, hylatyt=None):
     """Tavoiteportin hylkays nakyviin: tulostiedosto `- Tila: EPAONNISTUI` + syy, kerran per tehtava (olemassa olevaa tulosta ei
     ylikirjoiteta, ja tulos poistaa tehtavan jonosta). Tehtavaa ei ajeta. Kirjattu polku lisataan listaan `hylatyt` julkaisua varten."""
     kohde = Path(repo) / JONO / "tulokset" / polku.name
-    tavoite.kirjaa_hylkays(tila, polku.name, peruste)
     if kohde.exists():
         return None
     try:
         p = kirjoita_tulos(repo, polku.name, False, "Tehtavaa ei ajettu: tavoiteportti hylkasi sen.\n\n- Syy: " + peruste + "\n"
                            "- Korjaus: lisaa tehtavan alkuun rivi `Tavoite: portfolio|ansainta|Aivo|yllapito` ja luo tehtava uudella nimella.",
                            tila="EPAONNISTUI")
-    except OSError as virhe:
-        print(f"kirjaa_hylkaystulos: {type(virhe).__name__}", file=sys.stderr)
+    except Exception as virhe:   # mikaan kirjauksen vika (OSError, JonoVirhe...) ei saa kaataa ajokierrosta; BaseException nousee edelleen
+        print(f"kirjaa_hylkaystulos: {polku.name}: {type(virhe).__name__}", file=sys.stderr)
         return None
+    tavoite.kirjaa_hylkays(tila, polku.name, peruste)   # kertakirjaus vasta, kun tulos on kirjoitettu; epaonnistunut kirjaus yritetaan uudelleen
     if hylatyt is not None:
         hylatyt.append(p)
     return p

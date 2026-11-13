@@ -61,6 +61,48 @@ class Hylkaystulos(unittest.TestCase):
         self.assertIsNone(ajuri.kirjaa_hylkaystulos(repo, tila, repo / "claude-jono" / "tehtavat" / NIMI, "syy", h))
         self.assertEqual((tulos(repo).read_text(encoding="utf-8"), h), ("vanha", []))
 
+    def _kirjoita_tulos_nostaa(self, virhe):
+        vanha = ajuri.kirjoita_tulos
+        def nosta(*a, **k):
+            raise virhe
+        ajuri.kirjoita_tulos = nosta
+        self.addCleanup(setattr, ajuri, "kirjoita_tulos", vanha)
+
+    def test_kirjoitusvirhe_ei_kaada_ajokierrosta_ja_nakyy_lokissa(self):
+        """JonoVirhe (ei OSError) kirjoita_tulos-kutsusta: seuraava kelvollinen tehtava valitaan ja virhe kirjataan stderriin tehtavan nimella."""
+        repo, tila = pystyta("Tavoite: rahaa\n")
+        (repo / "claude-jono" / "tehtavat" / "2026-11-12-02-kelpaa.md").write_text("Tavoite: portfolio\n", encoding="utf-8")
+        self._kirjoita_tulos_nostaa(ajuri.JonoVirhe("salaisuus-ei-tulosteta"))
+        hylatyt = []
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            valittu = ajuri.varaa_seuraava(repo, tila, 1, hylatyt=hylatyt)
+        self.assertEqual(valittu.name, "2026-11-12-02-kelpaa.md")
+        self.assertEqual(hylatyt, [])
+        self.assertIn(NIMI, err.getvalue())
+        self.assertIn("JonoVirhe", err.getvalue())
+        self.assertNotIn("salaisuus", err.getvalue())
+
+    def test_baseexception_nousee_edelleen(self):
+        repo, tila = pystyta("Tavoite: rahaa\n")
+        self._kirjoita_tulos_nostaa(KeyboardInterrupt())
+        with self.assertRaises(KeyboardInterrupt):
+            ajuri.varaa_seuraava(repo, tila, 1)
+
+    def test_epaonnistunut_kirjoitus_ei_kuluta_kertakirjausta(self):
+        """Hylkayslokiin kirjataan vasta onnistuneen tuloksen jalkeen: epaonnistunut kirjoitus yritetaan seuraavalla kierroksella uudelleen."""
+        repo, tila = pystyta("Tavoite: rahaa\n")
+        vanha = ajuri.kirjoita_tulos
+        self._kirjoita_tulos_nostaa(ajuri.JonoVirhe("x"))
+        with contextlib.redirect_stderr(io.StringIO()):
+            ajuri.varaa_seuraava(repo, tila, 1)
+        self.assertFalse((tila / tavoite.HYLKAYSLOKI).exists())
+        ajuri.kirjoita_tulos = vanha
+        h = []
+        ajuri.varaa_seuraava(repo, tila, 1, hylatyt=h)
+        self.assertEqual(h, [tulos(repo)])
+        self.assertEqual(len((tila / tavoite.HYLKAYSLOKI).read_text().splitlines()), 1)
+
     def test_kelpaava_ei_tulosta(self):
         repo, tila = pystyta("Tavoite: portfolio\n")
         hylatyt = []
