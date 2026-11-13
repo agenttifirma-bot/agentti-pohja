@@ -113,8 +113,8 @@ def on_todennettu(teksti):
 
 # Raportti, joka itse ilmoittaa rivin alussa "Tila: KESKEN" (myos lihavoituna), ei ole VALMIS vaikka todennusrivi olisi.
 # Lainaukset (>), sisennetyt rivit ja koodilohkot eivat laukaise.
-KESKEN_ILMOITUS_RE = re.compile(r"^[ ]{0,3}(?:\*\*|__)?[ \t]*Tila[ \t]*:[ \t]*(?:\*\*|__)?[ \t]*KESKEN\b", re.IGNORECASE | re.MULTILINE)
-KOODILOHKO_RE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,}).*?(?:^[ ]{0,3}\1[`~]*[ \t]*$|\Z)", re.MULTILINE | re.DOTALL)
+KESKEN_ILMOITUS_RE = re.compile(r"^[ ]{0,3}(?:(?:\*\*|__)[ \t]*)?Tila[ \t]*:[ \t]*(?:\*\*|__)?[ \t]*KESKEN\b", re.IGNORECASE | re.MULTILINE)
+KOODILOHKO_RE = re.compile(r"^[ ]{0,3}((?P<merkki>[`~])(?P=merkki){2,}).*?(?:^[ ]{0,3}\1(?P=merkki)*[ \t]*$|\Z)", re.MULTILINE | re.DOTALL)
 
 
 def ilmoittaa_kesken(teksti):

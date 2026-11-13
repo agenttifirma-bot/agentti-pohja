@@ -860,6 +860,17 @@ class TulosPortti(Pohja):
         self.assertFalse(ajuri.ilmoittaa_kesken("~~~\n**Tila: KESKEN.**\n~~~"))
         self.assertFalse(ajuri.ilmoittaa_kesken("> Tila: KESKEN"))
         self.assertFalse(ajuri.ilmoittaa_kesken("Tulos 13-07 sanoi Tila: KESKEN, mutta nyt valmis"))
+        # sisennys: 4+ valilyontia tai sarkain on sisennetty koodilohko, ei ilmoitus
+        self.assertFalse(ajuri.ilmoittaa_kesken("    Tila: KESKEN"))
+        self.assertFalse(ajuri.ilmoittaa_kesken("\tTila: KESKEN"))
+        self.assertFalse(ajuri.ilmoittaa_kesken("    **Tila: KESKEN**"))
+        self.assertTrue(ajuri.ilmoittaa_kesken("   Tila: KESKEN"))
+        self.assertTrue(ajuri.ilmoittaa_kesken("   **Tila: KESKEN**"))
+        # aidat: sulkeva aita on samaa merkkia, eika infotekstillinen rivi sulje lohkoa
+        self.assertFalse(ajuri.ilmoittaa_kesken("```\nx\n```~~\nTila: KESKEN"))
+        self.assertFalse(ajuri.ilmoittaa_kesken("```\nx\n~~~\nTila: KESKEN"))
+        self.assertTrue(ajuri.ilmoittaa_kesken("```\nx\n```\nTila: KESKEN"))
+        self.assertTrue(ajuri.ilmoittaa_kesken("~~~\nx\n~~~~\nTila: KESKEN"))
         self.assertFalse(ajuri.ilmoittaa_kesken("- Tila: KESKEN (lainaus toisesta tuloksesta)"))
         self.assertFalse(ajuri.ilmoittaa_kesken("Tila: KESKENERAINEN"))
         self.assertFalse(ajuri.ilmoittaa_kesken(""))
