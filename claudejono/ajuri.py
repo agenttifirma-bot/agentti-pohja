@@ -876,6 +876,18 @@ def hylatyt_prt(tila_hak, nyt=None, ika_pv=HYLATYT_IKA_PV):
     return ulos[:HYLATYT_MAX]
 
 
+def ilman_kasiteltyja(hylatyt, repo):
+    """Pudottaa listalta rivit, joille tehtavat/-hakemistossa on jo tiedosto, jonka nimi paattyy muotoon -pr-<nro>-<sha7>.md
+    (sama nimi kuin hylatyt_kehote ehdottaa). Puuttuva hakemisto tai lukuvirhe: lista sellaisenaan."""
+    teht = Path(repo) / JONO / "tehtavat"
+    try:
+        nimet = [p.name for p in teht.iterdir()]
+    except OSError:
+        return hylatyt
+    return [h for h in hylatyt
+            if not any(n.endswith(f"-pr-{h['pr']}-{h['sha'][:7]}.md") for n in nimet)]
+
+
 def hylatyt_kehote(hylatyt):
     if not hylatyt:
         return ""
@@ -896,7 +908,7 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None, kaista=1):
     if suunnittelu_tauolla(tyohak, repo, nyt, int(env.get("CLAUDEJONO_SUUNNITTELU_TAUKO_S", SUUNNITTELU_TAUKO_S))):
         return "jono tyhja (suunnittelu tauolla: edellinen kierros ei tuottanut tehtavia eika uusia tuloksia ole)"
     kehote = (KEHOTE.read_text(encoding="utf-8") + "\n\n" + SUUNNITTELU.read_text(encoding="utf-8")
-              + hylatyt_kehote(hylatyt_prt(Path(repo).parent, nyt))
+              + hylatyt_kehote(ilman_kasiteltyja(hylatyt_prt(Path(repo).parent, nyt), repo))
               + f"\n\nEhdota enintaan {tilaa} tehtavaa.\n")
     luo_kaistan_tyohak(tyohak, kaista, env)
     sm = mallit.suunnittelun_malli()   # suunnittelu = Opus (mallien tyonjako 3.11.2026)
