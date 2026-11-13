@@ -114,13 +114,14 @@ OTSIKKO_RIVI_RE = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+\S")
 
 
 def _otsikon_sisalto_kelpaa(rivit):
-    """True, jos otsikon alla (seuraavaan otsikkoon asti) on rivi, jolla on muu sisalto kuin tyhja tai viiva."""
+    """True, jos otsikon alla ensimmainen ei-tyhja rivi (ennen seuraavaa otsikkoa) ei ole tyhja eika viiva.
+    Sama saanto kuin rivimuodossa: ensimmainen sisaltorivi ratkaisee."""
     for rivi in rivit:
         if OTSIKKO_RIVI_RE.match(rivi):
             return False
         sisalto = re.sub(r"^[ \t>]*(?:[-*+][ \t]+)?", "", rivi)
-        if sisalto.strip() and not TODENNETTU_TYHJA_RE.match(sisalto):
-            return True
+        if sisalto.strip():
+            return not TODENNETTU_TYHJA_RE.match(sisalto)
     return False
 
 

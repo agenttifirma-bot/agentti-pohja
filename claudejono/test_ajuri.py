@@ -851,7 +851,8 @@ class TulosPortti(Pohja):
                        "## Todennettu kaytossa:\ntesti ajettu\n", "## todennettu k\u00e4yt\u00f6ss\u00e4\n\n\n> ajettu\n")
         tyhjat = ("## Todennettu k\u00e4yt\u00f6ss\u00e4\n", "## Todennettu k\u00e4yt\u00f6ss\u00e4\n\n## Tonylle opittavaa\nTeksti\n",
                   "## Todennettu k\u00e4yt\u00f6ss\u00e4\n-\n", "## Todennettu k\u00e4yt\u00f6ss\u00e4\n- TBD\n\n## Muu\nasia\n",
-                  "Todennettu k\u00e4yt\u00f6ss\u00e4 ilman otsikkoa\nmuuta\n")
+                  "Todennettu k\u00e4yt\u00f6ss\u00e4 ilman otsikkoa\nmuuta\n",
+                  "## Todennettu k\u00e4yt\u00f6ss\u00e4\n-\nmyohempi rivi ei pelasta\n")
         for t in kelvolliset:
             with self.subTest(kelvollinen=t):
                 self.assertTrue(ajuri.on_todennettu("raportti\n" + t))

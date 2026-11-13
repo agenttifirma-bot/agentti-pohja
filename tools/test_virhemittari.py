@@ -139,6 +139,18 @@ class KeskenSyyTesti(unittest.TestCase):
         self.assertIn("| 45 (2.11.\u20138.11.), kesken | 3 | 0 | 3 | 0 | 2 | 3 |", osio)
 
 
+class KeskenSyyRunkoTesti(unittest.TestCase):
+    def test_rungon_rivi_ei_ratkaise_syyta(self):
+        vanha = "# Tulos: x\n\n- Tila: KESKEN\n- Aika: 2026-11-01T10:00\n\nRaportti\n- KESKEN-syy: odottaa-yhdistamista\n"
+        self.assertIsNone(vm.lue_kesken_syy(vanha))
+        self.assertEqual(vm.luokittele_ajo("KESKEN", vanha), "1")
+
+    def test_otsikon_rivi_ratkaisee(self):
+        uusi = "# Tulos: x\n\n- Tila: KESKEN\n- KESKEN-syy: odottaa-yhdistamista\n- Aika: 2026-11-01T10:00\n\nRunko\n"
+        self.assertEqual(vm.lue_kesken_syy(uusi), "odottaa-yhdistamista")
+        self.assertEqual(vm.luokittele_ajo("KESKEN", uusi), "O")
+
+
 class LokiOtsikkoTesti(unittest.TestCase):
     LOKI2 = (
         "# Virheloki\n\n"
@@ -153,6 +165,17 @@ class LokiOtsikkoTesti(unittest.TestCase):
         self.assertEqual(vm.osio_paiva("30.10.\u20132.11.2026 \u2013 x").isoformat(), "2026-10-30")
         self.assertEqual(vm.osio_paiva("5.-6.11.2026: x").isoformat(), "2026-11-05")
         self.assertIsNone(vm.osio_paiva("31.2.2026: mahdoton"))
+
+    def test_vuodenvaihteen_yli_menevan_valin_alku_on_edellista_vuotta(self):
+        self.assertEqual(vm.osio_paiva("30.12.\u20132.1.2027 \u2013 x").isoformat(), "2026-12-30")
+        self.assertEqual(vm.viikko(vm.osio_paiva("30.12.-2.1.2027: x")), (2026, 53))
+        self.assertEqual(vm.osio_paiva("30.11.-2.12.2026: x").isoformat(), "2026-11-30")
+
+    def test_mahdoton_paiva_ja_numeroitu_otsikko_eivat_kaada_laskea(self):
+        loki = ("## 1. Yhteenveto\nteksti\n\n## 31.2.2026: mahdoton\nrunko\n\n## 5.11.2026: oikea\n- Mit\u00e4: y\n")
+        self.assertEqual([p.isoformat() for p, _ in vm.lue_loki(loki)], ["2026-11-05"])
+        rivit, _ = vm.laske(loki, [], datetime.date(2026, 11, 6))
+        self.assertEqual([(v, r["loki"]) for v, r in rivit], [((2026, 45), 1)])
 
     def test_vakavuus_lasketaan_vain_kirjatusta_rivista(self):
         rivit, _ = vm.laske(self.LOKI2, [], datetime.date(2026, 11, 6))

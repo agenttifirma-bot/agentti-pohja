@@ -97,7 +97,10 @@ def osio_paiva(otsikko):
         if re.match(r"\d{1,2}\.(?:\d{1,2}\.)?[ \t]*[\u2013\u2014-]", otsikko) else None
     try:
         if m:
-            return datetime.date(int(m.group(4)), int(m.group(2) or m.group(3)), int(m.group(1)))
+            vuosi = int(m.group(4))
+            if m.group(2) and m.group(3) and int(m.group(2)) > int(m.group(3)):
+                vuosi -= 1   # vuodenvaihteen yli: '30.12.-2.1.2027' alkaa vuonna 2026
+            return datetime.date(vuosi, int(m.group(2) or m.group(3)), int(m.group(1)))
     except ValueError:
         return None
     return parse_paiva(otsikko)
@@ -223,7 +226,14 @@ def lue_tulos(teksti):
 
 def lue_kesken_syy(teksti):
     """Tulostiedoston otsikon '- KESKEN-syy: koodi' -rivi; None jos rivia ei ole (vanha tulos)."""
-    m = KESKEN_SYY_RE.search(teksti)
+    # Vain otsikkolohko (yhtenainen '- ' -rivien jakso '- Tila:' -rivista); raportin rungon rivia ei lueta.
+    otsikko = []
+    for rivi in teksti.splitlines():
+        if otsikko or rivi.startswith("- Tila:"):
+            if not rivi.startswith("- "):
+                break
+            otsikko.append(rivi)
+    m = KESKEN_SYY_RE.search("\n".join(otsikko))
     return m.group(1).lower() if m else None
 
 
