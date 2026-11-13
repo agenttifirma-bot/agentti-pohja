@@ -311,6 +311,23 @@ class KulutTarkkaTesti(unittest.TestCase):
         self.assertIn("- 2026-10-07: tehtavien viimeisimmat ajot 0.50,", teksti)
         self.assertIn("- 2026-10-06: tehtavien viimeisimmat ajot 0.00,", teksti)
 
+    def test_taasmays_raporttien_summa_selittaa_ylikirjoitetun_rivin(self):
+        (self.t / "raportit").mkdir()
+        for nimi, kulu in (("2026-11-01-a.json", 0.5), ("2026-11-01-b.json", 0.7), ("2026-11-02-c.json", 0.3)):
+            (self.t / "raportit" / nimi).write_text(json.dumps({"total_cost_usd": kulu}))
+        (self.t / "raportit" / "2026-11-01-rikki.json").write_text("{")
+        self.kirjoita({"kulut": {"2026-11-01": 1.2, "2026-11-02": 0.3}, "tehtavat": {
+            "a": {"pvm": "2026-11-04", "kulu": 0.5}, "c": {"pvm": "2026-11-02", "kulu": 0.3}}})
+        rivit = tk.kulut_osio(self.t, None).splitlines()
+        self.assertTrue([l for l in rivit if l.startswith("- 2026-11-01:") and "-> OK, raporttien summa 1.20 tasmaa" in l])
+        self.assertTrue([l for l in rivit if l.startswith("- 2026-11-02:") and l.endswith("-> OK")])
+
+    def test_taasmays_ero_pysyy_erona_ilman_tasmaavia_raportteja(self):
+        (self.t / "raportit").mkdir()
+        (self.t / "raportit" / "2026-11-01-a.json").write_text(json.dumps({"total_cost_usd": 0.5}))
+        self.kirjoita({"kulut": {"2026-11-01": 1.2}, "tehtavat": {}})
+        self.assertIn("-> ERO", tk.kulut_osio(self.t, None))
+
     def test_ei_numeerinen_kulu_lasketaan_nollaksi(self):
         self.kirjoita({"kulut": {"2026-10-20": "x"}})
         self.assertIn("kirjattu 0.00 -> OK", tk.kulut_osio(self.t, None))
