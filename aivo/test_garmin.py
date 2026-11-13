@@ -223,14 +223,14 @@ class AamukoosteTestit(unittest.TestCase):
         self.kirjoita("kirjaudu")
         t = {"tulokset": [], "yojono": None, "uudet_prt": [], "kaistat": None, "pr": {"tony": []}, "tonylle": [],
              "opit": [], "yksikot": [], "garmin_tarvitaan": garmin.aamukooste_osa(self.polku, self.NYT)[0]}
-        self.assertIn("Garmin: kirjaudu uudelleen", aamukooste.rivit(t)[1])
+        self.assertIn("Garmin: kirjaudu uudelleen", aamukooste.rivit(t)[0])   # Päätökset sinulle -rivi
 
     def test_aamukooste_keraa_lukee_tilan(self):
         self.kirjoita("ok", aika=self.NYT - timedelta(hours=48))
         with mock.patch("agentti.aamupaketti.keraa", return_value={"tony": []}):
             t = aamukooste.keraa(self.tmp / "docs", self.tmp / "yj", self.NYT, hae=lambda u: [], yksikot=lambda: [],
                                  garmin_tila=self.polku)
-        self.assertIn("Garmin-haku ei ole", aamukooste.rivit(t)[3])
+        self.assertTrue(any(r.startswith("H\u00e4lytykset:") and "Garmin-haku ei ole" in r for r in aamukooste.rivit(t)))
 
 
 if __name__ == "__main__":
