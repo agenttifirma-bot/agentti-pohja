@@ -223,7 +223,7 @@ class AamukoosteTestit(unittest.TestCase):
         self.kirjoita("kirjaudu")
         t = {"tulokset": [], "yojono": None, "uudet_prt": [], "kaistat": None, "pr": {"tony": []}, "tonylle": [],
              "opit": [], "yksikot": [], "garmin_tarvitaan": garmin.aamukooste_osa(self.polku, self.NYT)[0]}
-        self.assertIn("Garmin: kirjaudu uudelleen", aamukooste.rivit(t)[0])   # Päätökset sinulle -rivi
+        self.assertIn("Garmin: kirjaudu uudelleen", aamukooste.rivit(t)[0])   # Paatokset sinulle -rivi
 
     def test_aamukooste_keraa_lukee_tilan(self):
         self.kirjoita("ok", aika=self.NYT - timedelta(hours=48))
