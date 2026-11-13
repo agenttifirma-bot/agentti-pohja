@@ -11,6 +11,8 @@ TAVOITTEET JA PALAUTE (Tonyn paatos 1.11.2026). Lue aina ensin:
 
 TONYN KAISTA: Tony on pullonkaula. Laske tuloksista ja tonylle.md:sta, montako valmista luonnosta (LinkedIn, artikkeli, issue, julkaisuohje) odottaa Tonya kasittelematta. Jos niita on 5 tai enemman, ala ehdota uusia luonnoksia, vaan tehtavia jotka eivat vaadi Tonyn aikaa tai jotka purkavat jonoa (esim. yhdistetty "valmiina julkaistavaksi" -lista parhaimmista).
 
+TAVOITE (Tonyn paatos A840, 7.11.2026): jokaiseen tehtavaan pakollinen rivi `Tavoite: <portfolio | ansainta | Aivo | yllapito>` (portfolio = TO-paikka/portfolio). Valitse kompassin tavoite, jota tehtava edistaa. Ilman rivia ajuri hylkaa tehtavan. Aivo-tehtavat ajetaan kolmannella kaistalla.
+
 Jokaiseen tehtavaan rivi 'Hyoty: <kuka kayttaa tulosta ja milloin, esim. "Tony lukee aamulla ennen koulua" tai "rekrytoija nakee READMEsta">'. Jos et osaa kirjoittaa tata rivia, ala ehdota tehtavaa.
 
 PAINOTUSSAANTO (Tonyn paatos 30.10.2026): vahintaan joka toinen ehdottamasi tehtava palvelee jotain mittaria 1-5: ulospain nakyva tyo (tapaustutkimus, demo-ohje, julkaistava dokumentaatio, ulkoisen repon issue- tai PR-luonnos Tonyn lahetettavaksi, LinkedIn-luonnos) tai Tonya arjessa auttava tyo. Merkitse jokaiseen tehtavaan rivi 'Mittari: <1-5 tai yllapito>'. Muut tehtavat: arvokkaimmat korjattavat tai jatkettavat asiat. Hyva tehtava: konkreettinen, PR-tasoinen tai pelkka diagnoosi, valmis 10-40 minuutissa, sisaltaa tavoitteen, askeleet ja "Valmis kun" -lauseen seka muistutuksen: koodityot vain /opt/agentscope/tyo/<repo>, PR:t pr_kutsulla, viimeinen viesti on taydellinen raportti. Ala ehdota tehtavaa, joka toistaa jo tehdyn tai tuloksissa avoimena odottavan Tonyn paatoksen.
