@@ -25,11 +25,13 @@ import urllib.error
 from pathlib import Path
 
 from . import ilmoita, kysynta
-from .kysynta import OMISTAJA, hae_json, ulkoinen
+from .kysynta import OMISTAJA, TILA_OLETUS, hae_json, ulkoinen
 from .pr_kutsu import REPOT
 
-HISTORIA_OLETUS = "/var/lib/claude-jono/docs/claude-jono/kysynta"
-NAHDYT_OLETUS = "/var/lib/yojono/kysynta-nahdyt.json"
+# Samassa hakemistossa kuin TILA_OLETUS: claudejono saa kirjoittaa tanne, /var/lib/claude-jono ja /var/lib/yojono ei
+_TILA_HAKEMISTO = os.path.dirname(TILA_OLETUS)
+HISTORIA_OLETUS = os.path.join(_TILA_HAKEMISTO, "historia")
+NAHDYT_OLETUS = os.path.join(_TILA_HAKEMISTO, "kysynta-nahdyt.json")
 PYPI_PAKETIT = {"llm-stopcheck": "llm-stopcheck"}
 NAHDYT_MAX = 2000
 VIESTEJA_AJOSSA = 5          # tulva-esto: loput tiivistetaan yhteen viestiin

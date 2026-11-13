@@ -241,6 +241,13 @@ def kysynta_raja():
 
 
 class MainTesti(unittest.TestCase):
+    def test_oletuspolut_ovat_claudejonon_kirjoitettavassa_tilahakemistossa(self):
+        from agentti import kysynta
+        tila = os.path.dirname(kysynta.TILA_OLETUS)
+        for polku in (a.HISTORIA_OLETUS, a.NAHDYT_OLETUS):
+            self.assertEqual(os.path.dirname(polku), tila)
+            self.assertFalse(polku.startswith(("/var/lib/claude-jono", "/var/lib/yojono")))
+
     def test_main_viikko_ja_kirjoitusvirhe_kertoo_vain_tyypin(self):
         with tempfile.TemporaryDirectory() as d:
             ulos = io.StringIO()
