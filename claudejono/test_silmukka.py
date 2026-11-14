@@ -8,13 +8,13 @@ from pathlib import Path
 from claudejono import ajuri, silmukka
 from claudejono.test_ajuri import Pohja, git
 
-OK_TEHTAVA = "# A\n\nPisteet: hyoty 4, varmuus 4, vaiva 1 h\nSuunta: jatkoa (kompassi 1)\n"
+OK_TEHTAVA = "# A\n\nTavoite: yllapito\nPisteet: hyoty 4, varmuus 4, vaiva 1 h\nSuunta: jatkoa (kompassi 1)\n"
 
 NYT = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
 
 
 def teht(lisa="", suunta="jatkoa (kompassi 1)", pisteet="hyoty 4, varmuus 4, vaiva 2 h"):
-    return f"# Tehtava\n\nPisteet: {pisteet}\nSuunta: {suunta}\n{lisa}\nValmis kun: PR.\n"
+    return f"# Tehtava\n\nTavoite: yllapito\nPisteet: {pisteet}\nSuunta: {suunta}\n{lisa}\nValmis kun: PR.\n"
 
 
 class Tarkistin(unittest.TestCase):
@@ -158,7 +158,7 @@ class Silmukka(Pohja):
 
     def test_paivaraja_ja_per_ajo_ennallaan(self):
         self.assertEqual(ajuri.AUTO_MAX_PAIVA, 30)
-        self.assertEqual(ajuri.AUTO_PER_AJO, 2)
+        self.assertEqual(ajuri.AUTO_PER_AJO, 5)
         self.assertTrue(ajuri.sallittu_polku("claude-jono/tonylle.md"))
         self.assertFalse(ajuri.sallittu_polku("claude-jono/sunnuntaiehdotukset.md"))
 
