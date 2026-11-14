@@ -331,13 +331,18 @@ class Itsesuunnittelu(Pohja):
             {"nimi": "korjaa-x", "sisalto": "# X\n\nTavoite: yllapito\nValmis kun: x"},
             {"nimi": "HUONO NIMI", "sisalto": "y"},
             {"nimi": "toinen", "sisalto": "# Y\nTavoite: yllapito"},
-            {"nimi": "kolmas", "sisalto": "# Z\nTavoite: yllapito"}], "tonylle": "Nosta katto?"})
+            {"nimi": "kolmas", "sisalto": "# Z\nTavoite: yllapito"},
+            {"nimi": "neljas", "sisalto": "# N\nTavoite: yllapito"},
+            {"nimi": "viides", "sisalto": "# V\nTavoite: yllapito"},
+            {"nimi": "kuudes", "sisalto": "# K\nTavoite: yllapito"}], "tonylle": "Nosta katto?"})
         v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli("Tassa:\n" + vastaus), nyt=self.nyt())
         self.assertIn("itsesuunnittelu", v)
         tied = self.origin_tiedostot()
         self.assertIn("claude-jono/tehtavat/2026-10-30-02-auto-korjaa-x.md", tied)
         self.assertIn("claude-jono/tehtavat/2026-10-30-03-auto-toinen.md", tied)
-        self.assertNotIn("claude-jono/tehtavat/2026-10-30-04-auto-kolmas.md", tied)   # AUTO_PER_AJO = 2
+        self.assertIn("claude-jono/tehtavat/2026-10-30-04-auto-kolmas.md", tied)
+        self.assertIn("claude-jono/tehtavat/2026-10-30-06-auto-viides.md", tied)
+        self.assertNotIn("claude-jono/tehtavat/2026-10-30-07-auto-kuudes.md", tied)   # AUTO_PER_AJO = 5 (A961)
         self.assertIn("claude-jono/tonylle.md", tied)
         self.assertEqual(ajuri.seuraava_tehtava(self.repo).name, "2026-10-30-02-auto-korjaa-x.md")
 
