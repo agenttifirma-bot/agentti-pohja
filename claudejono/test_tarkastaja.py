@@ -1,10 +1,11 @@
+import copy
 import io
 import json
 import subprocess
 import tempfile
 import unittest
 import urllib.error
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -330,6 +331,131 @@ class PrAvaajaTesti(unittest.TestCase):
         self.assertEqual(api.postit, [])
         api = self.api()
         self.assertEqual(tk.kierros(dict(self.env, CLAUDEJONO_PR_AVAAJA="0"), "t", avaa=api), [])
+
+
+class Avaa422Testi(unittest.TestCase):
+    """422 PR:n avauksessa: sama haara ohitetaan 24 h ilman GitHub-kutsuja (tila avaa_422)."""
+
+    def setUp(self):
+        self.d = tempfile.TemporaryDirectory()
+        self.env = dict(ENV, CLAUDEJONO_TILA=self.d.name)
+        self.nyt = datetime(2026, 11, 7, 12, 0).astimezone()
+
+    def tearDown(self):
+        self.d.cleanup()
+
+    def api(self, postin_virhe=422):
+        api = Feikki([], [], [])
+        api.haarat = [{"name": "korjaus/uusi"}]
+        api.vertailu = {"korjaus%2Fuusi": {"ahead_by": 1, "commits": [{"commit": {"message": "Otsikko"}}]}}
+        orig = api.__call__
+
+        class Kaareet:
+            def __init__(s):
+                s.kutsut = []
+
+            def __call__(s, req, timeout=None):
+                s.kutsut.append((req.get_method(), req.full_url))
+                if req.get_method() == "POST" and postin_virhe:
+                    raise urllib.error.HTTPError(req.full_url, postin_virhe, "x", {}, io.BytesIO(b'{"message": "Validation Failed"}'))
+                return orig(req, timeout)
+        return Kaareet()
+
+    def kierros(self, api, tunti=0):
+        return tk.kierros(self.env, "t", nyt=self.nyt + timedelta(hours=tunti), suorita=lambda *a, **k: None, avaa=api)
+
+    def tila(self):
+        return json.loads((Path(self.d.name) / tk.TILA_TIEDOSTO).read_text())
+
+    def avauskutsut(self, api):
+        return [k for k in api.kutsut if k[0] == "POST" or "/compare/" in k[1] or "head=" in k[1]]
+
+    def test_422_ohitetaan_24h_ilman_kutsuja(self):
+        api = self.api()
+        self.assertEqual(self.kierros(api)[0]["tulos"], "virhe")
+        self.assertIn("korjaus/uusi", json.dumps(self.tila().get("avaa_422")))
+        api.kutsut.clear()
+        self.assertEqual(self.kierros(api, 1), [])
+        self.assertEqual(self.kierros(api, 23), [])
+        self.assertEqual(self.avauskutsut(api), [])
+
+    def test_24h_jalkeen_yritetaan_kerran(self):
+        api = self.api()
+        self.kierros(api)
+        api.kutsut.clear()
+        self.assertEqual(self.kierros(api, 25)[0]["tulos"], "virhe")
+        self.assertEqual(len([k for k in api.kutsut if k[0] == "POST"]), 1)
+        api.kutsut.clear()
+        self.assertEqual(self.kierros(api, 26), [])
+        self.assertEqual(self.avauskutsut(api), [])
+
+    def test_onnistuminen_poistaa_merkinnan(self):
+        self.kierros(self.api())
+        self.assertTrue(self.tila().get("avaa_422"))
+        self.assertEqual(self.kierros(self.api(postin_virhe=None), 25)[0]["tulos"], "avattu")
+        self.assertNotIn("avaa_422", self.tila())
+
+    def test_muu_virhe_yritetaan_seuraavalla_kierroksella(self):
+        api = self.api(postin_virhe=502)
+        self.assertEqual(self.kierros(api)[0]["tulos"], "virhe")
+        self.assertNotIn("avaa_422", self.tila())
+        api.kutsut.clear()
+        self.assertEqual(self.kierros(api, 1)[0]["tulos"], "virhe")
+        self.assertEqual(len([k for k in api.kutsut if k[0] == "POST"]), 1)
+
+    def test_get_kutsun_422_ei_merkitse_haaraa(self):
+        for osa in ("/compare/", "head="):
+            api = self.api(postin_virhe=None)
+            orig = api.__call__
+
+            def kaareet(req, timeout=None, osa=osa, orig=orig):
+                if req.get_method() == "GET" and osa in req.full_url:
+                    raise urllib.error.HTTPError(req.full_url, 422, "x", {}, io.BytesIO(b'{"message": "Validation Failed"}'))
+                return orig(req, timeout)
+            self.assertEqual(self.kierros(kaareet)[0]["tulos"], "virhe", osa)
+            self.assertNotIn("avaa_422", self.tila(), osa)
+
+    def test_avainta_ei_luoda_ennen_ensimmaista_422a(self):
+        api = self.api(postin_virhe=None)
+        self.assertEqual(self.kierros(api)[0]["tulos"], "avattu")
+        self.assertNotIn("avaa_422", self.tila())
+        self.kierros(self.api(postin_virhe=None), 1)
+        self.assertNotIn("avaa_422", self.tila())
+
+    def test_viimeisen_merkinnan_vanhentuessa_avain_poistuu(self):
+        self.kierros(self.api())
+        self.assertIn("agentti-pohja/korjaus/uusi", self.tila()["avaa_422"])
+        self.assertEqual(self.kierros(self.api(postin_virhe=502), 25)[0]["tulos"], "virhe")   # tauko loppu, ei 422
+        self.assertNotIn("avaa_422", self.tila())
+
+    def test_merkinta_sailyy_paivan_vaihtuessa(self):
+        api = self.api()
+        self.kierros(api, 0)
+        api.kutsut.clear()
+        self.assertEqual(self.kierros(api, 10), [])               # 7.11. 22:00
+        self.assertEqual(self.kierros(api, 14), [])               # 8.11. 02:00, uusi pvm
+        self.assertEqual(self.tila()["pvm"], (self.nyt + timedelta(hours=14)).date().isoformat())
+        self.assertTrue(self.tila().get("avaa_422"))
+        self.assertEqual(self.avauskutsut(api), [])
+
+    def test_kuiva_ajo_ei_muokkaa_tilaa(self):
+        vanha = self.nyt.timestamp() - 25 * 3600                  # tauko loppunut
+        tuore = self.nyt.timestamp() - 3600
+        tila = {"pvm": "2026-11-07", "avattu": 0, "per_pr": {},
+                "avaa_422": {"agentti-pohja/korjaus/vanha": vanha, "agentti-pohja/korjaus/tuore": tuore}}
+        ennen = copy.deepcopy(tila)
+        api = self.api()
+        tehty = tk.avaa_puuttuvat(self.env, "t", tila, avaa=api, kuiva=True, nyt=self.nyt)
+        self.assertEqual(tila, ennen)
+        self.assertEqual(tehty[0]["tulos"], "avattaisiin")        # vanhentunut merkinta ei estanyt haaraa
+        self.assertEqual([k for k in api.kutsut if k[0] == "POST"], [])
+
+    def test_kuiva_ajo_ei_poista_viimeista_merkintaa(self):
+        vanha = self.nyt.timestamp() - 25 * 3600
+        tila = {"pvm": "2026-11-07", "avattu": 0, "per_pr": {}, "avaa_422": {"muu/korjaus/x": vanha}}
+        ennen = copy.deepcopy(tila)
+        tk.avaa_puuttuvat(self.env, "t", tila, avaa=self.api(), kuiva=True, nyt=self.nyt)
+        self.assertEqual(tila, ennen)
 
 
 class VirheNakyvyys(unittest.TestCase):
