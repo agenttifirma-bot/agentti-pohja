@@ -4,12 +4,17 @@ Jos etuliite muuttuu toisessa paassa, rivi putoaisi tilannekuvasta hiljaa."""
 import re
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 from agentti import tilannekuva
 
 JUURI = Path(__file__).resolve().parent.parent
-RAPORTTI = """# Kehitys: aihe, repo (2026-11-08)
+# yojono_osio valitsee raportit tiedostojen muokkausajan (mtime) mukaan, ei nimen paivamaarasta.
+# Nimi ja otsikko muodostetaan silti tanaisesta paivasta, jotta testi ei riipu kiinteasta pvm:sta.
+PVM = date.today().isoformat()
+RAPORTTINIMI = PVM + "-01.md"
+RAPORTTI = """# Kehitys: aihe, repo (""" + PVM + """)
 
 - Haara: yo/esim
 - PR: https://github.com/x/y/pull/1
@@ -24,7 +29,7 @@ def _osio(testit_rivi):
     with tempfile.TemporaryDirectory() as t:
         perus = Path(t)
         (perus / "raportit").mkdir()
-        (perus / "raportit" / "2026-11-08-01.md").write_text(RAPORTTI % testit_rivi, encoding="utf-8")
+        (perus / "raportit" / RAPORTTINIMI).write_text(RAPORTTI % testit_rivi, encoding="utf-8")
         return tilannekuva.yojono_osio(perus)
 
 
@@ -43,20 +48,26 @@ class TestitEtuliitePoiminta(unittest.TestCase):
             perus = Path(t)
             (perus / "raportit").mkdir()
             teksti = (RAPORTTI % "vihrea").replace("- Testit:", "- Testien tila:")
-            (perus / "raportit" / "2026-11-08-01.md").write_text(teksti, encoding="utf-8")
-            self.assertNotIn("Testien tila", tilannekuva.yojono_osio(perus))
+            (perus / "raportit" / RAPORTTINIMI).write_text(teksti, encoding="utf-8")
+            osio = tilannekuva.yojono_osio(perus)
+            # Positiivinen kontrolli: sama raportti on mukana (nimi ja '- PR'-rivi), joten
+            # puuttuminen johtuu etuliitteesta eika raportin suodattumisesta pois.
+            self.assertIn(RAPORTTINIMI, osio)
+            self.assertIn("- PR: https://github.com/x/y/pull/1", osio)
+            self.assertNotIn("Testien tila", osio)
 
 
 class KehitysShKirjoittaaEtuliitteen(unittest.TestCase):
     def test_kehitys_sh_kirjoittaa_testit_rivin(self):
         lahde = (JUURI / "yojono" / "kehitys.sh").read_text(encoding="utf-8")
         self.assertTrue(
-            re.search(r'^\s*echo "- Testit: \$TESTIT"\s*$', lahde, re.M),
+            # Sallii echo/printf ja ' tai " -lainausmerkin; vaatii vain etuliitteen ja $TESTIT-arvon samalla rivilla.
+            re.search(r'^\s*(echo|printf)\b.*- Testit: \$\{?TESTIT\}?', lahde, re.M),
             "kehitys.sh ei kirjoita rivia, joka alkaa '- Testit:'")
 
     def test_etuliite_on_tilannekuvan_poimintalistassa(self):
         lahde = (JUURI / "agentti" / "tilannekuva.py").read_text(encoding="utf-8")
-        self.assertIn('"- Testit"', lahde)
+        self.assertRegex(lahde, r"""["']- Testit["']""")
 
 
 if __name__ == "__main__":
