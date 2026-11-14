@@ -164,23 +164,8 @@ PR=""
 TESTIT="ei ajettu"
 MUUTOKSET=$(git status --porcelain --untracked-files=all)
 
-# Budjetti loppui kesken (subtype error_max_budget_usd tai terminal_reason budget_exhausted): muutokset ovat keskenerainen tyo,
-# joten testeja ei ajeta eika punaista kirjata (tulos 2026-11-07-42). Kulu-/budjettiarvoihin ei kosketa.
-BUDJETTI_LOPPUI=""
-if [ -z "$OHITETTU" ]; then
-  BUDJETTI_LOPPUI=$("$PYTHON" -c "import sys,json
-try:
-    d=json.load(open(sys.argv[1]))
-    print('1' if d.get('subtype') == 'error_max_budget_usd' or d.get('terminal_reason') == 'budget_exhausted' else '')
-except Exception:
-    print('')" "$UL.json")
-fi
-
 if [ -n "$OHITETTU" ]; then
   SYY="ohitettu: repo ei muuttunut (HEAD $(printf '%.8s' "$SHA")) viimeisen tuloksettoman ajon jalkeen; ei mallikutsua"
-elif [ -n "$BUDJETTI_LOPPUI" ]; then
-  TESTIT="ei ajettu (budjetti loppui, tehtava kesken)"
-  SYY="budjetti loppui, tehtava kesken: PR:aa ei avattu"
 elif [ -z "$MUUTOKSET" ]; then
   SYY="ei muutoksia: PR:aa ei avattu"
 else
@@ -221,11 +206,7 @@ else
         TESTIT="vihrea, $LKM testia ($(tail -n 3 "$TMP/testit.puhdas" | tr '\n' ' ' | cut -c1-120))"
       fi
     else
-      # Havainto 7.11. (tulos 2026-11-07-42): hanta ei nayttanyt oikeaa vikaa. Nayta FAIL/ERROR/FAILED/Ran-rivit; hanta vain jos niita ei ole.
-      sed 's/\x1b\[[0-9;]*[A-Za-z]//g' "$TMP/testit.log" > "$TMP/testit.puhdas"
-      VIKARIVIT=$(grep -E '^(FAIL|ERROR|FAILED|Ran )' "$TMP/testit.puhdas" | tr '\n' ' ' | cut -c1-120 || true)
-      [ -n "$VIKARIVIT" ] || VIKARIVIT=$(tail -n 3 "$TMP/testit.puhdas" | tr '\n' ' ' | cut -c1-120)
-      TESTIT="punainen ($VIKARIVIT)"
+      TESTIT="punainen ($(sed 's/\x1b\[[0-9;]*[A-Za-z]//g' "$TMP/testit.log" | tail -n 3 | tr '\n' ' ' | cut -c1-120))"
       SYY="testit punaisella agentin muutosten jalkeen: PR:aa ei avattu"
     fi
   fi
