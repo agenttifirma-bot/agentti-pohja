@@ -106,11 +106,13 @@ def rajaa(klooni, ulos, perus, repo, raja=OLETUS_RAJA, nyt=None):
     kaikki = sum(m[1] for m in muutokset)
     mukana, pois, mukana_koko = valitse_mukaan(muutokset, raja) if kaikki > raja else (muutokset, [], kaikki)
     (ulos / "diff.patch").write_bytes(b"".join(m[2] for m in mukana))
-    rivit = [f"# Katselmoinnin rajaus", "", f"- Pohja: {selite}", f"- Vertailu: {pohja[:8] if pohja != TYHJA_PUU else 'tyhj\u00e4 puu'}..{head[:8]}",
+    vertailupohja = pohja[:8] if pohja != TYHJA_PUU else "tyhj\u00e4 puu"
+    rivit = ["# Katselmoinnin rajaus", "", f"- Pohja: {selite}", f"- Vertailu: {vertailupohja}..{head[:8]}",
              f"- Muuttuneita tiedostoja: {len(muutokset)}; diffin koko {kaikki} tavua, katselmoitavaa {mukana_koko} tavua (raja {raja})", ""]
     rivit.append("## Muuttuneet tiedostot")
     for n, koko, _ in sorted(muutokset, key=lambda m: m[0]):
-        rivit.append(f"- {n} ({koko} tavua){' - J\u00c4I POIS: ei mahtunut rajaan' if any(n == p[0] for p in pois) else ''}")
+        merkinta = " - J\u00c4I POIS: ei mahtunut rajaan" if any(n == p[0] for p in pois) else ""
+        rivit.append(f"- {n} ({koko} tavua){merkinta}")
     (ulos / "muutokset.md").write_text("\n".join(rivit) + "\n", encoding="utf-8")
     otsikko = [f"> Rajaus: katselmoitu vain muutokset ({selite}); {len(mukana)}/{len(muutokset)} tiedostoa, {mukana_koko} tavua diffi\u00e4."]
     if pois:
