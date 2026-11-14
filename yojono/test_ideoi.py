@@ -80,7 +80,7 @@ class IdeoiTesti(unittest.TestCase):
         self.assertFalse((self.loki / "claude-cwd").exists())
 
     def test_oletuspolku_on_claude_jonon_docs_kopio(self):
-        # Oletus kiinteana: ei vanhaa polkua, ja YOJONO_DOCS ohittaa sen (testit yllä).
+        # Oletus kiinteana: ei vanhaa polkua, ja YOJONO_DOCS ohittaa sen (testit ylla).
         teksti = SKRIPTI.read_text()
         self.assertIn('DOCS="${YOJONO_DOCS:-/var/lib/claude-jono/docs}"', teksti)
         self.assertNotIn("/opt/agenttifirma-docs", teksti)
