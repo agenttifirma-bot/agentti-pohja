@@ -452,4 +452,4 @@ class SocketinKayttajamalliTesti(unittest.TestCase):
 
     def test_ohjeessa_ei_ristiriitaista_kayttajaa(self):
         self.assertNotIn("ajetaan suoraan `aivo-yksityinen`", self.ohje)
-        self.assertNotIn("Vain `aivo-yksityinen` pääsee", self.ohje)
+        self.assertNotIn("Vain `aivo-yksityinen` p\u00e4\u00e4see", self.ohje)
