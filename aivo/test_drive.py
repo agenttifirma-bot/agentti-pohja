@@ -6,6 +6,7 @@ import stat
 import tempfile
 import unittest
 import urllib.error
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -90,7 +91,7 @@ class PyyntoTesti(unittest.TestCase):
         self.assertEqual(f.kutsut, [])   # verkkoon ei lahtenyt mitaan
 
     def test_asiakkaan_metodit_vain_get(self):
-        f = Feikki((200, {"files": []}), (200, {"id": "i", "name": "n", "mimeType": "text/plain"}), (200, b"teksti"))
+        f = Feikki((200, {"files": []}), (200, {"id": "i", "name": "n", "mimeType": "text/plain", "parents": [drive.AIVO_KANSIO_ID]}), (200, b"teksti"))
         a = drive.Asiakas("tok", f)
         a.uusimmat(3)
         a.sisalto(a.tiedot("i"))
@@ -114,10 +115,45 @@ class ListausTesti(unittest.TestCase):
     def test_sisalto_tyypit(self):
         f = Feikki((200, b"doc"), (200, b"a,b"))
         a = drive.Asiakas("t", f)
-        self.assertEqual(a.sisalto({"id": "1", "mimeType": drive.GOOGLE_DOC}), "doc")
-        self.assertEqual(a.sisalto({"id": "2", "mimeType": drive.GOOGLE_SHEET}), "a,b")
-        self.assertIsNone(a.sisalto({"id": "3", "mimeType": "image/png"}))
+        self.assertEqual(a.sisalto({"id": "1", "mimeType": drive.GOOGLE_DOC, "parents": [drive.AIVO_KANSIO_ID]}), "doc")
+        self.assertEqual(a.sisalto({"id": "2", "mimeType": drive.GOOGLE_SHEET, "parents": [drive.AIVO_KANSIO_ID]}), "a,b")
+        self.assertIsNone(a.sisalto({"id": "3", "mimeType": "image/png", "parents": [drive.AIVO_KANSIO_ID]}))
         self.assertIn("export", f.kutsut[0][1])
+
+
+class KansiorajausTesti(unittest.TestCase):
+    def test_kansio_id_on_paatoksen_mukainen(self):
+        self.assertEqual(drive.AIVO_KANSIO_ID, "1rTTkRxS1A1Mx_7yARM_Hw-qtUbsiIBGL")
+
+    def test_listauksen_kysely_sisaltaa_rajauksen(self):
+        f = Feikki((200, {"files": []}))
+        drive.Asiakas("tok", f).uusimmat(5)
+        kysely = urllib.parse.parse_qs(urllib.parse.urlparse(f.kutsut[0][1]).query)["q"][0]
+        self.assertIn("'%s' in parents" % drive.AIVO_KANSIO_ID, kysely)
+        self.assertIn("trashed=false", kysely)
+
+    def test_kansion_ulkopuolinen_tiedosto_hylataan_eika_sisaltoa_haeta(self):
+        for parents in (["muu-kansio"], [], None, "pelkka-merkkijono", ["muu", "toinen"]):
+            f = Feikki()
+            meta = {"id": "x", "mimeType": drive.GOOGLE_DOC}
+            if parents is not None:
+                meta["parents"] = parents
+            with self.assertRaises(drive.DriveVirhe):
+                drive.Asiakas("tok", f).sisalto(meta)
+            self.assertEqual(f.kutsut, [])   # sisaltoa ei pyydetty
+
+    def test_tiivista_polku_hylkaa_ulkopuolisen_tiedoston(self):
+        f = Feikki((200, {"id": "x", "name": "n", "mimeType": drive.GOOGLE_DOC, "parents": ["muu"]}))
+        a = drive.Asiakas("tok", f)
+        with self.assertRaises(drive.DriveVirhe):
+            a.sisalto(a.tiedot("x"))
+        self.assertEqual(len(f.kutsut), 1)   # vain metatiedot, ei export-kutsua
+
+    def test_kansion_lapsi_luetaan_ja_scope_pysyy_vain_luku(self):
+        f = Feikki((200, b"teksti"))
+        meta = {"id": "x", "mimeType": drive.GOOGLE_DOC, "parents": ["muu", drive.AIVO_KANSIO_ID]}
+        self.assertEqual(drive.Asiakas("tok", f).sisalto(meta), "teksti")
+        self.assertEqual(drive.SCOPE, "https://www.googleapis.com/auth/drive.readonly")
 
 
 class TiivistysTesti(unittest.TestCase):

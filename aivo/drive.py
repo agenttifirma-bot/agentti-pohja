@@ -12,6 +12,8 @@ Ajetaan Proxmox-isannalla omana kayttajana `aivo` (ks. docs/aivo-drive.md). Kome
   kirjoitustesti  Yrittaa luoda tiedoston; odotettu tulos on hylkays (HTTP 403). Todistaa vain luvan.
 
 Turvarajat (koodi on laki):
+  * Luku rajataan kansioon AIVO_KANSIO_ID: listaus hakee vain kansion sisallon ja sisalto() hylkaa
+    tiedoston, jonka parents-kentassa ei ole kansiota. Alikansioita ei lueta.
   * Scope on vain drive.readonly. Tunnustiedosto, jossa on muu scope, hylataan.
   * Tunnustiedoston pitaa olla 600 eika sita saa lukea muut; sita ei tulosteta eika kirjoiteta lokiin.
   * Kaikki Drive-kutsut kulkevat yhden funktion (_pyynto) lapi: sallittu on GET Drive-rajapintaan.
@@ -33,6 +35,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+# Tonyn paatos A953: Aivo lukee vain Drive-kansiota "Aivo" (suorat lapset). Vakio on koodissa, ei asetuksissa.
+AIVO_KANSIO_ID = "1rTTkRxS1A1Mx_7yARM_Hw-qtUbsiIBGL"
 OLETUS_TUNNUS = "/etc/aivo/drive-tunnus.json"
 OLETUS_DATA = "/var/lib/aivo/drive"
 OLETUS_KIRJASTO = "/var/lib/aivo/kirjasto"
@@ -152,8 +156,9 @@ class Asiakas:
         return runko
 
     def uusimmat(self, n=10):
+        q = "'%s' in parents and trashed=false and mimeType!='%s'" % (AIVO_KANSIO_ID, GOOGLE_KANSIO)
         runko = self._get("files", pageSize=str(max(1, min(int(n), 100))), orderBy="modifiedTime desc",
-                          fields="files(%s)" % LUKU_KENTAT, q="trashed=false and mimeType!='%s'" % GOOGLE_KANSIO)
+                          fields="files(%s)" % LUKU_KENTAT, q=q)
         return json.loads(runko).get("files", [])
 
     def tiedot(self, tid):
@@ -166,7 +171,11 @@ class Asiakas:
             return "?"
 
     def sisalto(self, meta):
-        """Palauttaa tekstin (enintaan MAX_TAVUA tavua) tai None, jos tyyppia ei lueta."""
+        """Palauttaa tekstin (enintaan MAX_TAVUA tavua) tai None, jos tyyppia ei lueta.
+        Hylkaa (DriveVirhe) tiedoston, joka ei ole Aivo-kansion suora lapsi."""
+        parents = meta.get("parents")
+        if not isinstance(parents, list) or AIVO_KANSIO_ID not in parents:
+            raise DriveVirhe("tiedosto ei ole Aivo-kansiossa; ei luettu")
         tyyppi = meta.get("mimeType", "")
         tid = urllib.parse.quote(meta["id"], safe="")
         if tyyppi in (GOOGLE_DOC, GOOGLE_SLIDES):
