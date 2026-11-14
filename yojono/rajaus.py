@@ -60,9 +60,9 @@ def valitse_pohja(klooni, perus, repo, nyt=None, paivat=OLETUS_PAIVAT):
             return sha, f"edellinen onnistunut katselmointi (commit {sha[:8]})"
     pvm = viimeisin_raportin_pvm(perus, repo)
     if pvm is not None:
-        raja, selite = pvm, f"edellisen raportin päivä {pvm:%Y-%m-%d} (commit-tietoa ei ole)"
+        raja, selite = pvm, f"edellisen raportin p\u00e4iv\u00e4 {pvm:%Y-%m-%d} (commit-tietoa ei ole)"
     else:
-        raja, selite = nyt - timedelta(days=paivat), f"ei edellistä katselmointia: viimeiset {paivat} päivää"
+        raja, selite = nyt - timedelta(days=paivat), f"ei edellist\u00e4 katselmointia: viimeiset {paivat} p\u00e4iv\u00e4\u00e4"
     sha = git(klooni, "rev-list", "-1", f"--before={raja.strftime('%Y-%m-%dT%H:%M:%S')}+0000", "HEAD").decode().strip()
     if not sha:
         return TYHJA_PUU, selite + "; aikarajaa vanhempaa committia ei ole, koko historia on mukana"
@@ -106,15 +106,15 @@ def rajaa(klooni, ulos, perus, repo, raja=OLETUS_RAJA, nyt=None):
     kaikki = sum(m[1] for m in muutokset)
     mukana, pois, mukana_koko = valitse_mukaan(muutokset, raja) if kaikki > raja else (muutokset, [], kaikki)
     (ulos / "diff.patch").write_bytes(b"".join(m[2] for m in mukana))
-    rivit = [f"# Katselmoinnin rajaus", "", f"- Pohja: {selite}", f"- Vertailu: {pohja[:8] if pohja != TYHJA_PUU else 'tyhjä puu'}..{head[:8]}",
+    rivit = [f"# Katselmoinnin rajaus", "", f"- Pohja: {selite}", f"- Vertailu: {pohja[:8] if pohja != TYHJA_PUU else 'tyhj\u00e4 puu'}..{head[:8]}",
              f"- Muuttuneita tiedostoja: {len(muutokset)}; diffin koko {kaikki} tavua, katselmoitavaa {mukana_koko} tavua (raja {raja})", ""]
     rivit.append("## Muuttuneet tiedostot")
     for n, koko, _ in sorted(muutokset, key=lambda m: m[0]):
-        rivit.append(f"- {n} ({koko} tavua){' - JÄI POIS: ei mahtunut rajaan' if any(n == p[0] for p in pois) else ''}")
+        rivit.append(f"- {n} ({koko} tavua){' - J\u00c4I POIS: ei mahtunut rajaan' if any(n == p[0] for p in pois) else ''}")
     (ulos / "muutokset.md").write_text("\n".join(rivit) + "\n", encoding="utf-8")
-    otsikko = [f"> Rajaus: katselmoitu vain muutokset ({selite}); {len(mukana)}/{len(muutokset)} tiedostoa, {mukana_koko} tavua diffiä."]
+    otsikko = [f"> Rajaus: katselmoitu vain muutokset ({selite}); {len(mukana)}/{len(muutokset)} tiedostoa, {mukana_koko} tavua diffi\u00e4."]
     if pois:
-        otsikko.append(f"> Diff oli {kaikki} tavua (raja {raja}). Katselmoimatta jäi {len(pois)} tiedostoa: " + ", ".join(f"{p[0]} ({p[1]} t)" for p in sorted(pois, key=lambda p: -p[1])[:OTSIKON_PISIMMAT]) + (f" ja {len(pois) - OTSIKON_PISIMMAT} muuta (koko lista: .katselmointi-rajaus/muutokset.md)" if len(pois) > OTSIKON_PISIMMAT else "") + ".")
+        otsikko.append(f"> Diff oli {kaikki} tavua (raja {raja}). Katselmoimatta j\u00e4i {len(pois)} tiedostoa: " + ", ".join(f"{p[0]} ({p[1]} t)" for p in sorted(pois, key=lambda p: -p[1])[:OTSIKON_PISIMMAT]) + (f" ja {len(pois) - OTSIKON_PISIMMAT} muuta (koko lista: .katselmointi-rajaus/muutokset.md)" if len(pois) > OTSIKON_PISIMMAT else "") + ".")
     (ulos / "otsikko.md").write_text("\n".join(otsikko) + "\n\n", encoding="utf-8")
     return {"pohja": pohja, "head": head, "muuttuneita": len(muutokset), "mukana": len(mukana), "pois": len(pois),
             "diff_tavua": kaikki, "mukana_tavua": mukana_koko}

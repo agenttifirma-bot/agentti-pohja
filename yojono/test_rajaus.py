@@ -53,7 +53,7 @@ class TestPohja(Pohja):
         self.assertEqual(t["muuttuneita"], 1)  # vain 2.11. commit; 29.10. rajan jalkeen ei ole committeja
         self.assertIn("uusi", (self.tmp / "ulos" / "muutokset.md").read_text())
         self.assertNotIn("keski", (self.tmp / "ulos" / "muutokset.md").read_text())
-        self.assertIn("viimeiset 7 päivää", (self.tmp / "ulos" / "otsikko.md").read_text())
+        self.assertIn("viimeiset 7 p\u00e4iv\u00e4\u00e4", (self.tmp / "ulos" / "otsikko.md").read_text())
 
     def test_ilman_edellista_ja_lyhyella_historialla_koko_historia_mukaan(self):
         self.commit("2026-11-03", a="a\n")
@@ -114,8 +114,8 @@ class TestKoko(Pohja):
         self.assertIn("xxxx", diff)
         self.assertNotIn("qqqq", diff)
         otsikko = (self.tmp / "ulos" / "otsikko.md").read_text()
-        self.assertIn("Katselmoimatta jäi 1 tiedostoa: valtava/lukko", otsikko)
-        self.assertIn("JÄI POIS", (self.tmp / "ulos" / "muutokset.md").read_text())
+        self.assertIn("Katselmoimatta j\u00e4i 1 tiedostoa: valtava/lukko", otsikko)
+        self.assertIn("J\u00c4I POIS", (self.tmp / "ulos" / "muutokset.md").read_text())
 
     def test_otsikko_lyhentaa_pitkan_pois_jaaneiden_listan(self):
         tiedostot = {f"f{i:02d}": "x" * 300 + "\n" for i in range(15)}
@@ -162,7 +162,7 @@ class TestSkripti(Pohja):
         self.etuosa.mkdir()
         self.claude = self.tmp / "claude"
         self.claude.write_text('#!/bin/sh\necho "$@" > "$KATSELMOI_PERUS/claude-argit"\n'
-                               'echo \'{"result": "Ei löydöksiä muutoksissa, kaikki kunnossa ja muutokset tarkistettu rajauksen mukaisesti ja huolellisesti tässä.", "total_cost_usd": 0.4}\'\n')
+                               'echo \'{"result": "Ei loydoksia muutoksissa, kaikki kunnossa ja muutokset tarkistettu rajauksen mukaisesti ja huolellisesti tassa.", "total_cost_usd": 0.4}\'\n')
         self.claude.chmod(self.claude.stat().st_mode | stat.S_IXUSR)
         (self.tmp / "env").write_text("")
 
