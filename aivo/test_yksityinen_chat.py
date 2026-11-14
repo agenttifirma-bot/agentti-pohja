@@ -387,9 +387,69 @@ class OhjeenRajatTesti(unittest.TestCase):
         self.assertIsNotNone(m)
         self.assertIn('--tools ""', m.group(1))
         self.assertNotRegex(m.group(1), r"[*$;|&]|%[iIfFhH]")      # ei jokereita eika sijaismerkkeja
-        self.assertIn("SocketMode=0600", self.ohje)
 
     def test_yksikko_ajaa_kaaresta_ja_kaares_on_repossa(self):
         m = re.search(r"aivo-tyokalu@\.service`:.*?ExecStart=(.*?)\n", self.ohje, re.S)
         self.assertIn("aivo/tyokalu_kaares.py", m.group(1))
         self.assertTrue((Path(__file__).resolve().parent / "tyokalu_kaares.py").is_file())
+
+
+def _yksikko_arvot(ohje, otsikko_alku, osio):
+    """Palauttaa ohjeen koodilohkon (se, jossa on [osio]) avain-arvo-rivit listana (avain, arvo)."""
+    for lohko in re.findall(r"```\n(.*?)```", ohje, re.S):
+        if f"[{osio}]" in lohko and otsikko_alku in lohko:
+            rivit = []
+            for r in lohko.splitlines():
+                m = re.match(r"\s*([A-Za-z]+)=(.*)$", r)
+                if m:
+                    rivit.append((m.group(1), m.group(2).strip()))
+            return rivit
+    raise AssertionError(f"lohkoa ei loytynyt: {osio} / {otsikko_alku}")
+
+
+class SocketinKayttajamalliTesti(unittest.TestCase):
+    """Chat-palvelun kayttaja paasee socketille, mutta tyokalun kayttaja ja muut eivat (14.11. tarkastajan loydos)."""
+
+    def setUp(self):
+        self.ohje = (Path(__file__).resolve().parent.parent / "docs" / "aivo-chat.md").read_text(encoding="utf-8")
+        self.chat = _yksikko_arvot(self.ohje, "aivo.chat palvele", "Service")
+        self.socket = dict(_yksikko_arvot(self.ohje, "ListenStream", "Socket"))
+        self.tyokalu = dict(_yksikko_arvot(self.ohje, "tyokalu_kaares.py", "Service"))
+
+    def _chat_kayttaja_ja_ryhmat(self):
+        arvot = dict(self.chat)
+        ryhmat = {arvot.get("Group", arvot["User"])}
+        for avain, arvo in self.chat:
+            if avain == "SupplementaryGroups":
+                ryhmat.update(arvo.split())
+        return arvot["User"], ryhmat
+
+    def test_chat_kayttaja_paasee_socketille(self):
+        kayttaja, ryhmat = self._chat_kayttaja_ja_ryhmat()
+        tila = int(self.socket["SocketMode"], 8)
+        omistaja = self.socket.get("SocketUser", "root")
+        ryhma = self.socket.get("SocketGroup", omistaja)
+        omistajana = kayttaja == omistaja and tila & 0o600 == 0o600
+        ryhmana = ryhma in ryhmat and tila & 0o060 == 0o060
+        self.assertTrue(omistajana or ryhmana, (kayttaja, ryhmat, omistaja, ryhma, oct(tila)))
+
+    def test_socket_ei_ole_maailmalle_avoin(self):
+        tila = int(self.socket["SocketMode"], 8)
+        self.assertEqual(tila & 0o007, 0, oct(tila))
+        self.assertEqual(tila & 0o111, 0, "socketille ei suoritusoikeutta")
+
+    def test_tyokalun_kayttaja_ei_paase_socketille(self):
+        tk = self.tyokalu["User"]
+        kayttaja, ryhmat = self._chat_kayttaja_ja_ryhmat()
+        self.assertNotEqual(tk, kayttaja)
+        omistaja = self.socket.get("SocketUser", "root")
+        ryhma = self.socket.get("SocketGroup", omistaja)
+        tila = int(self.socket["SocketMode"], 8)
+        self.assertNotEqual(tk, omistaja)
+        self.assertNotEqual(tk, ryhma)              # ryhma ei saa olla tyokalun oma ryhma
+        self.assertNotEqual(ryhma, kayttaja, "socketin ryhma on oma, ei chat-kayttajan paaryhma")
+        self.assertEqual(tila & 0o007, 0)
+
+    def test_ohjeessa_ei_ristiriitaista_kayttajaa(self):
+        self.assertNotIn("ajetaan suoraan `aivo-yksityinen`", self.ohje)
+        self.assertNotIn("Vain `aivo-yksityinen` pääsee", self.ohje)
