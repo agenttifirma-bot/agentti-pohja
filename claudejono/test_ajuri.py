@@ -773,6 +773,49 @@ class HylatytSuunnittelussa(Pohja):
         self.assertIn("HYLATYT PR:T", nahty[0])
 
 
+class HylatytIlmanKasiteltyja(unittest.TestCase):
+    """Hylkayslista ohittaa commitit, joille on jo tehtavatiedosto (jonossa tai tehty)."""
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        self.h = [{"repo": "agentti-pohja", "pr": 303, "sha": "93060a6cafe1"}]
+
+    def tehtava(self, nimi):
+        p = self.repo / ajuri.JONO / "tehtavat" / nimi
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x")
+
+    def test_olemassa_oleva_tiedosto_pudottaa_rivin(self):
+        self.tehtava("2026-11-14-04-auto-pr-303-93060a6.md")
+        self.assertEqual(ajuri.ilman_kasiteltyja(self.h, self.repo), [])
+
+    def test_eri_sha_samalle_prlle_jaa_listalle(self):
+        self.tehtava("2026-11-14-04-auto-pr-303-1111111.md")
+        self.assertEqual(ajuri.ilman_kasiteltyja(self.h, self.repo), self.h)
+
+    def test_eri_pr_samalla_shalla_jaa_listalle(self):
+        self.tehtava("2026-11-14-04-auto-pr-30-93060a6.md")
+        self.assertEqual(ajuri.ilman_kasiteltyja(self.h, self.repo), self.h)
+
+    def test_puuttuva_hakemisto_ei_kaada(self):
+        self.assertEqual(ajuri.ilman_kasiteltyja(self.h, self.repo / "ei-ole"), self.h)
+
+
+class HylatytKasiteltyOhitetaanSuunnittelussa(Pohja):
+    def test_kasitelty_commit_ei_paady_kehotteeseen(self):
+        nyt = datetime(2026, 11, 4, 12, 0, tzinfo=timezone.utc)
+        (self.repo.parent / ajuri.TARKASTUSLOKI).write_text(json.dumps(
+            {"repo": "agentti-pohja", "pr": 199, "tulos": "HYLATTY", "sha": "f6d8ee42326e", "aika": "2026-11-04T07:46:00+00:00"}) + "\n", encoding="utf-8")
+        self.lisaa_tehtava("2026-11-04-01-auto-pr-199-f6d8ee4.md")
+        nahty = []
+
+        def f(kom, **kw):
+            nahty.append(" ".join(map(str, kom)) + str(kw.get("input") or ""))
+            return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": json.dumps({"tehtavat": [], "tonylle": ""})}), "")
+        ajuri.suunnittele(self.repo, self.tmp, {}, f, nyt=nyt)
+        self.assertNotIn("agentti-pohja#199", nahty[0])
+
+
 def git_ulos(hak, *a):
     return subprocess.run(["git", "-C", str(hak), *a], check=True, capture_output=True, text=True).stdout.strip()
 
