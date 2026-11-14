@@ -4,7 +4,8 @@ Taydentaa test_openrouter_zdr.py:n merkkijonovartijaa (A851, ZDR). Merkkijonovar
 ohitetaan pilkkomalla osoite (`"https://openrouter" + ".ai/x"`). Tama vartija vaatii:
 
   (a) jokainen `provider`-avaimen sisaltava pyyntorunko syntyy funktiossa `rakenna_runko`
-      (sanakirjaliteraali, `dict(provider=...)` tai `runko["provider"] = ...`), ja
+      tiedostossa `aivo/openrouter_zdr.py` (sanakirjaliteraali, `dict(provider=...)` tai
+      sijoitus `runko["provider"] = ...`; pelkka lukeminen `x["provider"]` ei halyta), ja
   (b) merkkijonojen yhdistelmat (`+`, `%`, f-merkkijono) eivat muodosta sanaa `openrouter`
       sallittujen tiedostojen ulkopuolella.
 
@@ -16,6 +17,8 @@ from pathlib import Path
 
 JUURI = Path(__file__).resolve().parent.parent
 RUNKO_FUNKTIO = "rakenna_runko"
+# Poikkeus sidotaan polkuun JA nimeen: samanniminen funktio muussa tiedostossa ei kelpaa.
+RUNKO_TIEDOSTO = "aivo/openrouter_zdr.py"
 
 # Tiedostot, joissa `openrouter` saa esiintya yhdistelmassa (b). Perustelu: moduuli
 # `aivo/openrouter_zdr.py` on ainoa paikka, jonka tehtava on rakentaa OpenRouter-pyynto
@@ -23,12 +26,22 @@ RUNKO_FUNKTIO = "rakenna_runko"
 SALLITUT_YHDISTELMAT = frozenset({"aivo/openrouter_zdr.py"})
 
 
-def _skannattavat():
-    tiedostot = sorted(p for p in (JUURI / "aivo").glob("*.py") if not p.name.startswith("test_"))
+def _skannattavat(juuri=JUURI):
+    tiedostot = sorted(p for p in (juuri / "aivo").glob("*.py") if not p.name.startswith("test_"))
     tiedostot += sorted(
-        p for p in (JUURI / "claudejono").glob("aivo_*.py") if not p.name.startswith("test_")
+        p for p in (juuri / "claudejono").glob("aivo_*.py") if not p.name.startswith("test_")
     )
     return tiedostot
+
+
+def provider_osumat(juuri=JUURI):
+    """`tiedosto:rivi`-osumat kaikista skannattavista tiedostoista (polku juuresta, vinoviivoin)."""
+    osumat = []
+    for p in _skannattavat(juuri):
+        rel = p.relative_to(juuri).as_posix()
+        for rivi in provider_rikkomukset(_jasenna(p.read_text(encoding="utf-8")), rel):
+            osumat.append(f"{rel}:{rivi}")
+    return osumat
 
 
 def _jasenna(lahde):
@@ -44,12 +57,14 @@ def _on_provider(solmu):
     )
 
 
-def provider_rikkomukset(puu):
-    """Rivinumerot, joilla `provider`-runko rakennetaan `rakenna_runko`-funktion ulkopuolella."""
+def provider_rikkomukset(puu, polku="aivo/muu.py"):
+    """Rivinumerot, joilla `provider`-runko rakennetaan muualla kuin `RUNKO_TIEDOSTO`:n
+    `rakenna_runko`-funktiossa. `polku` on tiedoston polku juuresta (vinoviivoin)."""
     sallitut = set()
-    for f in ast.walk(puu):
-        if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)) and f.name == RUNKO_FUNKTIO:
-            sallitut.update(id(n) for n in ast.walk(f))
+    if polku == RUNKO_TIEDOSTO:
+        for f in ast.walk(puu):
+            if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)) and f.name == RUNKO_FUNKTIO:
+                sallitut.update(id(n) for n in ast.walk(f))
     rivit = []
     for n in ast.walk(puu):
         if id(n) in sallitut:
@@ -60,7 +75,11 @@ def provider_rikkomukset(puu):
             (k.arg or "").strip().lower() == "provider" for k in n.keywords
         ):
             rivit.append(n.lineno)
-        elif isinstance(n, ast.Subscript) and _on_provider(n.slice):
+        elif (
+            isinstance(n, ast.Subscript)
+            and isinstance(n.ctx, ast.Store)
+            and _on_provider(n.slice)
+        ):
             rivit.append(n.lineno)
     return sorted(set(rivit))
 
@@ -89,11 +108,7 @@ class ZdrKutsupolkuTesti(unittest.TestCase):
         self.assertIn("aivo/openrouter_zdr.py", nimet)
 
     def test_provider_runko_vain_rakenna_runko_funktiossa(self):
-        osumat = []
-        for p in _skannattavat():
-            for rivi in provider_rikkomukset(_jasenna(p.read_text(encoding="utf-8"))):
-                osumat.append(f"{p.relative_to(JUURI)}:{rivi}")
-        self.assertEqual(osumat, [])
+        self.assertEqual(provider_osumat(), [])
 
     def test_ei_openrouter_yhdistelmia_sallittujen_ulkopuolella(self):
         osumat = []
@@ -130,10 +145,53 @@ class ZdrKutsupolkuTesti(unittest.TestCase):
 
     def test_skanneri_hyvaksyy_rakenna_runko_ja_viattoman_koodin(self):
         self.assertEqual(
-            provider_rikkomukset(_jasenna('def rakenna_runko():\n    return {"provider": {}}\n')), []
+            provider_rikkomukset(
+                _jasenna('def rakenna_runko():\n    return {"provider": {}}\n'), RUNKO_TIEDOSTO
+            ),
+            [],
         )
         self.assertEqual(yhdistelma_rikkomukset(_jasenna('U = "a" + "b"\nV = f"x{y}"\n')), [])
         self.assertEqual(provider_rikkomukset(_jasenna('R = {"model": "m"}\n')), [])
+
+    def test_rakenna_runko_poikkeus_vain_sovitussa_tiedostossa(self):
+        lahde = 'def rakenna_runko():\n    return {"provider": {"zdr": False}}\n'
+        # Sama funktio sovitussa tiedostossa: sallittu.
+        self.assertEqual(provider_rikkomukset(_jasenna(lahde), RUNKO_TIEDOSTO), [])
+        # Sovitussa tiedostossa mutta eri nimisessa funktiossa: vartija kaatuu.
+        muu_nimi = 'def toinen():\n    return {"provider": {"zdr": False}}\n'
+        self.assertEqual(provider_rikkomukset(_jasenna(muu_nimi), RUNKO_TIEDOSTO), [2])
+        # Samanniminen funktio missa tahansa muualla: vartija kaatuu.
+        for polku in ("aivo/muu.py", "claudejono/aivo_x.py", "aivo/openrouter_zdr2.py"):
+            with self.subTest(polku=polku):
+                self.assertEqual(provider_rikkomukset(_jasenna(lahde), polku), [2])
+
+    def test_tiedostoskannaus_kaataa_samannimisen_funktion_toisessa_tiedostossa(self):
+        import tempfile
+
+        lahde = 'def rakenna_runko():\n    return {"provider": {"zdr": False}}\n'
+        with tempfile.TemporaryDirectory() as t:
+            juuri = Path(t)
+            (juuri / "aivo").mkdir()
+            (juuri / "claudejono").mkdir()
+            (juuri / "aivo" / "openrouter_zdr.py").write_text(lahde, encoding="utf-8")
+            self.assertEqual(provider_osumat(juuri), [])
+            (juuri / "aivo" / "muu.py").write_text(lahde, encoding="utf-8")
+            (juuri / "claudejono" / "aivo_x.py").write_text(lahde, encoding="utf-8")
+            self.assertEqual(
+                provider_osumat(juuri), ["aivo/muu.py:2", "claudejono/aivo_x.py:2"]
+            )
+
+    def test_provider_lukeminen_ei_halyta_mutta_sijoitus_halyttaa(self):
+        for lahde in (
+            'x = r["provider"]\n',
+            'def f(r):\n    return r["provider"].get("zdr")\n',
+            'if "provider" in r:\n    pass\n',
+        ):
+            with self.subTest(lahde=lahde):
+                self.assertEqual(provider_rikkomukset(_jasenna(lahde)), [])
+        for lahde in ('r["provider"] = {}\n', 'r["provider"] += {}\n', 'a, r["provider"] = 1, 2\n'):
+            with self.subTest(lahde=lahde):
+                self.assertTrue(provider_rikkomukset(_jasenna(lahde)))
 
 
 if __name__ == "__main__":
