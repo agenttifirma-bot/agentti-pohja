@@ -11,6 +11,7 @@ Jos diff on yli rajan (oletus 150000 tavua), mukaan otetaan suurimmat tiedostomu
 
 Kirjoittaa <ulos>/muutokset.md (tiedostolista, rajaus), <ulos>/diff.patch ja <ulos>/otsikko.md (raportin alkuun) ja tulostaa avain=arvo-rivit.
 Vain stdlib. Ei salaisuuksia: lukee vain git-kloonia ja raporttien nimia."""
+import os
 import re
 import subprocess
 import sys
@@ -119,13 +120,23 @@ def rajaa(klooni, ulos, perus, repo, raja=OLETUS_RAJA, nyt=None):
             "diff_tavua": kaikki, "mukana_tavua": mukana_koko}
 
 
+def _nyt_ymparistosta():
+    """KATSELMOI_NYT (ISO 8601, esim. 2026-11-05T12:00:00+00:00) kiinnittaa kellon testeille; puuttuessa None (oikea kello).
+    Vaikuttaa vain siihen, mista hetkesta oletusajanjakso lasketaan; budjettiin ja rajoihin se ei koske."""
+    arvo = os.environ.get("KATSELMOI_NYT")
+    if not arvo:
+        return None
+    t = datetime.fromisoformat(arvo)
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
 def main(argv):
     if len(argv) not in (5, 6):
         print("kaytto: rajaus.py <klooni> <ulos> <perus> <repo> [raja_tavua]", file=sys.stderr)
         return 2
     try:
         raja = int(argv[5]) if len(argv) == 6 else OLETUS_RAJA
-        t = rajaa(argv[1], argv[2], argv[3], argv[4], raja)
+        t = rajaa(argv[1], argv[2], argv[3], argv[4], raja, nyt=_nyt_ymparistosta())
     except (RuntimeError, ValueError, OSError) as virhe:
         print(f"rajaus.py: {type(virhe).__name__}", file=sys.stderr)  # vain tyyppi
         return 1

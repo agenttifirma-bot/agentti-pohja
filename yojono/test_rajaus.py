@@ -138,6 +138,21 @@ class TestKoko(Pohja):
             rajaus.rajaa(self.repo, self.tmp / "u", self.perus, "../x")
 
 
+class TestKello(unittest.TestCase):
+    def test_nyt_ymparistosta(self):
+        vanha = os.environ.pop("KATSELMOI_NYT", None)
+        try:
+            self.assertIsNone(rajaus._nyt_ymparistosta())
+            os.environ["KATSELMOI_NYT"] = "2026-11-05T12:00:00"
+            self.assertEqual(rajaus._nyt_ymparistosta(), NYT)  # aikavyohykkeeton tulkitaan UTC:ksi
+            os.environ["KATSELMOI_NYT"] = "2026-11-05T12:00:00+00:00"
+            self.assertEqual(rajaus._nyt_ymparistosta(), NYT)
+        finally:
+            os.environ.pop("KATSELMOI_NYT", None)
+            if vanha is not None:
+                os.environ["KATSELMOI_NYT"] = vanha
+
+
 class TestSkripti(Pohja):
     """katselmoi.sh kokonaan tekoclauden ja paikallisen 'GitHubin' kanssa."""
 
@@ -155,7 +170,7 @@ class TestSkripti(Pohja):
         subprocess.run(["rm", "-rf", str(self.etuosa / "r")], check=True)
         subprocess.run(["git", "clone", "-q", "--bare", str(self.repo), str(self.etuosa / "r")], check=True)
         env = dict(os.environ, KATSELMOI_PERUS=str(self.perus), KATSELMOI_ENV=str(self.tmp / "env"), KATSELMOI_CLAUDE=str(self.claude),
-                   KATSELMOI_URL_ETUOSA=str(self.etuosa), KATSELMOI_PYTHON="python3", YOJONO_AJURI=str(HAKEMISTO.parent))
+                   KATSELMOI_URL_ETUOSA=str(self.etuosa), KATSELMOI_PYTHON="python3", KATSELMOI_NYT=NYT.isoformat(), YOJONO_AJURI=str(HAKEMISTO.parent))
         return subprocess.run(["sh", str(HAKEMISTO / "katselmoi.sh"), "r", budjetti], capture_output=True, text=True, env=env, check=False)
 
     def raportti(self):
