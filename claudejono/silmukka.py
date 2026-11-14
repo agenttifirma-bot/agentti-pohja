@@ -38,9 +38,9 @@ _RAHA_RE = re.compile(r"\b(?:osta(?! ja pid)|ostaa|ostetaan|maksa|maksaa|makseta
 _TILAA_RE = re.compile(r"\btilaa\b", re.IGNORECASE)
 _SANA_ENNEN_RE = re.compile(r"(\w+)\W+$")
 _SANA_JALKEEN_RE = re.compile(r"^\W*(\w+)")
-# "tilaa" on sekä käsky (tilata) että osanto (tila). Osanto tunnistetaan vain suljetusta sanalistasta: edeltävä sana
-# (yksityistä, vapaata, paljon ...) tai seuraava sana (kasvulle ...). Sanat täsmäävät kokonaisina, ei päätteen tai alun perusteella.
-# Kaikki muu "tilaa" on raha: parempi ohjata Tonylle liikaa. Verbit kuten saa, antaa ja varaa voivat edeltää ostokäskyä, joten ne eivät ole listalla.
+# "tilaa" on seka kasky (tilata) etta osanto (tila). Osanto tunnistetaan vain suljetusta sanalistasta: edeltava sana
+# (yksityista, vapaata, paljon ...) tai seuraava sana (kasvulle ...). Sanat tasmaavat kokonaisina, ei paatteen tai alun perusteella.
+# Kaikki muu "tilaa" on raha: parempi ohjata Tonylle liikaa. Verbit kuten saa, antaa ja varaa voivat edeltaa ostokaskya, joten ne eivat ole listalla.
 _TILA_EDELTAJA = {"yksityist\u00e4", "yksityista", "vapaata", "lis\u00e4\u00e4", "lisaa", "enemm\u00e4n", "enemman", "paljon", "v\u00e4h\u00e4n", "vahan",
                   "tarpeeksi", "riitt\u00e4v\u00e4sti", "riittavasti", "tarvitsee", "tarvitaan", "tarvitsemme", "vie", "viev\u00e4t", "veisi", "vaatii"}
 _TILA_SEURAAJA = {"kasvulle", "kasvua", "riitt\u00e4\u00e4", "riittaa", "puuttuu", "vapautuu", "levyll\u00e4", "levylla", "muistissa", "liikkua"}
@@ -55,7 +55,7 @@ def _tilaa_on_osto(lause, m):
 
 
 class RahaRe:
-    """Raha-luokan tunnistin: tavalliset ostosanat ja \"tilaa\" vain ostamisen merkityksessä. search palauttaa totuusarvon (ei Match-oliota)."""
+    """Raha-luokan tunnistin: tavalliset ostosanat ja \"tilaa\" vain ostamisen merkityksessa. search palauttaa totuusarvon (ei Match-oliota)."""
     def search(self, lause):
         return bool(_RAHA_RE.search(lause) or any(_tilaa_on_osto(lause, m) for m in _TILAA_RE.finditer(lause)))
 
