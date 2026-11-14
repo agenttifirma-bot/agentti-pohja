@@ -99,8 +99,13 @@ class Kulutus(unittest.TestCase):
             virta = "\n".join(['{"type":"assistant","x":"' + "a" * 400 + '"}'] * 20 + [loppu])
             self.assertGreater(len(virta), raja)
             self.assertEqual(kulutus.claude_luvut(virta), {"tokenit_in": 7})      # loppuolio loytyy lopusta
-            self.assertEqual(kulutus.claude_luvut(json.dumps({"type": "result", "x": "a" * 3000})),
-                             {"jasennysvirhe": "liian_suuri"})                    # yksi iso olio ei jasennu rajan jalkeen
+            # yksittainen iso JSON-olio (vanha --output-format json) jasentyy kuten ennen, vaikka ylittaisi rajan
+            iso = json.dumps({"type": "result", "x": "a" * 3000, "usage": {"input_tokens": 9}})
+            self.assertGreater(len(iso), raja)
+            self.assertEqual(kulutus.claude_luvut(iso), {"tokenit_in": 9})
+            # rivipohjainen virta ilman loppuoliota rajan ylittyessa: vakiosyy liian_suuri
+            self.assertEqual(kulutus.claude_luvut("\n".join(['{"type":"assistant","x":"' + "a" * 400 + '"}'] * 20)),
+                             {"jasennysvirhe": "liian_suuri"})
 
     def test_kirjaus_ja_malleittain_ja_rivi(self):
         k = lambda malli_, usd, ok=True, paivia=1: kulutus.kirjaa(

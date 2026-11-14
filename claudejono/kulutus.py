@@ -35,16 +35,16 @@ def _tulosolio_syy(stdout):
     """(olio, syy). syy on None kun olio loytyi; muuten tyhja | ei_tulosta | liian_suuri (vakiosanasto, ei tulosteen sisaltoa)."""
     if not isinstance(stdout, str) or not stdout.strip():
         return None, "tyhja"
-    teksti, katkaistu = _rajaa(stdout)
-    syy = "liian_suuri" if katkaistu else "ei_tulosta"
     try:
-        d = json.loads(teksti)
+        d = json.loads(stdout)          # vanha yksittainen JSON-olio jasennetaan kokonaisena kuten ennen (ei rajaa)
     except (ValueError, TypeError):
         d = None
     if isinstance(d, dict) and d.get("type", "result") == "result":
         return d, None
     if d is not None and not isinstance(d, dict):
         return None, "ei_tulosta"
+    teksti, katkaistu = _rajaa(stdout)  # rajaus vain rivipohjaiseen etsintaan (stream-json)
+    syy = "liian_suuri" if katkaistu else "ei_tulosta"
     loppu = None
     for rivi in teksti.splitlines():
         try:
