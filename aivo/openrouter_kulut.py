@@ -11,17 +11,23 @@ Saannot:
   * Tuntematon kulu lasketaan varovasti: tunnetuilla tokeneilla mallin hinnasta (tuntematon malli = korkea oletushinta),
     ilman tokeneita kiintea VARO_USD_KUTSU. Myos kuljetinvirhe kirjataan tuntemattomana kulutuksena (aikakatkaisu voi laskuttaa).
   * Valuutta: OpenRouter raportoi USD:na; muunnos on kiintea vakio USD_EUR (ei verkkohakua).
-  * Katkaisin tarkistaa kulun ennen kutsua, joten yksittainen kutsu voi ylittaa katon sen verran kuin kutsu maksaa.
+  * Katkaisin tarkistaa kulun ennen kutsua. Tarkistus ja varaus tehdaan yhdessa tiedostolukon (flock) alla: ennen kutsua
+    kirjataan varaus VARAUS_USD, ja kutsun jalkeen toteutunut kulu korvaa varauksen. Rinnakkaiset prosessit nakevat
+    toistensa varaukset, joten katto ylittyy enintaan yhden varauksen (ja toteutuneen kulun erotuksen) verran.
+    Kaatunut prosessi jattaa varauksen voimaan vuorokauden loppuun asti (varovainen, fail closed).
   * Kirjaus on isannan tilahakemistossa (oletus /var/lib/claude-jono, kulutus.jsonl:n vieressa), ei GitHubissa (A728).
     Rivilla on vain malli, aika, tehtavan tunniste ja luvut; ei viestien sisaltoa.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import math
 import os
 import re
 import sys
+import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -37,6 +43,9 @@ VARO_USD_KUTSU = Decimal("0.50")    # kulu, kun ei kulua eika tokeneita
 OLETUS_TILA = "/var/lib/claude-jono"
 KULUT = "openrouter-kulut.jsonl"
 TAPAHTUMAT = "openrouter-katto.jsonl"
+LUKKO = "openrouter-kulut.lock"
+VARAUS_USD = VARO_USD_KUTSU         # varaus ennen kutsua (arvioitu enimmaiskulu); toteutunut kulu korvaa sen
+MIN_ARVIO_USD = Decimal("0.01")     # tokeniarvion alaraja: 0/0 tokenia ei koskaan anna nollaa
 VIIKKO_TARKISTA_PAIVIA = 3          # katto taynna vahintaan nain monena paivana 7:sta -> "tarkista kaytto" (A963)
 
 # USD / miljoona tokenia (sisaan, ulos). Tuntematon malli: OLETUSHINTA (korkea, varovainen).
@@ -86,7 +95,7 @@ def arvioi_usd(malli: str, tokenit_in: Any, tokenit_out: Any) -> Decimal:
     if t_in is None and t_out is None:
         return VARO_USD_KUTSU
     h_in, h_out = HINNAT_USD_MTOK.get(malli, OLETUSHINTA_USD_MTOK)
-    arvio = ((t_in or 0) * h_in + (t_out or 0) * h_out) / Decimal(1_000_000)
+    arvio = max(((t_in or 0) * h_in + (t_out or 0) * h_out) / Decimal(1_000_000), MIN_ARVIO_USD)
     return max(arvio, VARO_USD_KUTSU) if (t_in is None or t_out is None) else arvio
 
 
@@ -124,6 +133,29 @@ def _lue_rivit(tila: Path, tiedosto: str) -> list[dict[str, Any]]:
     return ulos
 
 
+@contextmanager
+def _lukko(tila: Path):
+    """Yksinoikeus kulutiedostoon (flock kulutiedoston viereisella lukkotiedostolla). Epaonnistuminen -> KulutVirhe."""
+    try:
+        fd = os.open(tila / LUKKO, os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError:
+        raise KulutVirhe("lukkoa ei voi avata") from None
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError:
+            raise KulutVirhe("lukkoa ei saada") from None
+        yield
+    finally:
+        os.close(fd)            # sulkeminen vapauttaa lukon
+
+
+def _voimassa(rivit: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Pudottaa varausrivit, joille on kirjattu toteutunut kulu (sama varaus_id)."""
+    valmiit = {str(r["varaus_id"]) for r in rivit if "varaus_id" in r and not r.get("varaus")}
+    return [r for r in rivit if not (r.get("varaus") and str(r.get("varaus_id")) in valmiit)]
+
+
 def _lisaa_rivi(tila: Path, tiedosto: str, rivi: Mapping[str, Any]) -> None:
     try:
         fd = os.open(tila / tiedosto, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
@@ -140,13 +172,13 @@ def _eur(usd: Decimal) -> Decimal:
 def kulut_paivalta(tila: Any, nyt: datetime) -> Decimal:
     """Kuluvan vuorokauden (Helsinki) kulut EUR. KulutVirhe, jos kirjanpito ei kelpaa."""
     paiva = _paiva(nyt)
-    return _eur(sum((rivin_usd(r) for r in _lue_rivit(_tila(tila), KULUT) if r["_paiva"] == paiva), Decimal(0)))
+    return _eur(sum((rivin_usd(r) for r in _voimassa(_lue_rivit(_tila(tila), KULUT)) if r["_paiva"] == paiva), Decimal(0)))
 
 
-def kirjaa(malli: str, tehtava: str, vastaus: Any, nyt: datetime, tila: Any = None) -> dict[str, Any]:
+def kirjaa(malli: str, tehtava: str, vastaus: Any, nyt: datetime, tila: Any = None, varaus_id: str | None = None) -> dict[str, Any]:
     """Kirjaa yhden OpenRouter-vastauksen kulun. `vastaus` = vastauksen JSON (dict) tai None (kuljetinvirhe).
     usage.cost (USD) kirjataan sellaisenaan; jos se puuttuu, kirjataan tokenit ja kulu merkitaan tuntemattomaksi.
-    KulutVirhe, jos kirjoitus ei onnistu."""
+    `varaus_id`: kutsua edeltaneen varauksen tunniste; rivi korvaa varauksen. KulutVirhe, jos kirjoitus ei onnistu."""
     _paiva(nyt)
     u = vastaus.get("usage") if isinstance(vastaus, Mapping) and isinstance(vastaus.get("usage"), Mapping) else {}
     rivi: dict[str, Any] = {"aika": nyt.astimezone(TZ).isoformat(timespec="seconds"), "malli": _tunniste(malli), "tehtava": _tunniste(tehtava)}
@@ -166,7 +198,11 @@ def kirjaa(malli: str, tehtava: str, vastaus: Any, nyt: datetime, tila: Any = No
         rivi["kulu_tuntematon"] = True
     if vastaus is None:
         rivi["virhe"] = True
-    _lisaa_rivi(_tila(tila), KULUT, rivi)
+    if varaus_id is not None:
+        rivi["varaus_id"] = _tunniste(varaus_id, 64)
+    t = _tila(tila)
+    with _lukko(t):
+        _lisaa_rivi(t, KULUT, rivi)
     return rivi
 
 
@@ -187,6 +223,22 @@ def _ilmoita_katto(tila: Path, nyt: datetime, eur: Decimal, ilmoita: Callable[[s
                 _lisaa_rivi(tila, TAPAHTUMAT, {"aika": aika, "tyyppi": "ilmoitus"})
     except Exception as virhe:  # noqa: BLE001 - ilmoitus ei saa kaataa katkaisinta
         print("openrouter_kulut: katto-ilmoitus epaonnistui (%s)" % type(virhe).__name__, file=sys.stderr)
+
+
+def _varaa(nyt: datetime, tila: Any, malli: str, tehtava: str) -> tuple[str | None, Decimal]:
+    """Tarkistus ja varaus yhdessa lukon alla. Palauttaa (varaus_id, kulut EUR ennen varausta); varaus_id on None, kun katto on taynna.
+    Mika tahansa virhe nostetaan (kutsuja kasittelee sen estona)."""
+    t = _tila(tila)
+    if not t.is_dir() or not os.access(t, os.W_OK):
+        raise KulutVirhe("tilahakemisto ei kelpaa")
+    with _lukko(t):
+        eur = kulut_paivalta(t, nyt)
+        if eur >= PAIVAKATTO_EUR:
+            return None, eur
+        tunnus = uuid.uuid4().hex
+        _lisaa_rivi(t, KULUT, {"aika": nyt.astimezone(TZ).isoformat(timespec="seconds"), "malli": _tunniste(malli),
+                               "tehtava": _tunniste(tehtava), "varaus": True, "varaus_id": tunnus, "usd": float(VARAUS_USD)})
+        return tunnus, eur
 
 
 def saako_kutsua(nyt: datetime, tila: Any = None, ilmoita: Callable[[str], Any] | None = None) -> bool:
@@ -219,18 +271,23 @@ def kutsu(
     `laheta` on kuljetin (tekee verkkokutsun ja palauttaa vastauksen JSON:n); testeissa feikki.
     Katkaisin estaa: KutsuEstetty. Kuljetinvirhe kirjataan (varovainen kulu) ja nostetaan edelleen."""
     aika = (nyt or (lambda: datetime.now(TZ)))()
-    if not saako_kutsua(aika, tila, ilmoita):
+    runko = openrouter_zdr.rakenna_runko(malli, viestit, **lisa)    # ennen varausta: runkovirhe ei jata varausta
+    try:
+        varaus, eur = _varaa(aika, tila, malli, tehtava)
+    except Exception:  # noqa: BLE001 - mika tahansa virhe est\u00e4\u00e4 kutsun (fail closed)
+        raise KutsuEstetty("paivakatto tayna tai kirjanpito ei kelpaa") from None
+    if varaus is None:
+        _ilmoita_katto(_tila(tila), aika, eur, ilmoita)
         raise KutsuEstetty("paivakatto tayna tai kirjanpito ei kelpaa")
-    runko = openrouter_zdr.rakenna_runko(malli, viestit, **lisa)
     try:
         vastaus = laheta(runko)
     except BaseException:
         try:
-            kirjaa(malli, tehtava, None, aika, tila)
+            kirjaa(malli, tehtava, None, aika, tila, varaus)
         except KulutVirhe:
             pass
         raise
-    kirjaa(malli, tehtava, vastaus, aika, tila)
+    kirjaa(malli, tehtava, vastaus, aika, tila, varaus)
     return vastaus
 
 
@@ -238,7 +295,7 @@ def viikkoraportti(tila: Any, nyt: datetime) -> str:
     """Viikkoraportin osa: kulut per paiva ja malli (7 vrk, Helsinki) EUR. Jos katto taynna >= 3 paivana: 'tarkista kaytto' (A963)."""
     try:
         paiva = _paiva(nyt)
-        rivit = _lue_rivit(_tila(tila), KULUT)
+        rivit = _voimassa(_lue_rivit(_tila(tila), KULUT))
         paivat = [paiva - timedelta(days=i) for i in range(6, -1, -1)]
         taulu: dict[Any, dict[str, Decimal]] = {p: {} for p in paivat}
         for r in rivit:

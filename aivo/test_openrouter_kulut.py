@@ -1,7 +1,9 @@
 """Testit aivo/openrouter_kulut.py:lle. Ei verkkoa, ei tunnuksia; kuljetin on feikki, tila tilapaishakemisto."""
 import ast
 import json
+import multiprocessing
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -217,7 +219,7 @@ class KutsuTesti(Pohja):
         self.kutsu(laheta)
         self.assertTrue(runkot[0]["provider"]["zdr"])
         self.assertEqual(runkot[0]["provider"]["data_collection"], "deny")
-        self.assertEqual(len(ok._lue_rivit(self.tila, ok.KULUT)), 1)
+        self.assertEqual(len(ok._voimassa(ok._lue_rivit(self.tila, ok.KULUT))), 1)
 
     def test_katto_estaa_eika_laheta(self):
         self.rivi(NYT, USD_KATTO * 2)
@@ -244,7 +246,7 @@ class KutsuTesti(Pohja):
             raise OSError("x")
         with self.assertRaises(OSError):
             self.kutsu(laheta)
-        r = ok._lue_rivit(self.tila, ok.KULUT)[0]
+        r = ok._voimassa(ok._lue_rivit(self.tila, ok.KULUT))[0]
         self.assertTrue(r["virhe"] and r["kulu_tuntematon"])
         self.assertGreater(ok.kulut_paivalta(self.tila, NYT), 0)
 
@@ -260,7 +262,7 @@ class KutsuTesti(Pohja):
                 break
         else:
             self.fail("katkaisin ei pysaytanyt virheloopia")
-        self.assertLessEqual(len(ok._lue_rivit(self.tila, ok.KULUT)), 22)
+        self.assertLessEqual(len(ok._voimassa(ok._lue_rivit(self.tila, ok.KULUT))), 22)
 
 
 class RakenneTesti(unittest.TestCase):
@@ -299,8 +301,83 @@ class RakenneTesti(unittest.TestCase):
             if isinstance(n, ast.Call):
                 nimi = n.func.id if isinstance(n.func, ast.Name) else getattr(n.func, "attr", "")
                 rivit.setdefault(nimi, n.lineno)
-        self.assertLess(rivit["saako_kutsua"], rivit["rakenna_runko"])
+        self.assertLess(rivit["_varaa"], rivit["laheta"])
         self.assertLess(rivit["rakenna_runko"], rivit["laheta"])
+
+
+def _rinnakkainen(tila, aloitus, jono):
+    """Aliprosessi: odottaa yhteista lahtoa, yrittaa yhta kutsua hitaalla kuljettimella, raportoi tuloksen."""
+    def laheta(_):
+        time.sleep(0.3)             # pitaa katkaisimen "avoimena" muiden prosessien tarkistusten ajan
+        return {"usage": {"cost": 0.0}}
+    aloitus.wait(10)
+    try:
+        ok.kutsu("m/x", MSG, laheta, tehtava="t", nyt=lambda: NYT, tila=tila)
+        jono.put("lahti")
+    except ok.KutsuEstetty:
+        jono.put("estetty")
+
+
+class RinnakkaisuusTesti(Pohja):
+    def test_rinnakkaiset_prosessit_eivat_ylita_kattoa_yli_yhden_varauksen(self):
+        self.rivi(NYT, 10.76)                       # 10.76 USD * 0.92 = 9.8992 EUR: alle katon, yksi varaus (0.46 EUR) ylittaa
+        self.assertTrue(ok.saako_kutsua(NYT, self.tila))
+        ctx = multiprocessing.get_context("fork")
+        n = 8
+        aloitus, jono = ctx.Barrier(n), ctx.Queue()
+        ps = [ctx.Process(target=_rinnakkainen, args=(self.tila, aloitus, jono)) for _ in range(n)]
+        for p in ps:
+            p.start()
+        for p in ps:
+            p.join(30)
+        tulokset = [jono.get(timeout=5) for _ in range(n)]
+        self.assertEqual(tulokset.count("lahti"), 1, tulokset)
+        self.assertEqual(tulokset.count("estetty"), n - 1, tulokset)
+        # kokonaiskulu ei ylita kattoa enempaa kuin yhden varauksen verran
+        yht = ok.kulut_paivalta(self.tila, NYT)
+        self.assertLessEqual(yht, ok.PAIVAKATTO_EUR + ok.VARAUS_USD * ok.USD_EUR)
+
+    def test_varaus_nakyy_katkaisimessa_kutsun_aikana(self):
+        self.rivi(NYT, 10.76)
+        nahty = []
+
+        def laheta(_):
+            nahty.append(ok.saako_kutsua(NYT, self.tila))   # varaus on jo kirjattu -> katto taynna
+            return {"usage": {"cost": 0.0}}
+        ok.kutsu("m/x", MSG, laheta, tehtava="t", nyt=lambda: NYT, tila=self.tila)
+        self.assertEqual(nahty, [False])
+        self.assertTrue(ok.saako_kutsua(NYT, self.tila))    # toteutunut 0 USD korvasi varauksen
+
+    def test_toteutunut_kulu_korvaa_varauksen_eika_lasketa_kahdesti(self):
+        ok.kutsu("m/x", MSG, lambda _: {"usage": {"cost": 1.0}}, tehtava="t", nyt=lambda: NYT, tila=self.tila)
+        self.assertEqual(ok.kulut_paivalta(self.tila, NYT), Decimal("1.0") * ok.USD_EUR)
+
+    def test_kaatuneen_prosessin_varaus_pysyy_voimassa(self):
+        tunnus, _ = ok._varaa(NYT, self.tila, "m/x", "t")       # ei koskaan kirjata toteutunutta
+        self.assertIsNotNone(tunnus)
+        self.assertEqual(ok.kulut_paivalta(self.tila, NYT), ok.VARAUS_USD * ok.USD_EUR)
+
+    def test_lukon_virhe_estaa_kutsun(self):
+        (self.tila / ok.LUKKO).mkdir()                          # lukkotiedostoa ei voi avata
+        kutsuttu = []
+        with self.assertRaises(ok.KutsuEstetty):
+            ok.kutsu("m/x", MSG, lambda r: kutsuttu.append(r) or {}, tehtava="t", nyt=lambda: NYT, tila=self.tila)
+        self.assertEqual(kutsuttu, [])
+
+    def test_runkovirhe_ei_jata_varausta(self):
+        with self.assertRaises(ok.openrouter_zdr.ZdrVirhe):
+            ok.kutsu("m/x", MSG, lambda r: {}, tehtava="t", nyt=lambda: NYT, tila=self.tila, zdr=False)
+        self.assertEqual(ok.kulut_paivalta(self.tila, NYT), 0)
+
+
+class NollaArvioTesti(Pohja):
+    def test_nolla_tokenia_ei_anna_nollaa(self):
+        self.assertEqual(ok.arvioi_usd("m/x", 0, 0), ok.MIN_ARVIO_USD)
+        self.assertGreater(ok.MIN_ARVIO_USD, 0)
+
+    def test_nolla_tokenia_ilman_kulua_nakyy_kuluna(self):
+        ok.kirjaa("m/x", "t", {"usage": {"prompt_tokens": 0, "completion_tokens": 0}}, NYT, self.tila)
+        self.assertGreater(ok.kulut_paivalta(self.tila, NYT), 0)
 
 
 class ViikkoraporttiTesti(Pohja):
