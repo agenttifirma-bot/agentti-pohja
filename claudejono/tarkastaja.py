@@ -3,8 +3,9 @@ tarkastaja on hyvaksynyt, paitsi rajatut).
 
 Ajetaan isannalla rootina (systemd-ajastin claude-tarkastaja.timer). Yksi kierros:
   1. hakee avoimet PR:t seurattavista repoista (GitHubin API, botin tunnuksella vain luku + kommentti)
-  2. ohittaa PR:t, jotka eivat muutenkaan kelpaa automergeen (tools/automerge.rakenne_syyt: rajatut, koko, osoitteet)
-     tai joiden head-commit on jo tarkastettu. Rakennesyysta ohitettu PR kirjataan lokiin kerran per head-commit
+  2. tarkastaa myos PR:t, jotka eivat kelpaa automergeen (tools/automerge.rakenne_syyt: rajatut, koko, osoitteet),
+     mutta niiden paatos on enintaan RAJATTU (A962, 14.11.2026; CLAUDEJONO_TARKASTA_RAJATUT=0 palauttaa ohituksen).
+     Ohittaa luonnokset ja PR:t, joiden head-commit on jo tarkastettu. Rakennesyysta ohitettu PR kirjataan lokiin kerran per head-commit
      (tulos OHITETTU ja syyt), jotta lokista nakee, miksi PR odottaa Tonya.
   3. hakee diffin, ja malli (oletus Opus) arvioi sen ERILLISENA kayttajana (CLAUDEJONO_TARKASTAJA_KAYTTAJA, ei agentin
      kayttaja eika root) ilman tyokaluja: --tools "" ja --strict-mcp-config, kehote stdinista
@@ -176,6 +177,14 @@ def tulkitse(stdout, koodi):
         return "EN_TIEDA", "tarkastajan vastaus ei ollut sovitussa muodossa", [], luvut
     loydokset = [_siivoa(x, LOYDOS_MAX) for x in (v.get("loydokset") or []) if isinstance(x, str) and x.strip()][:LOYDOKSIA_MAX]
     return PAATOKSET[v["paatos"]], _siivoa(v.get("perustelu"), PERUSTELU_MAX), loydokset, luvut
+
+
+def rajaa_paatos(paatos, perustelu, syyt):
+    """Rakenteellisesti rajattu PR (A962): HYVAKSYTTY muuttuu RAJATUKSI, ja syyt kerrotaan perustelun alussa."""
+    syyteksti = "; ".join(_siivoa(x, OHITUS_SYY_MAX) for x in list(syyt)[:OHITUS_SYITA_MAX])
+    if paatos == "HYVAKSYTTY":
+        paatos = "RAJATTU"
+    return paatos, _siivoa("Rakenteellisesti rajattu (%s). %s" % (syyteksti, perustelu or ""), PERUSTELU_MAX)
 
 
 def kommentti(paatos, sha, perustelu, loydokset, malli):
@@ -356,7 +365,10 @@ def kierros(env, tunnus, nyt=None, suorita=subprocess.run, avaa=urllib.request.u
             try:
                 tiedostot = hae_sivutettu("%s/repos/%s/%s/pulls/%s/files" % (API, OMISTAJA, repo, nro), tunnus, avaa=avaa)
                 syyt = automerge.rakenne_syyt(pr, tiedostot)
-                if syyt:                                               # Tonylle joka tapauksessa: ei kuluteta tarkastusta
+                # Tonyn paatos 14.11.2026 (A962): myos rakenteellisesti rajatut tarkastetaan, jotta Tony paattaa
+                # tarkastetusta versiosta. Luonnokset ohitetaan edelleen. Paatos ei voi olla HYVAKSYTTY (fail closed).
+                tarkasta_rajattu = bool(syyt) and not d.get("draft") and env.get("CLAUDEJONO_TARKASTA_RAJATUT", "1") == "1"
+                if syyt and not tarkasta_rajattu:                      # Tonylle joka tapauksessa: ei kuluteta tarkastusta
                     pari = (repo, nro, pr["head_sha"][:12])
                     if pari not in ohitetut:
                         ohitetut.add(pari)
@@ -377,6 +389,8 @@ def kierros(env, tunnus, nyt=None, suorita=subprocess.run, avaa=urllib.request.u
                     continue
                 alku = time.monotonic()
                 paatos, perustelu, loydokset, luvut, malli = tarkasta_pr(repo, nro, d, tunnus, env, suorita=suorita, avaa=avaa)
+                if tarkasta_rajattu:
+                    paatos, perustelu = rajaa_paatos(paatos, perustelu, syyt)
                 tila["maara"] += 1
                 tila["per_pr"][avain] = tila["per_pr"].get(avain, 0) + 1
                 kirjoita_tila(tilapolku, tila)
