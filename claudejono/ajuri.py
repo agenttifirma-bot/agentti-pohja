@@ -1316,6 +1316,8 @@ def main(argv=None):
             print(f"claude-jono virhe: {kuvaus}", file=sys.stderr)
             halyta(repo.parent / "viimeisin-halytys.json", kuvaus, laheta_telegram)
             return 1
+        finally:   # kerran per kierros; virhe vain lokiin (aivo_arvio kirjaa tyypin), ei koskaan esta ajoa
+            aivo_arvio.kirjoita_kooste_varmasti(repo.parent, repo / JONO / "tulokset")
     return 0
 
 

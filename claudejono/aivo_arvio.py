@@ -10,7 +10,9 @@ import argparse
 import json
 import os
 import random
+import re
 import sys
+import tempfile
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -158,6 +160,115 @@ def viikkoosio(tila, n=OTOS_OLETUS, rng=None):
         kylla_sana = "kyll\u00e4"
         rivit += [f"- {k}: Aivo sanoi {kylla_sana if v['kylla'] else 'ei'} - {v['syy']}" for k, v in o]
     return "\n".join(rivit) + "\n"
+
+
+KOOSTE_TIEDOSTO = "aivo-kooste.json"
+RYHMA_MIN = 5   # alle taman ryhmat nakyvat koosteessa muodossa "<5"
+_TILA_RE = re.compile(r"(?m)^- Tila: ([A-Z]+)\s*$")
+_VALMIS = "VALMIS"
+_EI_VALMIS = ("HYLATTY", "KESKEN")   # EPAONNISTUI on tekninen vika, ei oleellisuuden tuomio: ei oteta vertailuun
+
+
+def _peita(n):
+    return n if n >= RYHMA_MIN else "<" + str(RYHMA_MIN)
+
+
+def _prosentti(osa, kaikki):
+    return round(100 * osa / kaikki, 1) if kaikki >= RYHMA_MIN else None
+
+
+def _tulos_tila(tulokset_hak, tehtava):
+    """Tehtavan tuloksen Tila-rivi (VALMIS, KESKEN, ...) tai None. Vain nimeen luotetaan, ei polun osiin."""
+    if tulokset_hak is None or Path(tehtava).name != tehtava:
+        return None
+    try:
+        with open(Path(tulokset_hak) / tehtava, encoding="utf-8", errors="replace") as f:
+            m = _TILA_RE.search(f.read(2000))
+    except OSError:
+        return None
+    return m.group(1) if m else None
+
+
+def laske_kooste(tila, tulokset_hak=None, nyt=None):
+    """Koosteluvut Aivon arvioista: vain lukumaaria ja prosentteja. EI tehtavien nimia, EI syita, EI yksittaisia rivia.
+    Alle RYHMA_MIN kokoiset ryhmat nakyvat muodossa "<5" eika niista lasketa prosenttia."""
+    nyt = nyt or datetime.now().astimezone()
+    aivo, tony = {}, {}
+    for d in lue(tila):
+        if not isinstance(d.get("kylla"), bool):
+            continue
+        if d.get("laji") == "aivo":
+            aivo[d["tehtava"]] = d
+        elif d.get("laji") == "tony":
+            tony[d["tehtava"]] = d
+    tony = {k: v for k, v in tony.items() if k in aivo}
+    n = len(aivo)
+    kylla = sum(1 for d in aivo.values() if d["kylla"])
+    ei = n - kylla
+    jakauma_peitetty = kylla < RYHMA_MIN or ei < RYHMA_MIN   # muuten pieni ryhma paattelisi yhteissummasta
+    paivat = {}
+    mallit = {}
+    for d in aivo.values():
+        pv = str(d.get("aika", ""))[:10]
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", pv):
+            paivat[pv] = paivat.get(pv, 0) + 1
+        if isinstance(d.get("malli"), str) and re.fullmatch(r"[A-Za-z0-9._:/-]{1,60}", d["malli"]):
+            mallit[d["malli"]] = mallit.get(d["malli"], 0) + 1
+    tony_osumat = sum(1 for k, v in tony.items() if v["kylla"] == aivo[k]["kylla"])
+    vertailtu = osumat = 0
+    for k, d in aivo.items():
+        t = _tulos_tila(tulokset_hak, k)
+        if t == _VALMIS or t in _EI_VALMIS:
+            vertailtu += 1
+            osumat += 1 if (d["kylla"] == (t == _VALMIS)) else 0
+    return {
+        "laskettu": nyt.isoformat(timespec="seconds"),
+        "ryhman_vahimmaiskoko": RYHMA_MIN,
+        "arvioita_yhteensa": _peita(n),
+        "kylla": "<5" if jakauma_peitetty else kylla,
+        "ei": "<5" if jakauma_peitetty else ei,
+        "mallit": {m: _peita(c) for m, c in sorted(mallit.items())},
+        "ensimmainen_paiva": min(paivat) if n >= RYHMA_MIN and paivat else None,
+        "viimeinen_paiva": max(paivat) if n >= RYHMA_MIN and paivat else None,
+        "paivittain": {pv: _peita(c) for pv, c in sorted(paivat.items())},
+        "tony_tarkistanut": _peita(len(tony)),
+        "yhtenevyys_tonyn_kanssa_prosenttia": _prosentti(tony_osumat, len(tony)),
+        "tulokseen_verrattu": _peita(vertailtu),
+        "yhtenevyys_tuloksen_kanssa_prosenttia": _prosentti(osumat, vertailtu),
+        "yhtenevyys_tuloksen_kanssa_selitys": "Aivon kylla = tehtava loppui tilaan VALMIS; Aivon ei = tulos on HYLATTY tai KESKEN. "
+                                               "Muut tilat (esim. EPAONNISTUI) ja tehtavat ilman tulosta jatetaan pois.",
+        "lahtotasoon_riittavasti_arvioita": n >= VAHIMMAIS_LAHTOTASOON,
+        "lahtotason_raja": VAHIMMAIS_LAHTOTASOON,
+    }
+
+
+def kirjoita_kooste(tila, tulokset_hak=None, nyt=None):
+    """Laskee koosteen ja kirjoittaa sen atomisesti (valiaikaistiedosto + rename) tiedostoon tila/aivo-kooste.json, oikeudet 0644."""
+    kooste = laske_kooste(tila, tulokset_hak, nyt)
+    kohde = Path(tila) / KOOSTE_TIEDOSTO
+    fd, vali = tempfile.mkstemp(prefix=KOOSTE_TIEDOSTO + ".", suffix=".tmp", dir=str(tila))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(kooste, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        os.chmod(vali, 0o644)   # mkstemp luo 0600; umask ei saa vaikuttaa
+        os.replace(vali, kohde)
+    except BaseException:
+        try:
+            os.unlink(vali)
+        except OSError:
+            pass
+        raise
+    return kohde
+
+
+def kirjoita_kooste_varmasti(tila, tulokset_hak=None, nyt=None):
+    """Kuten kirjoita_kooste, mutta ei koskaan nosta virhetta (ajo ei saa kaatua). Virheesta kirjataan vain tyyppi. True = onnistui."""
+    try:
+        kirjoita_kooste(tila, tulokset_hak, nyt)
+        return True
+    except Exception as e:
+        print(f"aivo_arvio: koosteen laskenta epaonnistui ({type(e).__name__})", file=sys.stderr)
+        return False
 
 
 def main(argv=None):
