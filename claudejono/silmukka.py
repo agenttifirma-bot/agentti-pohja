@@ -38,27 +38,26 @@ _RAHA_RE = re.compile(r"\b(?:osta(?! ja pid)|ostaa|ostetaan|maksa|maksaa|makseta
 _TILAA_RE = re.compile(r"\btilaa\b", re.IGNORECASE)
 _SANA_ENNEN_RE = re.compile(r"(\w+)\W+$")
 _SANA_JALKEEN_RE = re.compile(r"^\W*(\w+)")
-# "tilaa" on sekä käsky (tilata) että osanto (tila). Osanto tunnistetaan edeltävästä sanasta (yksityistä, vapaata, lisää, paljon ...)
-# tai seuraavasta sanasta (kasvulle, varten ...). Muu "tilaa" luokitellaan rahaksi, koska parempi ohjata Tonylle liikaa.
-_TILA_EDELTAJA = {"lis\u00e4\u00e4", "lisaa", "enemm\u00e4n", "enemman", "paljon", "v\u00e4h\u00e4n", "vahan", "tarpeeksi", "riitt\u00e4v\u00e4sti",
-                  "riittavasti", "tarvitsee", "tarvitaan", "tarvitsemme", "vie", "viev\u00e4t", "veisi", "vaatii", "j\u00e4tt\u00e4\u00e4", "jattaa", "varaa", "antaa", "saa"}
-_TILA_SEURAAJA_RE = re.compile(r"^(?:kasvu\w*|kehity\w*|varten|riitt\w*|puuttuu|vapautu\w*|levyll\w*|muistissa|liikkua|hengitt\w*)$",
-                               re.IGNORECASE)
+# "tilaa" on sekä käsky (tilata) että osanto (tila). Osanto tunnistetaan vain suljetusta sanalistasta: edeltävä sana
+# (yksityistä, vapaata, paljon ...) tai seuraava sana (kasvulle ...). Sanat täsmäävät kokonaisina, ei päätteen tai alun perusteella.
+# Kaikki muu "tilaa" on raha: parempi ohjata Tonylle liikaa. Verbit kuten saa, antaa ja varaa voivat edeltää ostokäskyä, joten ne eivät ole listalla.
+_TILA_EDELTAJA = {"yksityist\u00e4", "yksityista", "vapaata", "lis\u00e4\u00e4", "lisaa", "enemm\u00e4n", "enemman", "paljon", "v\u00e4h\u00e4n", "vahan",
+                  "tarpeeksi", "riitt\u00e4v\u00e4sti", "riittavasti", "tarvitsee", "tarvitaan", "tarvitsemme", "vie", "viev\u00e4t", "veisi", "vaatii"}
+_TILA_SEURAAJA = {"kasvulle", "kasvua", "riitt\u00e4\u00e4", "riittaa", "puuttuu", "vapautuu", "levyll\u00e4", "levylla", "muistissa", "liikkua"}
 
 
 def _tilaa_on_osto(lause, m):
     ed = _SANA_ENNEN_RE.search(lause[:m.start()])
-    ed = ed.group(1).lower() if ed else ""
-    if ed.endswith(("ta", "t\u00e4")) or ed in _TILA_EDELTAJA:
+    if ed and ed.group(1).lower() in _TILA_EDELTAJA:
         return False
     jalk = _SANA_JALKEEN_RE.search(lause[m.end():])
-    return not (jalk and _TILA_SEURAAJA_RE.match(jalk.group(1)))
+    return not (jalk and jalk.group(1).lower() in _TILA_SEURAAJA)
 
 
 class RahaRe:
-    """Raha-luokan tunnistin: tavalliset ostosanat ja \"tilaa\" vain ostamisen merkityksessä."""
+    """Raha-luokan tunnistin: tavalliset ostosanat ja \"tilaa\" vain ostamisen merkityksessä. search palauttaa totuusarvon (ei Match-oliota)."""
     def search(self, lause):
-        return _RAHA_RE.search(lause) or any(_tilaa_on_osto(lause, m) for m in _TILAA_RE.finditer(lause)) or None
+        return bool(_RAHA_RE.search(lause) or any(_tilaa_on_osto(lause, m) for m in _TILAA_RE.finditer(lause)))
 
 
 LUOKAT = {

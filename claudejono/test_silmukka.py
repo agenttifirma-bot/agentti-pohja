@@ -53,6 +53,17 @@ class Tarkistin(unittest.TestCase):
             tulos = silmukka.tarkista_tehtava(teht(lause))
             self.assertNotEqual(tulos, ("sunnuntai", "raha"), lause)
 
+    def test_tilaa_ostokasky_ei_livahda_tilaksi(self):
+        """Tarkastajan hylkäys 0eb7ca5: elatiivi tai -ta/-tä-verbi ennen 'tilaa'-käskyä ei saa tehdä siitä tilaa; epäselvä on raha."""
+        for lause in ("Hetzneristä tilaa palvelin.", "Verkkokaupasta tilaa lisenssi.", "Muista tilaa uusi VPS.", "Varmista ja tilaa domain.",
+                      "Agentti saa tilaa palvelun.", "Agentti antaa tilaa palvelun.", "Varaa ja tilaa lisenssi.",
+                      "Tilaa kehitysympäristö.", "Tilaa kasvupalvelu."):
+            self.assertEqual(silmukka.tarkista_tehtava(teht(lause)), ("sunnuntai", "raha"), lause)
+
+    def test_raha_tunnistin_palauttaa_totuusarvon(self):
+        self.assertIs(silmukka.LUOKAT["raha"].search("Osta palvelin."), True)
+        self.assertIs(silmukka.LUOKAT["raha"].search("Lokit vievät tilaa."), False)
+
     def test_tilaa_kieltosanat_ennallaan(self):
         self.assertEqual(silmukka.tarkista_tehtava(teht("Osta lisää tilaa."))[1], "raha")   # osta laukaisee edelleen
         self.assertEqual(silmukka.tarkista_tehtava(teht("Tee LinkedIn-postaus."))[1], "julkaisu")
