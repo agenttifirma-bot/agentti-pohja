@@ -169,14 +169,34 @@ class KierrosTesti(unittest.TestCase):
 
     def test_rajattu_ja_jo_tarkastettu_ohitetaan_ilman_mallia(self):
         valmis = {"user": {"login": "agenttifirma-bot"}, "body": tk.kommentti("HYLATTY", SHA, "", [], "opus")}
-        for prt, tied, komm, tulokset in (([pr_olio()], [tiedosto(".github/workflows/ci.yml")], [], ["OHITETTU"]),
-                                          ([pr_olio()], [tiedosto()], [valmis], []),
+        for prt, tied, komm, tulokset in (([pr_olio()], [tiedosto()], [valmis], []),
                                           ([pr_olio(nro=6, draft=True)], [tiedosto()], [], ["OHITETTU"]),
                                           ([pr_olio(sha="kelvoton")], [tiedosto()], [], [])):
             api = Feikki(prt, tied, komm)
             self.assertEqual([r["tulos"] for r in tk.kierros(self.env, "t", suorita=self.suorita(), avaa=api)], tulokset)
             self.assertEqual(api.postit, [])
         self.assertEqual(self.ajot, [])
+
+    def test_rakenteellisesti_rajattu_tarkastetaan_mutta_ei_hyvaksyta(self):
+        api = Feikki([pr_olio()], [tiedosto(".github/workflows/ci.yml")], [])
+        tulos = tk.kierros(self.env, "t", suorita=self.suorita(), avaa=api)
+        self.assertEqual([r["tulos"] for r in tulos], ["RAJATTU"])
+        self.assertEqual(len(self.ajot), 1)
+        body = api.postit[0][1]["body"]
+        self.assertIn("paatos=RAJATTU", body)
+        self.assertIn("Rakenteellisesti rajattu", body)
+        self.assertEqual(automerge.tarkastajan_paatos([{"user": "agenttifirma-bot", "body": body}], SHA), "RAJATTU")
+
+    def test_rakenteellisesti_rajattu_hylkays_sailyy(self):
+        api = Feikki([pr_olio()], [tiedosto(".github/workflows/ci.yml")], [])
+        tulos = tk.kierros(self.env, "t", suorita=self.suorita('{"paatos": "HYLKAA", "perustelu": "bugi"}'), avaa=api)
+        self.assertEqual([r["tulos"] for r in tulos], ["HYLATTY"])
+
+    def test_rajattujen_tarkastus_voidaan_kytkea_pois(self):
+        api = Feikki([pr_olio()], [tiedosto(".github/workflows/ci.yml")], [])
+        tulos = tk.kierros(dict(self.env, CLAUDEJONO_TARKASTA_RAJATUT="0"), "t", suorita=self.suorita(), avaa=api)
+        self.assertEqual([r["tulos"] for r in tulos], ["OHITETTU"])
+        self.assertEqual((self.ajot, api.postit), ([], []))
 
     def lokirivit(self):
         polku = Path(self.d.name) / tk.LOKI
