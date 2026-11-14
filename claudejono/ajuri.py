@@ -643,7 +643,7 @@ def git(repo, *args, check=True):
 
 
 AUTO_MAX_PAIVA = 30     # Tonyn paatos 30.10.2026: itse keksittyja tehtavia enintaan 30 / vrk (nostettu 6 -> 30; koodi on laki)
-AUTO_PER_AJO = 2
+AUTO_PER_AJO = 5   # Tonyn paatos 14.11.2026 A961: 2 -> 5, jotta jono ei tyhjene kahden tehtavan valein
 AUTO_NIMI_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 TONYLLE = "tonylle.md"
 SUUNNITTELU = Path(__file__).resolve().parent / "suunnittelu.md"
