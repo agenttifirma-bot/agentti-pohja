@@ -520,6 +520,107 @@ def tulkitse(stdout, koodi):
     return ok, teksti
 
 
+# Viimeinen viesti ei aina ole raportti: taustatehtavan ilmoitus herattaa uuden vuoron, ja `result` on silloin vain jalkikommentti
+# (tulokset 2026-11-03-23 ja 2026-11-04-19: koko raportti katosi). Kehote vaatii osion "Tonylle opittavaa", joten sen puuttuminen paljastaa tilanteen.
+RAPORTTI_MERKKI = "## Tonylle opittavaa"
+RAPORTTI_OTSIKKO_RE = re.compile(r"^## Tonylle opittavaa[ \t]*$", re.M)    # otsikkorivi, ei maininta tekstin seassa
+ISTUNTOLOKI_MAX_TAVUA = 64 * 1024 * 1024
+ISTUNTO_RE = re.compile(r"^[0-9a-fA-F-]{8,64}$")
+
+
+def _avaa_hakemisto_ilman_linkkeja(vanhempi_fd, nimi):
+    """Avaa alihakemiston vanhemman kautta; symlinkki missa tahansa polun osassa on virhe (O_NOFOLLOW)."""
+    return os.open(nimi, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=vanhempi_fd)
+
+
+def _lue_istuntoloki(koti, istunto):
+    """Istunnon lokin tavut tai None. Ajuri voi olla root ja hakemistot agentin: jokainen polun osa avataan
+    O_NOFOLLOW-lipulla edellisen kautta (ei symlinkkeja), ja tiedosto ei saa olla kova linkki tai ylisuuri."""
+    fds = []
+    try:
+        fds.append(os.open(str(koti), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC))   # koti itse ei saa olla symlinkki
+        for osa in (".claude", "projects"):
+            fds.append(_avaa_hakemisto_ilman_linkkeja(fds[-1], osa))
+        projektit = fds[-1]
+        for nimi in sorted(os.listdir(projektit)):
+            try:
+                hfd = _avaa_hakemisto_ilman_linkkeja(projektit, nimi)
+            except OSError:
+                continue
+            try:
+                fd = os.open(f"{istunto}.jsonl", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=hfd)
+            except OSError:
+                continue
+            finally:
+                os.close(hfd)             # ei pideta jokaisen projektihakemiston kuvaajaa auki silmukan loppuun (EMFILE)
+            with os.fdopen(fd, "rb") as f:
+                st = os.fstat(f.fileno())
+                if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_size > ISTUNTOLOKI_MAX_TAVUA:
+                    return None
+                return f.read(ISTUNTOLOKI_MAX_TAVUA + 1)
+        return None
+    finally:
+        for fd in fds:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def _etsi_raportti(data, istunto):
+    """Paasession uusin assistant-viesti, jonka tekstissa on otsikkorivi RAPORTTI_MERKKI, mutta vain jos istunto
+    paattyi siihen: jos agentti kutsui raportin jalkeen tyokalua (jatkoi tyota), raportti on vanhentunut ja
+    palautetaan tyhja. Raportin omassa viestissa saa olla tyokutsu (taustatehtavan kaynnistys).
+    Claude Code kirjoittaa yhden viestin lohkot (thinking, text, tool_use) erillisille JSONL-riveille samalla
+    message.id:lla, joten rivit ryhmitellaan message.id:n mukaan ennen vanhentumistarkistusta.
+    Jaetaan vain rivinvaihdosta (str.splitlines() katkaisisi myos U+2028/U+2029/U+0085, jotka JSON sallii)."""
+    viestit = {}   # message.id -> (raporttitekstit, onko tyokutsu); dict sailyttaa ensiesiintymisjarjestyksen
+    for n, rivi in enumerate(data.split(b"\n")):
+        try:
+            d = json.loads(rivi.decode("utf-8", "replace"))
+            if d.get("type") != "assistant" or d.get("isSidechain") or d.get("sessionId") != istunto:
+                continue
+            viesti = d["message"]
+            osat = [o for o in viesti["content"] if isinstance(o, dict)]
+            raportit = [o["text"] for o in osat if o.get("type") == "text" and isinstance(o.get("text"), str)
+                        and RAPORTTI_OTSIKKO_RE.search(o["text"])]
+            tyokutsu = any(o.get("type") == "tool_use" for o in osat)
+            mid = viesti.get("id")
+            avain = ("id", mid) if isinstance(mid, str) and mid else ("rivi", n)   # ilman id:ta rivi on oma viestinsa
+            vanhat_r, vanha_t = viestit.get(avain, ([], False))
+            viestit[avain] = (vanhat_r + raportit, vanha_t or tyokutsu)
+        except Exception:  # yksi rikkinainen rivi ei esta muiden lukua
+            continue
+    loydetty = ""
+    vanhentunut = False
+    for raportit, tyokutsu in viestit.values():
+        if raportit:
+            loydetty, vanhentunut = raportit[-1], False
+        elif tyokutsu:
+            vanhentunut = True
+    return "" if vanhentunut else loydetty
+
+
+def palauta_raportti(teksti, stdout, koti):
+    """Jos viimeisesta viestista puuttuu raportin loppuosio, hae se saman istunnon lokista. Muuten teksti ennallaan.
+    Mikaan virhe (luku, JSON, sisakkaisyys, muisti) ei saa kaataa ajoa, koska ajuri voi olla root:
+    koko haku ja jasennys ovat samassa suojatussa lohkossa."""
+    if not koti or RAPORTTI_OTSIKKO_RE.search(teksti or ""):
+        return teksti
+    try:
+        istunto = json.loads(stdout).get("session_id")
+        if not isinstance(istunto, str) or not ISTUNTO_RE.match(istunto):
+            return teksti
+        data = _lue_istuntoloki(koti, istunto)
+        loydetty = _etsi_raportti(data, istunto) if data else ""
+    except Exception as e:  # tarkoituksella laaja: vain tyyppi talteen, ei viestia (voi sisaltaa salaisuuksia)
+        print(f"ajuri: raportin palautus ohitettu ({type(e).__name__})", file=sys.stderr)
+        return teksti
+    if not loydetty:
+        return teksti
+    return f"{loydetty}\n\n[AJURI: raportti palautettu istuntolokista. Agentin viimeinen viesti oli:]\n\n{teksti}"
+
+
 def kirjoita_tulos(repo, nimi, ok, teksti, nyt=None, tila=None, malli=None):
     nyt = nyt or datetime.now().astimezone()
     polku = Path(repo) / JONO / "tulokset" / nimi
@@ -1139,6 +1240,8 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
                 r = suorita(kom, cwd=cwd, capture_output=True, text=True,
                             timeout=aikaraja_s(env, m.nimi), env=alaenv, check=False)
                 ok, teksti = tulkitse(r.stdout, r.returncode)
+                if ok:
+                    teksti = palauta_raportti(teksti, r.stdout, alaenv.get("HOME"))
                 luvut = kulutus.claude_luvut(getattr(r, "stdout", "") or "")
             except subprocess.TimeoutExpired:
                 ok, teksti = False, "aikakatkaisu"
