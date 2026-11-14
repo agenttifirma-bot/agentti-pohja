@@ -25,6 +25,11 @@ def _luku(d, avain):
 def tulosolio(stdout):
     """Clauden loppuolio (type=result) tulosteesta: joko yksi JSON-olio (--output-format json) tai JSON-rivit
     (--output-format stream-json, viimeinen result-rivi). Muu tai lukukelvoton -> None."""
+    if isinstance(stdout, (bytes, bytearray)):
+        try:
+            stdout = bytes(stdout).decode("utf-8")
+        except UnicodeDecodeError:
+            return None
     try:
         d = json.loads(stdout)
     except (ValueError, TypeError):

@@ -244,44 +244,20 @@ class TulkintaVirta(unittest.TestCase):
         loppu = dict(self.LOPPU, total_cost_usd=0.5, usage={"input_tokens": 3})
         self.assertEqual(kulutus.claude_luvut(_virta(_viesti("x"), loppu)), {"tokenit_in": 3, "usd": 0.5})
 
+    def test_kaistalokin_mittarit_luetaan_virrasta(self):
+        loppu = dict(self.LOPPU, num_turns=4, total_cost_usd=0.5, duration_api_ms=900)
+        odotus = {"kierrokset": 4, "arvo_usd": 0.5, "api_ms": 900}
+        self.assertEqual(ajuri.mittarit(_virta(_viesti("x"), loppu)), odotus)
+        self.assertEqual(ajuri.mittarit(json.dumps(loppu)), odotus)
+        self.assertEqual(ajuri.mittarit("ei jsonia"), {})
 
-class SuunnitelmaJalkiviesti(unittest.TestCase):
-    """#264: itsesuunnittelun JSON-vastaus, jonka perassa on jalkiviesti ("ok")."""
-    SUUNN = json.dumps({"tehtavat": [{"nimi": "korjaa-x", "sisalto": "# X\nTavoite: yllapito"}], "tonylle": "T"})
-    LOPPU = {"type": "result", "subtype": "success", "is_error": False, "result": "ok"}
-
-    def test_ketju_tulkitse_jasenna_menettaa_suunnitelman_jalkiviestissa(self):
-        # #264:n karjen kaytos: tulkitse palauttaa result-kentan ("ok"), josta ei saa suunnitelmaa
-        ulos = _virta({"type": "system"}, _viesti(self.SUUNN), _viesti("ok"), self.LOPPU)
-        ok, teksti = ajuri.tulkitse(ulos, 0)
-        self.assertEqual((ok, teksti), (True, "ok"))
-        self.assertIsNone(ajuri.jasenna_suunnitelma(teksti))
-
-    def test_suunnitelma_loytyy_jalkiviestista_huolimatta(self):
-        ulos = _virta({"type": "system"}, _viesti(self.SUUNN), _viesti("ok"), self.LOPPU)
-        ok, teksti = ajuri.tulkitse(ulos, 0)
-        suunn = ajuri.suunnitelma_tulosteesta(ulos, teksti)
-        self.assertEqual([t["nimi"] for t in suunn["tehtavat"]], ["korjaa-x"])
-        self.assertEqual(suunn["tonylle"], "T")
-
-    def test_vertailu_json_viimeisena_viestina(self):
-        ulos = _virta(_viesti("Mietin."), _viesti(self.SUUNN), dict(self.LOPPU, result=self.SUUNN))
-        ok, teksti = ajuri.tulkitse(ulos, 0)
-        self.assertEqual((ok, teksti), (True, self.SUUNN))
-        self.assertEqual([t["nimi"] for t in ajuri.jasenna_suunnitelma(teksti)["tehtavat"]], ["korjaa-x"])
-        self.assertEqual(ajuri.suunnitelma_tulosteesta(ulos, teksti), ajuri.jasenna_suunnitelma(teksti))
-
-    def test_alitehtavan_json_ei_kelpaa_suunnitelmaksi(self):
-        ali = dict(_viesti(self.SUUNN), parent_tool_use_id="toolu_1")
-        ulos = _virta(ali, _viesti("ok"), self.LOPPU)
-        ok, teksti = ajuri.tulkitse(ulos, 0)
-        self.assertIsNone(ajuri.suunnitelma_tulosteesta(ulos, teksti))
-
-    def test_viimeisin_paaagentin_json_voittaa(self):
-        vanha = json.dumps({"tehtavat": [{"nimi": "vanha", "sisalto": "# V\nTavoite: yllapito"}]})
-        ulos = _virta(_viesti(vanha), _viesti(self.SUUNN), _viesti("ok"), self.LOPPU)
-        suunn = ajuri.suunnitelma_tulosteesta(ulos, ajuri.tulkitse(ulos, 0)[1])
-        self.assertEqual([t["nimi"] for t in suunn["tehtavat"]], ["korjaa-x"])
+    def test_bytes_tuloste_luetaan_kuten_ennen(self):
+        # vanha json.loads hyvaksyi bytesit; monirivinen virta ja yksittainen JSON bytes-muodossa
+        loppu = dict(self.LOPPU, total_cost_usd=0.5, usage={"input_tokens": 3})
+        odotus = {"tokenit_in": 3, "usd": 0.5}
+        self.assertEqual(kulutus.claude_luvut(_virta(_viesti("x"), loppu).encode()), odotus)
+        self.assertEqual(kulutus.claude_luvut(json.dumps(loppu).encode()), odotus)
+        self.assertEqual(kulutus.claude_luvut(b"\xff\xfe"), {})
 
 
 class Komento(unittest.TestCase):
@@ -449,7 +425,8 @@ class Itsesuunnittelu(Pohja):
         self.assertIn("paivaraja", v)
         self.assertEqual(kutsut, [])
 
-    def test_jalkiviesti_ei_hukkaa_suunnitelmaa(self):
+    def test_jalkiviesti_suunnitelman_perassa_ei_luo_tehtavia(self):
+        # #264: suunnitelma + jalkiviesti ("ok") on valivaihe; tehtavia ei luoda aiemmasta JSON-viestista (turvaraja, fail closed)
         vastaus = json.dumps({"tehtavat": [{"nimi": "korjaa-x", "sisalto": "# X\n\nTavoite: yllapito"}], "tonylle": ""})
         ulos = _virta(_viesti(vastaus), _viesti("ok"),
                       {"type": "result", "subtype": "success", "is_error": False, "result": "ok"})
@@ -457,8 +434,8 @@ class Itsesuunnittelu(Pohja):
         def f(kom, **kw):
             return subprocess.CompletedProcess(kom, 0, ulos, "")
         v = ajuri.suunnittele(self.repo, self.tmp, {}, f, nyt=self.nyt())
-        self.assertNotIn("ei tuottanut", v)
-        self.assertIn("claude-jono/tehtavat/2026-10-30-01-auto-korjaa-x.md", self.origin_tiedostot())
+        self.assertIn("ei tuottanut", v)
+        self.assertNotIn("claude-jono/tehtavat/2026-10-30-01-auto-korjaa-x.md", self.origin_tiedostot())
 
     def test_virheellinen_json_ei_luo_mitaan(self):
         v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli("ei jsonia"), nyt=self.nyt())

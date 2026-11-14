@@ -778,19 +778,6 @@ def jasenna_suunnitelma(teksti):
     return {"tehtavat": ok, "tonylle": tonylle[:3000]}
 
 
-def suunnitelma_tulosteesta(stdout, teksti):
-    """Itsesuunnittelun suunnitelma: ensin tulkitse-funktion teksti, sitten paaagentin viimeisin viesti, josta suunnitelma jasentyy.
-    Tausta (#264): jalkiviesti ("ok") JSON-vastauksen perassa jattaa tekstiksi vain result-kentan. Alitehtavien viestit eivat kelpaa."""
-    suunn = jasenna_suunnitelma(teksti)
-    if suunn is not None:
-        return suunn
-    for t in reversed(_paaagentin_tekstit(stdout)):
-        suunn = jasenna_suunnitelma(t)
-        if suunn is not None:
-            return suunn
-    return None
-
-
 def tulosten_maara(repo):
     hak = Path(repo) / JONO / "tulokset"
     return sum(1 for _ in hak.glob("*.md")) if hak.is_dir() else 0
@@ -819,11 +806,8 @@ RAJA_RE = re.compile(r"usage limit|limit reached|rate.?limit|too many requests|\
 
 def mittarit(stdout):
     """Claude-ajon luvut tulosteesta (arvio tilauksen kulutuksesta): kierrokset ja API-kustannuksen arvo. Lukukelvoton -> tyhja."""
-    try:
-        d = json.loads(stdout)
-    except (ValueError, TypeError):
-        return {}
-    if not isinstance(d, dict):
+    d = kulutus.tulosolio(stdout)
+    if d is None:
         return {}
     ulos = {}
     for avain, nimi in (("num_turns", "kierrokset"), ("total_cost_usd", "arvo_usd"), ("duration_api_ms", "api_ms")):
@@ -985,7 +969,7 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None, kaista=1):
     except subprocess.TimeoutExpired:
         kirjaa_suunnittelu(tyohak, repo, nyt, 0)
         return "jono tyhja (suunnittelu: aikakatkaisu)"
-    suunn = suunnitelma_tulosteesta(r.stdout, teksti) if ok else None
+    suunn = jasenna_suunnitelma(teksti) if ok else None
     if suunn is None:
         kirjaa_suunnittelu(tyohak, repo, nyt, 0)
         return "jono tyhja (suunnittelu ei tuottanut kelvollista JSONia)"
