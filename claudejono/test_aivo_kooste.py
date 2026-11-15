@@ -255,9 +255,9 @@ class Erotushyokkays(Pohja):
 
     def test_tonyn_tarkistus_ja_tulos_lasketaan_muutokseen(self):
         ennen = self.pohja()
-        for i in range(5):                        # 5 Tonin tarkistusta + 5 tulosta = 10 muutosta
+        for i in range(5):                        # 5 Tonin tarkistusta + 5 tulosta (eri tehtavissa) = 10 muuttunutta kohdetta
             aivo_arvio.tarkista(self.tila, f"t9-{i}-k.md", True, aika(12))
-            self.tulos(f"t9-{i}-k.md", "VALMIS")
+            self.tulos(f"t9-{i + 5}-k.md", "VALMIS")
         self.assertIsNotNone(self.julkaise(12))
         self.assertNotEqual(self.luku(), ennen)
 
@@ -279,11 +279,6 @@ class Erotushyokkays(Pohja):
             self.assertEqual(b[kentta] % 5, 0)
         self.assertEqual((b["kylla"] - a["kylla"], b["ei"] - a["ei"]), (10, 0))   # vain koko era nakyy
 
-    def test_puuttuva_kooste_julkaistaan_vaikka_kirjanpito_on(self):
-        self.pohja()
-        (self.tila / aivo_arvio.KOOSTE_TIEDOSTO).unlink()
-        self.assertIsNotNone(self.julkaise(10, tunti=13))   # vain 1 h edellisesta, mutta koostetta ei ole
-
     def test_laskettu_on_vain_paiva_ja_prosentit_kokonaislukuja(self):
         for i in range(7):
             self.arvio(f"a{i}.md", i < 4, tony=(i < 5))
@@ -293,18 +288,6 @@ class Erotushyokkays(Pohja):
         p = k["yhtenevyys_tonyn_kanssa_prosenttia"]
         self.assertIs(type(p), int)
         self.assertEqual(p, 88)   # 7/8
-
-    def test_puuttuva_kirjanpito_julkaisee_ja_luo_sen_uudelleen(self):
-        self.pohja()
-        (self.tila / aivo_arvio.KOOSTE_TILA_TIEDOSTO).unlink()
-        self.assertIsNotNone(self.julkaise(11))
-        self.assertTrue((self.tila / aivo_arvio.KOOSTE_TILA_TIEDOSTO).is_file())
-        self.assertIsNone(self.julkaise(12))   # portti taas kiinni
-
-    def test_rikki_oleva_kirjanpito_ei_kaada(self):
-        self.pohja()
-        (self.tila / aivo_arvio.KOOSTE_TILA_TIEDOSTO).write_text("ei json")
-        self.assertIsNotNone(self.julkaise(11))
 
     def test_kellon_meno_taaksepain_ei_avaa_porttia(self):
         self.pohja()
@@ -319,6 +302,77 @@ class Erotushyokkays(Pohja):
         self.assertNotIn("lukema", teksti)
         self.assertNotIn("21", teksti.replace("2026", ""))   # 13 + 8 = 21 ei nay
         self.assertEqual(self.kooste()["arvioita_yhteensa"], 20)
+
+
+    # Tarkastajan 15.11. loydokset: portti ei aukea virhetilanteessa; muutosmittari huomaa korvauksen ja tilanvaihdon.
+
+    def test_puuttuva_kooste_ei_avaa_porttia(self):
+        ennen = self.pohja()
+        (self.tila / aivo_arvio.KOOSTE_TIEDOSTO).unlink()
+        self.assertIsNone(self.julkaise(10, tunti=13))   # vain 1 h edellisesta, ei uusia
+        self.assertFalse((self.tila / aivo_arvio.KOOSTE_TIEDOSTO).exists())
+
+    def test_puuttuva_kirjanpito_ei_avaa_porttia(self):
+        ennen = self.pohja()
+        (self.tila / aivo_arvio.KOOSTE_TILA_TIEDOSTO).unlink()
+        self.assertIsNone(self.julkaise(11))
+        self.assertEqual(self.luku(), ennen)
+
+    def test_rikkinainen_kirjanpito_ei_avaa_porttia(self):
+        ennen = self.pohja()
+        for sisalto in ("ei json", "[]", "{}", '{"aika": "x", "kohteet": {}}', '{"aika": "2026-11-10T12:00:00+00:00"}'):
+            (self.tila / aivo_arvio.KOOSTE_TILA_TIEDOSTO).write_text(sisalto)
+            self.assertIsNone(self.julkaise(14), sisalto)
+            self.assertEqual(self.luku(), ennen)
+
+    def test_kooste_poistettu_mutta_kirjanpito_kunnossa_odottaa_porttia(self):
+        self.pohja()
+        (self.tila / aivo_arvio.KOOSTE_TIEDOSTO).unlink()
+        self.taydenna(10, True, pv=10, alku=900)
+        self.assertIsNotNone(self.julkaise(11))   # portti aukeaa normaalisti: >= 24 h ja >= 10 uutta
+        self.assertTrue((self.tila / aivo_arvio.KOOSTE_TIEDOSTO).is_file())
+
+    def test_ensijulkaisu_toimii_kun_kumpaakaan_ei_ole(self):
+        self.taydenna(6, True)
+        self.assertIsNotNone(self.julkaise(10))
+
+    def test_arvion_korvaus_lasketaan_muutokseksi(self):
+        ennen = self.pohja()
+        for i in range(10):   # 10 olemassa olevan tehtavan arvio kaantyy kylla -> ei
+            aivo_arvio.kirjaa_arvio(self.tila, f"t9-{i}-k.md", False, "uusi", aika(12))
+        self.assertIsNotNone(self.julkaise(12))
+        self.assertNotEqual(self.luku(), ennen)
+
+    def test_yksi_korvaus_ei_avaa_porttia(self):
+        ennen = self.pohja()
+        aivo_arvio.kirjaa_arvio(self.tila, "t9-0-k.md", False, "uusi", aika(12))
+        self.assertIsNone(self.julkaise(14))
+        self.assertEqual(self.luku(), ennen)
+
+    def test_tuloksen_tilan_vaihto_lasketaan_muutokseksi(self):
+        for i in range(10):
+            self.tulos(f"t9-{i}-k.md", "KESKEN")
+        self.taydenna(12, True, pv=9)
+        self.taydenna(12, False, pv=9)
+        self.assertIsNotNone(self.julkaise(10))
+        for i in range(10):
+            self.tulos(f"t9-{i}-k.md", "VALMIS")   # KESKEN -> VALMIS: vertailtujen maara ei muutu
+        self.assertIsNotNone(self.julkaise(12))
+
+    def test_tonyn_tarkistuksen_kaantaminen_lasketaan_muutokseksi(self):
+        for i in range(10):
+            self.arvio(f"x{i}.md", True, pv=9, tony=True)
+        self.taydenna(12, False, pv=9)
+        self.assertIsNotNone(self.julkaise(10))
+        for i in range(10):
+            aivo_arvio.tarkista(self.tila, f"x{i}.md", False, aika(12))
+        self.assertIsNotNone(self.julkaise(12))
+
+    def test_kirjanpito_ei_sisalla_tehtavien_nimia(self):
+        self.arvio(SALAINEN_NIMI + ".md", True)
+        self.taydenna(12, True, alku=100)
+        self.julkaise(10)
+        self.assertNotIn(SALAINEN_NIMI, (self.tila / aivo_arvio.KOOSTE_TILA_TIEDOSTO).read_text())
 
 
 class Symlinkki(Pohja):
@@ -342,11 +396,15 @@ class Symlinkki(Pohja):
         uhri = self.tila / "uhri.txt"
         uhri.write_text("x")
         os.chmod(uhri, 0o600)
-        (self.tila / aivo_arvio.KOOSTE_TIEDOSTO).symlink_to(uhri)
-        aivo_arvio.kirjoita_kooste(self.tila)
+        self.taydenna(6, True, pv=9)
+        aivo_arvio.kirjoita_kooste(self.tila, nyt=aika(10))
+        kohde = self.tila / aivo_arvio.KOOSTE_TIEDOSTO
+        kohde.unlink()
+        kohde.symlink_to(uhri)
+        self.taydenna(10, True, pv=10, alku=50)
+        self.assertIsNotNone(aivo_arvio.kirjoita_kooste(self.tila, nyt=aika(12)))
         self.assertEqual(stat.S_IMODE(uhri.stat().st_mode), 0o600)
         self.assertEqual(uhri.read_text(), "x")
-        kohde = self.tila / aivo_arvio.KOOSTE_TIEDOSTO
         self.assertFalse(kohde.is_symlink())   # symlink korvattu, ei seurattu
         self.assertEqual(stat.S_IMODE(kohde.stat().st_mode), 0o644)
 

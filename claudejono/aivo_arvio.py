@@ -7,6 +7,7 @@ Aivon ja Tonyn tuomion yhtenevyys. Kunnes arvioija (Aivon tyokalutila) on kytket
 `arvioi_varjossa`-funktiolle parametrina, eika tama moduuli keksi arvioita.
 """
 import argparse
+import hashlib
 import json
 import os
 import random
@@ -222,11 +223,16 @@ def _raaka(tila, tulokset_hak=None):
         if v:
             viikot[v] = viikot.get(v, 0) + 1
     vertailtu = osumat = 0
+    kohteet = {}
     for k, d in aivo.items():
         t = _tulos_tila(tulokset_hak, k)
-        if t == _VALMIS or t in _EI_VALMIS:
+        vertailussa = t == _VALMIS or t in _EI_VALMIS
+        if vertailussa:
             vertailtu += 1
             osumat += 1 if (d["kylla"] == (t == _VALMIS)) else 0
+        # kohteen sormenjalki: kaikki, mika vaikuttaa julkaistaviin lukuihin (oma arvio, Tonin tarkistus, vertailtu tulostila)
+        kohteet[_tiiviste(k)] = _tiiviste(json.dumps(
+            [d["kylla"], tony[k]["kylla"] if k in tony else None, t if vertailussa else None]))
     return {
         "n": len(aivo),
         "kylla": sum(1 for d in aivo.values() if d["kylla"]),
@@ -235,12 +241,18 @@ def _raaka(tila, tulokset_hak=None):
         "tony_osumat": sum(1 for k, v in tony.items() if v["kylla"] == aivo[k]["kylla"]),
         "vertailtu": vertailtu,
         "osumat": osumat,
+        "kohteet": kohteet,
     }
 
 
-def _lukema(r):
-    """Muutosmittari porttia varten: kaikki, mika voi muuttaa julkaistavia lukuja."""
-    return r["n"] + r["tony"] + r["vertailtu"]
+def _tiiviste(teksti):
+    return hashlib.sha256(teksti.encode("utf-8")).hexdigest()[:16]
+
+
+def _muutokset(kohteet, vanhat):
+    """Montako kohdetta on uusi, poistunut tai muuttunut (korvattu arvio, kaantynyt tarkistus, vaihtunut tulostila)
+    edelliseen julkaisuun verrattuna. Sisallon tiiviste, ei lukumaaria: korvaus ei saa jaada huomaamatta."""
+    return sum(1 for k in kohteet.keys() | vanhat.keys() if kohteet.get(k) != vanhat.get(k))
 
 
 def _muodosta(r, nyt):
@@ -296,35 +308,41 @@ def _kirjoita_atomisesti(tila, nimi, teksti, oikeudet):
     return kohde
 
 
-def _portti_auki(tila, lukema, nyt):
-    """True, jos koosteen saa paivittaa: edellisesta on >= KOOSTE_VALI ja uusia >= KOOSTE_UUSIA_MIN.
-    Ensimmainen julkaisu (ei kooste- eika tilatiedostoa) sallitaan. Jos koosteella on mutta tilatiedosto puuttuu
-    tai on rikki, kirjanpito luodaan uudelleen (julkaistaan kerran)."""
-    if not (Path(tila) / KOOSTE_TIEDOSTO).is_file():
+def _portti_auki(tila, kohteet, nyt):
+    """True, jos koosteen saa paivittaa: edellisesta on >= KOOSTE_VALI ja muuttuneita kohteita >= KOOSTE_UUSIA_MIN.
+    FAIL-CLOSED: paatos tehdaan kirjanpitotiedostosta (aivo-kooste.tila.json). Jos kirjanpito puuttuu tai on
+    rikki, portti pysyy kiinni, vaikka koostetta ei olisi: poistettu tiedosto ei saa avata porttia.
+    Ainoa sallittu avaus ilman kirjanpitoa on aito ensijulkaisu (ei kirjanpitoa eika koostetta).
+    Puuttuvan koosteen (kirjanpito kunnossa) luo seuraava normaali avaus. Toipuminen rikkinaisesta tilasta:
+    Tony poistaa molemmat tiedostot kasin."""
+    kooste_on = (Path(tila) / KOOSTE_TIEDOSTO).exists()
+    kirjanpito_on = (Path(tila) / KOOSTE_TILA_TIEDOSTO).exists()
+    if not kooste_on and not kirjanpito_on:
         return True
     try:
         with open(Path(tila) / KOOSTE_TILA_TIEDOSTO, encoding="utf-8") as f:
             edellinen = json.load(f)
         aika = datetime.fromisoformat(edellinen["aika"])
-        vanha = int(edellinen["lukema"])
+        vanhat = edellinen["kohteet"]
+        if not isinstance(vanhat, dict):
+            return False
     except (OSError, ValueError, KeyError, TypeError):
-        return True
-    return nyt - aika >= KOOSTE_VALI and lukema - vanha >= KOOSTE_UUSIA_MIN
+        return False
+    return nyt - aika >= KOOSTE_VALI and _muutokset(kohteet, vanhat) >= KOOSTE_UUSIA_MIN
 
 
 def kirjoita_kooste(tila, tulokset_hak=None, nyt=None):
     """Paivittaa tiedoston tila/aivo-kooste.json (oikeudet 0644, atominen kirjoitus) vain, jos portti on auki:
-    vahintaan KOOSTE_VALI edellisesta ja vahintaan KOOSTE_UUSIA_MIN uutta. Palauttaa polun tai None (ei paivitetty).
+    vahintaan KOOSTE_VALI edellisesta ja vahintaan KOOSTE_UUSIA_MIN muuttunutta kohdetta. Palauttaa polun tai None (ei paivitetty).
     Syy: kahden perakkaisen koosteen erotuksesta ei saa voida paatella yksittaista arviota (erotushyokkays)."""
     nyt = nyt or datetime.now().astimezone()
     r = _raaka(tila, tulokset_hak)
-    lukema = _lukema(r)
-    if not _portti_auki(tila, lukema, nyt):
+    if not _portti_auki(tila, r["kohteet"], nyt):
         return None
     teksti = json.dumps(_muodosta(r, nyt), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     # kirjanpito ensin: jos koosteen kirjoitus kaatuu, paivitys vain viivastyy (ei kaksoisjulkaisua)
     _kirjoita_atomisesti(tila, KOOSTE_TILA_TIEDOSTO,
-                         json.dumps({"aika": nyt.isoformat(timespec="seconds"), "lukema": lukema}) + "\n", 0o600)
+                         json.dumps({"aika": nyt.isoformat(timespec="seconds"), "kohteet": r["kohteet"]}) + "\n", 0o600)
     return _kirjoita_atomisesti(tila, KOOSTE_TIEDOSTO, teksti, 0o644)
 
 
