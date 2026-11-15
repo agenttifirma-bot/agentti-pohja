@@ -73,7 +73,7 @@ fi
 # (npm, jest, vitest, mocha), varapolku on lokin 3 viimeista rivia.
 testiselite() {
   local s
-  s=$({ grep -E '^(FAIL: |ERROR: |FAILED|Ran |OK)' "$1" || true; } | head -n 5 | tr '\n' ' ' | cut -c1-200)
+  s=$({ grep -E '^(FAIL: |ERROR: |FAILED|Ran |OK( .*)?$)' "$1" || true; } | head -n 5 | tr '\n' ' ' | cut -c1-200)
   if [ -z "$(printf '%s' "$s" | tr -d ' ')" ]; then
     s=$(tail -n 3 "$1" | tr '\n' ' ' | cut -c1-120)
   fi

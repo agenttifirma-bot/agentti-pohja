@@ -117,7 +117,13 @@ class Testiselite(unittest.TestCase):
         s = self.selite("a\nb\nERROR in ./src\nc\n")
         self.assertEqual(s.strip(), "b ERROR in ./src c")
 
+    def test_ok_vaatii_koko_rivin_tai_valilyonnin(self):
+        # 'OKAY' ei ole unittestin OK-rivi; 'OK (skipped=1)' on
+        self.assertEqual(self.selite("x\nOKAY\ny\n").strip(), "x OKAY y")
+        self.assertEqual(self.selite("Ran 1 test\nOK (skipped=1)\n").strip(), "Ran 1 test OK (skipped=1)")
 
+
+@unittest.skipUnless(sys.platform.startswith("linux"), "kehitys.sh on palvelinskripti: vaatii GNU timeoutin (Linux); macOS-CI paljasti, ettei sita ole")
 class Ajo(Pohja):
     def test_readme_muutos_avaa_pr_ja_siivoaa(self):
         self.agentti_skripti('echo "uusi rivi" >> README.md')
