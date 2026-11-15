@@ -163,18 +163,34 @@ def viikkoosio(tila, n=OTOS_OLETUS, rng=None):
 
 
 KOOSTE_TIEDOSTO = "aivo-kooste.json"
+KOOSTE_TILA_TIEDOSTO = "aivo-kooste.tila.json"   # vain ajurin oma kirjanpito (tarkat luvut), oikeudet 0600, ei koskaan agenttien luettavaksi
 RYHMA_MIN = 5   # alle taman ryhmat nakyvat koosteessa muodossa "<5"
+PYORISTYS = 5   # julkaistavat maarat pyoristetaan lahimpaan viiteen
+KOOSTE_VALI = timedelta(hours=24)   # koostetta paivitetaan enintaan kerran vuorokaudessa
+KOOSTE_UUSIA_MIN = 10               # ... ja vain kun uusia arvioita/tarkistuksia/vertailuja on kertynyt vahintaan taman verran
 _TILA_RE = re.compile(r"(?m)^- Tila: ([A-Z]+)\s*$")
 _VALMIS = "VALMIS"
 _EI_VALMIS = ("HYLATTY", "KESKEN")   # EPAONNISTUI on tekninen vika, ei oleellisuuden tuomio: ei oteta vertailuun
 
 
 def _peita(n):
-    return n if n >= RYHMA_MIN else "<" + str(RYHMA_MIN)
+    """Julkaistava maara: alle RYHMA_MIN -> "<5", muuten pyoristetty lahimpaan viiteen (5, 5, 10, ...)."""
+    if n < RYHMA_MIN:
+        return "<" + str(RYHMA_MIN)
+    return (n + PYORISTYS // 2) // PYORISTYS * PYORISTYS
 
 
 def _prosentti(osa, kaikki):
-    return round(100 * osa / kaikki, 1) if kaikki >= RYHMA_MIN else None
+    return round(100 * osa / kaikki) if kaikki >= RYHMA_MIN else None   # kokonaisluku
+
+
+def _viikko(pv):
+    """ISO-viikko muodossa 2026-V46 tai None, jos paiva ei jasenny."""
+    try:
+        v = datetime.strptime(pv, "%Y-%m-%d").date().isocalendar()
+    except ValueError:
+        return None
+    return f"{v[0]}-V{v[1]:02d}"
 
 
 def _tulos_tila(tulokset_hak, tehtava):
@@ -189,10 +205,8 @@ def _tulos_tila(tulokset_hak, tehtava):
     return m.group(1) if m else None
 
 
-def laske_kooste(tila, tulokset_hak=None, nyt=None):
-    """Koosteluvut Aivon arvioista: vain lukumaaria ja prosentteja. EI tehtavien nimia, EI syita, EI yksittaisia rivia.
-    Alle RYHMA_MIN kokoiset ryhmat nakyvat muodossa "<5" eika niista lasketa prosenttia."""
-    nyt = nyt or datetime.now().astimezone()
+def _raaka(tila, tulokset_hak=None):
+    """Tarkat luvut (EI julkaista): n, kylla, viikot, tony-osumat, vertailu. Vain ajurin sisaiseen kayttoon."""
     aivo, tony = {}, {}
     for d in lue(tila):
         if not isinstance(d.get("kylla"), bool):
@@ -202,19 +216,11 @@ def laske_kooste(tila, tulokset_hak=None, nyt=None):
         elif d.get("laji") == "tony":
             tony[d["tehtava"]] = d
     tony = {k: v for k, v in tony.items() if k in aivo}
-    n = len(aivo)
-    kylla = sum(1 for d in aivo.values() if d["kylla"])
-    ei = n - kylla
-    jakauma_peitetty = kylla < RYHMA_MIN or ei < RYHMA_MIN   # muuten pieni ryhma paattelisi yhteissummasta
-    paivat = {}
-    mallit = {}
+    viikot = {}
     for d in aivo.values():
-        pv = str(d.get("aika", ""))[:10]
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", pv):
-            paivat[pv] = paivat.get(pv, 0) + 1
-        if isinstance(d.get("malli"), str) and re.fullmatch(r"[A-Za-z0-9._:/-]{1,60}", d["malli"]):
-            mallit[d["malli"]] = mallit.get(d["malli"], 0) + 1
-    tony_osumat = sum(1 for k, v in tony.items() if v["kylla"] == aivo[k]["kylla"])
+        v = _viikko(str(d.get("aika", ""))[:10])
+        if v:
+            viikot[v] = viikot.get(v, 0) + 1
     vertailtu = osumat = 0
     for k, d in aivo.items():
         t = _tulos_tila(tulokset_hak, k)
@@ -222,19 +228,40 @@ def laske_kooste(tila, tulokset_hak=None, nyt=None):
             vertailtu += 1
             osumat += 1 if (d["kylla"] == (t == _VALMIS)) else 0
     return {
-        "laskettu": nyt.isoformat(timespec="seconds"),
+        "n": len(aivo),
+        "kylla": sum(1 for d in aivo.values() if d["kylla"]),
+        "viikot": viikot,
+        "tony": len(tony),
+        "tony_osumat": sum(1 for k, v in tony.items() if v["kylla"] == aivo[k]["kylla"]),
+        "vertailtu": vertailtu,
+        "osumat": osumat,
+    }
+
+
+def _lukema(r):
+    """Muutosmittari porttia varten: kaikki, mika voi muuttaa julkaistavia lukuja."""
+    return r["n"] + r["tony"] + r["vertailtu"]
+
+
+def _muodosta(r, nyt):
+    n = r["n"]
+    ei = n - r["kylla"]
+    jakauma_peitetty = r["kylla"] < RYHMA_MIN or ei < RYHMA_MIN   # muuten pieni ryhma paattelisi yhteissummasta
+    viikot = sorted(r["viikot"])
+    return {
+        "laskettu": nyt.date().isoformat(),   # vain paiva: tarkka kellonaika ei kerro, milloin arvio tuli
         "ryhman_vahimmaiskoko": RYHMA_MIN,
+        "pyoristys": f"maarat pyoristetaan lahimpaan viiteen, prosentit kokonaisluvuiksi; koostetta paivitetaan enintaan kerran {int(KOOSTE_VALI.total_seconds() // 3600)} h valein ja vasta kun uusia on vahintaan {KOOSTE_UUSIA_MIN}",
         "arvioita_yhteensa": _peita(n),
-        "kylla": "<5" if jakauma_peitetty else kylla,
-        "ei": "<5" if jakauma_peitetty else ei,
-        "mallit": {m: _peita(c) for m, c in sorted(mallit.items())},
-        "ensimmainen_paiva": min(paivat) if n >= RYHMA_MIN and paivat else None,
-        "viimeinen_paiva": max(paivat) if n >= RYHMA_MIN and paivat else None,
-        "paivittain": {pv: _peita(c) for pv, c in sorted(paivat.items())},
-        "tony_tarkistanut": _peita(len(tony)),
-        "yhtenevyys_tonyn_kanssa_prosenttia": _prosentti(tony_osumat, len(tony)),
-        "tulokseen_verrattu": _peita(vertailtu),
-        "yhtenevyys_tuloksen_kanssa_prosenttia": _prosentti(osumat, vertailtu),
+        "kylla": "<5" if jakauma_peitetty else _peita(r["kylla"]),
+        "ei": "<5" if jakauma_peitetty else _peita(ei),
+        "ensimmainen_viikko": viikot[0] if n >= RYHMA_MIN and viikot else None,
+        "viimeinen_viikko": viikot[-1] if n >= RYHMA_MIN and viikot else None,
+        "viikoittain": {v: _peita(r["viikot"][v]) for v in viikot},
+        "tony_tarkistanut": _peita(r["tony"]),
+        "yhtenevyys_tonyn_kanssa_prosenttia": _prosentti(r["tony_osumat"], r["tony"]),
+        "tulokseen_verrattu": _peita(r["vertailtu"]),
+        "yhtenevyys_tuloksen_kanssa_prosenttia": _prosentti(r["osumat"], r["vertailtu"]),
         "yhtenevyys_tuloksen_kanssa_selitys": "Aivon kylla = tehtava loppui tilaan VALMIS; Aivon ei = tulos on HYLATTY tai KESKEN. "
                                                "Muut tilat (esim. EPAONNISTUI) ja tehtavat ilman tulosta jatetaan pois.",
         "lahtotasoon_riittavasti_arvioita": n >= VAHIMMAIS_LAHTOTASOON,
@@ -242,16 +269,24 @@ def laske_kooste(tila, tulokset_hak=None, nyt=None):
     }
 
 
-def kirjoita_kooste(tila, tulokset_hak=None, nyt=None):
-    """Laskee koosteen ja kirjoittaa sen atomisesti (valiaikaistiedosto + rename) tiedostoon tila/aivo-kooste.json, oikeudet 0644."""
-    kooste = laske_kooste(tila, tulokset_hak, nyt)
-    kohde = Path(tila) / KOOSTE_TIEDOSTO
-    fd, vali = tempfile.mkstemp(prefix=KOOSTE_TIEDOSTO + ".", suffix=".tmp", dir=str(tila))
+def laske_kooste(tila, tulokset_hak=None, nyt=None):
+    """Koosteluvut Aivon arvioista: vain pyoristettyja lukumaaria ja prosentteja, viikkotasolla.
+    EI tehtavien nimia, EI syita, EI yksittaisia rivia, EI malli- eika paivakohtaisia maaria.
+    Alle RYHMA_MIN kokoiset ryhmat nakyvat muodossa "<5" eika niista lasketa prosenttia."""
+    return _muodosta(_raaka(tila, tulokset_hak), nyt or datetime.now().astimezone())
+
+
+def _kirjoita_atomisesti(tila, nimi, teksti, oikeudet):
+    """Kirjoittaa tiedoston tila/nimi atomisesti: valiaikaistiedosto (mkstemp = O_EXCL, ei seuraa symlinkkia),
+    oikeudet asetetaan tiedostokahvalla (fchmod) ENNEN nimeamista. Ei koskaan chmod polun kautta, koska
+    polku voisi vaihtua symlinkiksi (kilpa) ja root muuttaisi muun tiedoston oikeuksia."""
+    kohde = Path(tila) / nimi
+    fd, vali = tempfile.mkstemp(prefix=nimi + ".", suffix=".tmp", dir=str(tila))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(json.dumps(kooste, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-        os.chmod(vali, 0o644)   # mkstemp luo 0600; umask ei saa vaikuttaa
-        os.replace(vali, kohde)
+            os.fchmod(f.fileno(), oikeudet)   # mkstemp luo 0600; umask ei saa vaikuttaa
+            f.write(teksti)
+        os.replace(vali, kohde)   # korvaa mahdollisen symlinkin itsensa, ei sen kohdetta
     except BaseException:
         try:
             os.unlink(vali)
@@ -259,6 +294,38 @@ def kirjoita_kooste(tila, tulokset_hak=None, nyt=None):
             pass
         raise
     return kohde
+
+
+def _portti_auki(tila, lukema, nyt):
+    """True, jos koosteen saa paivittaa: edellisesta on >= KOOSTE_VALI ja uusia >= KOOSTE_UUSIA_MIN.
+    Ensimmainen julkaisu (ei kooste- eika tilatiedostoa) sallitaan. Jos koosteella on mutta tilatiedosto puuttuu
+    tai on rikki, kirjanpito luodaan uudelleen (julkaistaan kerran)."""
+    if not (Path(tila) / KOOSTE_TIEDOSTO).is_file():
+        return True
+    try:
+        with open(Path(tila) / KOOSTE_TILA_TIEDOSTO, encoding="utf-8") as f:
+            edellinen = json.load(f)
+        aika = datetime.fromisoformat(edellinen["aika"])
+        vanha = int(edellinen["lukema"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return True
+    return nyt - aika >= KOOSTE_VALI and lukema - vanha >= KOOSTE_UUSIA_MIN
+
+
+def kirjoita_kooste(tila, tulokset_hak=None, nyt=None):
+    """Paivittaa tiedoston tila/aivo-kooste.json (oikeudet 0644, atominen kirjoitus) vain, jos portti on auki:
+    vahintaan KOOSTE_VALI edellisesta ja vahintaan KOOSTE_UUSIA_MIN uutta. Palauttaa polun tai None (ei paivitetty).
+    Syy: kahden perakkaisen koosteen erotuksesta ei saa voida paatella yksittaista arviota (erotushyokkays)."""
+    nyt = nyt or datetime.now().astimezone()
+    r = _raaka(tila, tulokset_hak)
+    lukema = _lukema(r)
+    if not _portti_auki(tila, lukema, nyt):
+        return None
+    teksti = json.dumps(_muodosta(r, nyt), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    # kirjanpito ensin: jos koosteen kirjoitus kaatuu, paivitys vain viivastyy (ei kaksoisjulkaisua)
+    _kirjoita_atomisesti(tila, KOOSTE_TILA_TIEDOSTO,
+                         json.dumps({"aika": nyt.isoformat(timespec="seconds"), "lukema": lukema}) + "\n", 0o600)
+    return _kirjoita_atomisesti(tila, KOOSTE_TIEDOSTO, teksti, 0o644)
 
 
 def kirjoita_kooste_varmasti(tila, tulokset_hak=None, nyt=None):
