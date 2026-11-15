@@ -62,7 +62,7 @@ Ota ensin snapshot, jos asennat konttiin. Käyttäjänimet ovat ehdotus.
    sudo install -d -m 700 -o aivo-yksityinen -g aivo-yksityinen /var/lib/aivo-yksityinen/{chat,muisti,ehdotukset,malli}
    ```
 
-2. **Työkalutilan käyttäjä.** Claude-kirjautuminen kuuluu `aivo-tyokalu`-käyttäjälle (`sudo -u aivo-tyokalu -H claude`). Chat-palvelu kutsuu sitä komennolla `sudo -n -u aivo-tyokalu -- claude …`, kun ympäristömuuttuja `AIVO_TYOKALU_KAYTTAJA=aivo-tyokalu` on asetettu. Tämä vaatii sudoers-rivin (esimerkki ja huomio `NoNewPrivileges=true`:sta tiedostossa `aivo-chat.md`), joka sallii juuri tämän yhden komennon ja vain palvelun käyttäjälle. Sudoers on oikeusmuutos, joten Tony kirjoittaa sen itse (`sudo visudo -f /etc/sudoers.d/aivo-tyokalu`).
+2. **Työkalutilan käyttäjä.** Claude-kirjautuminen kuuluu `aivo-tyokalu`-käyttäjälle (`sudo -u aivo-tyokalu -H claude`). Chat-palvelu kutsuu sitä unix-socketin kautta (`AIVO_TYOKALU_SOCKET=/run/aivo-tyokalu.sock`), jonka toisessa päässä systemd ajaa `claude`-komennon käyttäjänä `aivo-tyokalu` kiinteillä valitsimilla. Sudoa ei tarvita, eikä `NoNewPrivileges` jouda pois. Yksiköt ovat tiedostossa `aivo-chat.md` (kohta 5b); Tony luo ne itse.
 
 3. **Mallipalvelin** (`/etc/systemd/system/aivo-malli.service`). Rivit `IPAddressDeny=any` ja `IPAddressAllow=127.0.0.0/8` estävät mallipalvelinta puhumasta mihinkään loopbackin ulkopuolelle:
 
@@ -77,7 +77,7 @@ Ota ensin snapshot, jos asennat konttiin. Käyttäjänimet ovat ehdotus.
    ProtectHome=yes
    ```
 
-4. **Chat-palvelu.** Lisää olemassa olevan `aivo-chat.service`-tiedoston `ExecStart`-riville `--yksityinen-data /var/lib/aivo-yksityinen/chat --yksityinen-muisti /var/lib/aivo-yksityinen/muisti --ehdotukset /var/lib/aivo-yksityinen/ehdotukset --ydinohjeet /var/lib/aivo-yksityinen/ydinohjeet`, aseta `User=aivo-yksityinen` ja lisää `ReadOnlyPaths=/var/lib/aivo-yksityinen/ydinohjeet`. Palvelu voi silloin lukea ohjeita mutta ei kirjoittaa niitä; vain `hyvaksy`-komento kirjoittaa.
+4. **Chat-palvelu.** Lisää olemassa olevan `aivo-chat.service`-tiedoston `ExecStart`-riville `--yksityinen-data /var/lib/aivo-yksityinen/chat --yksityinen-muisti /var/lib/aivo-yksityinen/muisti --ehdotukset /var/lib/aivo-yksityinen/ehdotukset --ydinohjeet /var/lib/aivo-yksityinen/ydinohjeet`, aseta `User=aivo-yksityinen` (säilytä `SupplementaryGroups=aivo-tyokalu-socket`, jotta työkalutilan socket pysyy käytettävänä) ja lisää `ReadOnlyPaths=/var/lib/aivo-yksityinen/ydinohjeet`. Palvelu voi silloin lukea ohjeita mutta ei kirjoittaa niitä; vain `hyvaksy`-komento kirjoittaa.
 
 5. **Varmuuskopio.** `/var/lib/aivo-yksityinen` saa mennä Driveen vain salattuna (rclone crypt, A715–A718). Älä lisää sitä salaamattomaan varmuuskopioon.
 
@@ -110,6 +110,6 @@ Yksityisen tilan päätös kirjataan vain yksityiseen muistiin (tiedosto 0600) e
 
 ## Rajat ja avoimet asiat
 
-- Yksityinen tila ja työkalutila ovat samassa prosessissa. Erottelu perustuu siihen, että työkalutilan Claude-kutsu ajetaan toisena käyttäjänä (kohta 2) eikä saa työkaluja (`--tools ""`). Jos `AIVO_TYOKALU_KAYTTAJA`-asetusta ei käytetä, erottelu on vain koodin tasolla, ei tiedosto-oikeuksilla.
+- Yksityinen tila ja työkalutila ovat samassa prosessissa. Erottelu perustuu siihen, että työkalutilan Claude-kutsu ajetaan toisena käyttäjänä (kohta 2, socket) eikä saa työkaluja (`--tools ""`). Jos `AIVO_TYOKALU_SOCKET`-asetusta ei käytetä, erottelu on vain koodin tasolla, ei tiedosto-oikeuksilla.
 - Ensimmäinen vastaus yksityisessä tilassa on hidas (ks. nopeudet).
 - Aivon vastauksen lähdeviitteet tarkistetaan kuten työkalutilassa.

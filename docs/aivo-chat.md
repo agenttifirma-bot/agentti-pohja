@@ -72,6 +72,7 @@ Ota ensin tilannekuva, jos palvelu asennetaan kontin sisään. Tämä ohje ei mu
    Environment=AIVO_CLAUDE=/KOKO/POLKU/claude
    ExecStart=/usr/bin/python3 -m aivo.chat palvele --host TAILNET-NIMI
    Restart=on-failure
+   SupplementaryGroups=aivo-tyokalu-socket
    NoNewPrivileges=true
    ProtectSystem=strict
    ReadWritePaths=/var/lib/aivo
@@ -83,7 +84,64 @@ Ota ensin tilannekuva, jos palvelu asennetaan kontin sisään. Tämä ohje ei mu
 
    Vaihda `AIVO_CLAUDE` oikeaan polkuun (`command -v claude`) ja `TAILNET-NIMI` palvelun täydelliseen tailnet-nimeen (`tailscale status --self --json`, kenttä `DNSName`, ilman loppupistettä). `--host` vaatii täsmällisen nimen: jokerimerkintä (`.pääte`) hylätään käynnistyksessä, ja ilman `--host`-valitsinta sallitaan vain `localhost`. Tämä pienentää DNS-rebinding-riskiä, koska toisen tailnetin nimet eivät kelpaa.
 
-   **Huomio `NoNewPrivileges=true`:** se estää `sudo`-kutsun. Jos käytät yksityisen tilan ohjeen mukaista työkalukäyttäjää (`AIVO_TYOKALU_KAYTTAJA`, ks. `aivo-yksityinen.md`), poista rivi tästä yksiköstä, tai työkalukäyttäjän eristys ei toimi. Palvelun käyttäjälle on silloin kirjoitettava sudoers-rivi, joka sallii vain yhden komennon, esimerkiksi `aivo-yksityinen ALL=(aivo-tyokalu) NOPASSWD: /KOKO/POLKU/claude -p --output-format text --max-turns 1 --tools ""` (tiedosto `/etc/sudoers.d/aivo-tyokalu`, muokkaus komennolla `sudo visudo -f`). Sudoers on oikeusmuutos: Tony kirjoittaa sen itse.
+   **`NoNewPrivileges=true` pysyy.** Jos käytät yksityisen tilan ohjeen mukaista työkalukäyttäjää (`aivo-tyokalu`), ei tarvita `sudoa` eikä sudoers-riviä. Työkalutilan `claude` ajetaan erillisenä systemd-palveluna omana käyttäjänään, ja chat-palvelu puhuu sille unix-socketin kautta. Ohje on kohdassa 5b. Jos et käytä työkalukäyttäjää, jätä `AIVO_TYOKALU_SOCKET` ja `SupplementaryGroups`-rivi pois, jolloin `claude` ajetaan suoraan chat-palvelun käyttäjänä (`aivo`).
+
+5b. **Työkalutila omana käyttäjänään (ei sudoa).** Käyttäjämalli:
+
+   | Rooli | Käyttäjä | Oikeus socketille |
+   |---|---|---|
+   | Chat-palvelu (`aivo-chat.service`) | `aivo` (yksityisen tilan ohjeessa `aivo-yksityinen`) | kuuluu ryhmään `aivo-tyokalu-socket` (`SupplementaryGroups`), tila 0660 |
+   | Socketin omistaja | `root`, ryhmä `aivo-tyokalu-socket` | omistaja ja ryhmä saavat lukea ja kirjoittaa, muut eivät mitään |
+   | Työkalutilan kääre (`aivo-tyokalu@.service`) | `aivo-tyokalu` | ei ole ryhmässä eikä pääse socketille itse; systemd antaa sille yhteyden vain `StandardInput=socket`-kautta |
+
+   Ryhmään kuuluu vain chat-palvelun käyttäjä. Näin chat-palvelun käyttäjä voi vaihtua (`aivo` tai `aivo-yksityinen`) ilman, että socketin oikeuksia tarvitsee avata muille. Ryhmä luodaan kerran: `sudo groupadd --system aivo-tyokalu-socket`. Kaksi tiedostoa. Komento on kiinteä yksikkötiedostossa: chat-palvelu voi lähettää socketille vain tekstiä, ei valitsimia eikä komentoja.
+
+   `/etc/systemd/system/aivo-tyokalu.socket`:
+
+   ```
+   [Unit]
+   Description=Aivon tyokalutilan Claude-socket
+
+   [Socket]
+   ListenStream=/run/aivo-tyokalu.sock
+   Accept=yes
+   MaxConnections=2
+   SocketUser=root
+   SocketGroup=aivo-tyokalu-socket
+   SocketMode=0660
+
+   [Install]
+   WantedBy=sockets.target
+   ```
+
+   `/etc/systemd/system/aivo-tyokalu@.service`:
+
+   ```
+   [Unit]
+   Description=Aivon tyokalutilan Claude (yksi kutsu)
+
+   [Service]
+   User=aivo-tyokalu
+   Environment=HOME=/var/lib/aivo-tyokalu
+   StandardInput=socket
+   StandardOutput=socket
+   StandardError=journal
+   ExecStart=/usr/bin/python3 /KOKO/POLKU/aivo/tyokalu_kaares.py /KOKO/POLKU/claude -p --output-format text --max-turns 1 --tools ""
+   RuntimeMaxSec=250
+   NoNewPrivileges=yes
+   ProtectSystem=strict
+   ReadWritePaths=/var/lib/aivo-tyokalu
+   PrivateTmp=yes
+   PrivateDevices=yes
+   ```
+
+   `tyokalu_kaares.py` ajaa saman kiinteän `claude`-komennon ja lisää vastauksen perään päätösrivin `\x00AIVO-EXIT <koodi>`. Chat näyttää nollasta poikkeavasta koodista lyhyen virheen (`Työkalu epäonnistui (koodi 1), katso journalctl -u aivo-tyokalu@*`) tyhjän vastauksen sijaan. Puuttuva päätösrivi (katkennut yhteys, aikaraja) raportoidaan myös virheenä. `claude`:n stderr jää lokiin eikä kulje socketin yli. Kääreskripti ei saa olla `aivo-tyokalu`-käyttäjän kirjoitettavissa (omistajaksi root). Päivitys: vanha yksikkö ilman käärettä antaa nyt aina virheen, koska päätösrivi puuttuu.
+
+   Komento on koko polulla (`command -v claude`). Sitten `sudo systemctl daemon-reload && sudo systemctl enable --now aivo-tyokalu.socket`, ja chat-palvelun yksikköön rivi `Environment=AIVO_TYOKALU_SOCKET=/run/aivo-tyokalu.sock`. Vain `aivo-tyokalu-socket`-ryhmän jäsenet (chat-palvelun käyttäjä) pääsevät socketille (tila 0660, ei oikeuksia muille). Vanha `AIVO_TYOKALU_KAYTTAJA`-asetus on poistettu: koodi kieltäytyy käynnistämästä kutsua, jos se on asetettu, jotta eristys ei heikkene huomaamatta.
+
+   Jos chat-palvelun käyttäjä lisätään ryhmään vasta nyt, käynnistä chat-palvelu uudelleen, jotta ryhmä tulee voimaan.
+
+   Tarkistus (ryhmä annetaan `-g`-valitsimella, koska `sudo -u` ei muuten lisää lisäryhmää): `sudo -u aivo -g aivo-tyokalu-socket python3 -c "import socket;s=socket.socket(socket.AF_UNIX);s.connect('/run/aivo-tyokalu.sock');s.sendall(b'sano kyllä');s.shutdown(socket.SHUT_WR);print(s.recv(200))"` tulostaa vastauksen. Toisena käyttäjänä (`sudo -u nobody ...`) yhteys antaa `PermissionError`.
 
    Sitten:
 
