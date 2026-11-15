@@ -238,6 +238,7 @@ class PalveluTesti(unittest.TestCase):
         (k / "faktat.md").write_text("Tony opiskelee ohjelmistokehitt\u00e4j\u00e4ksi.")
         cls.kysytty = []
         cls.paatokset = []
+        cls.julkaisun_tulos = "pushattu"
 
         def kysy(muisti, historia):
             cls.kysytty.append((muisti, historia))
@@ -245,7 +246,7 @@ class PalveluTesti(unittest.TestCase):
 
         def julkaise(kirjasto, kid, aika, teksti):
             cls.paatokset.append(teksti)
-            return "ei-gitissa"
+            return cls.julkaisun_tulos
         cls.tila = chat.Tila(chat.tiivista_salasana(SAL), str(k), str(Path(cls.tmp.name) / "data"), [TS],
                              kysy=kysy, julkaise=julkaise)
         cls.srv = chat.kaynnista(ip(127, 0, 0, 1), 0, cls.tila)
@@ -333,9 +334,49 @@ class PalveluTesti(unittest.TestCase):
         # paatos: vain Tonyn viesti (indeksi 0) kelpaa, Aivon (1) ei
         s, _ = self.api(ev, "/api/paatos", {"keskustelu": kid, "indeksi": 1})
         self.assertEqual(s, 400)
-        s, _ = self.api(ev, "/api/paatos", {"keskustelu": kid, "indeksi": 0})
-        self.assertEqual(s, 200)
+        s, r = self.api(ev, "/api/paatos", {"keskustelu": kid, "indeksi": 0})
+        self.assertEqual((s, r["tila"], r["teksti"]), (200, "pushattu", "Kirjattu"))
         self.assertEqual(self.paatokset, ["mit\u00e4 tied\u00e4t minusta?"])
+
+    def _kirjaa_tuloksella(self, tulos):
+        ev = self.kirjaudu()
+        _, d = self.api(ev, "/api/uusi", {"tila": "tyokalu"})
+        self.api(ev, "/api/viesti", {"keskustelu": d["id"], "teksti": "p\u00e4\u00e4t\u00f6s"})
+        type(self).julkaisun_tulos = tulos
+        try:
+            return self.api(ev, "/api/paatos", {"keskustelu": d["id"], "indeksi": 0})
+        finally:
+            type(self).julkaisun_tulos = "pushattu"
+
+    def test_paatos_epaonnistuneesta_pushista_ei_ole_kirjattu(self):
+        for tulos in ("push-epaonnistui", "ei-etaa", "ei-gitissa"):
+            with self.subTest(tulos=tulos):
+                s, r = self._kirjaa_tuloksella(tulos)
+                self.assertEqual((s, r["tila"]), (502, tulos))
+                self.assertNotIn("Kirjattu", r["teksti"].replace("Ei kirjattu", ""))
+                self.assertTrue(r["teksti"].startswith("Ei kirjattu"))
+
+    def test_paatos_ei_muutosta_nayttaa_oman_tekstinsa(self):
+        s, r = self._kirjaa_tuloksella("ei-muutosta")
+        self.assertEqual((s, r["tila"]), (200, "ei-muutosta"))
+        self.assertNotEqual(r["teksti"], "Kirjattu")
+        self.assertIn("Ei muutosta", r["teksti"])
+
+    def test_paatos_tuntematon_tulos_ja_vaara_tila_ovat_virhe(self):
+        s, r = self._kirjaa_tuloksella("jotain-outoa")
+        self.assertEqual((s, r["tila"]), (502, "tuntematon"))
+        # "ei-julkaistu" kuuluu vain yksityiseen tilaan: tyokalutilassa se ei saa nayttaa onnistumista
+        s, r = self._kirjaa_tuloksella("ei-julkaistu")
+        self.assertEqual((s, r["tila"]), (502, "tuntematon"))
+
+    def test_paatoksen_vastaus_yksityinen_vain_ei_julkaistu(self):
+        self.assertEqual(chat.paatoksen_vastaus("ei-julkaistu", True)[0], 200)
+        for t in ("pushattu", "push-epaonnistui", "ei-etaa", "ei-gitissa", "ei-muutosta", None):
+            self.assertEqual(chat.paatoksen_vastaus(t, True)[0], 502, t)
+
+    def test_kayttoliittyma_nayttaa_palvelimen_tekstin_eika_pelkkaa_kirjattu_r_ok_perusteella(self):
+        self.assertIn("b.textContent=j.teksti||", chat.HTML)
+        self.assertNotIn("r.ok?'Kirjattu'", chat.HTML)
 
     def test_liian_pitka_viesti_hylataan(self):
         ev = self.kirjaudu()

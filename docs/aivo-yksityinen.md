@@ -106,7 +106,7 @@ Gitea on jo suljettu (rekisteröinti pois, kirjautuminen vaaditaan, käyttäjät
 
 ## Päätösten kirjaus
 
-Yksityisen tilan päätös kirjataan vain yksityiseen muistiin (tiedosto 0600) eikä koskaan commitoida tai pushata, vaikka muisti olisi git-repossa. Työkalutilan päätös julkaistaan kirjaston `origin`iin vain, jos sen palvelin on `AIVO_SALLITUT_ETAISANNAT`-listalla; julkaisun epäonnistuessa päätöstiedosto palautetaan ennalleen. Selain saa Tonyn viestin paikan palvelimelta, joten päätöspainike kirjaa aina juuri sen viestin.
+Yksityisen tilan päätös kirjataan vain yksityiseen muistiin (tiedosto 0600) eikä koskaan commitoida tai pushata, vaikka muisti olisi git-repossa. Työkalutilan päätös julkaistaan kirjaston `origin`iin vain, jos sen palvelin on `AIVO_SALLITUT_ETAISANNAT`-listalla; jos julkaisu heittää poikkeuksen, päätöstiedosto palautetaan ennalleen. Jos push epäonnistuu (tulos `push-epaonnistui`), commit jää kirjaston paikalliseen kloonaan eikä sitä peruta. Chat vastaa silloin virhekoodilla 502 eikä näytä "Kirjattu". Selain saa Tonyn viestin paikan palvelimelta, joten päätöspainike kirjaa aina juuri sen viestin.
 
 ## Rajat ja avoimet asiat
 
