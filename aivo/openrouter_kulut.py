@@ -217,12 +217,11 @@ def _ilmoita_katto(tila: Path, nyt: datetime, eur: Decimal, ilmoita: Callable[[s
         if "katto" not in tanaan:
             _lisaa_rivi(tila, TAPAHTUMAT, {"aika": aika, "tyyppi": "katto", "eur": float(round(eur, 2))})
         if "ilmoitus" not in tanaan and ilmoita is not None:
-            teksti = ("Aivon OpenRouter-p\u00e4iv\u00e4katto (%s \u20ac) t\u00e4yttyi: kulut t\u00e4n\u00e4\u00e4n %s \u20ac. Kutsut on estetty vuorokauden vaihteeseen."
-                      % (PAIVAKATTO_EUR, round(eur, 2)))
+            teksti = ("Aivon OpenRouter-p\u00e4iv\u00e4katto ({} \u20ac) t\u00e4yttyi: kulut t\u00e4n\u00e4\u00e4n {} \u20ac. Kutsut on estetty vuorokauden vaihteeseen.".format(PAIVAKATTO_EUR, round(eur, 2)))
             if ilmoita(teksti) is True:
                 _lisaa_rivi(tila, TAPAHTUMAT, {"aika": aika, "tyyppi": "ilmoitus"})
     except Exception as virhe:  # noqa: BLE001 - ilmoitus ei saa kaataa katkaisinta
-        print("openrouter_kulut: katto-ilmoitus epaonnistui (%s)" % type(virhe).__name__, file=sys.stderr)
+        print("openrouter_kulut: katto-ilmoitus epaonnistui ({})".format(type(virhe).__name__), file=sys.stderr)
 
 
 def _varaa(nyt: datetime, tila: Any, malli: str, tehtava: str) -> tuple[str | None, Decimal]:
@@ -304,7 +303,7 @@ def viikkoraportti(tila: Any, nyt: datetime) -> str:
                 taulu[r["_paiva"]][m] = taulu[r["_paiva"]].get(m, Decimal(0)) + _eur(rivin_usd(r))
     except Exception:  # noqa: BLE001
         return "OpenRouter-kulut: kirjanpitoa ei voitu lukea, tarkista k\u00e4ytt\u00f6."
-    rivit_ulos = ["OpenRouter-kulut (\u20ac, " + str(PAIVAKATTO_EUR) + " \u20ac/vrk katto):"]
+    rivit_ulos = ["OpenRouter-kulut (\u20ac, {} \u20ac/vrk katto):".format(PAIVAKATTO_EUR)]
     katto_paivia = 0
     for p in paivat:
         yht = sum(taulu[p].values(), Decimal(0))
