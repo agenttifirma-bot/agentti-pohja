@@ -1,4 +1,4 @@
-"""Regressio: testit eivat saa vuotaa stdoutiin (kehitys.sh nayttaa lokin kolme viimeista riviä raportin Testit-rivilla)."""
+"""Regressio: testit eivat saa vuotaa stdoutiin (kehitys.sh nayttaa lokin kolme viimeista rivia raportin Testit-rivilla)."""
 import subprocess
 import sys
 import unittest
