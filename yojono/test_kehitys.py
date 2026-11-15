@@ -191,6 +191,16 @@ class Ajo(Pohja):
         self.assertIn("testit punaisella", rap)
         self.assertEqual(self.kutsut(), "")
 
+    def test_punainen_testiloki_talteen_ja_fail_rivi_selitteeseen(self):
+        self.agentti_skripti('printf "import unittest\\nclass B(unittest.TestCase):\\n    def test_b(self):\\n        self.fail()\\n" > test/test_b.py')
+        self.pr_kutsu()
+        self.assertEqual(self.aja(REPO, "1.00", "testit").returncode, 1)
+        rap = self.raportti("testit")
+        testit_rivi = next(r for r in rap.splitlines() if r.startswith("- Testit:"))
+        self.assertIn("FAIL: test_b", testit_rivi)
+        (loki,) = list((self.perus / "raportit").glob(f"*-kehitys-testit-{REPO}-testit.log"))
+        self.assertIn("AssertionError", loki.read_text())
+
     def _lahde_muutos(self, *args, tiedostot=None):
         r = self.lahde / REPO
         for polku, teksti in (tiedostot or {}).items():

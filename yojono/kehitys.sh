@@ -69,6 +69,11 @@ if [ -z "$KUIVA" ] && [ -z "${YOJONO_PAKOTA:-}" ] && [ "$AIHE" != "riippuvuudet"
   fi
 fi
 
+# Testiloki: selitteeksi vain FAIL/ERROR/FAILED/Ran/OK-rivit (enintaan 5), ei lokin viimeisia rivejia.
+testiselite() {
+  { grep -E '^(FAIL|ERROR|FAILED|Ran|OK)' "$1" || true; } | head -n 5 | tr '\n' ' ' | cut -c1-200
+}
+
 testaa() {
   if [ -f package.json ]; then
     # Havainto 27.10.: palvelun ProtectHome=read-only estaa npm:n kirjoituksen ~/.npm:iin (EROFS, "Log files were not written"),
@@ -195,13 +200,18 @@ else
         TESTIT="punainen (ei testeja kloonista)"
         SYY="ei testeja kloonista: PR:aa ei avattu"
       else
-        TESTIT="vihrea${LKM:+, $LKM testia} ($(tail -n 3 "$TMP/testit.log" | tr '\n' ' ' | cut -c1-120))"
+        TESTIT="vihrea${LKM:+, $LKM testia} ($(testiselite "$TMP/testit.log"))"
       fi
     else
-      TESTIT="punainen ($(tail -n 3 "$TMP/testit.log" | tr '\n' ' ' | cut -c1-120))"
+      TESTIT="punainen ($(testiselite "$TMP/testit.log"))"
       SYY="testit punaisella agentin muutosten jalkeen: PR:aa ei avattu"
     fi
   fi
+fi
+
+# Koko testiloki raportin viereen (tilapaishakemisto poistuu), enintaan 200 kt lopusta
+if [ -f "$TMP/testit.log" ]; then
+  tail -c 204800 "$TMP/testit.log" > "$UL-testit.log" || true
 fi
 
 # Kirjaus: tuloksettoman (muutoksettoman) ajon HEAD talteen vain, jos agentti onnistui (ei budjetti- tai mallivirhetta)
