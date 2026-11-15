@@ -69,9 +69,15 @@ if [ -z "$KUIVA" ] && [ -z "${YOJONO_PAKOTA:-}" ] && [ "$AIHE" != "riippuvuudet"
   fi
 fi
 
-# Testiloki: selitteeksi vain FAIL/ERROR/FAILED/Ran/OK-rivit (enintaan 5), ei lokin viimeisia rivejia.
+# Testiloki: selitteeksi unittest-rivit (FAIL:/ERROR:/FAILED/Ran/OK, enintaan 5). Jos niita ei loydy
+# (npm, jest, vitest, mocha), varapolku on lokin 3 viimeista rivia.
 testiselite() {
-  { grep -E '^(FAIL|ERROR|FAILED|Ran|OK)' "$1" || true; } | head -n 5 | tr '\n' ' ' | cut -c1-200
+  local s
+  s=$({ grep -E '^(FAIL: |ERROR: |FAILED|Ran |OK)' "$1" || true; } | head -n 5 | tr '\n' ' ' | cut -c1-200)
+  if [ -z "$(printf '%s' "$s" | tr -d ' ')" ]; then
+    s=$(tail -n 3 "$1" | tr '\n' ' ' | cut -c1-120)
+  fi
+  printf '%s' "$s"
 }
 
 testaa() {

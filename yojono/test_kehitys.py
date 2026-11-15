@@ -83,6 +83,41 @@ class Argumentit(Pohja):
 
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "kehitys.sh on palvelinskripti: vaatii GNU timeoutin (Linux); macOS-CI paljasti, ettei sita ole")
+class Testiselite(unittest.TestCase):
+    """testiselite(): unittest-rivit, ja varapolku (lokin 3 viimeista rivia) muille ajureille."""
+
+    def selite(self, loki):
+        rivit = SKRIPTI.read_text().splitlines()
+        alku = next(i for i, r in enumerate(rivit) if r.startswith("testiselite()"))
+        loppu = next(i for i in range(alku, len(rivit)) if rivit[i] == "}")
+        with tempfile.TemporaryDirectory() as t:
+            lokipolku = Path(t) / "testit.log"
+            lokipolku.write_text(loki)
+            r = subprocess.run(["sh", "-c", "\n".join(rivit[alku:loppu + 1]) + '\ntestiselite "$1"', "x", str(lokipolku)],
+                               capture_output=True, text=True, check=True)
+        return r.stdout
+
+    def test_unittest_rivit(self):
+        s = self.selite("ERROR: test_a (m.T)\nFAIL: test_b\nRan 2 tests\nFAILED (failures=1)\n")
+        self.assertIn("FAIL: test_b", s)
+        self.assertIn("Ran 2 tests", s)
+
+    def test_jest_tuloste_antaa_varaselitteen(self):
+        s = self.selite("PASS a.test.js\nFAIL b.test.js\nTest Suites: 1 failed, 1 total\nTests:       1 failed, 2 passed, 3 total\nTime: 1s\n")
+        self.assertIn("Tests:", s)
+        self.assertNotIn("FAIL b.test.js", s.split("Test Suites")[0])  # varapolku on vain 3 viimeista rivia
+
+    def test_npm_virheloki_antaa_varaselitteen(self):
+        s = self.selite("npm ERROR code 1\nnpm ERROR path /x\nnpm ERROR command failed\n")
+        self.assertNotEqual(s.strip(), "")
+        self.assertIn("command failed", s)
+
+    def test_npm_rivi_ei_ole_unittest_osuma(self):
+        # 'ERROR' ilman kaksoispistetta ei kelpaa unittest-riviksi: valitaan varapolku
+        s = self.selite("a\nb\nERROR in ./src\nc\n")
+        self.assertEqual(s.strip(), "b ERROR in ./src c")
+
+
 class Ajo(Pohja):
     def test_readme_muutos_avaa_pr_ja_siivoaa(self):
         self.agentti_skripti('echo "uusi rivi" >> README.md')
