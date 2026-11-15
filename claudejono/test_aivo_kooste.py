@@ -184,7 +184,7 @@ class Kirjoitus(Pohja):
         self.assertEqual(stat.S_IMODE((self.tila / aivo_arvio.KOOSTE_TILA_TIEDOSTO).stat().st_mode), 0o600)
 
     def test_atominen_kirjoitus_rename(self):
-        aivo_arvio.kirjoita_kooste(self.tila)
+        aivo_arvio.kirjoita_kooste(self.tila, nyt=aika(10))
         vanha = (self.tila / aivo_arvio.KOOSTE_TIEDOSTO).read_text()
         self.taydenna(12, True)
         with mock.patch("claudejono.aivo_arvio.os.replace", side_effect=OSError("x")):
