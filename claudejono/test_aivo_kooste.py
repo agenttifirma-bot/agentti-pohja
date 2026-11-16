@@ -3,8 +3,6 @@ import io
 import json
 import os
 import stat
-import subprocess
-import sys
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -24,8 +22,6 @@ def aika(pv):
 class Pohja(unittest.TestCase):
     def setUp(self):
         self.tila = Path(tempfile.mkdtemp())
-        self.tulokset = self.tila / "tulokset"
-        self.tulokset.mkdir()
 
     def arvio(self, nimi, kylla, pv=10, tony=None, malli=None):
         aivo_arvio.kirjaa_arvio(self.tila, nimi, kylla, SALAINEN_SYY, aika(pv))
@@ -37,9 +33,6 @@ class Pohja(unittest.TestCase):
             (self.tila / aivo_arvio.TIEDOSTO).write_text("\n".join(rivit) + "\n")
         if tony is not None:
             aivo_arvio.tarkista(self.tila, nimi, tony, aika(pv))
-
-    def tulos(self, nimi, tila):
-        (self.tulokset / nimi).write_text(f"# Tulos: {nimi}\n\n- Tila: {tila}\n- Aika: x\n\nteksti\n")
 
     def taydenna(self, n, kylla=True, pv=10, alku=0):
         for i in range(alku, alku + n):
@@ -54,7 +47,7 @@ class Sisalto(Pohja):
         self.arvio(SALAINEN_NIMI + ".md", True)
         self.taydenna(12, True, alku=100)
         self.taydenna(12, False, pv=11)
-        aivo_arvio.kirjoita_kooste(self.tila, self.tulokset, nyt=aika(20))
+        aivo_arvio.kirjoita_kooste(self.tila, nyt=aika(20))
         teksti = (self.tila / aivo_arvio.KOOSTE_TIEDOSTO).read_text()
         self.assertNotIn(SALAINEN_SYY, teksti)
         self.assertNotIn(SALAINEN_NIMI, teksti)
@@ -66,7 +59,7 @@ class Sisalto(Pohja):
     def test_luvut(self):
         self.taydenna(12, True, pv=10)
         self.taydenna(7, False, pv=11)
-        k = aivo_arvio.laske_kooste(self.tila, self.tulokset)
+        k = aivo_arvio.laske_kooste(self.tila)
         self.assertEqual((k["arvioita_yhteensa"], k["kylla"], k["ei"]), (20, 10, 5))   # 19, 12, 7 pyoristettyna
         self.assertEqual(k["viikoittain"], {"2026-V46": 20})   # 10.-11.11.2026 = viikko 46
         self.assertEqual((k["ensimmainen_viikko"], k["viimeinen_viikko"]), ("2026-V46", "2026-V46"))
@@ -139,33 +132,12 @@ class PienetRyhmat(Pohja):
         k = aivo_arvio.laske_kooste(self.tila)
         self.assertEqual((k["tony_tarkistanut"], k["yhtenevyys_tonyn_kanssa_prosenttia"]), (10, 75))
 
-    def test_tulosyhtenevyys(self):
-        for i in range(4):   # kylla + VALMIS = osuma
-            self.arvio(f"v{i}.md", True)
-            self.tulos(f"v{i}.md", "VALMIS")
-        for i in range(2):   # kylla + KESKEN = ei osuma
-            self.arvio(f"k{i}.md", True)
-            self.tulos(f"k{i}.md", "KESKEN")
-        for i in range(2):   # ei + HYLATTY = osuma
-            self.arvio(f"h{i}.md", False)
-            self.tulos(f"h{i}.md", "HYLATTY")
-        self.arvio("x.md", True)
-        self.tulos("x.md", "EPAONNISTUI")   # ei vertailuun
-        self.arvio("ilman.md", True)        # ei tulosta
-        k = aivo_arvio.laske_kooste(self.tila, self.tulokset)
-        self.assertEqual((k["tulokseen_verrattu"], k["yhtenevyys_tuloksen_kanssa_prosenttia"]), (10, 75))
-
-    def test_tulosyhtenevyys_alle_viisi(self):
-        self.arvio("a.md", True)
-        self.tulos("a.md", "VALMIS")
-        k = aivo_arvio.laske_kooste(self.tila, self.tulokset)
-        self.assertEqual(k["tulokseen_verrattu"], "<5")
-        self.assertIsNone(k["yhtenevyys_tuloksen_kanssa_prosenttia"])
-
-    def test_polkuhypyn_nimi_ei_lue_tulosta(self):
-        (self.tila / "x.md").write_text("- Tila: VALMIS\n")   # tulokset/../x.md olisi olemassa
-        self.assertIsNone(aivo_arvio._tulos_tila(self.tulokset, "../x.md"))
-        self.assertEqual(aivo_arvio._tulos_tila(self.tila, "x.md"), "VALMIS")
+    def test_ei_tulosvertailua(self):
+        """Agentti kirjoittaa tulokset/-hakemistoon: koosteessa ei saa olla sen perusteella laskettuja kenttia."""
+        for i in range(10):
+            self.arvio(f"a{i}.md", True)
+        k = aivo_arvio.laske_kooste(self.tila)
+        self.assertFalse([a for a in k if "tulo" in a or "vertail" in a], sorted(k))
 
 
 class Kirjoitus(Pohja):
@@ -219,7 +191,7 @@ class Erotushyokkays(Pohja):
     """Kahden perakkaisen koosteen erotus ei saa paljastaa yksittaista arviota."""
 
     def julkaise(self, pv, tunti=12):
-        return aivo_arvio.kirjoita_kooste(self.tila, self.tulokset, nyt=datetime(2026, 11, pv, tunti, 0, tzinfo=timezone.utc))
+        return aivo_arvio.kirjoita_kooste(self.tila, nyt=datetime(2026, 11, pv, tunti, 0, tzinfo=timezone.utc))
 
     def luku(self):
         return (self.tila / aivo_arvio.KOOSTE_TIEDOSTO).read_bytes() if (self.tila / aivo_arvio.KOOSTE_TIEDOSTO).exists() else None
@@ -350,24 +322,6 @@ class Erotushyokkays(Pohja):
         self.assertIsNone(self.julkaise(14))
         self.assertEqual(self.luku(), ennen)
 
-    def test_tuloksen_tilan_vaihto_ei_avaa_porttia(self):
-        """tulokset/ on agentin kirjoitettavissa: tilanvaihdot eivat saa laskea muutoksiksi (9 tunnettua + 1 aito)."""
-        for i in range(10):
-            self.tulos(f"t9-{i}-k.md", "KESKEN")
-        ennen = self.pohja()
-        for i in range(10):
-            self.tulos(f"t9-{i}-k.md", "VALMIS")   # agentin tuottamat 10 tilanvaihtoa
-        self.assertIsNone(self.julkaise(12))
-        self.assertEqual(self.luku(), ennen)
-
-    def test_yhdeksan_tilanvaihtoa_ja_yksi_aito_muutos_ei_avaa_porttia(self):
-        ennen = self.pohja()
-        for i in range(9):
-            self.tulos(f"t9-{i}-k.md", "VALMIS")
-        aivo_arvio.kirjaa_arvio(self.tila, "t9-20-k.md", False, "uusi", aika(12))   # 1 aito muutos
-        self.assertIsNone(self.julkaise(12))
-        self.assertEqual(self.luku(), ennen)
-
     def test_tonyn_tarkistuksen_kaantaminen_lasketaan_muutokseksi(self):
         for i in range(10):
             self.arvio(f"x{i}.md", True, pv=9, tony=True)
@@ -436,37 +390,6 @@ class Symlinkki(Pohja):
                 pass
         self.assertEqual(stat.S_IMODE(uhri.stat().st_mode), 0o600)
         self.assertEqual(uhri.read_text(), "x")
-
-
-class TulosTiedostonAvaus(Pohja):
-    """tulokset/ on agentin kirjoitettavissa, ajuri on root: FIFO ei saa jumittaa, symlinkkia ei seurata."""
-
-    def test_fifo_ei_jumita(self):
-        os.mkfifo(self.tulokset / "f.md")
-        self.arvio("f.md", True)
-        koodi = ("import sys; from claudejono import aivo_arvio as a; "
-                 "assert a._tulos_tila(sys.argv[1], 'f.md') is None; "
-                 "a.laske_kooste(sys.argv[2], sys.argv[1])")
-        try:   # oma prosessi + aikaraja: vanha koodi jumittuu open-kutsuun eika testisarja saa jumittua mukana
-            r = subprocess.run([sys.executable, "-c", koodi, str(self.tulokset), str(self.tila)],
-                               cwd=str(Path(__file__).resolve().parent.parent), timeout=15, capture_output=True)
-        except subprocess.TimeoutExpired:
-            self.fail("FIFO jumitti tuloksen luvun")
-        self.assertEqual(r.returncode, 0, r.stderr[-300:])
-
-    def test_symlinkkia_ei_seurata(self):
-        ulko = self.tila / "ulko.md"
-        ulko.write_text("- Tila: VALMIS\n")
-        os.symlink(ulko, self.tulokset / "s.md")
-        self.assertIsNone(aivo_arvio._tulos_tila(self.tulokset, "s.md"))
-
-    def test_hakemisto_ei_kelpaa(self):
-        (self.tulokset / "h.md").mkdir()
-        self.assertIsNone(aivo_arvio._tulos_tila(self.tulokset, "h.md"))
-
-    def test_tavallinen_tiedosto_luetaan(self):
-        self.tulos("n.md", "VALMIS")
-        self.assertEqual(aivo_arvio._tulos_tila(self.tulokset, "n.md"), "VALMIS")
 
 
 class Virheet(Pohja):

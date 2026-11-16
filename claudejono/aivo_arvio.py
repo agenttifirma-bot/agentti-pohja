@@ -11,8 +11,6 @@ import hashlib
 import json
 import os
 import random
-import re
-import stat
 import sys
 import tempfile
 import time
@@ -169,10 +167,7 @@ KOOSTE_TILA_TIEDOSTO = "aivo-kooste.tila.json"   # vain ajurin oma kirjanpito (t
 RYHMA_MIN = 5   # alle taman ryhmat nakyvat koosteessa muodossa "<5"
 PYORISTYS = 5   # julkaistavat maarat pyoristetaan lahimpaan viiteen
 KOOSTE_VALI = timedelta(hours=24)   # koostetta paivitetaan enintaan kerran vuorokaudessa
-KOOSTE_UUSIA_MIN = 10               # ... ja vain kun uusia arvioita/tarkistuksia/vertailuja on kertynyt vahintaan taman verran
-_TILA_RE = re.compile(r"(?m)^- Tila: ([A-Z]+)\s*$")
-_VALMIS = "VALMIS"
-_EI_VALMIS = ("HYLATTY", "KESKEN")   # EPAONNISTUI on tekninen vika, ei oleellisuuden tuomio: ei oteta vertailuun
+KOOSTE_UUSIA_MIN = 10               # ... ja vain kun uusia arvioita/tarkistuksia on kertynyt vahintaan taman verran
 
 
 def _peita(n):
@@ -195,30 +190,8 @@ def _viikko(pv):
     return f"{v[0]}-V{v[1]:02d}"
 
 
-def _tulos_tila(tulokset_hak, tehtava):
-    """Tehtavan tuloksen Tila-rivi (VALMIS, KESKEN, ...) tai None. Vain nimeen luotetaan, ei polun osiin.
-    tulokset/ on agentin kirjoitettavissa ja ajuri on root, joten tiedosto avataan varovasti: O_NOFOLLOW (symlinkki
-    ei kelpaa), O_NONBLOCK (FIFO ei jumita open-kutsua) ja fstat: vain tavallinen tiedosto luetaan."""
-    if tulokset_hak is None or Path(tehtava).name != tehtava:
-        return None
-    try:
-        fd = os.open(Path(tulokset_hak) / tehtava, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY)
-    except OSError:
-        return None
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            return None
-        teksti = os.read(fd, 2000).decode("utf-8", errors="replace")
-    except OSError:
-        return None
-    finally:
-        os.close(fd)
-    m = _TILA_RE.search(teksti)
-    return m.group(1) if m else None
-
-
-def _raaka(tila, tulokset_hak=None):
-    """Tarkat luvut (EI julkaista): n, kylla, viikot, tony-osumat, vertailu. Vain ajurin sisaiseen kayttoon."""
+def _raaka(tila):
+    """Tarkat luvut (EI julkaista): n, kylla, viikot, tony-osumat. Vain ajurin sisaiseen kayttoon."""
     aivo, tony = {}, {}
     for d in lue(tila):
         if not isinstance(d.get("kylla"), bool):
@@ -233,17 +206,10 @@ def _raaka(tila, tulokset_hak=None):
         v = _viikko(str(d.get("aika", ""))[:10])
         if v:
             viikot[v] = viikot.get(v, 0) + 1
-    vertailtu = osumat = 0
     kohteet = {}
     for k, d in aivo.items():
-        t = _tulos_tila(tulokset_hak, k)
-        vertailussa = t == _VALMIS or t in _EI_VALMIS
-        if vertailussa:
-            vertailtu += 1
-            osumat += 1 if (d["kylla"] == (t == _VALMIS)) else 0
-        # kohteen sormenjalki portille: vain ajurin omasta 0600-datasta (oma arvio, Tonin tarkistus). Tulostila EI ole
-        # mukana: tulokset/ on agentin kirjoitettavissa, joten agentti voisi tuottaa tilanvaihdoilla "muutoksia" ja
-        # avata portin yhdella aidolla muutoksella (9 tunnettua + 1).
+        # kohteen sormenjalki portille: vain ajurin omasta 0600-datasta (oma arvio, Tonin tarkistus). Agentin
+        # kirjoitettavissa olevaa dataa (tulokset/) ei lueta lainkaan.
         kohteet[_tiiviste(k)] = _tiiviste(json.dumps([d["kylla"], tony[k]["kylla"] if k in tony else None]))
     return {
         "n": len(aivo),
@@ -251,8 +217,6 @@ def _raaka(tila, tulokset_hak=None):
         "viikot": viikot,
         "tony": len(tony),
         "tony_osumat": sum(1 for k, v in tony.items() if v["kylla"] == aivo[k]["kylla"]),
-        "vertailtu": vertailtu,
-        "osumat": osumat,
         "kohteet": kohteet,
     }
 
@@ -284,20 +248,16 @@ def _muodosta(r, nyt):
         "viikoittain": {v: _peita(r["viikot"][v]) for v in viikot},
         "tony_tarkistanut": _peita(r["tony"]),
         "yhtenevyys_tonyn_kanssa_prosenttia": _prosentti(r["tony_osumat"], r["tony"]),
-        "tulokseen_verrattu": _peita(r["vertailtu"]),
-        "yhtenevyys_tuloksen_kanssa_prosenttia": _prosentti(r["osumat"], r["vertailtu"]),
-        "yhtenevyys_tuloksen_kanssa_selitys": "Aivon kylla = tehtava loppui tilaan VALMIS; Aivon ei = tulos on HYLATTY tai KESKEN. "
-                                               "Muut tilat (esim. EPAONNISTUI) ja tehtavat ilman tulosta jatetaan pois.",
         "lahtotasoon_riittavasti_arvioita": n >= VAHIMMAIS_LAHTOTASOON,
         "lahtotason_raja": VAHIMMAIS_LAHTOTASOON,
     }
 
 
-def laske_kooste(tila, tulokset_hak=None, nyt=None):
+def laske_kooste(tila, nyt=None):
     """Koosteluvut Aivon arvioista: vain pyoristettyja lukumaaria ja prosentteja, viikkotasolla.
     EI tehtavien nimia, EI syita, EI yksittaisia rivia, EI malli- eika paivakohtaisia maaria.
     Alle RYHMA_MIN kokoiset ryhmat nakyvat muodossa "<5" eika niista lasketa prosenttia."""
-    return _muodosta(_raaka(tila, tulokset_hak), nyt or datetime.now().astimezone())
+    return _muodosta(_raaka(tila), nyt or datetime.now().astimezone())
 
 
 def _kirjoita_atomisesti(tila, nimi, teksti, oikeudet):
@@ -343,12 +303,12 @@ def _portti_auki(tila, kohteet, nyt):
     return nyt - aika >= KOOSTE_VALI and _muutokset(kohteet, vanhat) >= KOOSTE_UUSIA_MIN
 
 
-def kirjoita_kooste(tila, tulokset_hak=None, nyt=None):
+def kirjoita_kooste(tila, nyt=None):
     """Paivittaa tiedoston tila/aivo-kooste.json (oikeudet 0644, atominen kirjoitus) vain, jos portti on auki:
     vahintaan KOOSTE_VALI edellisesta ja vahintaan KOOSTE_UUSIA_MIN muuttunutta kohdetta. Palauttaa polun tai None (ei paivitetty).
     Syy: kahden perakkaisen koosteen erotuksesta ei saa voida paatella yksittaista arviota (erotushyokkays)."""
     nyt = nyt or datetime.now().astimezone()
-    r = _raaka(tila, tulokset_hak)
+    r = _raaka(tila)
     if not _portti_auki(tila, r["kohteet"], nyt):
         return None
     teksti = json.dumps(_muodosta(r, nyt), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -358,10 +318,10 @@ def kirjoita_kooste(tila, tulokset_hak=None, nyt=None):
     return _kirjoita_atomisesti(tila, KOOSTE_TIEDOSTO, teksti, 0o644)
 
 
-def kirjoita_kooste_varmasti(tila, tulokset_hak=None, nyt=None):
+def kirjoita_kooste_varmasti(tila, nyt=None):
     """Kuten kirjoita_kooste, mutta ei koskaan nosta virhetta (ajo ei saa kaatua). Virheesta kirjataan vain tyyppi. True = onnistui."""
     try:
-        kirjoita_kooste(tila, tulokset_hak, nyt)
+        kirjoita_kooste(tila, nyt)
         return True
     except Exception as e:
         print(f"aivo_arvio: koosteen laskenta epaonnistui ({type(e).__name__})", file=sys.stderr)
