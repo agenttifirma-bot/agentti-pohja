@@ -5,7 +5,7 @@ Tämä ohje on Tonylle. Claude on kirjoittanut koodin (`aivo/yksityinen.py`, `ai
 ## Mitä muuttuu
 
 - Chat-sivulla on valinta **Yksityinen / Työkalu**. Oletus on yksityinen. Työkalutilaan vaihtaminen kysyy varmistuksen, koska viestit kulkevat silloin Clauden pilvipalveluun.
-- **Yksityinen tila** puhuu vain paikalliselle mallipalvelimelle (llama.cpp:n `llama-server` tai vastaava, OpenAI-yhteensopiva). Koodi hyväksyy vain loopback-IP-osoitteen. Muuhun osoitteeseen se ei lähetä mitään, eikä palvelu käynnisty sellaisella asetuksella. Claudea, LiteLLM:ää ja OpenRouteria ei käytetä.
+- **Yksityinen tila** puhuu vain paikalliselle mallipalvelimelle (llama.cpp:n `llama-server` tai vastaava, OpenAI-yhteensopiva). Koodi hyväksyy vain loopback-IP-osoitteen. Muuhun osoitteeseen se ei lähetä mitään, eikä palvelu käynnisty sellaisella asetuksella. Claudea ja LiteLLM:ää ei käytetä. Vaihtoehtoinen taustapää on OpenRouterin avoin malli (ks. `aivo-yksityinen-openrouter.md`, Tonyn päätös A984).
 - Yksityisellä tilalla on **oma muisti** (`--yksityinen-muisti`) ja omat keskustelut (`--yksityinen-data`). Työkalutilan kirjasto ei sekoitu niihin, eikä yksityinen muisti mene työkalutilan kehotteeseen.
 - Yksityiset kansiot kuuluvat palvelun käyttäjälle ja ovat 0700. Jos kansio kuuluu jollekin toiselle tai on linkki, palvelu ei käynnisty.
 - **Ydinohjeet** luetaan vain yksityisessä tilassa. Työkalutila (pilvi-Claude) ei saa niitä.

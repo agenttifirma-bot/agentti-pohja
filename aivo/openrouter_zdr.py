@@ -1,8 +1,8 @@
 """ZDR-pakotus OpenRouter-pyyntoihin (kompassi A831, A728).
 
 Puhdas funktio: rakentaa pyynnon rungon ja asettaa aina `provider.zdr = true`
-(nollassailytys) ja `provider.data_collection = "deny"`. Ei verkkokutsua, ei avainten lukua. Mallia, osoitetta tai
-avainta ei kovakoodata: ne tulevat kutsujalta.
+(nollassailytys) ja `provider.data_collection = "deny"`. Ei verkkokutsua, ei avainten lukua. Mallia tai avainta
+ei kovakoodata: ne tulevat kutsujalta.
 
 Saannot:
   * Kutsuja ei voi ohittaa zdr:aa (zdr=False, provider.zdr != True tai
@@ -13,10 +13,15 @@ Saannot:
     pyynnot; muut pyynnot eivat kulje taman funktion kautta, joten niihin ei koske mikaan.
   * `yksityinen_chat=True` -> ZdrVirhe: yksityisen chatin sisalto ei koskaan lahde (A728).
   * Tata moduulia ei ole kytketty mihinkaan ajoon.
+  * `OSOITE` on ainoa kiintea tieto: rajapinnan osoite on vain tassa tiedostossa (staattinen vartija
+    test_openrouter_zdr.py tarkistaa, ettei se esiinny muualla aivo/-kansiossa). Moduuli ei itse kayta sita.
 """
 from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
+
+
+OSOITE = "https://openrouter.ai/api/v1/chat/completions"
 
 
 class ZdrVirhe(ValueError):

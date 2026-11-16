@@ -12,7 +12,8 @@ Turvarajat (koodi on laki):
   * Pyynnon Host-otsakkeen pitaa olla sallittu (DNS rebinding -suoja). Evasteen SameSite=Strict, HttpOnly,
     Secure; muutospyynnot vaativat otsakkeen X-Aivo ja samaa alkuperaa (Origin).
   * Kirjautumisyrityksia rajoitetaan (5 virhetta -> 5 min lukitus). Istunnot ovat vain muistissa.
-  * Vastaus tulee vain Claudelta suoraan (`claude -p`, ei tyokaluja). Ei LiteLLM:aa, ei OpenRouteria (A329).
+  * Tyokalutilan vastaus tulee vain Claudelta suoraan (`claude -p`, ei tyokaluja). Ei LiteLLM:aa, ei OpenRouteria (A329).
+    OpenRouter on vain yksityisen tilan valinnainen taustapaa (aivo/yksityinen_or.py, A984).
   * Keskustelut tallentuvat vain isannalle (600). Paatokset kirjataan kirjastoon, ja kirjasto pushataan vain,
     jos etarepo ei ole GitHubissa.
   * Paatos kirjataan vain Tonyn painalluksella ja Tonyn omin sanoin (sanasta sanaan). Mallin tekstia
@@ -38,7 +39,7 @@ from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from aivo import yksityinen
+from aivo import yksityinen, yksityinen_or
 from aivo.yksityinen import YksityinenVirhe as ChatVirhe, julkaise_kirjastoon   # sama poikkeus kaikkialla
 
 OLETUS_SALASANA = "/etc/aivo/chat-salasana"
@@ -97,7 +98,7 @@ textarea{resize:none;height:3.2rem}button{font:inherit;padding:.5rem .9rem;borde
 .pieni{font-size:.8rem;opacity:.7}
 </style></head><body>
 <header><strong>Aivo</strong><span><select id="tila" aria-label="Tila">
-<option value="yksityinen" selected>Yksityinen (oma malli, ei verkkoa)</option>
+<option value="yksityinen" selected>Yksityinen (avoin malli, ei tallennusta)</option>
 <option value="tyokalu">Ty\u00f6kalu (Claude pilvess\u00e4)</option></select> <button id="uusi">Uusi keskustelu</button></span></header>
 <div id="viestit" aria-live="polite"></div>
 <form id="lomake"><textarea id="teksti" maxlength="4000" placeholder="Kirjoita Aivolle\u2026" required></textarea><button>L\u00e4het\u00e4</button></form>
@@ -499,7 +500,9 @@ class Tila:
 
     def __init__(self, tiiviste, kirjasto, data, sallitut_hostit, kysy=kysy_claudelta, julkaise=kirjaa_paatos, julkaise_yks=kirjaa_paatos_yksityinen,
                  yks_data=None, yks_muisti=None, ydinohjeet=None, ehdotukset=None,
-                 malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None):
+                 malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None,
+                 taustapaa="loopback", or_malli=None, or_avain=yksityinen_or.OLETUS_AVAIN,
+                 or_kulutila=yksityinen_or.OLETUS_KULUTILA):
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
         self.keskustelut = Keskustelut(data)
@@ -511,15 +514,26 @@ class Tila:
         self.vastauslukko = threading.Lock()   # yksi Claude-kutsu kerrallaan
         self.yks = None
         if yks_data:
-            if not yksityinen.sallittu_malli_osoite(malli_url):
+            if taustapaa not in ("loopback", "openrouter"):
+                raise ChatVirhe("tuntematon yksityisen tilan taustapaa")
+            if taustapaa == "openrouter":
+                yksityinen_or.tarkista_malli(or_malli)       # avain luetaan vasta kutsussa; puuttuva avain nakyy virheena
+            elif not yksityinen.sallittu_malli_osoite(malli_url):
                 raise ChatVirhe("mallipalvelimen osoite ei ole loopback; kieltaydyn kaynnistymasta")
             self.yks = Keskustelut(yksityinen.tarkista_yksityinen_hakemisto(yks_data))
             self.yks_muisti = str(yksityinen.tarkista_yksityinen_hakemisto(yks_muisti or str(Path(yks_data).parent / "muisti")))
             self.ydinohjeet = ydinohjeet or yksityinen.OLETUS_YDINOHJEET
             self.ehdotukset = str(yksityinen.tarkista_yksityinen_hakemisto(
                 ehdotukset or str(Path(yks_data).parent / "ehdotukset")))
-            self.kysy_yks = kysy_yks or (lambda muisti, historia, ohjeet: yksityinen.kysy_paikalliselta(
-                muisti, historia, ohjeet, malli_url))
+            self.taustapaa = taustapaa
+            if kysy_yks:
+                self.kysy_yks = kysy_yks
+            elif taustapaa == "openrouter":
+                self.kysy_yks = lambda muisti, historia, ohjeet: yksityinen_or.kysy_openrouterilta(
+                    muisti, historia, ohjeet, malli=or_malli, avain_tiedosto=or_avain, kulutila=or_kulutila)
+            else:
+                self.kysy_yks = lambda muisti, historia, ohjeet: yksityinen.kysy_paikalliselta(
+                    muisti, historia, ohjeet, malli_url)
         self.yks_vastauslukko = threading.Lock()
 
     def tila_ja_kasittelija(self, kid):
@@ -747,6 +761,15 @@ def main(argv=None):
     ap.add_argument("--ydinohjeet", default=os.environ.get("AIVO_YDINOHJEET", yksityinen.OLETUS_YDINOHJEET))
     ap.add_argument("--ehdotukset", default=os.environ.get("AIVO_EHDOTUKSET"))
     ap.add_argument("--malli-url", default=os.environ.get("AIVO_MALLI_URL", yksityinen.OLETUS_MALLI_URL))
+    ap.add_argument("--yksityinen-taustapaa", choices=("loopback", "openrouter"),
+                    default=os.environ.get("AIVO_YKSITYINEN_TAUSTAPAA", "loopback"),
+                    help="yksityisen tilan mallin lahde: paikallinen palvelin (loopback) tai OpenRouterin avoin malli (ZDR)")
+    ap.add_argument("--openrouter-malli", default=os.environ.get("AIVO_OPENROUTER_MALLI"),
+                    help="avoin malli, esim. meta-llama/llama-3.3-70b-instruct (vain avointen perheiden lista)")
+    ap.add_argument("--openrouter-avain-tiedosto", default=os.environ.get("AIVO_OPENROUTER_AVAIN", yksityinen_or.OLETUS_AVAIN),
+                    help="tiedosto (0600, palvelun kayttajan), jossa avain on; avainta ei anneta ymparistomuuttujalla")
+    ap.add_argument("--openrouter-kulutila", default=os.environ.get("AIVO_OPENROUTER_KULUTILA", yksityinen_or.OLETUS_KULUTILA),
+                    help="kirjoitettava kansio kulukirjanpidolle ja paivakatkaisimelle")
     a = ap.parse_args(argv)
     try:
         if a.komento == "aseta-salasana":
@@ -757,7 +780,9 @@ def main(argv=None):
             raise ChatVirhe("--host vaatii taydellisen nimen (ei .paate-jokerimerkintaa)")
         # ilman --host sallitaan vain localhost
         tila = Tila(lue_tiiviste(a.salasana_tiedosto), a.kirjasto, a.data, hostit, yks_data=a.yksityinen_data,
-                    yks_muisti=a.yksityinen_muisti, ydinohjeet=a.ydinohjeet, ehdotukset=a.ehdotukset, malli_url=a.malli_url)
+                    yks_muisti=a.yksityinen_muisti, ydinohjeet=a.ydinohjeet, ehdotukset=a.ehdotukset, malli_url=a.malli_url,
+                    taustapaa=a.yksityinen_taustapaa, or_malli=a.openrouter_malli,
+                    or_avain=a.openrouter_avain_tiedosto, or_kulutila=a.openrouter_kulutila)
         palvelin = kaynnista(a.osoite, a.portti, tila)
     except ChatVirhe as e:
         print("virhe: %s" % e, file=sys.stderr)
