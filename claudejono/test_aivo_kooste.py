@@ -3,6 +3,8 @@ import io
 import json
 import os
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -253,11 +255,10 @@ class Erotushyokkays(Pohja):
         self.assertIsNotNone(self.julkaise(11))   # tasan 24 h, 10 uutta
         self.assertNotEqual(self.luku(), ennen)
 
-    def test_tonyn_tarkistus_ja_tulos_lasketaan_muutokseen(self):
+    def test_tonyn_tarkistukset_lasketaan_muutokseen(self):
         ennen = self.pohja()
-        for i in range(5):                        # 5 Tonin tarkistusta + 5 tulosta (eri tehtavissa) = 10 muuttunutta kohdetta
+        for i in range(10):                       # 10 Tonin tarkistusta = 10 muuttunutta kohdetta
             aivo_arvio.tarkista(self.tila, f"t9-{i}-k.md", True, aika(12))
-            self.tulos(f"t9-{i + 5}-k.md", "VALMIS")
         self.assertIsNotNone(self.julkaise(12))
         self.assertNotEqual(self.luku(), ennen)
 
@@ -349,15 +350,23 @@ class Erotushyokkays(Pohja):
         self.assertIsNone(self.julkaise(14))
         self.assertEqual(self.luku(), ennen)
 
-    def test_tuloksen_tilan_vaihto_lasketaan_muutokseksi(self):
+    def test_tuloksen_tilan_vaihto_ei_avaa_porttia(self):
+        """tulokset/ on agentin kirjoitettavissa: tilanvaihdot eivat saa laskea muutoksiksi (9 tunnettua + 1 aito)."""
         for i in range(10):
             self.tulos(f"t9-{i}-k.md", "KESKEN")
-        self.taydenna(12, True, pv=9)
-        self.taydenna(12, False, pv=9)
-        self.assertIsNotNone(self.julkaise(10))
+        ennen = self.pohja()
         for i in range(10):
-            self.tulos(f"t9-{i}-k.md", "VALMIS")   # KESKEN -> VALMIS: vertailtujen maara ei muutu
-        self.assertIsNotNone(self.julkaise(12))
+            self.tulos(f"t9-{i}-k.md", "VALMIS")   # agentin tuottamat 10 tilanvaihtoa
+        self.assertIsNone(self.julkaise(12))
+        self.assertEqual(self.luku(), ennen)
+
+    def test_yhdeksan_tilanvaihtoa_ja_yksi_aito_muutos_ei_avaa_porttia(self):
+        ennen = self.pohja()
+        for i in range(9):
+            self.tulos(f"t9-{i}-k.md", "VALMIS")
+        aivo_arvio.kirjaa_arvio(self.tila, "t9-20-k.md", False, "uusi", aika(12))   # 1 aito muutos
+        self.assertIsNone(self.julkaise(12))
+        self.assertEqual(self.luku(), ennen)
 
     def test_tonyn_tarkistuksen_kaantaminen_lasketaan_muutokseksi(self):
         for i in range(10):
@@ -427,6 +436,37 @@ class Symlinkki(Pohja):
                 pass
         self.assertEqual(stat.S_IMODE(uhri.stat().st_mode), 0o600)
         self.assertEqual(uhri.read_text(), "x")
+
+
+class TulosTiedostonAvaus(Pohja):
+    """tulokset/ on agentin kirjoitettavissa, ajuri on root: FIFO ei saa jumittaa, symlinkkia ei seurata."""
+
+    def test_fifo_ei_jumita(self):
+        os.mkfifo(self.tulokset / "f.md")
+        self.arvio("f.md", True)
+        koodi = ("import sys; from claudejono import aivo_arvio as a; "
+                 "assert a._tulos_tila(sys.argv[1], 'f.md') is None; "
+                 "a.laske_kooste(sys.argv[2], sys.argv[1])")
+        try:   # oma prosessi + aikaraja: vanha koodi jumittuu open-kutsuun eika testisarja saa jumittua mukana
+            r = subprocess.run([sys.executable, "-c", koodi, str(self.tulokset), str(self.tila)],
+                               cwd=str(Path(__file__).resolve().parent.parent), timeout=15, capture_output=True)
+        except subprocess.TimeoutExpired:
+            self.fail("FIFO jumitti tuloksen luvun")
+        self.assertEqual(r.returncode, 0, r.stderr[-300:])
+
+    def test_symlinkkia_ei_seurata(self):
+        ulko = self.tila / "ulko.md"
+        ulko.write_text("- Tila: VALMIS\n")
+        os.symlink(ulko, self.tulokset / "s.md")
+        self.assertIsNone(aivo_arvio._tulos_tila(self.tulokset, "s.md"))
+
+    def test_hakemisto_ei_kelpaa(self):
+        (self.tulokset / "h.md").mkdir()
+        self.assertIsNone(aivo_arvio._tulos_tila(self.tulokset, "h.md"))
+
+    def test_tavallinen_tiedosto_luetaan(self):
+        self.tulos("n.md", "VALMIS")
+        self.assertEqual(aivo_arvio._tulos_tila(self.tulokset, "n.md"), "VALMIS")
 
 
 class Virheet(Pohja):

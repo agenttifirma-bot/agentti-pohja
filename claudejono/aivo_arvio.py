@@ -12,6 +12,7 @@ import json
 import os
 import random
 import re
+import stat
 import sys
 import tempfile
 import time
@@ -195,14 +196,24 @@ def _viikko(pv):
 
 
 def _tulos_tila(tulokset_hak, tehtava):
-    """Tehtavan tuloksen Tila-rivi (VALMIS, KESKEN, ...) tai None. Vain nimeen luotetaan, ei polun osiin."""
+    """Tehtavan tuloksen Tila-rivi (VALMIS, KESKEN, ...) tai None. Vain nimeen luotetaan, ei polun osiin.
+    tulokset/ on agentin kirjoitettavissa ja ajuri on root, joten tiedosto avataan varovasti: O_NOFOLLOW (symlinkki
+    ei kelpaa), O_NONBLOCK (FIFO ei jumita open-kutsua) ja fstat: vain tavallinen tiedosto luetaan."""
     if tulokset_hak is None or Path(tehtava).name != tehtava:
         return None
     try:
-        with open(Path(tulokset_hak) / tehtava, encoding="utf-8", errors="replace") as f:
-            m = _TILA_RE.search(f.read(2000))
+        fd = os.open(Path(tulokset_hak) / tehtava, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY)
     except OSError:
         return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        teksti = os.read(fd, 2000).decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    m = _TILA_RE.search(teksti)
     return m.group(1) if m else None
 
 
@@ -230,9 +241,10 @@ def _raaka(tila, tulokset_hak=None):
         if vertailussa:
             vertailtu += 1
             osumat += 1 if (d["kylla"] == (t == _VALMIS)) else 0
-        # kohteen sormenjalki: kaikki, mika vaikuttaa julkaistaviin lukuihin (oma arvio, Tonin tarkistus, vertailtu tulostila)
-        kohteet[_tiiviste(k)] = _tiiviste(json.dumps(
-            [d["kylla"], tony[k]["kylla"] if k in tony else None, t if vertailussa else None]))
+        # kohteen sormenjalki portille: vain ajurin omasta 0600-datasta (oma arvio, Tonin tarkistus). Tulostila EI ole
+        # mukana: tulokset/ on agentin kirjoitettavissa, joten agentti voisi tuottaa tilanvaihdoilla "muutoksia" ja
+        # avata portin yhdella aidolla muutoksella (9 tunnettua + 1).
+        kohteet[_tiiviste(k)] = _tiiviste(json.dumps([d["kylla"], tony[k]["kylla"] if k in tony else None]))
     return {
         "n": len(aivo),
         "kylla": sum(1 for d in aivo.values() if d["kylla"]),
@@ -250,7 +262,7 @@ def _tiiviste(teksti):
 
 
 def _muutokset(kohteet, vanhat):
-    """Montako kohdetta on uusi, poistunut tai muuttunut (korvattu arvio, kaantynyt tarkistus, vaihtunut tulostila)
+    """Montako kohdetta on uusi, poistunut tai muuttunut (korvattu arvio, kaantynyt Tonin tarkistus)
     edelliseen julkaisuun verrattuna. Sisallon tiiviste, ei lukumaaria: korvaus ei saa jaada huomaamatta."""
     return sum(1 for k in kohteet.keys() | vanhat.keys() if kohteet.get(k) != vanhat.get(k))
 
