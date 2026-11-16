@@ -224,7 +224,7 @@ class Ajo(Pohja):
         self.assertEqual(r.returncode, 0, r.stderr)
         kuvaus = (self.ajuri / "agentti" / "pr_kutsu.py.kuvaus").read_text()
         self.assertIn("Todennettu kaytossa: ", kuvaus)
-        self.assertIn("2 testia, rc=0", kuvaus)
+        self.assertIn("Todennettu kaytossa: python3 -m unittest discover -p test_*.py kloonissa, 2 testia, rc=0", kuvaus)
         _, tarkista_todennus = self._oikea_tarkista_todennus()
         tarkista_todennus(kuvaus)  # ei saa nostaa PrVirhetta
 
@@ -317,17 +317,17 @@ class Ajo(Pohja):
         self.assertIn(".github/workflows/a.yml", self.raportti("ominaisuus"))
         self.assertEqual(self.kutsut(), "")
 
-    def js_repo(self, npm_test_koodi):
+    def js_repo(self, npm_test_koodi, tuloste="Tests  3 passed (3)", paketti='{"name": "koe", "scripts": {"test": "vitest run"}}\n'):
         """Lisaa lahderepoon package.json:n ja tekee PATH-hakemiston, jossa on tekonpm (kirjaa argumentit)."""
         r = self.lahde / REPO
-        kirjoita(r / "package.json", '{"name": "koe", "scripts": {"test": "x"}}\n')
+        kirjoita(r / "package.json", paketti)
         git(r, "add", "-A")
         git(r, "commit", "-q", "-m", "js")
         bin_ = self.perus.parent / "bin"
         kirjoita(bin_ / "npm", '#!/bin/sh\necho "$@" >> "' + str(self.perus.parent / "npm.kutsut") + '"\n'
                  'echo "cache=$npm_config_cache logs=$npm_config_logs_dir" >> "' + str(self.perus.parent / "npm.ymp") + '"\n'
                  'if [ "$1" = "install" ]; then mkdir -p node_modules/better-sqlite3; fi\n'
-                 'if [ "$1" = "test" ]; then exit ' + str(npm_test_koodi) + '; fi\nexit 0\n', True)
+                 'if [ "$1" = "test" ]; then echo "' + tuloste + '"; exit ' + str(npm_test_koodi) + '; fi\nexit 0\n', True)
         return dict(PATH=str(bin_) + os.pathsep + os.environ["PATH"])
 
     def test_js_repo_asentaa_riippuvuudet_ja_ajaa_npm_test(self):
@@ -363,6 +363,62 @@ class Ajo(Pohja):
         self.aja(REPO, "1.00", "readme", **env)
         self.assertIn("punainen", self.raportti())
         self.assertEqual(self.kutsut(), "")
+
+    def test_js_repon_todennusrivi_luetaan_repon_maarittelysta_ja_ajon_lokista(self):
+        env = self.js_repo(0)
+        self.agentti_skripti('echo "uusi rivi" >> README.md')
+        self._pr_kutsu_tallentaa_kuvauksen()
+        self.assertEqual(self.aja(REPO, "1.00", "readme", **env).returncode, 0)
+        kuvaus = self._kuvaus_kopio()
+        self.assertIn("Todennettu kaytossa: npm test (vitest run) kloonissa, 3 testia, rc=0", kuvaus)
+
+    def test_js_repo_ilman_luettavaa_testimaaraa_ei_todennusrivia_eika_prta(self):
+        env = self.js_repo(0, tuloste="kaikki ok")
+        self.agentti_skripti('echo "uusi rivi" >> README.md')
+        self.pr_kutsu()
+        self.aja(REPO, "1.00", "readme", **env)
+        self.assertEqual(self.kutsut(), "")
+        self.assertIn("punainen", self.raportti())
+
+    def test_js_repo_nolla_testia_ei_todennusrivia_eika_prta(self):
+        env = self.js_repo(0, tuloste="Tests  0 passed (0)")
+        self.agentti_skripti('echo "uusi rivi" >> README.md')
+        self.pr_kutsu()
+        self.aja(REPO, "1.00", "readme", **env)
+        self.assertEqual(self.kutsut(), "")
+
+    def test_js_repo_ilman_test_skriptia_ei_arvattua_komentoa(self):
+        env = self.js_repo(0, paketti='{"name": "koe"}\n')
+        self.agentti_skripti('echo "uusi rivi" >> README.md')
+        self.pr_kutsu()
+        self.aja(REPO, "1.00", "readme", **env)
+        self.assertEqual(self.kutsut(), "")
+        self.assertIn("testikomentoa ei loydy", self.raportti())
+
+    def _kuvaus_kopio(self):
+        kopio = self.ajuri / "agentti" / "pr_kutsu.py.kuvaus"
+        return kopio.read_text() if kopio.exists() else ""
+
+    def test_kuvaus_ei_lupaa_automergea_todennusrivin_perusteella(self):
+        self.agentti_skripti('printf "import unittest\\nclass B(unittest.TestCase):\\n    def test_b(self):\\n        self.assertEqual(1, 1)\\n" > test/test_b.py')
+        self._pr_kutsu_tallentaa_kuvauksen()
+        self.assertEqual(self.aja(REPO, "1.00", "testit").returncode, 0)
+        kuvaus = self._kuvaus_kopio()
+        self.assertIn("Todennettu kaytossa:", kuvaus)
+        self.assertNotIn("Automerge yhdistaa itse", kuvaus)
+        self.assertIn("riippumattoman tarkastajan hyvaksynnan", kuvaus)
+
+    def test_automerge_ei_lue_kuvausta_todennusrivi_ei_ohjaa_automergeen(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        self.addCleanup(sys.path.remove, str(Path(__file__).resolve().parent.parent))
+        from tools import automerge
+        pr = {"head_repo": "o/r", "base_repo": "o/r", "base_ref": "main", "head_sha": "a" * 40, "labels": []}
+        tiedostot = [{"filename": "moduuli.py", "changes": 2, "patch": "@@ -1 +1 @@\n+x\n"}]
+        ilman = automerge.arvioi(dict(pr), tiedostot)
+        rivilla = automerge.arvioi(dict(pr, body="Todennettu kaytossa: python3 -m unittest, 5 testia, rc=0"), tiedostot)
+        self.assertFalse(ilman[0])
+        self.assertEqual(ilman, rivilla)
+        self.assertIn("riippumaton tarkastus: odottaa", rivilla[1])
 
     def test_pr_kutsun_virhe_antaa_koodin_1_ja_syyn(self):
         self.agentti_skripti('echo "uusi" >> README.md')
