@@ -47,6 +47,14 @@ Ota ensin tilannekuva kontista. Tämä ohje ei muuta palomuureja, holvia eikä T
 
    Klooni kysyy tunnuksen ja avaimen; Tony kirjoittaa ne itse. Tarkista, että tiedoston tila on 600 (`stat -c '%a' /var/lib/aivo/.git-credentials`) ja ettei `origin` osoita GitHubiin: `runuser -u aivo -- git -C /var/lib/aivo/kirjasto remote -v`.
 
+   **Git-identiteetti.** Ilman nimeä ja sähköpostiosoitetta `git commit` kaatuu, eikä päätös mene perille. Aseta ne kirjaston omaan asetukseen (kloonin jälkeen, ei riipu kotihakemiston ympäristömuuttujista) ja tarkista:
+
+   ```
+   runuser -u aivo -- git -C /var/lib/aivo/kirjasto config user.name "Aivo"
+   runuser -u aivo -- git -C /var/lib/aivo/kirjasto config user.email "aivo@localhost"
+   runuser -u aivo -- git -C /var/lib/aivo/kirjasto config --get-regexp '^user\.'
+   ```
+
 3. **Salasana.** Aja itse ja kirjoita salasana kahdesti (vähintään 12 merkkiä). Mitään ei tulostu:
 
    ```
@@ -55,10 +63,10 @@ Ota ensin tilannekuva kontista. Tämä ohje ei muuta palomuureja, holvia eikä T
 
    Onnistuessaan komento tulostaa: `Salasanan tiiviste tallennettu (600). Salasanaa ei tallennettu.` Tiedosto on `/etc/aivo/chat-salasana`. `PYTHONPATH` osoittaa agentti-pohjan juureen.
 
-4. **Claude-kirjautuminen `aivo`-käyttäjälle.** Aivon `claude` tarvitsee oman kirjautumisen (`runuser -u aivo -- env HOME=/var/lib/aivo claude`, tee kirjautuminen kerran). Työkalutilan käyttäjä `aivo-tyokalu` tarvitsee oman kirjautumisensa samalla tavalla (`HOME=/var/lib/aivo-tyokalu`). Tarkista, että tämä toimii:
+4. **Claude-kirjautuminen `aivo-tyokalu`-käyttäjälle.** Tämän ohjeen mukaisessa socket-mallissa vain `aivo-tyokalu` ajaa `claude`:a (kohta 5b), joten vain sen tarvitsee kirjautua. Tee kirjautuminen kerran: `runuser -u aivo-tyokalu -- env HOME=/var/lib/aivo-tyokalu claude`. Chat-palvelun käyttäjä `aivo` ei tarvitse omaa kirjautumista. Jos jätät socketin pois (`AIVO_TYOKALU_SOCKET` ei ole asetettu), `claude` ajetaan suoraan käyttäjänä `aivo`, ja silloin kirjautuminen tehdään sille samalla komennolla (`HOME=/var/lib/aivo`). Tarkista, että kirjautuminen toimii:
 
    ```
-   echo "sano kyllä" | runuser -u aivo -- env HOME=/var/lib/aivo claude -p --tools "" --max-turns 1
+   echo "sano kyllä" | runuser -u aivo-tyokalu -- env HOME=/var/lib/aivo-tyokalu claude -p --tools "" --max-turns 1
    ```
 
 5. **Palvelu (systemd).** Tallenna tiedostoon `/etc/systemd/system/aivo-chat.service`:

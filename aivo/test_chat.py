@@ -175,6 +175,69 @@ class KirjastoTesti(unittest.TestCase):
             self.assertTrue(t2.startswith(t))          # vanhaa ei ylikirjoiteta
             self.assertIn("> Toinen.", t2)
 
+    def test_sama_paatos_kirjataan_vain_kerran_uudelleenyrityksessa(self):
+        def feikki(kom, **kw):
+            if "get-url" in kom:
+                return SimpleNamespace(returncode=0, stdout="https://git.example/a.git\n", stderr="")
+            if "push" in kom:
+                return SimpleNamespace(returncode=1, stdout="", stderr="")
+            if "status" in kom:
+                return SimpleNamespace(returncode=0, stdout="M f\n", stderr="")
+            if "symbolic-ref" in kom:
+                return SimpleNamespace(returncode=0, stdout="main\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout="true\n", stderr="")
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.dict(os.environ, {"AIVO_SALLITUT_ETAISANNAT": "git.example"}):
+            for _ in range(3):
+                self.assertEqual(chat.kirjaa_paatos(d, "k1", "2026-11-16T10:00:00+00:00", "Paatos A", suorita=feikki),
+                                 "push-epaonnistui")
+            self.assertEqual((Path(d) / chat.PAATOS_TIEDOSTO).read_text(encoding="utf-8").count("> Paatos A"), 1)
+            chat.kirjaa_paatos(d, "k1", "2026-11-16T10:01:00+00:00", "Paatos A", suorita=feikki)    # eri aika = uusi viesti
+            self.assertEqual((Path(d) / chat.PAATOS_TIEDOSTO).read_text(encoding="utf-8").count("> Paatos A"), 2)
+
+    def test_yksityinen_tila_ei_kirjaa_samaa_viestia_kahdesti(self):
+        with tempfile.TemporaryDirectory() as d:
+            for _ in range(2):
+                self.assertEqual(chat.kirjaa_paatos_yksityinen(d, "k1", "2026-11-16T10:00:00+00:00", "Yks"), "ei-julkaistu")
+            self.assertEqual((Path(d) / chat.PAATOS_TIEDOSTO).read_text(encoding="utf-8").count("> Yks"), 1)
+
+    def test_uusi_painallus_pushaa_uudelleen_vaikka_tiedosto_ei_muutu(self):
+        """Oikea git: ensimmainen push epaonnistuu (etarepo poissa), toinen painallus pushaa saman commitin."""
+        import shutil
+        import subprocess
+        if shutil.which("git") is None:
+            self.skipTest("git puuttuu")
+
+        def git(*a, cwd=None):
+            return subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True, text=True,
+                                  env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull,
+                                       "GIT_TERMINAL_PROMPT": "0"})
+
+        def suorita(kom, **kw):
+            if "get-url" in kom:
+                return SimpleNamespace(returncode=0, stdout="https://git.example/a.git\n", stderr="")
+            return subprocess.run(kom, **{**kw, "env": {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull,
+                                                        "GIT_CONFIG_SYSTEM": os.devnull, "GIT_TERMINAL_PROMPT": "0"}})
+        with tempfile.TemporaryDirectory() as t:
+            eta, oma, pois = Path(t) / "eta.git", Path(t) / "oma", Path(t) / "poissa.git"
+            git("init", "-q", "--bare", "-b", "main", str(eta))
+            git("clone", "-q", str(eta), str(oma))
+            for k, v in (("user.name", "t"), ("user.email", "t@example.invalid")):
+                git("-C", str(oma), "config", k, v)
+            (oma / "a").write_text("a", encoding="utf-8")
+            git("-C", str(oma), "add", "a")
+            git("-C", str(oma), "commit", "-q", "-m", "alku")
+            git("-C", str(oma), "push", "-q", "origin", "HEAD:refs/heads/main")
+            eta.rename(pois)                                              # push epaonnistuu
+            with unittest.mock.patch.dict(os.environ, {"AIVO_SALLITUT_ETAISANNAT": "git.example"}):
+                args = (str(oma), "k1", "2026-11-16T10:00:00+00:00", "Paatos B")
+                self.assertEqual(chat.kirjaa_paatos(*args, suorita=suorita), "push-epaonnistui")
+                self.assertEqual(chat.kirjaa_paatos(*args, suorita=suorita), "push-epaonnistui")
+                pois.rename(eta)                                          # etarepo palaa
+                self.assertEqual(chat.kirjaa_paatos(*args, suorita=suorita), "pushattu")
+                self.assertEqual(chat.kirjaa_paatos(*args, suorita=suorita), "ei-muutosta")
+            self.assertEqual((oma / chat.PAATOS_TIEDOSTO).read_text(encoding="utf-8").count("> Paatos B"), 1)
+            self.assertEqual(git("-C", str(eta), "rev-list", "--count", "main").stdout.strip(), "2")   # alku + yksi paatos
+
     def test_github_etarepo_estaa_pushin(self):
         def feikki(kom, **kw):
             if "get-url" in kom:

@@ -469,7 +469,8 @@ def kirjaa_paatos(kirjasto, kid, aika, teksti, suorita=subprocess.run, julkaise=
     """Liittaa Tonyn sanat sellaisenaan paatoskirjastoon (lainauksena). julkaise=True: commit ja push Giteaan
     (vain kirjaston omille, sallituille etapalvelimille); julkaise=False: vain paikallinen tiedosto (yksityinen tila).
     Jos julkaisu heittaa poikkeuksen, tiedosto palautetaan ennalleen. Jos push epaonnistuu (tulos "push-epaonnistui"),
-    commit jaa paikalliseksi eika sita peruta; kutsuja nayttaa tuloksen virheena (ks. paatoksen_vastaus)."""
+    commit jaa paikalliseksi eika sita peruta; kutsuja nayttaa tuloksen virheena (ks. paatoksen_vastaus).
+    Uusi painallus samalle viestille ei lisaa osiota toistamiseen, mutta yrittaa pushia uudelleen, jos edellinen epaonnistui."""
     polku = Path(kirjasto) / PAATOS_TIEDOSTO
     polku.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     lainaus = "\n".join("> " + r for r in teksti.splitlines()) or "> "
@@ -477,12 +478,16 @@ def kirjaa_paatos(kirjasto, kid, aika, teksti, suorita=subprocess.run, julkaise=
            "Kirjattu Tonyn painalluksella; ei Aivon p\u00e4\u00e4telm\u00e4.\n" % (aika[:10], aika[11:16], lainaus, kid))
     with _PAATOS_LUKKO:
         vanha = polku.read_text(encoding="utf-8") if polku.exists() else None
-        kirjoita_600(polku, (vanha if vanha is not None else "# Aivon p\u00e4\u00e4t\u00f6skirjasto\n") + osa)
+        uusi_osa = vanha is None or osa not in vanha     # sama viesti (sama keskustelu ja aika) kirjataan vain kerran
+        if uusi_osa:
+            kirjoita_600(polku, (vanha if vanha is not None else "# Aivon p\u00e4\u00e4t\u00f6skirjasto\n") + osa)
         if not julkaise:
             return "ei-julkaistu"
         try:
-            return julkaise_kirjastoon(kirjasto, polku, suorita)
+            return julkaise_kirjastoon(kirjasto, polku, suorita, jalkijulkaise=True)
         except BaseException:
+            if not uusi_osa:
+                raise
             if vanha is None:
                 polku.unlink(missing_ok=True)
             else:
