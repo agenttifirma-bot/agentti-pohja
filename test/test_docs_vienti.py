@@ -11,9 +11,9 @@ from agentti import docs_vienti as dv
 
 AVAIN_SK = "sk-" + "a1B2c3D4" * 4
 AVAIN_GH = "ghp_" + "x" * 30
-IP = "192.168." + "1.118"
+IP = "192.0.2.118"
 GITEA = ".".join(["192", "168", "7", "7"])
-TS_IP = "100.87." + "110.22"
+TS_IP = "198.51.100.110"
 TS_NIMI = "agenttifirma." + "tail1234" + ".ts.net"
 
 
