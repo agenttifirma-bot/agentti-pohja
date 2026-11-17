@@ -68,7 +68,7 @@ class RecallTesti(unittest.TestCase):
         t = hm.mittaa()
         self.assertEqual(t["kysymyksia"], 20)
         self.assertTrue(0.0 <= t["recall"] <= 1.0)
-        self.assertTrue(t["epaonnistuneet"], "aineistossa pitää olla kysymyksiä, joissa sanahaku epäonnistuu")
+        self.assertTrue(t["epaonnistuneet"], "aineistossa pitaa olla kysymyksia, joissa sanahaku epaonnistuu")
 
     def test_tuloste_ja_main(self):
         ulos = io.StringIO()

@@ -1,12 +1,12 @@
-"""Aivon muistihaun vertailumittari: recall@k keksityllä keskusteluaineistolla.
+"""Aivon muistihaun vertailumittari: recall@k keksitylla keskusteluaineistolla.
 
-Mittaa, löytääkö haku oikean keskustelun kysymyksen perusteella. Aineisto on keksitty
-(aivo/testidata/haku/). Moduuli ei lue oikeaa muistihakemistoa eikä käytä verkkoa tai mallia.
+Mittaa, loytaako haku oikean keskustelun kysymyksen perusteella. Aineisto on keksitty
+(aivo/testidata/haku/). Moduuli ei lue oikeaa muistihakemistoa eika kayta verkkoa tai mallia.
 
-Hakufunktion rajapinta: haku(kysymys, kirjasto) -> järjestetty lista keskustelun tunnisteita
-(paras ensin). `kirjasto` on väliaikainen hakemisto, jossa jokainen keskustelu on tiedostona
+Hakufunktion rajapinta: haku(kysymys, kirjasto) -> jarjestetty lista keskustelun tunnisteita
+(paras ensin). `kirjasto` on valiaikainen hakemisto, jossa jokainen keskustelu on tiedostona
 <tunniste>.md. Oletushaku on nykyinen Aivon haku (aivo.chat.lue_muisti kysymyksen kanssa).
-Toinen haku (esim. FTS5) kytketään parametrilla: --haku moduuli:funktio tai mittaa(haku=...).
+Toinen haku (esim. FTS5) kytketaan parametrilla: --haku moduuli:funktio tai mittaa(haku=...).
 
 Ajo: python3 -m aivo.hakumittari [--k 5] [--aineisto polku] [--haku moduuli:funktio]
 """
@@ -47,14 +47,14 @@ def kirjoita_kirjasto(keskustelut, kohde):
 
 
 def nykyinen_haku(kysymys, kirjasto):
-    """Nykyinen haku: lue_muisti järjestää tiedostot kysymyksen sanojen osumien mukaan."""
+    """Nykyinen haku: lue_muisti jarjestaa tiedostot kysymyksen sanojen osumien mukaan."""
     from aivo.chat import lue_muisti
     _, tiedostot = lue_muisti(kirjasto, kysymys=kysymys)
     return [Path(t).stem for t in tiedostot]
 
 
 def recall_at_k(tulokset, k=OLETUS_K):
-    """tulokset: [(oikea_tunniste, järjestetty_lista)]. Osuma, jos oikea on k parhaan joukossa."""
+    """tulokset: [(oikea_tunniste, jarjestetty_lista)]. Osuma, jos oikea on k parhaan joukossa."""
     if not tulokset:
         return 0.0
     return sum(1 for oikea, lista in tulokset if oikea in list(lista)[:k]) / len(tulokset)
@@ -85,10 +85,10 @@ def lataa_haku(maare):
 
 def tulosta(t, ulos=sys.stdout):
     osuneet = t["kysymyksia"] - len(t["epaonnistuneet"])
-    print("recall@%d = %.3f (%d/%d kysymystä, %d keskustelua)"
+    print("recall@%d = %.3f (%d/%d kysymysta, %d keskustelua)"
           % (t["k"], t["recall"], osuneet, t["kysymyksia"], t["keskusteluja"]), file=ulos)
     for v in t["epaonnistuneet"]:
-        print("EPÄONNISTUI [%s] %s -> oikea %s, sija %s"
+        print("EPAONNISTUI [%s] %s -> oikea %s, sija %s"
               % (v["tyyppi"], v["kysymys"], v["oikea"], v["sija"] or "ei listalla"), file=ulos)
 
 
@@ -101,7 +101,7 @@ def main(argv=None):
     try:
         haku = lataa_haku(a.haku) if a.haku else nykyinen_haku
     except (ValueError, ImportError, AttributeError) as e:
-        print("haun lataus epäonnistui (%s)" % type(e).__name__, file=sys.stderr)
+        print("haun lataus epaonnistui (%s)" % type(e).__name__, file=sys.stderr)
         return 2
     tulosta(mittaa(haku, a.aineisto, a.k))
     return 0
