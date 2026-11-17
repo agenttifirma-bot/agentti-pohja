@@ -100,10 +100,36 @@ class ZdrTesti(unittest.TestCase):
             with self.subTest(k=k), self.assertRaises(oz.ZdrVirhe):
                 oz.rakenna_runko("m/x", MSG, **{k: "y"})
 
-    def test_yksityinen_chat_kaatuu(self):
-        for arvo in (True, 1, "kylla"):
+    def test_yksityinen_chat_ei_totuusarvo_kaatuu(self):
+        for arvo in (1, "kylla", None, "True"):
             with self.subTest(arvo=arvo), self.assertRaises(oz.ZdrVirhe):
-                oz.rakenna_runko("m/x", MSG, yksityinen_chat=arvo)
+                oz.rakenna_runko("meta-llama/llama-3.3-70b-instruct", MSG, yksityinen_chat=arvo)
+
+    def test_yksityinen_chat_suljettu_malli_kaatuu(self):
+        """A984: lippu sallitaan vain avoimella mallilla; muut mallit -> ZdrVirhe."""
+        for malli in ("openai/gpt-4o", "anthropic/claude-sonnet-4", "qwen/qwen-max",
+                      "meta-llama/llama-3.3-70b-instruct:free", "m/x"):
+            with self.subTest(malli=malli), self.assertRaises(oz.ZdrVirhe):
+                oz.rakenna_runko(malli, MSG, yksityinen_chat=True)
+
+    def test_yksityinen_chat_avoin_malli_sallitaan_ja_zdr_pakotettu(self):
+        r = oz.rakenna_runko("meta-llama/llama-3.3-70b-instruct", MSG, yksityinen_chat=True)
+        self.assertIs(r["provider"]["zdr"], True)
+        self.assertEqual(r["provider"]["data_collection"], "deny")
+        self.assertNotIn("yksityinen_chat", r)
+
+    def test_yksityinen_chat_ei_ohita_zdr_saantoa(self):
+        malli = "meta-llama/llama-3.3-70b-instruct"
+        for prov in ({"zdr": False}, {"data_collection": "allow"}, {"ZDR": True}):
+            with self.subTest(prov=prov), self.assertRaises(oz.ZdrVirhe):
+                oz.rakenna_runko(malli, MSG, yksityinen_chat=True, provider=prov)
+        with self.assertRaises(oz.ZdrVirhe):
+            oz.rakenna_runko(malli, MSG, yksityinen_chat=True, zdr=False)
+
+    def test_ilman_lippua_sallittu_malli_ei_muutu(self):
+        """Lipun puute ei ohita ZDR:aa: runko on silti pakotettu."""
+        r = oz.rakenna_runko("openai/gpt-4o", MSG)
+        self.assertIs(r["provider"]["zdr"], True)
 
     def test_tyhja_malli_kaatuu(self):
         with self.assertRaises(oz.ZdrVirhe):
