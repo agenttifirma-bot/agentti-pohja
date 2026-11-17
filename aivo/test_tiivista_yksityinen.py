@@ -254,7 +254,7 @@ class KanariaTesti(Pohja):
 class LoopbackTesti(Pohja):
     def test_ei_loopback_osoite_hylataan_ennen_verkkoa(self):
         avaa = mock.Mock()
-        for url in ("http://10.0.0.5:8081", "http://example.com", "https://127.0.0.1:8081", "http://localhost:8081",
+        for url in ("http://203.0.113.5:8081", "http://example.com", "https://127.0.0.1:8081", "http://localhost:8081",
                     "http://user:pw@127.0.0.1:8081"):
             with self.assertRaises(ty.TiivistaVirhe):
                 ty.kysy_paikalliselta(url, "o", "d", avaa=avaa)
@@ -264,7 +264,7 @@ class LoopbackTesti(Pohja):
         self.perus()
         err = io.StringIO()
         with redirect_stderr(err), mock.patch("urllib.request.OpenerDirector.open") as auki:
-            rc = tiivista.main(["--alue", "yksityinen", "--juuri", str(self.juuri), "--malli-url", "http://192.168.1.50:8081"])
+            rc = tiivista.main(["--alue", "yksityinen", "--juuri", str(self.juuri), "--malli-url", "http://203.0.113.50:8081"])
         self.assertEqual(rc, 1)
         auki.assert_not_called()
         self.assertEqual(tiivistelma.luettele(self.tiiv), [])
