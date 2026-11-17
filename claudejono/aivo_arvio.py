@@ -160,18 +160,104 @@ def viikkoosio(tila, n=OTOS_OLETUS, rng=None):
     return "\n".join(rivit) + "\n"
 
 
+OSUMAT_OLETUSPOLKU = "/var/lib/claude-jono/aivo-arviot.jsonl"
+TULOS_KYLLA = ("VALMIS",)
+TULOS_EI = ("HYLATTY", "KESKEN")
+
+
+def _viite(tony, tulos):
+    """Vertailun vertailukohta: Tonyn tuomio (bool), muuten tehtavan lopputulos (VALMIS = kylla, HYLATTY/KESKEN = ei);
+    EPAONNISTUI, tuntematon tai puuttuva -> None (jatetaan pois)."""
+    if isinstance(tony, bool):
+        return tony
+    if tulos in TULOS_KYLLA:
+        return True
+    if tulos in TULOS_EI:
+        return False
+    return None
+
+
+def laske_osumat(rivit):
+    """rivit: iteroitava tekstirivien joukko (jsonl). Palauttaa vain koosteluvut (ei nimia, ei syita):
+    {"arvioita", "ensimmainen", "viimeinen", "vertailtavia", "osumia", "prosentti", "rikkinaisia"}.
+    Tuoreempi rivi samalle (tehtava, laji) korvaa vanhan, kuten arviot()-funktiossa."""
+    aivo, tony, tulos = {}, {}, {}
+    paivat = []
+    rikki = 0
+    for r in rivit:
+        if not r.strip():
+            continue
+        try:
+            d = json.loads(r)
+        except ValueError:
+            rikki += 1
+            continue
+        if not isinstance(d, dict) or not d.get("tehtava"):
+            rikki += 1
+            continue
+        t = d["tehtava"]
+        if isinstance(d.get("tulos"), str):
+            tulos[t] = d["tulos"].strip().upper()
+        if not isinstance(d.get("kylla"), bool):
+            continue
+        if d.get("laji") == "aivo":
+            aivo[t] = d["kylla"]
+            pv = str(d.get("aika", ""))[:10]
+            try:
+                datetime.strptime(pv, "%Y-%m-%d")
+                paivat.append(pv)
+            except ValueError:
+                pass
+        elif d.get("laji") == "tony":
+            tony[t] = d["kylla"]
+    vertailtavia = osumia = 0
+    for t, kylla in aivo.items():
+        v = _viite(tony.get(t), tulos.get(t))
+        if v is None:
+            continue
+        vertailtavia += 1
+        osumia += 1 if v == kylla else 0
+    return {"arvioita": len(aivo), "ensimmainen": min(paivat) if paivat else None,
+            "viimeinen": max(paivat) if paivat else None, "vertailtavia": vertailtavia, "osumia": osumia,
+            "prosentti": round(100 * osumia / vertailtavia, 1) if vertailtavia else None, "rikkinaisia": rikki}
+
+
+def osumat_teksti(l):
+    """Tonylle tulostettava teksti. Ei tehtavien nimia, perusteluja eika yksittaisia riveja."""
+    aika = f"{l['ensimmainen']} - {l['viimeinen']}" if l["ensimmainen"] else "ei aikavalia"
+    pros = f"{l['prosentti']} %" if l["prosentti"] is not None else "ei viel\u00e4 laskettavissa"
+    taynna = l["vertailtavia"] >= VAHIMMAIS_LAHTOTASOON
+    rivit = [f"Arvioita yhteens\u00e4: {l['arvioita']} (aikav\u00e4li {aika})",
+             "Vertailu: Aivon kyll\u00e4 = Tonyn kyll\u00e4 tai VALMIS; Aivon ei = Tonyn ei tai HYLATTY/KESKEN; EPAONNISTUI ja tulokseton j\u00e4tet\u00e4\u00e4n pois",
+             f"Vertailtavia: {l['vertailtavia']}, osumia: {l['osumia']}, osumaprosentti: {pros}",
+             f"L\u00e4ht\u00f6tason raja ({VAHIMMAIS_LAHTOTASOON} vertailtavaa) t\u00e4ynn\u00e4: " + ("kyll\u00e4" if taynna else "ei")]
+    if l["rikkinaisia"]:
+        rivit.append(f"Ohitettuja rikkin\u00e4isi\u00e4 rivej\u00e4: {l['rikkinaisia']}")
+    return "\n".join(rivit) + "\n"
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Aivon oleellisuusarviot (varjotila)")
     p.add_argument("--tila", default=os.environ.get("CLAUDEJONO_TILA", "/var/lib/claude-jono"))
     s = p.add_subparsers(dest="komento", required=True)
     s.add_parser("otos")
     s.add_parser("osuma")
+    o = s.add_parser("osumat", help="n\u00e4ytt\u00e4\u00e4 osumaprosentin vain p\u00e4\u00e4tteelle (Tony ajaa rootina)")
+    o.add_argument("--polku", default=OSUMAT_OLETUSPOLKU)
     t = s.add_parser("tarkista")
     t.add_argument("tehtava")
     t.add_argument("tuomio", choices=("kylla", "ei"))
     a = p.parse_args(argv)
     if a.komento == "otos":
         print(viikkoosio(a.tila), end="")
+    elif a.komento == "osumat":
+        try:
+            with open(a.polku, encoding="utf-8", errors="replace") as f:
+                l = laske_osumat(f)
+        except OSError as e:   # vain tyyppi (viesti voisi sisaltaa polun tai muuta)
+            print(f"virhe: tiedostoa ei voi lukea ({type(e).__name__})", file=sys.stderr)
+            return 1
+        print(osumat_teksti(l), end="")
     elif a.komento == "osuma":
         print(osuma(a.tila))
     else:
