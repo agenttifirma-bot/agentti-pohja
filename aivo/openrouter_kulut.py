@@ -37,6 +37,10 @@ from zoneinfo import ZoneInfo
 from . import openrouter_zdr
 
 TZ = ZoneInfo("Europe/Helsinki")
+OSOITE = openrouter_zdr.OSOITE        # uudelleenvienti: muut moduulit eivat tuo openrouter_zdr:aa suoraan (rakenne-vartija)
+ZdrVirhe = openrouter_zdr.ZdrVirhe
+AVOIMET_MALLIT = openrouter_zdr.AVOIMET_MALLIT
+avoin_malli = openrouter_zdr.avoin_malli
 PAIVAKATTO_EUR = Decimal(10)
 USD_EUR = Decimal("0.92")           # kiintea muuntokerroin (hieman korkea = varovainen); paivitys vain koodimuutoksella
 VARO_USD_KUTSU = Decimal("0.50")    # kulu, kun ei kulua eika tokeneita

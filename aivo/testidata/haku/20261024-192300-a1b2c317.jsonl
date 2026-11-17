@@ -1,0 +1,2 @@
+{"aika": "2026-10-24T19:23:00", "rooli": "tony", "teksti": "Miten keskitän elementin sivulle gridillä?", "lahteet": []}
+{"aika": "2026-10-24T19:23:30", "rooli": "aivo", "teksti": "Aseta konttiin display: grid ja place-items: center. Anna kontille korkeus esimerkiksi 100vh.", "lahteet": []}

@@ -65,6 +65,30 @@ class Kaistat(unittest.TestCase):
         self.assertEqual(self.nimet(2)[0], "ansainta")
         self.assertEqual(self.nimet(1)[1], "yllapito")
 
+    # --- kaista 4 (A991): vain Aivo ---
+    def test_kaista4_ottaa_vain_aivoa(self):
+        self.assertEqual(self.nimet(4, kaistoja=4), ["aivo"])
+
+    def test_kaista4_tyhja_aivojono_ei_ota_mitaan(self):
+        ilman = [x for x in self.kaikki if "aivo" not in x[0].name]
+        self.assertEqual(self.nimet(4, kaistoja=4, odottavat=ilman), [])
+
+    def test_kaistat_1_3_ennallaan_nelja_kaistaa(self):
+        for k in (1, 2, 3):
+            self.assertEqual(self.nimet(k, kaistoja=4), self.nimet(k, kaistoja=3), k)
+        self.assertEqual(self.nimet(3, kaistoja=4), ["aivo"])
+        ilman = [x for x in self.kaikki if "aivo" not in x[0].name]
+        self.assertEqual(self.nimet(3, kaistoja=4, odottavat=ilman), ["yllapito"])
+
+    def test_kaista4_ei_otakiinnitettya_ei_aivoa_ja_muut_saavat_sen(self):
+        pin = [(self.ts["portfolio"], 4), (self.ts["aivo"], 4)]
+        self.assertEqual(self.nimet(4, kaistoja=4, odottavat=pin), ["aivo"])
+        self.assertEqual(self.nimet(1, kaistoja=4, odottavat=pin), ["portfolio"])   # kiinnitys puretaan: ei jaa ilman ottajaa
+
+    def test_alle_neljan_kaistan_tilassa_kaista4_ei_ole_aivokaista(self):
+        # kaistoja=3: kaistan 4 jarjestys on vanha oletus (kaytannossa ei ole kaistaa 4, tarkista_kaista hylkaa sen)
+        self.assertNotEqual(self.nimet(4, kaistoja=3), ["aivo"])
+
     def test_alle_kolme_kaistaa_ei_aivo_rajausta(self):
         self.assertIn("aivo", self.nimet(1, kaistoja=2))
         self.assertIn("aivo", self.nimet(1, kaistoja=1))
@@ -276,9 +300,9 @@ class AivoKytkenta(unittest.TestCase):
         self.assertTrue(aivo_arvio.arvioi_varjossa(tila, t, ok))
         self.assertEqual(aivo_arvio.arviot(tila)[t.name]["kylla"], False)
 
-    def test_systemd_malli_kolme_kaistaa(self):
+    def test_systemd_malli_nelja_kaistaa(self):
         teksti = (Path(__file__).parent / "systemd" / "claude-jono@.service.mall").read_text()
-        self.assertIn("Environment=CLAUDEJONO_KAISTOJA=3", teksti)
+        self.assertIn("Environment=CLAUDEJONO_KAISTOJA=4", teksti)
 
 
 if __name__ == "__main__":

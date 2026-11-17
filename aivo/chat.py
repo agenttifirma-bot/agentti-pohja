@@ -12,7 +12,8 @@ Turvarajat (koodi on laki):
   * Pyynnon Host-otsakkeen pitaa olla sallittu (DNS rebinding -suoja). Evasteen SameSite=Strict, HttpOnly,
     Secure; muutospyynnot vaativat otsakkeen X-Aivo ja samaa alkuperaa (Origin).
   * Kirjautumisyrityksia rajoitetaan (5 virhetta -> 5 min lukitus). Istunnot ovat vain muistissa.
-  * Vastaus tulee vain Claudelta suoraan (`claude -p`, ei tyokaluja). Ei LiteLLM:aa, ei OpenRouteria (A329).
+  * Tyokalutilan vastaus tulee vain Claudelta suoraan (`claude -p`, ei tyokaluja). Ei LiteLLM:aa, ei OpenRouteria (A329).
+    OpenRouter on vain yksityisen tilan valinnainen taustapaa (aivo/yksityinen_or.py, A984).
   * Keskustelut tallentuvat vain isannalle (600). Paatokset kirjataan kirjastoon, ja kirjasto pushataan vain,
     jos etarepo ei ole GitHubissa.
   * Paatos kirjataan vain Tonyn painalluksella ja Tonyn omin sanoin (sanasta sanaan). Mallin tekstia
@@ -38,7 +39,7 @@ from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from aivo import yksityinen
+from aivo import yksityinen, yksityinen_or
 from aivo.yksityinen import YksityinenVirhe as ChatVirhe, julkaise_kirjastoon   # sama poikkeus kaikkialla
 
 OLETUS_SALASANA = "/etc/aivo/chat-salasana"
@@ -97,7 +98,7 @@ textarea{resize:none;height:3.2rem}button{font:inherit;padding:.5rem .9rem;borde
 .pieni{font-size:.8rem;opacity:.7}
 </style></head><body>
 <header><strong>Aivo</strong><span><select id="tila" aria-label="Tila">
-<option value="yksityinen" selected>Yksityinen (oma malli, ei verkkoa)</option>
+<option value="yksityinen" selected>{YKSITYINEN_TEKSTI}</option>
 <option value="tyokalu">Ty\u00f6kalu (Claude pilvess\u00e4)</option></select> <button id="uusi">Uusi keskustelu</button></span></header>
 <div id="viestit" aria-live="polite"></div>
 <form id="lomake"><textarea id="teksti" maxlength="4000" placeholder="Kirjoita Aivolle\u2026" required></textarea><button>L\u00e4het\u00e4</button></form>
@@ -109,7 +110,8 @@ function lisaa(rooli,teksti){const d=document.createElement('div');d.className='
 function painike(d,idx){const b=document.createElement('button');b.textContent='Kirjaa p\u00e4\u00e4t\u00f6kseksi (sanasi sellaisenaan)';
  b.onclick=async()=>{if(!confirm('Kirjataanko t\u00e4m\u00e4 viesti p\u00e4\u00e4t\u00f6skirjastoon sellaisenaan?'))return;
   const r=await fetch('/api/paatos',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,indeksi:idx})});
-  b.textContent=r.ok?'Kirjattu':'Kirjaus ep\u00e4onnistui ('+r.status+')';b.disabled=true;};d.appendChild(b);}
+  let j={};try{j=await r.json();}catch(e){}
+  b.textContent=j.teksti||('Kirjaus ep\u00e4onnistui ('+r.status+')');b.disabled=r.ok;};d.appendChild(b);}
 async function aloita(){const r=await fetch('/api/uusi',{method:'POST',headers:H,body:JSON.stringify({tila:document.getElementById('tila').value})});
  if(r.status===401){location.href='/kirjaudu';return;}
  if(!r.ok){lisaa('aivo','Tilaa ei voi k\u00e4ytt\u00e4\u00e4 ('+r.status+')');return;}
@@ -130,6 +132,18 @@ document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();if(lahet
 aloita();
 </script></body></html>
 """
+
+# Valinnan teksti kertoo, minne teksti oikeasti menee (A984): loopback = ei verkkoa, OpenRouter = pilvipalvelu (ZDR).
+YKSITYINEN_TEKSTIT = {
+    "loopback": "Yksityinen (oma malli, ei verkkoa)",
+    "openrouter": "Yksityinen (avoin malli OpenRouterissa, ZDR: ei tallennusta)",
+}
+
+
+def sivu_html(taustapaa):
+    """Paasivu valitun yksityisen taustapaan tekstilla (tuntematon taustapaa -> OpenRouter-teksti, ei vahattelevaa)."""
+    return HTML.replace("{YKSITYINEN_TEKSTI}", YKSITYINEN_TEKSTIT.get(taustapaa, YKSITYINEN_TEKSTIT["openrouter"]))
+
 
 KIRJAUTUMIS_HTML = """<!doctype html>
 <html lang="fi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -439,13 +453,37 @@ class Keskustelut:
         return [json.loads(r) for r in p.read_text(encoding="utf-8").splitlines() if r.strip()]
 
 
+# Paatoksen kirjauksen tulos -> (HTTP-tila, naytettava teksti). "Kirjattu" nakyy vain, kun paatos on oikeasti perilla:
+# pushattu Giteaan (tyokalutila) tai kirjattu yksityiseen muistiin (yksityinen tila). Tuntematon tulos on virhe.
+PAATOS_TULOKSET = {
+    "pushattu": (200, "Kirjattu"),
+    "ei-julkaistu": (200, "Kirjattu (vain yksityiseen muistiin)"),
+    "ei-muutosta": (200, "Ei muutosta: p\u00e4\u00e4t\u00f6s oli jo kirjattu"),
+    "push-epaonnistui": (502, "Ei kirjattu Giteaan: push ep\u00e4onnistui, p\u00e4\u00e4t\u00f6s j\u00e4i vain paikalliseksi"),
+    "ei-etaa": (502, "Ei kirjattu Giteaan: p\u00e4\u00e4t\u00f6skirjastolla ei ole sallittua et\u00e4palvelinta"),
+    "ei-gitissa": (502, "Ei kirjattu Giteaan: p\u00e4\u00e4t\u00f6skirjasto ei ole git-repo"),
+}
+PAATOS_TUNTEMATON = (502, "Kirjausta ei voitu vahvistaa")
+
+
+def paatoksen_vastaus(tulos, yksityinen=False):
+    """Muuntaa kirjaa_paatos-funktion tuloksen HTTP-tilaksi ja vastaukseksi. Vain onnistuneet tulokset ovat 2xx.
+    "ei-julkaistu" kelpaa vain yksityisessa tilassa ja vain se; muu tulos tai tuntematon arvo on virhe."""
+    if tulos in PAATOS_TULOKSET and (tulos == "ei-julkaistu") == bool(yksityinen):
+        koodi, teksti = PAATOS_TULOKSET[tulos]
+        return koodi, {"tila": tulos, "teksti": teksti}
+    return PAATOS_TUNTEMATON[0], {"tila": "tuntematon", "teksti": PAATOS_TUNTEMATON[1]}
+
+
 _PAATOS_LUKKO = threading.Lock()      # palvelin on saikeistetty: luku-muokkaus-kirjoitus ei saa lomittua
 
 
 def kirjaa_paatos(kirjasto, kid, aika, teksti, suorita=subprocess.run, julkaise=True):
     """Liittaa Tonyn sanat sellaisenaan paatoskirjastoon (lainauksena). julkaise=True: commit ja push Giteaan
     (vain kirjaston omille, sallituille etapalvelimille); julkaise=False: vain paikallinen tiedosto (yksityinen tila).
-    Jos julkaisu epaonnistuu, tiedosto palautetaan ennalleen eika paatos jaa puoliksi voimaan."""
+    Jos julkaisu heittaa poikkeuksen, tiedosto palautetaan ennalleen. Jos push epaonnistuu (tulos "push-epaonnistui"),
+    commit jaa paikalliseksi eika sita peruta; kutsuja nayttaa tuloksen virheena (ks. paatoksen_vastaus).
+    Uusi painallus samalle viestille ei lisaa osiota toistamiseen, mutta yrittaa pushia uudelleen, jos edellinen epaonnistui."""
     polku = Path(kirjasto) / PAATOS_TIEDOSTO
     polku.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     lainaus = "\n".join("> " + r for r in teksti.splitlines()) or "> "
@@ -453,12 +491,16 @@ def kirjaa_paatos(kirjasto, kid, aika, teksti, suorita=subprocess.run, julkaise=
            "Kirjattu Tonyn painalluksella; ei Aivon p\u00e4\u00e4telm\u00e4.\n" % (aika[:10], aika[11:16], lainaus, kid))
     with _PAATOS_LUKKO:
         vanha = polku.read_text(encoding="utf-8") if polku.exists() else None
-        kirjoita_600(polku, (vanha if vanha is not None else "# Aivon p\u00e4\u00e4t\u00f6skirjasto\n") + osa)
+        uusi_osa = vanha is None or osa not in vanha     # sama viesti (sama keskustelu ja aika) kirjataan vain kerran
+        if uusi_osa:
+            kirjoita_600(polku, (vanha if vanha is not None else "# Aivon p\u00e4\u00e4t\u00f6skirjasto\n") + osa)
         if not julkaise:
             return "ei-julkaistu"
         try:
-            return julkaise_kirjastoon(kirjasto, polku, suorita)
+            return julkaise_kirjastoon(kirjasto, polku, suorita, jalkijulkaise=True)
         except BaseException:
+            if not uusi_osa:
+                raise
             if vanha is None:
                 polku.unlink(missing_ok=True)
             else:
@@ -499,7 +541,9 @@ class Tila:
 
     def __init__(self, tiiviste, kirjasto, data, sallitut_hostit, kysy=kysy_claudelta, julkaise=kirjaa_paatos, julkaise_yks=kirjaa_paatos_yksityinen,
                  yks_data=None, yks_muisti=None, ydinohjeet=None, ehdotukset=None,
-                 malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None):
+                 malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None,
+                 taustapaa="loopback", or_malli=None, or_avain=yksityinen_or.OLETUS_AVAIN,
+                 or_kulutila=None):   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
         self.keskustelut = Keskustelut(data)
@@ -510,16 +554,28 @@ class Tila:
         self.julkaise_yks = julkaise_yks
         self.vastauslukko = threading.Lock()   # yksi Claude-kutsu kerrallaan
         self.yks = None
+        self.taustapaa = taustapaa if taustapaa in YKSITYINEN_TEKSTIT else "loopback"
         if yks_data:
-            if not yksityinen.sallittu_malli_osoite(malli_url):
+            if taustapaa not in ("loopback", "openrouter"):
+                raise ChatVirhe("tuntematon yksityisen tilan taustapaa")
+            if taustapaa == "openrouter":
+                yksityinen_or.tarkista_malli(or_malli)       # avain luetaan vasta kutsussa; puuttuva avain nakyy virheena
+            elif not yksityinen.sallittu_malli_osoite(malli_url):
                 raise ChatVirhe("mallipalvelimen osoite ei ole loopback; kieltaydyn kaynnistymasta")
             self.yks = Keskustelut(yksityinen.tarkista_yksityinen_hakemisto(yks_data))
             self.yks_muisti = str(yksityinen.tarkista_yksityinen_hakemisto(yks_muisti or str(Path(yks_data).parent / "muisti")))
             self.ydinohjeet = ydinohjeet or yksityinen.OLETUS_YDINOHJEET
             self.ehdotukset = str(yksityinen.tarkista_yksityinen_hakemisto(
                 ehdotukset or str(Path(yks_data).parent / "ehdotukset")))
-            self.kysy_yks = kysy_yks or (lambda muisti, historia, ohjeet: yksityinen.kysy_paikalliselta(
-                muisti, historia, ohjeet, malli_url))
+            self.taustapaa = taustapaa
+            if kysy_yks:
+                self.kysy_yks = kysy_yks
+            elif taustapaa == "openrouter":
+                self.kysy_yks = lambda muisti, historia, ohjeet: yksityinen_or.kysy_openrouterilta(
+                    muisti, historia, ohjeet, malli=or_malli, avain_tiedosto=or_avain, kulutila=or_kulutila)
+            else:
+                self.kysy_yks = lambda muisti, historia, ohjeet: yksityinen.kysy_paikalliselta(
+                    muisti, historia, ohjeet, malli_url)
         self.yks_vastauslukko = threading.Lock()
 
     def tila_ja_kasittelija(self, kid):
@@ -595,7 +651,7 @@ def tee_kasittelija(tila):
             if self.path in ("/", "/index.html"):
                 if not self._kirjautunut():
                     return self._laheta(302, "", "text/plain", [("Location", "/kirjaudu")])
-                return self._laheta(200, HTML, "text/html; charset=utf-8")
+                return self._laheta(200, sivu_html(tila.taustapaa), "text/html; charset=utf-8")
             if self.path == "/terve":
                 return self._json(200, {"tila": "ok"})
             self._json(404, {"virhe": "ei loydy"})
@@ -719,7 +775,7 @@ def tee_kasittelija(tila):
                 tulos = tila.julkaise_yks(tila.yks_muisti, kid, v["aika"], v["teksti"])
             else:
                 tulos = tila.julkaise(tila.kirjasto, kid, v["aika"], v["teksti"])
-            self._json(200, {"tila": tulos})
+            self._json(*paatoksen_vastaus(tulos, valittu == "yksityinen"))
 
     return K
 
@@ -747,6 +803,13 @@ def main(argv=None):
     ap.add_argument("--ydinohjeet", default=os.environ.get("AIVO_YDINOHJEET", yksityinen.OLETUS_YDINOHJEET))
     ap.add_argument("--ehdotukset", default=os.environ.get("AIVO_EHDOTUKSET"))
     ap.add_argument("--malli-url", default=os.environ.get("AIVO_MALLI_URL", yksityinen.OLETUS_MALLI_URL))
+    ap.add_argument("--yksityinen-taustapaa", choices=("loopback", "openrouter"),
+                    default=os.environ.get("AIVO_YKSITYINEN_TAUSTAPAA", "loopback"),
+                    help="yksityisen tilan mallin lahde: paikallinen palvelin (loopback) tai OpenRouterin avoin malli (ZDR)")
+    ap.add_argument("--openrouter-malli", default=os.environ.get("AIVO_OPENROUTER_MALLI"),
+                    help="avoin malli, esim. meta-llama/llama-3.3-70b-instruct (vain avointen perheiden lista)")
+    ap.add_argument("--openrouter-avain-tiedosto", default=os.environ.get("AIVO_OPENROUTER_AVAIN", yksityinen_or.OLETUS_AVAIN),
+                    help="tiedosto (0600, palvelun kayttajan), jossa avain on; avainta ei anneta ymparistomuuttujalla")
     a = ap.parse_args(argv)
     try:
         if a.komento == "aseta-salasana":
@@ -757,7 +820,9 @@ def main(argv=None):
             raise ChatVirhe("--host vaatii taydellisen nimen (ei .paate-jokerimerkintaa)")
         # ilman --host sallitaan vain localhost
         tila = Tila(lue_tiiviste(a.salasana_tiedosto), a.kirjasto, a.data, hostit, yks_data=a.yksityinen_data,
-                    yks_muisti=a.yksityinen_muisti, ydinohjeet=a.ydinohjeet, ehdotukset=a.ehdotukset, malli_url=a.malli_url)
+                    yks_muisti=a.yksityinen_muisti, ydinohjeet=a.ydinohjeet, ehdotukset=a.ehdotukset, malli_url=a.malli_url,
+                    taustapaa=a.yksityinen_taustapaa, or_malli=a.openrouter_malli,
+                    or_avain=a.openrouter_avain_tiedosto)
         palvelin = kaynnista(a.osoite, a.portti, tila)
     except ChatVirhe as e:
         print("virhe: %s" % e, file=sys.stderr)
