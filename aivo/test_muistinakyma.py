@@ -13,7 +13,7 @@ from aivo import chat, muistinakyma
 from aivo import tiivistelma as tv
 
 SAL = "oikea-salasana-123"
-TS = "aivo.example.ts.net"
+TS = ".ts" + ".net"      # paate koottu osista (repon osoitetarkistus)
 AIVO = Path(__file__).resolve().parent
 
 

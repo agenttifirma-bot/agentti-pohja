@@ -19,7 +19,7 @@ def _e(x):
 
 def _lyhenna(teksti):
     teksti = str(teksti)
-    return teksti if len(teksti) <= LYHYT else teksti[:LYHYT] + "…"
+    return teksti if len(teksti) <= LYHYT else teksti[:LYHYT] + "\u2026"
 
 
 def keraa(kansio):
@@ -46,17 +46,17 @@ def sivu(kansio, otsikko):
     rivit, ohitettu = keraa(kansio)
     o = ["<!doctype html>", '<html lang="fi"><head><meta charset="utf-8">',
          '<meta name="viewport" content="width=device-width, initial-scale=1">',
-         "<title>Aivo – muisti</title>",
+         "<title>Aivo \u2013 muisti</title>",
          "<style>body{font:16px/1.45 system-ui,sans-serif;max-width:46rem;margin:auto;padding:1rem}"
          "section{border:1px solid #888;border-radius:8px;padding:.6rem .9rem;margin:.8rem 0}"
          "q{display:block;margin:.2rem 0 .2rem 1rem}.pieni{font-size:.85rem;opacity:.7}</style></head><body>",
-         '<p><a href="/">← Keskusteluun</a></p>',
+         '<p><a href="/">\u2190 Keskusteluun</a></p>',
          "<h1>Aivon muisti: %s</h1>" % html.escape(otsikko),
-         '<p class="pieni">Vain luku. Tiivistelmät ovat Aivon tulkintoja; Tonyn omat sanat näkyvät lainauksina.</p>']
+         '<p class="pieni">Vain luku. Tiivistelm\u00e4t ovat Aivon tulkintoja; Tonyn omat sanat n\u00e4kyv\u00e4t lainauksina.</p>']
     if not rivit:
-        o.append("<p>Ei tiivistelmiä.</p>")
+        o.append("<p>Ei tiivistelmi\u00e4.</p>")
     for tunnus, t in rivit:
-        o.append("<section><strong>%s</strong> <span class=\"pieni\">viestit %s–%s, malli %s</span>"
+        o.append("<section><strong>%s</strong> <span class=\"pieni\">viestit %s\u2013%s, malli %s</span>"
                  % (_e(t.get("tiivistetty")), _e(t.get("alku")), _e(t.get("loppu")), _e(t.get("malli"))))
         for k in t.get("kohdat", []):
             if not isinstance(k, dict):
