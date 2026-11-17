@@ -3,13 +3,14 @@ import ast
 import hashlib
 import http.client
 import json
+import os
 import secrets
 import tempfile
 import threading
 import unittest
 from pathlib import Path
 
-from aivo import chat, muistinakyma
+from aivo import chat, muistinakyma, tyokalualue, yksityinen, yksityinen_alue
 from aivo import tiivistelma as tv
 
 SAL = "oikea-salasana-123"
@@ -96,6 +97,44 @@ class NakymaTesti(unittest.TestCase):
         self.assertEqual(s, 200)
         self.assertIn(self.kanaria, runko)
         self.assertNotIn(self.tyokalu_merkki, runko)
+
+    def test_yhteinen_ylakansio_hylataan(self):
+        """data ja yks_data samassa ylakansiossa => oletuskansiot yhtyisivat: kaynnistys kielletaan."""
+        r = Path(self.tmp.name) / "yhteinen"
+        with self.assertRaises(chat.ChatVirhe):
+            chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "chat"), [TS],
+                      yks_data=str(r / "yks-chat"), kysy_yks=lambda m, h, o: "x")
+
+    def test_tyokalukansio_yksityisen_alueen_sisalla_hylataan(self):
+        r = Path(self.tmp.name) / "sisalla"
+        for tyokalu in (r / "yks" / "muisti", r / "yks", r / "yks" / "tiivistelmat", r):
+            with self.assertRaises(chat.ChatVirhe, msg=str(tyokalu)):
+                chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "aivo" / "chat"), [TS],
+                          yks_data=str(r / "yks" / "chat"), yks_muisti=str(r / "yks" / "muisti"),
+                          ehdotukset=str(r / "yks" / "ehdotukset"), tiivistelmat=str(tyokalu),
+                          kysy_yks=lambda m, h, o: "x")
+
+    def test_yksityinen_tiivistelmakansio_tarkistetaan_ja_erottuu(self):
+        r = Path(self.tmp.name) / "erillaan"
+        tila = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "aivo" / "chat"), [TS],
+                         yks_data=str(r / "yks" / "chat"), kysy_yks=lambda m, h, o: "x")
+        self.assertNotEqual(tila.tiivistelmat, tila.yks_tiivistelmat)
+        self.assertEqual(os.stat(tila.yks_tiivistelmat).st_mode & 0o777, 0o700)
+        os.symlink(self.tmp.name, r / "linkki")
+        with self.assertRaises(yksityinen.YksityinenVirhe):
+            chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "aivo" / "chat"), [TS],
+                      yks_data=str(r / "yks" / "chat"), yks_tiivistelmat=str(r / "linkki"), kysy_yks=lambda m, h, o: "x")
+
+    def test_oletuskansiot_vastaavat_tiivistajan_alueita(self):
+        """Oletus (data-kansion ylakansio/tiivistelmat) on sama polku kuin alue-moduulit antavat samalla juurella
+        (tuotannossa data = JUURI/chat, ks. docs/aivo-yksityinen.md)."""
+        r = Path(self.tmp.name) / "oletus"
+        t = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "aivo" / "chat"), [TS],
+                      yks_data=str(r / "yks" / "chat"), kysy_yks=lambda m, h, o: "x")
+        self.assertEqual(Path(t.tiivistelmat), tyokalualue.tyokalualue(str(r / "aivo")).polku("tiivistelmat"))
+        self.assertEqual(Path(t.yks_tiivistelmat), yksityinen_alue.yksityinen_alue(str(r / "yks")).polku("tiivistelmat"))
+        self.assertEqual(tyokalualue.ALIKANSIOT.count("chat"), 1)
+        self.assertEqual(yksityinen_alue.ALIKANSIOT.count("chat"), 1)
 
     def test_ilman_yksityista_tilaa_yksityinen_reitti_ei_lue_mitaan(self):
         r = Path(self.tmp.name)

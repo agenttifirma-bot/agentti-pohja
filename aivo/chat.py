@@ -623,7 +623,9 @@ class Tila:
             self.ehdotukset = str(yksityinen.tarkista_yksityinen_hakemisto(
                 ehdotukset or str(Path(yks_data).parent / "ehdotukset")))
             self.taustapaa = taustapaa
-            self.yks_tiivistelmat = str(yks_tiivistelmat or Path(yks_data).parent / "tiivistelmat")
+            self.yks_tiivistelmat = str(yksityinen.tarkista_yksityinen_hakemisto(
+                yks_tiivistelmat or str(Path(yks_data).parent / "tiivistelmat")))
+            self._tarkista_tiivistelmakansiot(yks_data)
             if kysy_yks:
                 self.kysy_yks = kysy_yks
             elif taustapaa == "openrouter":
@@ -633,6 +635,16 @@ class Tila:
                 self.kysy_yks = lambda muisti, historia, ohjeet: yksityinen.kysy_paikalliselta(
                     muisti, historia, ohjeet, malli_url)
         self.yks_vastauslukko = threading.Lock()
+
+    def _tarkista_tiivistelmakansiot(self, yks_data):
+        """Tyokalutilan tiivistelmakansio ei saa olla sama kuin yksityisen tilan kansio, sen sisalla eika sen ylakansio.
+        Muuten tyokalutilan nakyma voisi lukea yksityisia tiivistelmia tai nakyma sekoittaisi tilat."""
+        tyokalu = Path(self.tiivistelmat).resolve()
+        yksityiset = [self.yks_tiivistelmat, str(yks_data), self.yks_muisti, self.ehdotukset]
+        for y in yksityiset:
+            y = Path(y).resolve()
+            if tyokalu == y or y in tyokalu.parents or tyokalu in y.parents:
+                raise ChatVirhe("tyokalutilan tiivistelmakansio on yksityisen tilan kansio tai sen sisalla; kieltaydyn kaynnistymasta")
 
     def tila_ja_kasittelija(self, kid):
         """Palauttaa (tila, keskustelut) sen mukaan, kummassa kansiossa keskustelu on."""
