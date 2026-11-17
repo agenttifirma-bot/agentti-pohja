@@ -289,6 +289,36 @@ class Opit(Pohja):
         self.assertFalse((self.repo / ajuri.OPIT).exists())
         self.assertEqual(subprocess.run(["git", "-C", str(self.repo), "status", "--porcelain"], capture_output=True, text=True).stdout, "")
 
+    def test_ajuri_kirjaa_tehtavan_tuloksen_aivon_arvion_viereen(self):
+        from claudejono import aivo_arvio
+        self.lisaa_tehtava("2026-10-30-01-a.md")
+        f = lambda kom, **kw: subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": "r\nTodennettu kaytossa: testi"}), "")
+        viesti = ajuri.aja(self.repo, self.tmp, env={}, suorita=f, aivo_arvioija=lambda teksti: (True, "oleellinen"))
+        self.assertIn("VALMIS", viesti)
+        with open(self.tmp / aivo_arvio.TIEDOSTO, encoding="utf-8") as fh:
+            l = aivo_arvio.laske_osumat(fh)
+        self.assertEqual((l["vertailtavia"], l["osumia"], l["prosentti"]), (1, 1, 100.0))
+
+    def test_ajuri_kirjaa_keskenjaaneen_tehtavan_tilan_ei_valmiiksi(self):
+        from claudejono import aivo_arvio
+        self.lisaa_tehtava("2026-10-30-01-a.md")
+        f = lambda kom, **kw: subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": "r ilman todennusrivia"}), "")
+        viesti = ajuri.aja(self.repo, self.tmp, env={}, suorita=f, aivo_arvioija=lambda teksti: (True, "oleellinen"))
+        self.assertIn("KESKEN", viesti)
+        with open(self.tmp / aivo_arvio.TIEDOSTO, encoding="utf-8") as fh:
+            rivit = [json.loads(r) for r in fh if r.strip()]
+        self.assertEqual([r["tulos"] for r in rivit if r["laji"] == "tulos"], ["KESKEN"])
+        with open(self.tmp / aivo_arvio.TIEDOSTO, encoding="utf-8") as fh:
+            l = aivo_arvio.laske_osumat(fh)
+        self.assertEqual((l["vertailtavia"], l["osumia"]), (1, 0))   # Aivo sanoi kylla, mutta KESKEN = ei
+
+    def test_ajuri_ilman_arvioijaa_ei_kirjaa_tulosta(self):
+        from claudejono import aivo_arvio
+        self.lisaa_tehtava("2026-10-30-01-a.md")
+        f = lambda kom, **kw: subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": "r\nTodennettu kaytossa: testi"}), "")
+        ajuri.aja(self.repo, self.tmp, env={}, suorita=f)
+        self.assertFalse((self.tmp / aivo_arvio.TIEDOSTO).exists())
+
     def test_julkaise_opit_kun_sallittu(self):
         self.lisaa_tehtava("2026-10-30-01-a.md")
         vanha = ajuri.OPIT_JULKAISU_SALLITTU
