@@ -188,7 +188,7 @@ Ota ensin tilannekuva kontista. Tämä ohje ei muuta palomuureja, holvia eikä T
 
 Työkalutilan keskustelut tiivistetään kirjastoon, jotta Aivo muistaa ne 40 viestin jälkeenkin (A983 kohta A3). Tiivistys ajetaan komennolla `python3 -m aivo.tiivista --alue tyokalu`. Se tiivistää keskustelun, kun viimeisestä viestistä on kulunut vähintään 30 minuuttia, ja kutsuu Claudea samalla `aivo-tyokalu`-socketilla kuin chat. Päiväkatto on 10 tiivistystä vuorokaudessa (Europe/Helsinki). Katto on koodin vakio, eikä sitä voi muuttaa asetuksilla. Katon täyttyessä ajo lopettaa ja kirjoittaa syyn tiedostoon `/var/lib/aivo/indeksi/tiivista.log`. Yksityisen tilan keskusteluja ei lueta eikä lähetetä: komento hyväksyy vain alueen `tyokalu`.
 
-Tiivistelmät tallentuvat kansioon `/var/lib/aivo/tiivistelmat` (0700, tiedostot 0600) ja luettelo tiedostoon `/var/lib/aivo/indeksi/indeksi.json`. Tonyn lainaukset on erotettu mallin tulkinnasta. Lainaus tarkistetaan sanasta sanaan Tonyn viestistä, ja virheellinen lainaus poistetaan. Uudet kohdat ovat aina tilassa `ehdotus`, ja vain Tonyn korjaus (`python3 -m aivo.tiivistelma`) vahvistaa ne. Chat liittää tiivistelmät työkalutilan kehotteeseen muun muistin rinnalle, enintään 60 kt. Osuvimmat ja uusimmat tulevat ensin. Yksityinen tila ei saa niitä koskaan.
+Tiivistelmät tallentuvat kansioon `/var/lib/aivo/tiivistelmat` (0700, tiedostot 0600) ja luettelo tiedostoon `/var/lib/aivo/indeksi/indeksi.json`. Tonyn lainaukset on erotettu mallin tulkinnasta. Lainaus tarkistetaan sanasta sanaan Tonyn viestistä, ja virheellinen lainaus poistetaan. Uudet kohdat ovat aina tilassa `ehdotus`, ja vain Tonyn korjaus (`python3 -m aivo.tiivistelma`) vahvistaa ne. Chat liittää tiivistelmät työkalutilan kehotteeseen muun muistin rinnalle, enintään 60 kt, mutta vain kun Tony kytkee sen erikseen päälle: chatin käynnistysasetus `--tiivistelmat-kaytossa` (tai ympäristömuuttuja `AIVO_TIIVISTELMAT_KAYTOSSA=1`). Oletuksena kytkentä on pois, eikä kansion olemassaolo kytke sitä. Osuvimmat ja uusimmat tulevat ensin. Yksityinen tila ei saa niitä koskaan.
 
 Ota ensin snapshot kontista 122. Ajastin ei asennu itsestään: tämä on ohje, jonka Tony ajaa.
 
@@ -201,7 +201,7 @@ Ota ensin snapshot kontista 122. Ajastin ei asennu itsestään: tämä on ohje, 
 
    Odotettu tulos: komento `hostname` tulostaa kontin 122 nimen (ei isännän nimeä).
 
-2. **Päivitä koodi ja käynnistä chat uudelleen**, jotta chat lukee tiivistelmät. Chatin palvelukäyttäjä selviää komennolla:
+2. **Päivitä koodi ja käynnistä chat uudelleen.** Tiivistelmien lukeminen kehotteeseen ei ole päällä oletuksena: lisää chatin käynnistykseen asetus `--tiivistelmat-kaytossa` (tai `AIVO_TIIVISTELMAT_KAYTOSSA=1` ympäristöön), kun olet tarkistanut tiivistelmät kohdassa 8. Chatin palvelukäyttäjä selviää komennolla:
 
    ```
    systemctl show aivo-chat -p User

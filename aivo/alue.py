@@ -18,9 +18,10 @@ class AlueVirhe(Exception):
     """Muistialueen tarkistus epaonnistui. Viesti ei sisalla polkuja eika sisaltoa."""
 
 
-def tarkista_hakemisto(polku, luo=True):
+def tarkista_hakemisto(polku, luo=True, korjaa=True):
     """Kansion pitaa olla oikea kansio (ei linkki), prosessin kayttajan oma ja 0700. Liian laajat oikeudet yritetaan
-    korjata; jos se ei onnistu, kieltaydytaan. Palauttaa Path-olion."""
+    korjata; jos se ei onnistu, kieltaydytaan. korjaa=False: vain tarkistus (lukupolku ei muuta oikeuksia; liian
+    laajat oikeudet => AlueVirhe). Palauttaa Path-olion."""
     p = Path(polku)
     if luo:
         try:
@@ -36,6 +37,8 @@ def tarkista_hakemisto(polku, luo=True):
     if st.st_uid != os.geteuid():
         raise AlueVirhe("alueen kansio ei kuulu palvelun kayttajalle")
     if stat.S_IMODE(st.st_mode) & 0o077:
+        if not korjaa:
+            raise AlueVirhe("alueen kansion oikeudet ovat liian laajat")
         try:
             os.chmod(p, 0o700)
         except OSError:

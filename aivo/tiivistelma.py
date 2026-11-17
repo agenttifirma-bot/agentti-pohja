@@ -337,15 +337,21 @@ def katettu_loppu(kansio, kid):
             continue
         try:
             d = json.loads(r)
-            if d["keskustelu"] == kid:
-                suurin = max(suurin, int(d["loppu"]))
-        except (ValueError, KeyError, TypeError):
+            if "keskustelu" in d and "loppu" in d:
+                rkid, rloppu = d["keskustelu"], int(d["loppu"])
+            else:                                 # vanha tai kasin kirjoitettu rivi: johdetaan tunnuksesta
+                m = TUNNUS_RE.match(d["tunnus"])
+                rkid, rloppu = m.group(1), int(m.group(3))
+            if rkid == kid:
+                suurin = max(suurin, rloppu)
+        except (ValueError, KeyError, TypeError, AttributeError):
             raise TiivistelmaVirhe("poistettujen loki on rikkinainen")
     return suurin
 
 
 def poista(kansio, tunnus):
-    """Poistaa tiivistelman ja jattaa merkinnan (tunnus, sha, aika) ilman sisaltoa, ettei sama kohta synny uudelleen."""
+    """Poistaa tiivistelman ja jattaa merkinnan ilman sisaltoa (tunnus, keskustelu, alku, loppu, sha, aika), ettei sama
+    kohta synny uudelleen. katettu_loppu lukee keskustelun ja lopun tasta rivista (tai tunnuksesta, jos kentat puuttuvat)."""
     t = lue(kansio, tunnus)
     p = _polku(kansio, tunnus)
     rivi = json.dumps({"tunnus": tunnus, "keskustelu": t["keskustelu"], "alku": t["alku"], "loppu": t["loppu"],

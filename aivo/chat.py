@@ -864,8 +864,12 @@ def main(argv=None):
     ap.add_argument("--yksityinen-muisti", default=os.environ.get("AIVO_YKSITYINEN_MUISTI"))
     ap.add_argument("--ydinohjeet", default=os.environ.get("AIVO_YDINOHJEET", yksityinen.OLETUS_YDINOHJEET))
     ap.add_argument("--ehdotukset", default=os.environ.get("AIVO_EHDOTUKSET"))
+    ap.add_argument("--tiivistelmat-kaytossa", action="store_true",
+                    default=os.environ.get("AIVO_TIIVISTELMAT_KAYTOSSA") == "1",
+                    help="liittaa tiivistelmat tyokalutilan kehotteeseen (oletus: pois paalta; kansion olemassaolo ei kytke)")
     ap.add_argument("--tiivistelmat", default=os.environ.get("AIVO_TIIVISTELMAT"),
-                    help="tyokalutilan tiivistelmakansio (oletus: --datan viereinen 'tiivistelmat'); puuttuva kansio ohitetaan")
+                    help="tyokalutilan tiivistelmakansio (oletus: --datan viereinen 'tiivistelmat'); kaytossa vain, "
+                         "kun --tiivistelmat-kaytossa on annettu")
     ap.add_argument("--malli-url", default=os.environ.get("AIVO_MALLI_URL", yksityinen.OLETUS_MALLI_URL))
     ap.add_argument("--yksityinen-taustapaa", choices=("loopback", "openrouter"),
                     default=os.environ.get("AIVO_YKSITYINEN_TAUSTAPAA", "loopback"),
@@ -887,7 +891,8 @@ def main(argv=None):
                     yks_muisti=a.yksityinen_muisti, ydinohjeet=a.ydinohjeet, ehdotukset=a.ehdotukset, malli_url=a.malli_url,
                     taustapaa=a.yksityinen_taustapaa, or_malli=a.openrouter_malli,
                     or_avain=a.openrouter_avain_tiedosto,
-                    tiivistelmat=a.tiivistelmat or str(Path(a.data).parent / "tiivistelmat"))
+                    tiivistelmat=(a.tiivistelmat or str(Path(a.data).parent / "tiivistelmat"))
+                    if a.tiivistelmat_kaytossa else None)
         palvelin = kaynnista(a.osoite, a.portti, tila)
     except ChatVirhe as e:
         print("virhe: %s" % e, file=sys.stderr)

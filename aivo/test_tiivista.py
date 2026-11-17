@@ -139,6 +139,37 @@ class HiljaisuusTesti(Pohja):
         m = Malli()
         self.aja(m, nyt=NYT + timedelta(days=1))
         self.assertEqual(len(m.syotteet), 0)
+        self.assertEqual(tiivistelma.katettu_loppu(self.tiiv(), kid_nro(1)), 2)        # ei lukuvirhetta
+        self.assertFalse(any("epaonnistui" in r or "virhe" in r for r in self.ulos))
+
+    def test_yksi_poistetaan_toinen_tiivistetaan_sen_jalkeen(self):
+        self.tee(1)
+        self.tee(2)
+        self.aja(Malli(), nyt=NYT)
+        with mock.patch("sys.stdin.isatty", return_value=True):
+            tiivistelma.poista(self.tiiv(), "%s-0-2" % kid_nro(1))
+        tee_keskustelu(self.juuri, kid_nro(3), KESK, NYT - timedelta(minutes=60))
+        m = Malli()
+        t = self.aja(m)
+        self.assertEqual(len(m.syotteet), 1)                    # vain keskustelu 3
+        self.assertIn("tiivistetty", t)
+        self.assertEqual(t["tiivistetty"], 1)
+        self.assertEqual(sorted(tiivistelma.luettele(self.tiiv())),
+                         sorted(["%s-0-2" % kid_nro(2), "%s-0-2" % kid_nro(3)]))
+        self.assertEqual(tiivistelma.katettu_loppu(self.tiiv(), kid_nro(1)), 2)
+
+    def test_katettu_loppu_toimii_rivilla_ilman_keskustelu_ja_loppu_kenttia(self):
+        self.a.valmista()
+        (self.tiiv() / tiivistelma.POISTETUT).write_text(
+            json.dumps({"tunnus": "%s-0-7" % kid_nro(1), "alue_sha": "x", "poistettu": "2026-11-17T10:00:00"}) + "\n")
+        self.assertEqual(tiivistelma.katettu_loppu(self.tiiv(), kid_nro(1)), 7)
+        self.assertEqual(tiivistelma.katettu_loppu(self.tiiv(), kid_nro(2)), -1)
+
+    def test_katettu_loppu_hylkaa_rikkinaisen_rivin(self):
+        self.a.valmista()
+        (self.tiiv() / tiivistelma.POISTETUT).write_text(json.dumps({"poistettu": "x"}) + "\n")
+        with self.assertRaises(tiivistelma.TiivistelmaVirhe):
+            tiivistelma.katettu_loppu(self.tiiv(), kid_nro(1))
 
     def test_keskustelu_ilman_tonyn_viesteja_ohitetaan(self):
         self.tee(1, viestit=[("aivo", "Hei vaan.")])
@@ -505,11 +536,23 @@ class KehoteRajaTesti(Pohja):
         self.assertEqual(teksti.count(tiivistelma.RAJA), 1)
         self.assertNotIn("\nA", teksti)
 
-    def test_liian_laaja_kansion_oikeus_tiukennetaan_lukiessa(self):
+    def test_lukupolku_ei_muuta_oikeuksia_vaan_kieltaytyy(self):
         self.a.valmista()
-        self.tallenna_n(1)
+        tn = self.tallenna_n(1)
         os.chmod(self.tiiv(), 0o755)
-        tiivistelmat_kehote.muodosta(self.tiiv(), "x")
+        os.chmod(self.tiiv() / (tn + ".json"), 0o644)
+        self.assertEqual(tiivistelmat_kehote.muodosta(self.tiiv(), "x"), ("", []))
+        self.assertEqual(stat.S_IMODE(self.tiiv().stat().st_mode), 0o755)          # ei chmodia lukiessa
+        self.assertEqual(stat.S_IMODE((self.tiiv() / (tn + ".json")).stat().st_mode), 0o644)
+        os.chmod(self.tiiv(), 0o700)
+        teksti, _ = tiivistelmat_kehote.muodosta(self.tiiv(), "x")
+        self.assertIn("TIIVISTELM", teksti)
+        self.assertEqual(stat.S_IMODE((self.tiiv() / (tn + ".json")).stat().st_mode), 0o644)
+
+    def test_valmista_korjaa_edelleen_oikeudet(self):
+        self.a.valmista()
+        os.chmod(self.tiiv(), 0o755)
+        self.a.valmista()
         self.assertEqual(stat.S_IMODE(self.tiiv().stat().st_mode), 0o700)
 
     def test_tonyn_korjaus_korvaa_tulkinnan_kehotteessa(self):

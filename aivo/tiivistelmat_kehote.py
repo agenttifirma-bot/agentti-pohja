@@ -62,7 +62,7 @@ def muodosta(kansio, kysymys=None, ylaraja=YLARAJA_TAVUA):
     ('tiivistelmat/<tunnus>.json', samat kuin [lahde: ...]-viitteen tarkistuksessa). Tyhja kansio tai
     virhe => ('', []): keskustelua ei koskaan kaadeta tiivistelmiin. Teksti on enintaan `ylaraja` tavua."""
     try:
-        p = alue.tarkista_hakemisto(kansio, luo=False)
+        p = alue.tarkista_hakemisto(kansio, luo=False, korjaa=False)   # lukupolku ei chmodaa
         nimet = tiivistelma.luettele(p)
     except (alue.AlueVirhe, tiivistelma.TiivistelmaVirhe, OSError):
         return "", []
