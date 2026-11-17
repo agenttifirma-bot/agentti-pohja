@@ -157,6 +157,48 @@ class MuistiTesti(unittest.TestCase):
         self.assertNotIn("SALAINEN", str(c.exception))
 
 
+class TaivutusHakuTesti(unittest.TestCase):
+    """lue_muisti(kysymys=...) yhdistaa taivutusmuodot sanan alun (5 merkkia) ja aakkosten normalisoinnin avulla."""
+
+    def jarjesta(self, kysymys, tiedostot):
+        with tempfile.TemporaryDirectory() as d:
+            for nimi, teksti in tiedostot.items():
+                (Path(d) / nimi).write_text(teksti, encoding="utf-8")
+            return chat.lue_muisti(d, kysymys=kysymys)[1]
+
+    def test_taivutusmuoto_nostaa_oikean_tiedoston_ensimmaiseksi(self):
+        # nimet valittu niin, etta aakkosjarjestys ja oletusjarjestys eivat auta
+        tied = {"a.md": "Tony: sorsapata uunissa\n", "b.md": "Tony: kellastuneet lehdet kukassa\n",
+                "c.md": "Tony: kuntosali\n"}
+        self.assertEqual(self.jarjesta("Miten kastelen kellastuvia lehtia?", tied)[0], "b.md")
+
+    def test_aakkoset_normalisoituvat(self):
+        tied = {"a.md": "Tony: sorsapata\n", "b.md": "Tony: ymp\u00e4rist\u00f6 asennetaan\n"}
+        self.assertEqual(self.jarjesta("ymparistoon liittyva", tied)[0], "b.md")
+        tied = {"a.md": "Tony: sorsapata\n", "b.md": "Tony: ymparisto asennetaan\n"}
+        self.assertEqual(self.jarjesta("ymp\u00e4rist\u00f6ss\u00e4 toimiva", tied)[0], "b.md")
+
+    def test_o_a_ja_aa_normalisoituvat_sananalussa(self):
+        for kysymys, teksti in (("tyopoydan korkeus", "ty\u00f6p\u00f6yt\u00e4 s\u00e4\u00e4det\u00e4\u00e4n"),
+                                ("ty\u00f6p\u00f6yt\u00e4 korkea", "tyopoyta saadetaan"),
+                                ("s\u00e4\u00e4tila rannalla", "saatila vaihtuu"),
+                                ("\u00e5bolandia kartta", "abolandia kartta")):
+            tied = {"a.md": "Tony: sorsapata\n", "b.md": "Tony: %s\n" % teksti}
+            self.assertEqual(self.jarjesta(kysymys, tied)[0], "b.md", kysymys)
+
+    def test_sanojen_eri_alut_eivat_osu(self):
+        # "kasvi" ja "kasvu" jakavat vain 4 merkkia: alku 5 merkkia erottaa ne
+        tied = {"a.md": "Tony: kasvit parvekkeella\n", "b.md": "Tony: talouden kasvua\n"}
+        self.assertEqual(self.jarjesta("kasvun hidastuminen", tied)[0], "b.md")
+
+    def test_ilman_kysymysta_jarjestys_ei_muutu(self):
+        tied = {"a.md": "x", "b.md": "y"}
+        with tempfile.TemporaryDirectory() as d:
+            for n, t in tied.items():
+                (Path(d) / n).write_text(t)
+            self.assertEqual(chat.lue_muisti(d)[1], sorted(chat.lue_muisti(d)[1], key=chat._jarjestys))
+
+
 class KirjastoTesti(unittest.TestCase):
     def test_paatos_on_sanasta_sanaan_lainaus(self):
         with tempfile.TemporaryDirectory() as d:
