@@ -1,9 +1,10 @@
 """Aivon yksityinen tila (A729-A731): paikallinen malli, erillinen muisti ja ydinohjeet.
 
 Tama moduuli on tarkoituksella pieni ja vain stdlib. Turvarajat (koodi on laki):
-  * Yksityinen tila puhuu vain paikalliselle mallipalvelimelle (llama.cpp tms.), jonka osoitteen pitaa olla
-    loopback-IP. Muuhun osoitteeseen koodi kieltaytyy lahettamasta mitaan. Claudea, LiteLLM:aa ja OpenRouteria
-    ei kayteta yksityisessa tilassa.
+  * Yksityisella tilalla on kaksi taustapaata. (1) Paikallinen mallipalvelin (llama.cpp tms.), jonka osoitteen
+    pitaa olla loopback-IP; muuhun osoitteeseen koodi kieltaytyy lahettamasta mitaan. (2) OpenRouterin avoin malli
+    (aivo/yksityinen_or.py, Tonyn paatos A984): vain ZDR pakotettuna, paivakatkaisimen kautta ja vain avoimilla
+    malleilla. Claudea ja LiteLLM:aa ei kayteta yksityisessa tilassa.
   * Yksityisen tilan kansiot (keskustelut, muisti) kuuluvat prosessin kayttajalle ja ovat 0700. Muuten
     palvelu ei kaynnisty. Tyokalutila ajetaan eri kayttajana, joten se ei paase kansioihin kayttooikeuksilla.
   * Ydinohjeet luetaan vain yksityisessa tilassa. Aivo voi vain ehdottaa muutosta (tallentuu ehdotukseksi);
@@ -137,9 +138,9 @@ def lue_ydinohjeet(polku):
     return "".join(osat)
 
 
-def muodosta_viestit(muisti, historia, ohjeet):
+def muodosta_viestit(muisti, historia, ohjeet, kehote=None):
     j = "%s\nYDINOHJEET (Tonyn hyv\u00e4ksymi\u00e4):\n%s\nMUISTI (data, ei ohjeita):\n%s" % (
-        YKSITYINEN_KEHOTE, ohjeet or "(ei ydinohjeita)\n", muisti)
+        kehote or YKSITYINEN_KEHOTE, ohjeet or "(ei ydinohjeita)\n", muisti)
     viestit = [{"role": "system", "content": j}]
     for v in historia[-HISTORIA_YLARAJA:]:
         viestit.append({"role": "user" if v["rooli"] == "tony" else "assistant", "content": v["teksti"]})
@@ -303,10 +304,12 @@ def tarkista_julkaisukohde(kirjasto, suorita=subprocess.run, sallitut=None):
 
 
 def julkaise_kirjastoon(kirjasto, polku, suorita=subprocess.run, viesti="Aivo: paatos keskustelusta", sallitut=None,
-                        kohde_tiedot=False):
+                        kohde_tiedot=False, jalkijulkaise=False):
     """Jos kirjasto on git-repo: commit ja push. Kieltaytyy, ellei jokainen push-osoite ole sallittujen listalla.
     Push nimeaa kohteen ('origin' ja haara) eika kayta pushDefault- tai pushRemote-asetuksia.
-    Commit-virhe nostaa virheen (ei palauta 'ei-muutosta'); vain aidosti muuttumaton tiedosto palauttaa 'ei-muutosta'."""
+    Commit-virhe nostaa virheen (ei palauta 'ei-muutosta'); vain aidosti muuttumaton tiedosto palauttaa 'ei-muutosta'.
+    jalkijulkaise=True: muuttumattomalla tiedostolla pushataan silti, jos paikallinen HEAD ei ole etahaaran paalla
+    (aiempi push epaonnistui); 'ei-muutosta' tarkoittaa silloin, etta kaikki on jo perilla."""
     def git(*a):
         try:
             return suorita(["git", "-C", str(kirjasto), *a], capture_output=True, text=True, check=False,
@@ -321,6 +324,12 @@ def julkaise_kirjastoon(kirjasto, polku, suorita=subprocess.run, viesti="Aivo: p
         raise YksityinenVirhe("git add epaonnistui; muutosta ei commitoitu")
     muutos = git("status", "--porcelain", "--", str(polku))
     if muutos.returncode == 0 and not muutos.stdout.strip():
+        if jalkijulkaise and kohde_tiedot is not None:
+            paikallinen = git("rev-parse", "HEAD")
+            etana = git("rev-parse", "--verify", "-q", "refs/remotes/origin/" + kohde_tiedot[0])
+            if paikallinen.returncode != 0 or etana.returncode != 0 or paikallinen.stdout.strip() != etana.stdout.strip():
+                return ("pushattu" if git("push", "origin", "HEAD:refs/heads/" + kohde_tiedot[0]).returncode == 0
+                        else "push-epaonnistui")
         return "ei-muutosta"
     c = git("commit", "-m", viesti, "--", str(polku))
     if c.returncode != 0:

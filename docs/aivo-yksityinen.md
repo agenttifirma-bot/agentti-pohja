@@ -5,7 +5,7 @@ Tämä ohje on Tonylle. Claude on kirjoittanut koodin (`aivo/yksityinen.py`, `ai
 ## Mitä muuttuu
 
 - Chat-sivulla on valinta **Yksityinen / Työkalu**. Oletus on yksityinen. Työkalutilaan vaihtaminen kysyy varmistuksen, koska viestit kulkevat silloin Clauden pilvipalveluun.
-- **Yksityinen tila** puhuu vain paikalliselle mallipalvelimelle (llama.cpp:n `llama-server` tai vastaava, OpenAI-yhteensopiva). Koodi hyväksyy vain loopback-IP-osoitteen. Muuhun osoitteeseen se ei lähetä mitään, eikä palvelu käynnisty sellaisella asetuksella. Claudea, LiteLLM:ää ja OpenRouteria ei käytetä.
+- **Yksityinen tila** puhuu vain paikalliselle mallipalvelimelle (llama.cpp:n `llama-server` tai vastaava, OpenAI-yhteensopiva). Koodi hyväksyy vain loopback-IP-osoitteen. Muuhun osoitteeseen se ei lähetä mitään, eikä palvelu käynnisty sellaisella asetuksella. Claudea ja LiteLLM:ää ei käytetä. Vaihtoehtoinen taustapää on OpenRouterin avoin malli (ks. `aivo-yksityinen-openrouter.md`, Tonyn päätös A984).
 - Yksityisellä tilalla on **oma muisti** (`--yksityinen-muisti`) ja omat keskustelut (`--yksityinen-data`). Työkalutilan kirjasto ei sekoitu niihin, eikä yksityinen muisti mene työkalutilan kehotteeseen.
 - Yksityiset kansiot kuuluvat palvelun käyttäjälle ja ovat 0700. Jos kansio kuuluu jollekin toiselle tai on linkki, palvelu ei käynnisty.
 - **Ydinohjeet** luetaan vain yksityisessä tilassa. Työkalutila (pilvi-Claude) ei saa niitä.
@@ -106,7 +106,7 @@ Gitea on jo suljettu (rekisteröinti pois, kirjautuminen vaaditaan, käyttäjät
 
 ## Päätösten kirjaus
 
-Yksityisen tilan päätös kirjataan vain yksityiseen muistiin (tiedosto 0600) eikä koskaan commitoida tai pushata, vaikka muisti olisi git-repossa. Työkalutilan päätös julkaistaan kirjaston `origin`iin vain, jos sen palvelin on `AIVO_SALLITUT_ETAISANNAT`-listalla; julkaisun epäonnistuessa päätöstiedosto palautetaan ennalleen. Selain saa Tonyn viestin paikan palvelimelta, joten päätöspainike kirjaa aina juuri sen viestin.
+Yksityisen tilan päätös kirjataan vain yksityiseen muistiin (tiedosto 0600) eikä koskaan commitoida tai pushata, vaikka muisti olisi git-repossa. Työkalutilan päätös julkaistaan kirjaston `origin`iin vain, jos sen palvelin on `AIVO_SALLITUT_ETAISANNAT`-listalla; jos julkaisu heittää poikkeuksen, päätöstiedosto palautetaan ennalleen. Jos push epäonnistuu (tulos `push-epaonnistui`), commit jää kirjaston paikalliseen kloonaan eikä sitä peruta. Chat vastaa silloin virhekoodilla 502 eikä näytä "Kirjattu". Selain saa Tonyn viestin paikan palvelimelta, joten päätöspainike kirjaa aina juuri sen viestin.
 
 ## Rajat ja avoimet asiat
 
