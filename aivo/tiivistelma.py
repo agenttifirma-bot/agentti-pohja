@@ -60,17 +60,21 @@ def _ohjausmerkki(c):
 
 
 def puhdista_kehotteeseen(teksti, raja=None):
-    """Poistaa NUL- ja ohjausmerkit, RAJA-merkkijonon ja lohkomerkit [[ ]]; rajaa pituuden (suunnitelma 5.1)."""
-    t = "".join(c for c in str(teksti) if not _ohjausmerkki(c)).replace(RAJA, "")
-    while "[[" in t or "]]" in t:
-        t = t.replace("[[", "").replace("]]", "")
+    """Poistaa NUL- ja ohjausmerkit, muuttaa rivinvaihdot ja sarkaimet valilyonneiksi seka poistaa RAJA-merkkijonon
+    ja lohkomerkit [[ ]] toistaen, kunnes tulos ei enaa muutu (poisto voi muuten koota uuden RAJA-merkkijonon)."""
+    t = "".join(" " if c in "\n\t" else c for c in str(teksti) if c in "\n\t" or not _ohjausmerkki(c))
+    edellinen = None
+    while t != edellinen:
+        edellinen = t
+        t = t.replace(RAJA, "").replace("[[", "").replace("]]", "")
     t = t.strip()
     return t[:raja] if raja else t
 
 
 def puhdista_naytolle(teksti):
-    """Ohjaus- ja muotoilumerkit nakyviksi \\xNN/\\uNNNN-merkinnoiksi, jottei terminaalissa voi piilottaa sisaltoa."""
-    return "".join(("\\x%02x" % ord(c) if ord(c) < 256 else "\\u%04x" % ord(c)) if _ohjausmerkki(c) else c
+    """Ohjaus- ja muotoilumerkit (myos rivinvaihto ja sarkain) nakyviksi \\xNN/\\uNNNN-merkinnoiksi, jottei
+    terminaalissa voi piilottaa sisaltoa eika vaarentaa uutta rivia (esim. 'Tony sanoi: ...')."""
+    return "".join(("\\x%02x" % ord(c) if ord(c) < 256 else "\\u%04x" % ord(c)) if (_ohjausmerkki(c) or c in "\n\t") else c
                    for c in teksti)
 
 
