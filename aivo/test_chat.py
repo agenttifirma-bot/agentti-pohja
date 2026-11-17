@@ -175,6 +175,69 @@ class KirjastoTesti(unittest.TestCase):
             self.assertTrue(t2.startswith(t))          # vanhaa ei ylikirjoiteta
             self.assertIn("> Toinen.", t2)
 
+    def test_sama_paatos_kirjataan_vain_kerran_uudelleenyrityksessa(self):
+        def feikki(kom, **kw):
+            if "get-url" in kom:
+                return SimpleNamespace(returncode=0, stdout="https://git.example/a.git\n", stderr="")
+            if "push" in kom:
+                return SimpleNamespace(returncode=1, stdout="", stderr="")
+            if "status" in kom:
+                return SimpleNamespace(returncode=0, stdout="M f\n", stderr="")
+            if "symbolic-ref" in kom:
+                return SimpleNamespace(returncode=0, stdout="main\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout="true\n", stderr="")
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.dict(os.environ, {"AIVO_SALLITUT_ETAISANNAT": "git.example"}):
+            for _ in range(3):
+                self.assertEqual(chat.kirjaa_paatos(d, "k1", "2026-11-16T10:00:00+00:00", "Paatos A", suorita=feikki),
+                                 "push-epaonnistui")
+            self.assertEqual((Path(d) / chat.PAATOS_TIEDOSTO).read_text(encoding="utf-8").count("> Paatos A"), 1)
+            chat.kirjaa_paatos(d, "k1", "2026-11-16T10:01:00+00:00", "Paatos A", suorita=feikki)    # eri aika = uusi viesti
+            self.assertEqual((Path(d) / chat.PAATOS_TIEDOSTO).read_text(encoding="utf-8").count("> Paatos A"), 2)
+
+    def test_yksityinen_tila_ei_kirjaa_samaa_viestia_kahdesti(self):
+        with tempfile.TemporaryDirectory() as d:
+            for _ in range(2):
+                self.assertEqual(chat.kirjaa_paatos_yksityinen(d, "k1", "2026-11-16T10:00:00+00:00", "Yks"), "ei-julkaistu")
+            self.assertEqual((Path(d) / chat.PAATOS_TIEDOSTO).read_text(encoding="utf-8").count("> Yks"), 1)
+
+    def test_uusi_painallus_pushaa_uudelleen_vaikka_tiedosto_ei_muutu(self):
+        """Oikea git: ensimmainen push epaonnistuu (etarepo poissa), toinen painallus pushaa saman commitin."""
+        import shutil
+        import subprocess
+        if shutil.which("git") is None:
+            self.skipTest("git puuttuu")
+
+        def git(*a, cwd=None):
+            return subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True, text=True,
+                                  env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull,
+                                       "GIT_TERMINAL_PROMPT": "0"})
+
+        def suorita(kom, **kw):
+            if "get-url" in kom:
+                return SimpleNamespace(returncode=0, stdout="https://git.example/a.git\n", stderr="")
+            return subprocess.run(kom, **{**kw, "env": {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull,
+                                                        "GIT_CONFIG_SYSTEM": os.devnull, "GIT_TERMINAL_PROMPT": "0"}})
+        with tempfile.TemporaryDirectory() as t:
+            eta, oma, pois = Path(t) / "eta.git", Path(t) / "oma", Path(t) / "poissa.git"
+            git("init", "-q", "--bare", "-b", "main", str(eta))
+            git("clone", "-q", str(eta), str(oma))
+            for k, v in (("user.name", "t"), ("user.email", "t@example.invalid")):
+                git("-C", str(oma), "config", k, v)
+            (oma / "a").write_text("a", encoding="utf-8")
+            git("-C", str(oma), "add", "a")
+            git("-C", str(oma), "commit", "-q", "-m", "alku")
+            git("-C", str(oma), "push", "-q", "origin", "HEAD:refs/heads/main")
+            eta.rename(pois)                                              # push epaonnistuu
+            with unittest.mock.patch.dict(os.environ, {"AIVO_SALLITUT_ETAISANNAT": "git.example"}):
+                args = (str(oma), "k1", "2026-11-16T10:00:00+00:00", "Paatos B")
+                self.assertEqual(chat.kirjaa_paatos(*args, suorita=suorita), "push-epaonnistui")
+                self.assertEqual(chat.kirjaa_paatos(*args, suorita=suorita), "push-epaonnistui")
+                pois.rename(eta)                                          # etarepo palaa
+                self.assertEqual(chat.kirjaa_paatos(*args, suorita=suorita), "pushattu")
+                self.assertEqual(chat.kirjaa_paatos(*args, suorita=suorita), "ei-muutosta")
+            self.assertEqual((oma / chat.PAATOS_TIEDOSTO).read_text(encoding="utf-8").count("> Paatos B"), 1)
+            self.assertEqual(git("-C", str(eta), "rev-list", "--count", "main").stdout.strip(), "2")   # alku + yksi paatos
+
     def test_github_etarepo_estaa_pushin(self):
         def feikki(kom, **kw):
             if "get-url" in kom:
@@ -238,6 +301,7 @@ class PalveluTesti(unittest.TestCase):
         (k / "faktat.md").write_text("Tony opiskelee ohjelmistokehitt\u00e4j\u00e4ksi.")
         cls.kysytty = []
         cls.paatokset = []
+        cls.julkaisun_tulos = "pushattu"
 
         def kysy(muisti, historia):
             cls.kysytty.append((muisti, historia))
@@ -245,7 +309,7 @@ class PalveluTesti(unittest.TestCase):
 
         def julkaise(kirjasto, kid, aika, teksti):
             cls.paatokset.append(teksti)
-            return "ei-gitissa"
+            return cls.julkaisun_tulos
         cls.tila = chat.Tila(chat.tiivista_salasana(SAL), str(k), str(Path(cls.tmp.name) / "data"), [TS],
                              kysy=kysy, julkaise=julkaise)
         cls.srv = chat.kaynnista(ip(127, 0, 0, 1), 0, cls.tila)
@@ -333,9 +397,49 @@ class PalveluTesti(unittest.TestCase):
         # paatos: vain Tonyn viesti (indeksi 0) kelpaa, Aivon (1) ei
         s, _ = self.api(ev, "/api/paatos", {"keskustelu": kid, "indeksi": 1})
         self.assertEqual(s, 400)
-        s, _ = self.api(ev, "/api/paatos", {"keskustelu": kid, "indeksi": 0})
-        self.assertEqual(s, 200)
+        s, r = self.api(ev, "/api/paatos", {"keskustelu": kid, "indeksi": 0})
+        self.assertEqual((s, r["tila"], r["teksti"]), (200, "pushattu", "Kirjattu"))
         self.assertEqual(self.paatokset, ["mit\u00e4 tied\u00e4t minusta?"])
+
+    def _kirjaa_tuloksella(self, tulos):
+        ev = self.kirjaudu()
+        _, d = self.api(ev, "/api/uusi", {"tila": "tyokalu"})
+        self.api(ev, "/api/viesti", {"keskustelu": d["id"], "teksti": "p\u00e4\u00e4t\u00f6s"})
+        type(self).julkaisun_tulos = tulos
+        try:
+            return self.api(ev, "/api/paatos", {"keskustelu": d["id"], "indeksi": 0})
+        finally:
+            type(self).julkaisun_tulos = "pushattu"
+
+    def test_paatos_epaonnistuneesta_pushista_ei_ole_kirjattu(self):
+        for tulos in ("push-epaonnistui", "ei-etaa", "ei-gitissa"):
+            with self.subTest(tulos=tulos):
+                s, r = self._kirjaa_tuloksella(tulos)
+                self.assertEqual((s, r["tila"]), (502, tulos))
+                self.assertNotIn("Kirjattu", r["teksti"].replace("Ei kirjattu", ""))
+                self.assertTrue(r["teksti"].startswith("Ei kirjattu"))
+
+    def test_paatos_ei_muutosta_nayttaa_oman_tekstinsa(self):
+        s, r = self._kirjaa_tuloksella("ei-muutosta")
+        self.assertEqual((s, r["tila"]), (200, "ei-muutosta"))
+        self.assertNotEqual(r["teksti"], "Kirjattu")
+        self.assertIn("Ei muutosta", r["teksti"])
+
+    def test_paatos_tuntematon_tulos_ja_vaara_tila_ovat_virhe(self):
+        s, r = self._kirjaa_tuloksella("jotain-outoa")
+        self.assertEqual((s, r["tila"]), (502, "tuntematon"))
+        # "ei-julkaistu" kuuluu vain yksityiseen tilaan: tyokalutilassa se ei saa nayttaa onnistumista
+        s, r = self._kirjaa_tuloksella("ei-julkaistu")
+        self.assertEqual((s, r["tila"]), (502, "tuntematon"))
+
+    def test_paatoksen_vastaus_yksityinen_vain_ei_julkaistu(self):
+        self.assertEqual(chat.paatoksen_vastaus("ei-julkaistu", True)[0], 200)
+        for t in ("pushattu", "push-epaonnistui", "ei-etaa", "ei-gitissa", "ei-muutosta", None):
+            self.assertEqual(chat.paatoksen_vastaus(t, True)[0], 502, t)
+
+    def test_kayttoliittyma_nayttaa_palvelimen_tekstin_eika_pelkkaa_kirjattu_r_ok_perusteella(self):
+        self.assertIn("b.textContent=j.teksti||", chat.HTML)
+        self.assertNotIn("r.ok?'Kirjattu'", chat.HTML)
 
     def test_liian_pitka_viesti_hylataan(self):
         ev = self.kirjaudu()

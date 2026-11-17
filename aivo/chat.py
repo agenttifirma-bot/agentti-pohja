@@ -109,7 +109,8 @@ function lisaa(rooli,teksti){const d=document.createElement('div');d.className='
 function painike(d,idx){const b=document.createElement('button');b.textContent='Kirjaa p\u00e4\u00e4t\u00f6kseksi (sanasi sellaisenaan)';
  b.onclick=async()=>{if(!confirm('Kirjataanko t\u00e4m\u00e4 viesti p\u00e4\u00e4t\u00f6skirjastoon sellaisenaan?'))return;
   const r=await fetch('/api/paatos',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,indeksi:idx})});
-  b.textContent=r.ok?'Kirjattu':'Kirjaus ep\u00e4onnistui ('+r.status+')';b.disabled=true;};d.appendChild(b);}
+  let j={};try{j=await r.json();}catch(e){}
+  b.textContent=j.teksti||('Kirjaus ep\u00e4onnistui ('+r.status+')');b.disabled=r.ok;};d.appendChild(b);}
 async function aloita(){const r=await fetch('/api/uusi',{method:'POST',headers:H,body:JSON.stringify({tila:document.getElementById('tila').value})});
  if(r.status===401){location.href='/kirjaudu';return;}
  if(!r.ok){lisaa('aivo','Tilaa ei voi k\u00e4ytt\u00e4\u00e4 ('+r.status+')');return;}
@@ -439,13 +440,37 @@ class Keskustelut:
         return [json.loads(r) for r in p.read_text(encoding="utf-8").splitlines() if r.strip()]
 
 
+# Paatoksen kirjauksen tulos -> (HTTP-tila, naytettava teksti). "Kirjattu" nakyy vain, kun paatos on oikeasti perilla:
+# pushattu Giteaan (tyokalutila) tai kirjattu yksityiseen muistiin (yksityinen tila). Tuntematon tulos on virhe.
+PAATOS_TULOKSET = {
+    "pushattu": (200, "Kirjattu"),
+    "ei-julkaistu": (200, "Kirjattu (vain yksityiseen muistiin)"),
+    "ei-muutosta": (200, "Ei muutosta: p\u00e4\u00e4t\u00f6s oli jo kirjattu"),
+    "push-epaonnistui": (502, "Ei kirjattu Giteaan: push ep\u00e4onnistui, p\u00e4\u00e4t\u00f6s j\u00e4i vain paikalliseksi"),
+    "ei-etaa": (502, "Ei kirjattu Giteaan: p\u00e4\u00e4t\u00f6skirjastolla ei ole sallittua et\u00e4palvelinta"),
+    "ei-gitissa": (502, "Ei kirjattu Giteaan: p\u00e4\u00e4t\u00f6skirjasto ei ole git-repo"),
+}
+PAATOS_TUNTEMATON = (502, "Kirjausta ei voitu vahvistaa")
+
+
+def paatoksen_vastaus(tulos, yksityinen=False):
+    """Muuntaa kirjaa_paatos-funktion tuloksen HTTP-tilaksi ja vastaukseksi. Vain onnistuneet tulokset ovat 2xx.
+    "ei-julkaistu" kelpaa vain yksityisessa tilassa ja vain se; muu tulos tai tuntematon arvo on virhe."""
+    if tulos in PAATOS_TULOKSET and (tulos == "ei-julkaistu") == bool(yksityinen):
+        koodi, teksti = PAATOS_TULOKSET[tulos]
+        return koodi, {"tila": tulos, "teksti": teksti}
+    return PAATOS_TUNTEMATON[0], {"tila": "tuntematon", "teksti": PAATOS_TUNTEMATON[1]}
+
+
 _PAATOS_LUKKO = threading.Lock()      # palvelin on saikeistetty: luku-muokkaus-kirjoitus ei saa lomittua
 
 
 def kirjaa_paatos(kirjasto, kid, aika, teksti, suorita=subprocess.run, julkaise=True):
     """Liittaa Tonyn sanat sellaisenaan paatoskirjastoon (lainauksena). julkaise=True: commit ja push Giteaan
     (vain kirjaston omille, sallituille etapalvelimille); julkaise=False: vain paikallinen tiedosto (yksityinen tila).
-    Jos julkaisu epaonnistuu, tiedosto palautetaan ennalleen eika paatos jaa puoliksi voimaan."""
+    Jos julkaisu heittaa poikkeuksen, tiedosto palautetaan ennalleen. Jos push epaonnistuu (tulos "push-epaonnistui"),
+    commit jaa paikalliseksi eika sita peruta; kutsuja nayttaa tuloksen virheena (ks. paatoksen_vastaus).
+    Uusi painallus samalle viestille ei lisaa osiota toistamiseen, mutta yrittaa pushia uudelleen, jos edellinen epaonnistui."""
     polku = Path(kirjasto) / PAATOS_TIEDOSTO
     polku.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     lainaus = "\n".join("> " + r for r in teksti.splitlines()) or "> "
@@ -453,12 +478,16 @@ def kirjaa_paatos(kirjasto, kid, aika, teksti, suorita=subprocess.run, julkaise=
            "Kirjattu Tonyn painalluksella; ei Aivon p\u00e4\u00e4telm\u00e4.\n" % (aika[:10], aika[11:16], lainaus, kid))
     with _PAATOS_LUKKO:
         vanha = polku.read_text(encoding="utf-8") if polku.exists() else None
-        kirjoita_600(polku, (vanha if vanha is not None else "# Aivon p\u00e4\u00e4t\u00f6skirjasto\n") + osa)
+        uusi_osa = vanha is None or osa not in vanha     # sama viesti (sama keskustelu ja aika) kirjataan vain kerran
+        if uusi_osa:
+            kirjoita_600(polku, (vanha if vanha is not None else "# Aivon p\u00e4\u00e4t\u00f6skirjasto\n") + osa)
         if not julkaise:
             return "ei-julkaistu"
         try:
-            return julkaise_kirjastoon(kirjasto, polku, suorita)
+            return julkaise_kirjastoon(kirjasto, polku, suorita, jalkijulkaise=True)
         except BaseException:
+            if not uusi_osa:
+                raise
             if vanha is None:
                 polku.unlink(missing_ok=True)
             else:
@@ -719,7 +748,7 @@ def tee_kasittelija(tila):
                 tulos = tila.julkaise_yks(tila.yks_muisti, kid, v["aika"], v["teksti"])
             else:
                 tulos = tila.julkaise(tila.kirjasto, kid, v["aika"], v["teksti"])
-            self._json(200, {"tila": tulos})
+            self._json(*paatoksen_vastaus(tulos, valittu == "yksityinen"))
 
     return K
 

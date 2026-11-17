@@ -303,10 +303,12 @@ def tarkista_julkaisukohde(kirjasto, suorita=subprocess.run, sallitut=None):
 
 
 def julkaise_kirjastoon(kirjasto, polku, suorita=subprocess.run, viesti="Aivo: paatos keskustelusta", sallitut=None,
-                        kohde_tiedot=False):
+                        kohde_tiedot=False, jalkijulkaise=False):
     """Jos kirjasto on git-repo: commit ja push. Kieltaytyy, ellei jokainen push-osoite ole sallittujen listalla.
     Push nimeaa kohteen ('origin' ja haara) eika kayta pushDefault- tai pushRemote-asetuksia.
-    Commit-virhe nostaa virheen (ei palauta 'ei-muutosta'); vain aidosti muuttumaton tiedosto palauttaa 'ei-muutosta'."""
+    Commit-virhe nostaa virheen (ei palauta 'ei-muutosta'); vain aidosti muuttumaton tiedosto palauttaa 'ei-muutosta'.
+    jalkijulkaise=True: muuttumattomalla tiedostolla pushataan silti, jos paikallinen HEAD ei ole etahaaran paalla
+    (aiempi push epaonnistui); 'ei-muutosta' tarkoittaa silloin, etta kaikki on jo perilla."""
     def git(*a):
         try:
             return suorita(["git", "-C", str(kirjasto), *a], capture_output=True, text=True, check=False,
@@ -321,6 +323,12 @@ def julkaise_kirjastoon(kirjasto, polku, suorita=subprocess.run, viesti="Aivo: p
         raise YksityinenVirhe("git add epaonnistui; muutosta ei commitoitu")
     muutos = git("status", "--porcelain", "--", str(polku))
     if muutos.returncode == 0 and not muutos.stdout.strip():
+        if jalkijulkaise and kohde_tiedot is not None:
+            paikallinen = git("rev-parse", "HEAD")
+            etana = git("rev-parse", "--verify", "-q", "refs/remotes/origin/" + kohde_tiedot[0])
+            if paikallinen.returncode != 0 or etana.returncode != 0 or paikallinen.stdout.strip() != etana.stdout.strip():
+                return ("pushattu" if git("push", "origin", "HEAD:refs/heads/" + kohde_tiedot[0]).returncode == 0
+                        else "push-epaonnistui")
         return "ei-muutosta"
     c = git("commit", "-m", viesti, "--", str(polku))
     if c.returncode != 0:
