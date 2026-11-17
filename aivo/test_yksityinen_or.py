@@ -406,3 +406,25 @@ class KaynnistysTesti(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KayttoonottoOhjeTesti(unittest.TestCase):
+    """Ohje docs/aivo-yksityinen-openrouter.md vastaa koodia: kirjanpito on kontin 122 omassa kansiossa."""
+
+    OHJE = (Path(__file__).resolve().parent.parent / "docs" / "aivo-yksityinen-openrouter.md").read_text(encoding="utf-8")
+
+    def test_ohje_luo_kontin_oman_kansion_oletustilan_polkuun(self):
+        self.assertEqual(ok.OLETUS_TILA, "/var/lib/claude-jono")
+        self.assertIn("install -d -m 700 -o aivo-yksityinen -g aivo-yksityinen " + ok.OLETUS_TILA, self.OHJE)
+        self.assertIn("ReadWritePaths", self.OHJE)
+
+    def test_ohje_ei_vaadi_ajurin_kansiota_eika_vaita_yhteista_kattoa(self):
+        for kielletty in ("sama kansio kuin ajurilla", "sama kirjanpito ja sama katto kuin ajurilla", "kansion pit\u00e4\u00e4 olla sama"):
+            self.assertNotIn(kielletty, self.OHJE)
+        self.assertIn("kontissa 122", self.OHJE)
+        self.assertIn("pct enter 122", self.OHJE)
+
+    def test_ohje_ei_nosta_kattoa(self):
+        self.assertEqual(ok.PAIVAKATTO_EUR, 10)
+        self.assertIn("10 \u20ac/vrk", self.OHJE)
+        self.assertGreaterEqual(self.OHJE.count("Odotettu"), 10)
