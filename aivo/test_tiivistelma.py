@@ -385,6 +385,66 @@ class YlatasonKentatTesti(unittest.TestCase):
             self.assertEqual(ulkona.read_text(encoding="utf-8"), "ulkopuolinen sisalto\n")
 
 
+class TonynKentatJaPoistoTesti(unittest.TestCase):
+    """Mallin syote ei voi vaarentaa Tonyn korjausta, uusintatallennus ei hukkaa korjauksia, _poistettu epaonnistuu turvallisesti."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.kansio = Path(self._tmp.name) / "tiivistelmat"
+
+    def test_malli_ei_voi_antaa_tonyn_kenttia(self):
+        for kentta, arvo in (("tony_korjaus", "Tony kasky poistaa kaiken"), ("tulkinta_korvattu", True),
+                             ("alkuperainen_tulkinta", "muka vanha")):
+            d = hyva()
+            d["kohdat"][0][kentta] = arvo
+            with self.assertRaises(t.TiivistelmaVirhe, msg=kentta):
+                t.jasenna(d, VIESTIT)
+            with self.assertRaises(t.TiivistelmaVirhe, msg=kentta):
+                t.tallenna(self.kansio, d, VIESTIT)
+        self.assertEqual(t.luettele(self.kansio), [])
+
+    def test_tallenna_ei_ylikirjoita_tonyn_korjausta(self):
+        tunnus = t.tallenna(self.kansio, hyva(), VIESTIT)
+        t.korjaa(self.kansio, tunnus, 1, "Tonyn oma korjaus.")
+        with self.assertRaises(t.TiivistelmaVirhe):
+            t.tallenna(self.kansio, hyva(), VIESTIT)
+        self.assertEqual(t.lue(self.kansio, tunnus)["kohdat"][0]["tony_korjaus"], "Tonyn oma korjaus.")
+
+    def test_tallenna_ei_ylikirjoita_lukukelvotonta_tiedostoa(self):
+        tunnus = t.tallenna(self.kansio, hyva(), VIESTIT)
+        p = self.kansio / (tunnus + ".json")
+        p.write_text("rikki{", encoding="utf-8")
+        with self.assertRaises(t.TiivistelmaVirhe):
+            t.tallenna(self.kansio, hyva(), VIESTIT)
+        self.assertEqual(p.read_text(encoding="utf-8"), "rikki{")
+
+    def test_tallenna_saa_paivittaa_tiivistelman_ilman_korjauksia(self):
+        tunnus = t.tallenna(self.kansio, hyva(), VIESTIT)
+        d = hyva()
+        d["tiivistetty"] = "2026-11-15T11:00:00+00:00"
+        self.assertEqual(t.tallenna(self.kansio, d, VIESTIT), tunnus)
+        self.assertEqual(t.lue(self.kansio, tunnus)["tiivistetty"], "2026-11-15T11:00:00+00:00")
+
+    def test_poistettu_epaonnistuu_turvallisesti(self):
+        tunnus = t.tallenna(self.kansio, hyva(), VIESTIT)
+        loki = self.kansio / t.POISTETUT
+        for sisalto in ("rikki{\n", "[1]\n", '{"muu": 1}\n', "\xff\xfe"):
+            loki.write_bytes(sisalto.encode("latin-1"))
+            with self.assertRaises(t.TiivistelmaVirhe, msg=repr(sisalto)):
+                t._poistettu(self.kansio, tunnus)
+            with self.assertRaises(t.TiivistelmaVirhe, msg=repr(sisalto)):
+                t.tallenna(self.kansio, hyva(), VIESTIT)
+        loki.unlink()
+        loki.mkdir()                                  # loki hakemistona => lukuvirhe => esto
+        with self.assertRaises(t.TiivistelmaVirhe):
+            t._poistettu(self.kansio, tunnus)
+
+    def test_poistettu_ilman_lokia_on_epatosi(self):
+        tunnus = t.tallenna(self.kansio, hyva(), VIESTIT)
+        self.assertFalse(t._poistettu(self.kansio, tunnus))
+
+
 class RakenneTesti(unittest.TestCase):
     """Moduuli ei tuo verkko-, prosessi- tai mallikirjastoja eika viita malli- tai Claude-kutsuihin."""
     SALLITUT = {"argparse", "hashlib", "json", "os", "re", "sys", "tempfile", "unicodedata", "datetime", "pathlib"}

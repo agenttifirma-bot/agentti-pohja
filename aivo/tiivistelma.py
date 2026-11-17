@@ -42,7 +42,8 @@ MERKINTA = "Aivon tulkinta, ei Tonyn sanoja"
 YLAKENTAT = ("versio", "keskustelu", "alku", "loppu", "ensimmainen_aika", "viimeinen_aika", "tiivistetty", "malli",
              "alue_sha", "kohdat")
 KOHTAKENTAT_PAKOLLISET = ("id", "tyyppi", "tony_sanoi", "tulkinta", "viestit", "tila")
-KOHTAKENTAT_VALINNAISET = ("tony_korjaus", "tulkinta_korvattu", "alkuperainen_tulkinta")
+# Vain korjaa() kirjoittaa nama kentat. Mallin syote ei saa sisaltaa niita (jasenna_kohta hylkaa ne tuntemattomina).
+TONYN_KENTAT = ("tony_korjaus", "tulkinta_korvattu", "alkuperainen_tulkinta")
 
 
 class TiivistelmaVirhe(Exception):
@@ -143,7 +144,7 @@ def _lainaus_ok(lainaus, viestit, indeksit):
 
 def jasenna_kohta(d, viestit, nimi="kohta"):
     """Tarkistaa yhden kohdan. Palauttaa puhdistetun kopion; virheessa TiivistelmaVirhe."""
-    _tarkista_kentat(d, KOHTAKENTAT_PAKOLLISET, KOHTAKENTAT_VALINNAISET, nimi)
+    _tarkista_kentat(d, KOHTAKENTAT_PAKOLLISET, (), nimi)
     if not _on_int(d["id"]) or d["id"] < 1:
         raise TiivistelmaVirhe("%s: id pitaa olla positiivinen kokonaisluku" % nimi)
     if d["tyyppi"] not in TYYPIT:
@@ -170,16 +171,6 @@ def jasenna_kohta(d, viestit, nimi="kohta"):
             "viestit": list(ind), "tila": d["tila"]}
     if not ulos["tulkinta"]:
         raise TiivistelmaVirhe("%s: tulkinta jai tyhjaksi puhdistuksessa" % nimi)
-    if "tony_korjaus" in d:
-        ulos["tony_korjaus"] = puhdista_kehotteeseen(_teksti(d["tony_korjaus"], nimi + ".tony_korjaus", MAX_KORJAUS),
-                                                     MAX_KORJAUS)
-    if "tulkinta_korvattu" in d:
-        if d["tulkinta_korvattu"] is not True:
-            raise TiivistelmaVirhe("%s: tulkinta_korvattu on joko true tai puuttuu" % nimi)
-        ulos["tulkinta_korvattu"] = True
-    if "alkuperainen_tulkinta" in d:
-        ulos["alkuperainen_tulkinta"] = puhdista_kehotteeseen(
-            _teksti(d["alkuperainen_tulkinta"], nimi + ".alkuperainen_tulkinta", MAX_TULKINTA), MAX_TULKINTA)
     return ulos
 
 
@@ -265,9 +256,15 @@ def _poistettu(kansio, tunnus):
     if p.is_symlink():
         raise TiivistelmaVirhe("poistetut.jsonl on linkki")
     try:
-        return any(json.loads(r).get("tunnus") == tunnus for r in p.read_text(encoding="utf-8").splitlines() if r.strip())
-    except (OSError, ValueError):
-        return False
+        rivit = p.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return False                              # ei lokia => mitaan ei ole poistettu
+    except (OSError, ValueError) as e:            # turvallinen epaonnistuminen: ei tiedeta, onko poistettu => esto
+        raise TiivistelmaVirhe("poistettujen lokia ei voi lukea (%s)" % type(e).__name__)
+    try:
+        return any(json.loads(r)["tunnus"] == tunnus for r in rivit if r.strip())
+    except (ValueError, KeyError, TypeError):
+        raise TiivistelmaVirhe("poistettujen loki on rikkinainen")
 
 
 def tallenna(kansio, raaka, viestit):
@@ -277,7 +274,15 @@ def tallenna(kansio, raaka, viestit):
     p = _kansio(kansio, luo=True)
     if _poistettu(p, tunnus):
         raise TiivistelmaVirhe("tama viestialue on poistettu eika sita luoda uudelleen")
-    _kirjoita_600(_polku(p, tunnus), json.dumps(t, ensure_ascii=False, indent=1) + "\n")
+    polku = _polku(p, tunnus)
+    if os.path.lexists(polku):                    # uusintatiivistys ei saa hukata Tonyn korjauksia hiljaa
+        try:
+            vanha = lue(p, tunnus)
+        except TiivistelmaVirhe:
+            raise TiivistelmaVirhe("olemassa olevaa tiivistelmaa ei voi lukea, ei ylikirjoiteta")
+        if any(isinstance(k, dict) and any(f in k for f in TONYN_KENTAT) for k in vanha["kohdat"]):
+            raise TiivistelmaVirhe("tiivistelmassa on Tonyn korjauksia, ei ylikirjoiteta")
+    _kirjoita_600(polku, json.dumps(t, ensure_ascii=False, indent=1) + "\n")
     return tunnus
 
 
