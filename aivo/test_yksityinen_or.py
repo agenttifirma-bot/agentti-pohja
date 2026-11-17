@@ -113,6 +113,46 @@ class ZdrPuuttuuTesti(Pohja):
         self.assertEqual(len(self.kutsut), 1)
 
 
+class YhteinenKattoTesti(Pohja):
+    """A963/A984: yksityinen tila kuluttaa samaa kirjanpitoa ja samaa 10 EUR/vrk kattoa kuin muut kutsut."""
+
+    def test_ei_omaa_kulutilaa(self):
+        self.assertFalse(hasattr(yo, "OLETUS_KULUTILA"))
+        import inspect
+        self.assertIsNone(inspect.signature(yo.kysy_openrouterilta).parameters["kulutila"].default)
+        self.assertIsNone(inspect.signature(chat.Tila.__init__).parameters["or_kulutila"].default)
+        self.assertNotIn("--openrouter-kulutila", (AIVO / "chat.py").read_text(encoding="utf-8"))
+
+    def test_oletuskulutila_on_ajurin_yhteinen(self):
+        with mock.patch.object(ok, "OLETUS_TILA", str(self.kulut)):
+            yo.kysy_openrouterilta("m", HISTORIA, malli=MALLI, avain_tiedosto=str(self.avain),
+                                   avaa=self.avaa(), nyt=lambda: NYT)
+        self.assertEqual(len([r for r in self.kulurivit() if not r.get("varaus")]), 1)
+
+    def test_ajurin_kulut_tayttavat_yksityisen_katon(self):
+        with mock.patch.object(ok, "OLETUS_TILA", str(self.kulut)):
+            ok.kutsu(MALLI, [{"role": "user", "content": "x"}], lambda r: {"usage": {"cost": 20.0}},
+                     tehtava="ajuri", nyt=lambda: NYT)
+            with self.assertRaises(yksityinen.YksityinenVirhe) as e:
+                yo.kysy_openrouterilta("m", HISTORIA, malli=MALLI, avain_tiedosto=str(self.avain),
+                                       avaa=self.avaa(), nyt=lambda: NYT)
+        self.assertIn("p\u00e4iv\u00e4katto", str(e.exception))
+        self.assertEqual(self.kutsut, [])
+
+    def test_yksityisen_kulut_tayttavat_ajurin_katon(self):
+        with mock.patch.object(ok, "OLETUS_TILA", str(self.kulut)):
+            yo.kysy_openrouterilta("m", HISTORIA, malli=MALLI, avain_tiedosto=str(self.avain), nyt=lambda: NYT,
+                                   avaa=self.avaa({"choices": [{"message": {"content": "x"}}], "usage": {"cost": 20.0}}))
+            self.assertFalse(ok.saako_kutsua(NYT))
+
+    def test_pyynto_valittaa_yksityisen_lipun(self):
+        with mock.patch.object(ok.openrouter_zdr, "rakenna_runko", wraps=ok.openrouter_zdr.rakenna_runko) as m:
+            self.kysy()
+            self.assertIs(m.call_args.kwargs["yksityinen_chat"], True)
+            self.kysy(yksityinen_chat=False)                  # kutsuja ei voi poistaa lippua
+            self.assertIs(m.call_args.kwargs["yksityinen_chat"], True)
+
+
 class PaivakattoTesti(Pohja):
     def tayta(self, usd):
         with open(self.kulut / ok.KULUT, "w") as f:
@@ -303,6 +343,43 @@ class TyokalutilaTesti(Pohja):
         s, v = api("/api/viesti", {"keskustelu": d["id"], "teksti": "moi"})
         self.assertEqual(s, 502)
         self.assertIn("avain puuttuu", v["virhe"])
+
+
+class ValintaTekstiTesti(unittest.TestCase):
+    def test_teksti_taustapaan_mukaan(self):
+        lb = chat.sivu_html("loopback")
+        orr = chat.sivu_html("openrouter")
+        self.assertIn(">Yksityinen (oma malli, ei verkkoa)</option>", lb)
+        self.assertNotIn("OpenRouter", lb.split("</select>")[0])
+        self.assertIn(">Yksityinen (avoin malli OpenRouterissa, ZDR: ei tallennusta)</option>", orr)
+        self.assertNotIn("ei verkkoa", orr)
+        self.assertNotIn("{YKSITYINEN_TEKSTI}", lb + orr)
+
+    def test_tuntematon_taustapaa_ei_vaita_verkotonta(self):
+        self.assertNotIn("ei verkkoa", chat.sivu_html("muu"))
+
+    def test_tila_valitsee_tekstin_ja_sivu_palvelee_sen(self):
+        with tempfile.TemporaryDirectory() as d:
+            for tp, odotus in (("loopback", "oma malli, ei verkkoa"), ("openrouter", "avoin malli OpenRouterissa")):
+                kw = {"or_malli": MALLI} if tp == "openrouter" else {}
+                tila = chat.Tila(chat.tiivista_salasana("oikea-salasana-123"), d, d, ["localhost"], yks_data=d + "/y" + tp,
+                                 taustapaa=tp, **kw)
+                self.assertEqual(tila.taustapaa, tp)
+                srv = chat.kaynnista("127.0.0.1", 0, tila)
+                self.addCleanup(srv.server_close)
+                threading.Thread(target=srv.serve_forever, daemon=True).start()
+                self.addCleanup(srv.shutdown)
+                portti = srv.server_address[1]
+                c = http.client.HTTPConnection("127.0.0.1", portti, timeout=10)
+                c.request("POST", "/kirjaudu", body="salasana=oikea-salasana-123",
+                          headers={"Content-Type": "application/x-www-form-urlencoded"})
+                x = c.getresponse()
+                x.read()
+                ev = x.getheader("Set-Cookie").split(";")[0]
+                c = http.client.HTTPConnection("127.0.0.1", portti, timeout=10)
+                c.request("GET", "/", headers={"Cookie": ev})
+                sivu = c.getresponse().read().decode("utf-8")
+                self.assertIn(odotus, sivu)
 
 
 class KaynnistysTesti(unittest.TestCase):

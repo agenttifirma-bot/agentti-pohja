@@ -98,7 +98,7 @@ textarea{resize:none;height:3.2rem}button{font:inherit;padding:.5rem .9rem;borde
 .pieni{font-size:.8rem;opacity:.7}
 </style></head><body>
 <header><strong>Aivo</strong><span><select id="tila" aria-label="Tila">
-<option value="yksityinen" selected>Yksityinen (avoin malli, ei tallennusta)</option>
+<option value="yksityinen" selected>{YKSITYINEN_TEKSTI}</option>
 <option value="tyokalu">Ty\u00f6kalu (Claude pilvess\u00e4)</option></select> <button id="uusi">Uusi keskustelu</button></span></header>
 <div id="viestit" aria-live="polite"></div>
 <form id="lomake"><textarea id="teksti" maxlength="4000" placeholder="Kirjoita Aivolle\u2026" required></textarea><button>L\u00e4het\u00e4</button></form>
@@ -131,6 +131,18 @@ document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();if(lahet
 aloita();
 </script></body></html>
 """
+
+# Valinnan teksti kertoo, minne teksti oikeasti menee (A984): loopback = ei verkkoa, OpenRouter = pilvipalvelu (ZDR).
+YKSITYINEN_TEKSTIT = {
+    "loopback": "Yksityinen (oma malli, ei verkkoa)",
+    "openrouter": "Yksityinen (avoin malli OpenRouterissa, ZDR: ei tallennusta)",
+}
+
+
+def sivu_html(taustapaa):
+    """Paasivu valitun yksityisen taustapaan tekstilla (tuntematon taustapaa -> OpenRouter-teksti, ei vahattelevaa)."""
+    return HTML.replace("{YKSITYINEN_TEKSTI}", YKSITYINEN_TEKSTIT.get(taustapaa, YKSITYINEN_TEKSTIT["openrouter"]))
+
 
 KIRJAUTUMIS_HTML = """<!doctype html>
 <html lang="fi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -502,7 +514,7 @@ class Tila:
                  yks_data=None, yks_muisti=None, ydinohjeet=None, ehdotukset=None,
                  malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None,
                  taustapaa="loopback", or_malli=None, or_avain=yksityinen_or.OLETUS_AVAIN,
-                 or_kulutila=yksityinen_or.OLETUS_KULUTILA):
+                 or_kulutila=None):   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
         self.keskustelut = Keskustelut(data)
@@ -513,6 +525,7 @@ class Tila:
         self.julkaise_yks = julkaise_yks
         self.vastauslukko = threading.Lock()   # yksi Claude-kutsu kerrallaan
         self.yks = None
+        self.taustapaa = taustapaa if taustapaa in YKSITYINEN_TEKSTIT else "loopback"
         if yks_data:
             if taustapaa not in ("loopback", "openrouter"):
                 raise ChatVirhe("tuntematon yksityisen tilan taustapaa")
@@ -609,7 +622,7 @@ def tee_kasittelija(tila):
             if self.path in ("/", "/index.html"):
                 if not self._kirjautunut():
                     return self._laheta(302, "", "text/plain", [("Location", "/kirjaudu")])
-                return self._laheta(200, HTML, "text/html; charset=utf-8")
+                return self._laheta(200, sivu_html(tila.taustapaa), "text/html; charset=utf-8")
             if self.path == "/terve":
                 return self._json(200, {"tila": "ok"})
             self._json(404, {"virhe": "ei loydy"})
@@ -768,8 +781,6 @@ def main(argv=None):
                     help="avoin malli, esim. meta-llama/llama-3.3-70b-instruct (vain avointen perheiden lista)")
     ap.add_argument("--openrouter-avain-tiedosto", default=os.environ.get("AIVO_OPENROUTER_AVAIN", yksityinen_or.OLETUS_AVAIN),
                     help="tiedosto (0600, palvelun kayttajan), jossa avain on; avainta ei anneta ymparistomuuttujalla")
-    ap.add_argument("--openrouter-kulutila", default=os.environ.get("AIVO_OPENROUTER_KULUTILA", yksityinen_or.OLETUS_KULUTILA),
-                    help="kirjoitettava kansio kulukirjanpidolle ja paivakatkaisimelle")
     a = ap.parse_args(argv)
     try:
         if a.komento == "aseta-salasana":
@@ -782,7 +793,7 @@ def main(argv=None):
         tila = Tila(lue_tiiviste(a.salasana_tiedosto), a.kirjasto, a.data, hostit, yks_data=a.yksityinen_data,
                     yks_muisti=a.yksityinen_muisti, ydinohjeet=a.ydinohjeet, ehdotukset=a.ehdotukset, malli_url=a.malli_url,
                     taustapaa=a.yksityinen_taustapaa, or_malli=a.openrouter_malli,
-                    or_avain=a.openrouter_avain_tiedosto, or_kulutila=a.openrouter_kulutila)
+                    or_avain=a.openrouter_avain_tiedosto)
         palvelin = kaynnista(a.osoite, a.portti, tila)
     except ChatVirhe as e:
         print("virhe: %s" % e, file=sys.stderr)

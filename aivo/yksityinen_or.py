@@ -5,6 +5,10 @@ palvelun omissa kansioissa; OpenRouterille lahtee vain kulloinenkin kehote (ydin
 keskusteluhistoria) ja ZDR on pakotettu.
 
 Saannot (koodi on laki):
+  * Yksi yhteinen kulukirjanpito ja yksi paivakatto: ei omaa kulutilaa. Oletus on `openrouter_kulut.OLETUS_TILA`,
+    joten yksityisen tilan kutsut kuluttavat samaa 10 EUR/vrk kattoa kuin ajurin kutsut (A963, #309). `kulutila`-parametri
+    on vain testeja varten eika sita voi asettaa palvelun asetuksista.
+  * Pyynto rakennetaan aina lipulla `yksityinen_chat=True` (A984): saantomoduuli hyvaksyy sen vain avoimella mallilla.
   * Kaikki kutsut kulkevat `openrouter_kulut.kutsu`n kautta: paivakatkaisin (10 EUR/vrk) tarkistetaan ennen kutsua,
     pyynto rakennetaan `openrouter_zdr.rakenna_runko`lla (ZDR ja data_collection=deny) ja kulu kirjataan.
     Tama moduuli ei rakenna `provider`-rungon osaa eika tuo katon arvoja ulos muutettavaksi.
@@ -34,44 +38,20 @@ from . import openrouter_kulut, yksityinen
 from .yksityinen import YKSITYINEN_KEHOTE, YksityinenVirhe
 
 OLETUS_AVAIN = "/var/lib/aivo-yksityinen/openrouter-avain"
-OLETUS_KULUTILA = "/var/lib/aivo-yksityinen/kulut"
 TEHTAVA = "aivo-yksityinen"
 VASTAUS_AIKARAJA_S = 120
 MAX_VASTAUS_TAVUA = 2_000_000
 MAX_TOKENIA = yksityinen.MAX_TOKENIA
 
-# Avoimet mallit (painot julkaistu). Etuliite, joka alkaa tasmalleen naista, kelpaa; suljetut saman valmistajan
-# mallit (esim. qwen-max, mistral-large, gemma-hostattu-suljettu) eivat. Uuden perheen lisays vaatii koodimuutoksen.
-AVOIMET_MALLIT = (
-    "meta-llama/llama-3",
-    "meta-llama/llama-4",
-    "qwen/qwen3",
-    "qwen/qwen2.5",
-    "qwen/qwq",
-    "google/gemma-2",
-    "google/gemma-3",
-    "mistralai/mistral-small",
-    "mistralai/mistral-nemo",
-    "mistralai/mixtral-",
-    "deepseek/deepseek-chat",
-    "deepseek/deepseek-r1",
-)
+AVOIMET_MALLIT = openrouter_kulut.AVOIMET_MALLIT      # lista on saantomoduulissa (A984); uudelleenvienti
 _VANHA_LAUSE = ("sinua ajetaan Tonyn omalla\nkoneella, eik\u00e4 t\u00e4m\u00e4 keskustelu l\u00e4hde millek\u00e4\u00e4n ulkoiselle palvelulle.")
 _UUSI_LAUSE = ("sinua ajetaan avoimella mallilla\nOpenRouterin kautta nollas\u00e4ilytyksell\u00e4 (ZDR). Muisti ja keskustelut s\u00e4ilyv\u00e4t Tonyn omalla palvelimella;\n"
                "ulos l\u00e4htee vain kulloinenkin kehote.")
 KEHOTE = YKSITYINEN_KEHOTE.replace(_VANHA_LAUSE, _UUSI_LAUSE)
-_MALLI_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*(?::[a-z0-9_-]+)?$")
-KIELLETYT_LIITTEET = (":free", ":online", ":nitro", ":floor", ":exacto")
 _AVAIN_RE = re.compile(r"^[\x21-\x7e]{16,300}$")
 
 
-def avoin_malli(malli: Any) -> bool:
-    """Tosi vain, jos malli on avointen perheiden listalla eika siina ole kiellettya liitetta."""
-    if not isinstance(malli, str) or not _MALLI_RE.match(malli):
-        return False
-    if any(malli.endswith(l) for l in KIELLETYT_LIITTEET):
-        return False
-    return malli.startswith(AVOIMET_MALLIT)
+avoin_malli = openrouter_kulut.avoin_malli
 
 
 def tarkista_malli(malli: Any) -> str:
@@ -140,7 +120,7 @@ def kysy_openrouterilta(
     *,
     malli: str,
     avain_tiedosto: str = OLETUS_AVAIN,
-    kulutila: str = OLETUS_KULUTILA,
+    kulutila: str | None = None,
     avaa: Callable[..., Any] | None = None,
     nyt: Callable[[], datetime] | None = None,
     ilmoita: Callable[[str], Any] | None = None,
@@ -154,7 +134,8 @@ def kysy_openrouterilta(
     try:
         data = openrouter_kulut.kutsu(
             malli, viestit, laheta, tehtava=TEHTAVA, nyt=nyt, tila=kulutila, ilmoita=ilmoita,
-            max_tokens=MAX_TOKENIA, temperature=0.3, stream=False, usage={"include": True}, **lisa)
+            max_tokens=MAX_TOKENIA, temperature=0.3, stream=False, usage={"include": True},
+            **{**lisa, "yksityinen_chat": True})
     except openrouter_kulut.KutsuEstetty:
         raise YksityinenVirhe("OpenRouterin p\u00e4iv\u00e4katto on t\u00e4ynn\u00e4 tai kulukirjanpito ei kelpaa; kutsua ei tehty") from None
     except openrouter_kulut.ZdrVirhe:
