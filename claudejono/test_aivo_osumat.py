@@ -114,5 +114,80 @@ class Osumat(unittest.TestCase):
         self.assertIn("(PermissionError)", e.getvalue())
 
 
+class TulosKirjaus(unittest.TestCase):
+    """kirjaa_tulos kirjoittaa Aivon arvion viereen tehtavan lopputuloksen, jotta osumat voi verrata niita."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.tila = self.td.name
+        self.p = Path(self.tila) / aivo_arvio.TIEDOSTO
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def osumat(self):
+        with open(self.p, encoding="utf-8") as f:
+            return aivo_arvio.laske_osumat(f)
+
+    def test_arvio_ja_tulos_on_vertailtava(self):
+        aivo_arvio.kirjaa_arvio(self.tila, "a.md", True, "syy")
+        self.assertEqual(self.osumat()["vertailtavia"], 0)   # puuttuva tulos -> ei vertailtava
+        self.assertTrue(aivo_arvio.kirjaa_tulos(self.tila, "a.md", "VALMIS"))
+        l = self.osumat()
+        self.assertEqual((l["vertailtavia"], l["osumia"], l["prosentti"]), (1, 1, 100.0))
+
+    def test_ei_osuma_kun_aivo_sanoi_kylla_mutta_hylatty(self):
+        aivo_arvio.kirjaa_arvio(self.tila, "a.md", True, "syy")
+        aivo_arvio.kirjaa_tulos(self.tila, "a.md", "HYLATTY")
+        l = self.osumat()
+        self.assertEqual((l["vertailtavia"], l["osumia"], l["prosentti"]), (1, 0, 0.0))
+
+    def test_epaonnistunut_kirjataan_mutta_ei_vertailla(self):
+        aivo_arvio.kirjaa_arvio(self.tila, "a.md", False, "syy")
+        self.assertTrue(aivo_arvio.kirjaa_tulos(self.tila, "a.md", "EPAONNISTUI"))
+        self.assertEqual(self.osumat()["vertailtavia"], 0)
+
+    def test_uusintaajon_tulos_korvaa_vanhan(self):
+        aivo_arvio.kirjaa_arvio(self.tila, "a.md", True, "syy")
+        aivo_arvio.kirjaa_tulos(self.tila, "a.md", "KESKEN")
+        aivo_arvio.kirjaa_tulos(self.tila, "a.md", "VALMIS")
+        self.assertEqual(self.osumat()["osumia"], 1)
+
+    def test_ilman_arviota_ei_kirjata(self):
+        self.assertFalse(aivo_arvio.kirjaa_tulos(self.tila, "a.md", "VALMIS"))
+        self.assertFalse(self.p.exists())
+
+    def test_tuntematon_tila_ei_kirjata(self):
+        aivo_arvio.kirjaa_arvio(self.tila, "a.md", True, "syy")
+        for t in ("", "ok", None, "VALMIS; rm", "valmiiksi"):
+            self.assertFalse(aivo_arvio.kirjaa_tulos(self.tila, "a.md", t), t)
+        self.assertEqual(len(self.p.read_text().splitlines()), 1)
+
+    def test_pieni_kirjain_normalisoidaan(self):
+        aivo_arvio.kirjaa_arvio(self.tila, "a.md", True, "syy")
+        self.assertTrue(aivo_arvio.kirjaa_tulos(self.tila, "a.md", " valmis "))
+        self.assertEqual(json.loads(self.p.read_text().splitlines()[-1])["tulos"], "VALMIS")
+
+    def test_rivilla_vain_nimi_ja_tila_ja_oikeudet_0600(self):
+        aivo_arvio.kirjaa_arvio(self.tila, "a.md", True, "syy")
+        aivo_arvio.kirjaa_tulos(self.tila, "a.md", "VALMIS")
+        d = json.loads(self.p.read_text().splitlines()[-1])
+        self.assertEqual(sorted(d), ["aika", "laji", "tehtava", "tulos"])
+        self.assertEqual(d["laji"], "tulos")
+        self.assertEqual(oct(self.p.stat().st_mode & 0o777), "0o600")
+
+    def test_tulosrivi_ei_muuta_arvioita_otosta_eika_osumaa(self):
+        aivo_arvio.kirjaa_arvio(self.tila, "a.md", True, "syy")
+        aivo_arvio.kirjaa_tulos(self.tila, "a.md", "VALMIS")
+        self.assertEqual(aivo_arvio.arviot(self.tila), {"a.md": {"kylla": True, "syy": "syy", "tony": None}})
+        self.assertEqual(aivo_arvio.osuma(self.tila), (0, 0, None, 1))
+
+    def test_virhe_ei_nouse(self):
+        aivo_arvio.kirjaa_arvio(self.tila, "a.md", True, "syy")
+        with mock.patch.object(aivo_arvio, "_liita", side_effect=OSError("x")), redirect_stderr(io.StringIO()) as e:
+            self.assertFalse(aivo_arvio.kirjaa_tulos(self.tila, "a.md", "VALMIS"))
+        self.assertIn("(OSError)", e.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
