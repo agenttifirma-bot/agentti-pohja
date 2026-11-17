@@ -203,7 +203,8 @@ def jasenna(raaka, viestit):
     if not (_on_int(a) and _on_int(b)) or not 0 <= a <= b < len(viestit):
         raise TiivistelmaVirhe("viestialue on virheellinen")
     for k in ("ensimmainen_aika", "viimeinen_aika", "tiivistetty"):
-        _teksti(d[k], k, 40)
+        if any(_ohjausmerkki(c) or c in "\n\t" for c in _teksti(d[k], k, 40)):
+            raise TiivistelmaVirhe("%s sisaltaa kiellettyja merkkeja" % k)
     _teksti(d["malli"], "malli", 100)
     if any(_ohjausmerkki(c) for c in d["malli"]):
         raise TiivistelmaVirhe("malli sisaltaa kiellettyja merkkeja")
@@ -261,6 +262,8 @@ def _kirjoita_600(polku, teksti):
 
 def _poistettu(kansio, tunnus):
     p = Path(kansio) / POISTETUT
+    if p.is_symlink():
+        raise TiivistelmaVirhe("poistetut.jsonl on linkki")
     try:
         return any(json.loads(r).get("tunnus") == tunnus for r in p.read_text(encoding="utf-8").splitlines() if r.strip())
     except (OSError, ValueError):
@@ -312,6 +315,8 @@ def poista(kansio, tunnus):
     rivi = json.dumps({"tunnus": tunnus, "keskustelu": t["keskustelu"], "alku": t["alku"], "loppu": t["loppu"],
                        "alue_sha": t["alue_sha"], "poistettu": _nyt().isoformat(timespec="seconds")})
     loki = Path(kansio) / POISTETUT
+    if loki.is_symlink():
+        raise TiivistelmaVirhe("poistetut.jsonl on linkki")
     vanha = loki.read_text(encoding="utf-8") if loki.exists() else ""
     _kirjoita_600(loki, vanha + rivi + "\n")
     p.unlink()
@@ -338,11 +343,12 @@ def korjaa(kansio, tunnus, kohta_id, teksti):
 # --- CLI (ei mallikutsua) ----------------------------------------------------------------------------
 
 def muotoile(t):
-    rivit = ["%s  %s  viestit %d-%d  malli: %s" % (puhdista_naytolle(t["keskustelu"]), t["tiivistetty"], t["alku"],
-                                                    t["loppu"], puhdista_naytolle(str(t["malli"])))]
+    n = lambda x: puhdista_naytolle(str(x))      # kaikki tiedostosta luettu arvo kulkee puhdistuksen kautta
+    rivit = ["%s  %s  viestit %s-%s  malli: %s" % (n(t["keskustelu"]), n(t["tiivistetty"]), n(t["alku"]), n(t["loppu"]),
+                                                    n(t["malli"]))]
     for k in t["kohdat"]:
-        rivit.append("[%s] %s, tila: %s, viestit %s" % (k.get("id"), puhdista_naytolle(str(k.get("tyyppi"))),
-                                                         puhdista_naytolle(str(k.get("tila"))), k.get("viestit")))
+        rivit.append("[%s] %s, tila: %s, viestit %s" % (n(k.get("id")), n(k.get("tyyppi")), n(k.get("tila")),
+                                                         n(k.get("viestit"))))
         for q in k.get("tony_sanoi", []):
             rivit.append("  Tony sanoi: \"%s\"" % puhdista_naytolle(str(q)))
         if k.get("tony_korjaus"):
