@@ -119,6 +119,25 @@ def arvioi_varjossa(tila, tehtava_polku, arvioija, nyt=None):
         return False
 
 
+TULOS_SALLITUT = ("VALMIS", "HYLATTY", "KESKEN", "EPAONNISTUI")
+
+
+def kirjaa_tulos(tila, tehtava, tulos, nyt=None):
+    """Kirjaa tehtavan lopputuloksen (Tila) samaan tiedostoon kuin Aivon arvio, jotta `osumat` voi verrata niita.
+    Kirjataan vain, jos Aivo on arvioinut tehtavan; tuntematon tila ohitetaan. Ei koskaan nosta virhetta eika esta ajoa.
+    Palauttaa True, jos rivi kirjattiin. Rivilla ei ole tekstia agentin tuotoksesta: vain tehtavan nimi ja tila."""
+    try:
+        tulos = str(tulos).strip().upper()
+        if tulos not in TULOS_SALLITUT or tehtava not in arviot(tila):
+            return False
+        nyt = nyt or datetime.now().astimezone()
+        _liita(tila, {"aika": nyt.isoformat(timespec="seconds"), "laji": "tulos", "tehtava": tehtava, "tulos": tulos})
+        return True
+    except Exception as e:   # varjotila: mikaan ei saa kaataa ajoa; viestia ei tulosteta
+        print(f"aivo_arvio: tuloksen kirjaus epaonnistui ({type(e).__name__})", file=sys.stderr)
+        return False
+
+
 def otos(tila, n=OTOS_OLETUS, rng=None):
     """n satunnaista arviota, joita Tony ei ole viela tarkistanut."""
     avoimet = sorted(k for k, v in arviot(tila).items() if v["tony"] is None)

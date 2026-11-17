@@ -1277,6 +1277,7 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
                 tila_nimi = "KESKEN"   # osa tyosta jai docs-repon ulkopuolelle; ei vaaraa valmista
             polku = kirjoita_tulos(repo, t.name, ok, docs_ohitus_huom(ohitetut) + teksti, tila=tila_nimi, malli=m.tunniste)
             pushattu = julkaise(repo, [polku] + docs)
+            aivo_arvio.kirjaa_tulos(tila, t.name, tila_nimi)   # lopputulos Aivon arvion viereen (osumat-vertailu); ei esta ajoa
             if tila_nimi == "VALMIS" and m.reitti == "claude":
                 uudet, _ = suodata_opit(poimi_uusi_oppi(teksti))
                 if uudet:
