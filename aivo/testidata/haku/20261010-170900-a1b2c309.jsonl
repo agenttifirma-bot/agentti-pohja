@@ -1,0 +1,2 @@
+{"aika": "2026-10-10T17:09:00", "rooli": "tony", "teksti": "Miten tehdään LEFT JOIN kahden taulun välillä?", "lahteet": []}
+{"aika": "2026-10-10T17:09:30", "rooli": "aivo", "teksti": "SELECT * FROM asiakas LEFT JOIN tilaus ON asiakas.id = tilaus.asiakas_id palauttaa kaikki asiakkaat, myös ilman tilauksia.", "lahteet": []}

@@ -1,0 +1,2 @@
+{"aika": "2026-10-21T16:20:00", "rooli": "tony", "teksti": "Tarvitsen säännöllisen lausekkeen puhelinnumerolle.", "lahteet": []}
+{"aika": "2026-10-21T16:20:30", "rooli": "aivo", "teksti": "Esimerkiksi ^\\+?358\\d{8,9}$ sopii kansainväliseen muotoon. Testaa se ennen käyttöä.", "lahteet": []}
