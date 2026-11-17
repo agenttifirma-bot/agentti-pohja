@@ -270,7 +270,7 @@ class KaynnistysTesti(unittest.TestCase):
                                     env={"AIVO_TYOKALU_SOCKET": polku})
             t.join(5)
             self.assertEqual(v, "Kyll\u00e4, t\u00e4m\u00e4 on keksitty vastaus.")
-            self.assertIn(b"Tony: moi", saatu[0])
+            self.assertIn(b"Tony #0: moi", saatu[0])
 
     def test_socket_tyhja_vastaus_ja_puuttuva_socket_ovat_virheita(self):
         with tempfile.TemporaryDirectory() as d:
