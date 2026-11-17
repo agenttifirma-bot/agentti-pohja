@@ -313,6 +313,37 @@ def luettele(kansio):
     return [n for n in nimet if TUNNUS_RE.match(n)]
 
 
+def katettu_loppu(kansio, kid):
+    """Suurin viestin indeksi, jonka tiivistelma on keskustelulle olemassa TAI jonka Tony on poistanut (-1: ei mitaan).
+    Poistettua aluetta ei tiivisteta uudelleen. Lukuvirhe => TiivistelmaVirhe (turvallinen epaonnistuminen)."""
+    if not isinstance(kid, str) or not KID_TARKISTUS.match(kid):
+        raise TiivistelmaVirhe("keskustelun tunniste on virheellinen")
+    suurin = -1
+    for n in luettele(kansio):
+        m = TUNNUS_RE.match(n)
+        if m and m.group(1) == kid:
+            suurin = max(suurin, int(m.group(3)))
+    loki = Path(kansio) / POISTETUT
+    if loki.is_symlink():
+        raise TiivistelmaVirhe("poistetut.jsonl on linkki")
+    try:
+        rivit = loki.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return suurin
+    except (OSError, ValueError) as e:
+        raise TiivistelmaVirhe("poistettujen lokia ei voi lukea (%s)" % type(e).__name__)
+    for r in rivit:
+        if not r.strip():
+            continue
+        try:
+            d = json.loads(r)
+            if d["keskustelu"] == kid:
+                suurin = max(suurin, int(d["loppu"]))
+        except (ValueError, KeyError, TypeError):
+            raise TiivistelmaVirhe("poistettujen loki on rikkinainen")
+    return suurin
+
+
 def poista(kansio, tunnus):
     """Poistaa tiivistelman ja jattaa merkinnan (tunnus, sha, aika) ilman sisaltoa, ettei sama kohta synny uudelleen."""
     t = lue(kansio, tunnus)

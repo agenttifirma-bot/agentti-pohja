@@ -184,10 +184,107 @@ Ota ensin tilannekuva kontista. Tämä ohje ei muuta palomuureja, holvia eikä T
 3. Sano chatissa selvästi päättäväsi jotain (esimerkiksi "kyllä, tehdään X") ja tarkista, että vastauksen alle ilmestyy kortti "Kirjaanko päätökseksi". "Ei" sulkee kortin ilman kirjausta. Voit myös painaa yhden oman viestisi kohdalla "Kirjaa päätökseksi" ja tarkista, että `aivo-paatoskirjasto.md` sisältää viestin sanasta sanaan ja että muutos näkyy Giteassa (ei GitHubissa). Painikkeen pitää näyttää "Kirjattu" vasta, kun push on onnistunut. Jos push epäonnistuu (esimerkiksi `AIVO_SALLITUT_ETAISANNAT` puuttuu), painikkeen tekstin pitää olla "Ei kirjattu Giteaan: ...".
 4. Isännällä: `ss -ltnp | grep 8780` näyttää vain `127.0.0.1:8780`.
 
+## Keskustelumuisti: automaattinen tiivistys (Tony tekee kontissa 122)
+
+Työkalutilan keskustelut tiivistetään kirjastoon, jotta Aivo muistaa ne 40 viestin jälkeenkin (A983 kohta A3). Tiivistys ajetaan komennolla `python3 -m aivo.tiivista --alue tyokalu`. Se tiivistää keskustelun, kun viimeisestä viestistä on kulunut vähintään 30 minuuttia, ja kutsuu Claudea samalla `aivo-tyokalu`-socketilla kuin chat. Päiväkatto on 10 tiivistystä vuorokaudessa (Europe/Helsinki). Katto on koodin vakio, eikä sitä voi muuttaa asetuksilla. Katon täyttyessä ajo lopettaa ja kirjoittaa syyn tiedostoon `/var/lib/aivo/indeksi/tiivista.log`. Yksityisen tilan keskusteluja ei lueta eikä lähetetä: komento hyväksyy vain alueen `tyokalu`.
+
+Tiivistelmät tallentuvat kansioon `/var/lib/aivo/tiivistelmat` (0700, tiedostot 0600) ja luettelo tiedostoon `/var/lib/aivo/indeksi/indeksi.json`. Tonyn lainaukset on erotettu mallin tulkinnasta. Lainaus tarkistetaan sanasta sanaan Tonyn viestistä, ja virheellinen lainaus poistetaan. Uudet kohdat ovat aina tilassa `ehdotus`, ja vain Tonyn korjaus (`python3 -m aivo.tiivistelma`) vahvistaa ne. Chat liittää tiivistelmät työkalutilan kehotteeseen muun muistin rinnalle, enintään 60 kt. Osuvimmat ja uusimmat tulevat ensin. Yksityinen tila ei saa niitä koskaan.
+
+Ota ensin snapshot kontista 122. Ajastin ei asennu itsestään: tämä on ohje, jonka Tony ajaa.
+
+1. **Yhteys.** Avaa isännällä (Proxmox) kontin pääte ja varmista, että olet kontissa 122:
+
+   ```
+   pct enter 122
+   hostname
+   ```
+
+   Odotettu tulos: komento `hostname` tulostaa kontin 122 nimen (ei isännän nimeä).
+
+2. **Päivitä koodi ja käynnistä chat uudelleen**, jotta chat lukee tiivistelmät. Chatin palvelukäyttäjä selviää komennolla:
+
+   ```
+   systemctl show aivo-chat -p User
+   ```
+
+   Odotettu tulos: rivi `User=aivo`. Jos rivillä on muu nimi, käytä sitä nimeä alla kohdassa `User=` ja `runuser -u`-komennoissa.
+
+3. **Kuiva-ajo.** Se vain listaa tiivistettävät keskustelut eikä kutsu mallia:
+
+   ```
+   runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -m aivo.tiivista --alue tyokalu --kuiva
+   ```
+
+   Odotettu tulos: rivit `tiivistettaisiin <keskustelun tunnus> viestit 0-N`, yksi kutakin tiivistämätöntä ja yli 30 minuuttia hiljaista keskustelua kohti. Jos keskusteluja ei ole, ei tule mitään.
+
+4. **Yksikkö.** Tallenna tiedostoon `/etc/systemd/system/aivo-tiivista.service`:
+
+   ```
+   [Unit]
+   Description=Aivon keskustelujen tiivistys (tyokalutila)
+
+   [Service]
+   Type=oneshot
+   User=aivo
+   WorkingDirectory=/opt/agentti-pohja
+   Environment=PYTHONPATH=/opt/agentti-pohja
+   Environment=AIVO_TYOKALU_SOCKET=/run/aivo-tyokalu.sock
+   ExecStart=/usr/bin/python3 -m aivo.tiivista --alue tyokalu
+   SupplementaryGroups=aivo-tyokalu-socket
+   NoNewPrivileges=true
+   ProtectSystem=strict
+   ReadWritePaths=/var/lib/aivo
+   PrivateTmp=true
+   ```
+
+   Käyttäjä ja ryhmä ovat samat kuin `aivo-chat.service`-yksikössä. Kaksi ajoa yhtä aikaa on turvallista: toinen ajo huomaa lukon ja päättyy.
+
+5. **Ajastin** (15 minuutin välein). Tallenna tiedostoon `/etc/systemd/system/aivo-tiivista.timer`:
+
+   ```
+   [Unit]
+   Description=Aivon tiivistys 15 minuutin valein
+
+   [Timer]
+   OnBootSec=5min
+   OnUnitActiveSec=15min
+
+   [Install]
+   WantedBy=timers.target
+   ```
+
+6. **Käyttöönotto ja tarkistus.**
+
+   ```
+   systemctl daemon-reload && systemctl enable --now aivo-tiivista.timer
+   systemctl list-timers aivo-tiivista.timer
+   ```
+
+   Odotettu tulos: ajastin näkyy listassa, ja `NEXT`-sarakkeessa on aika enintään 15 minuutin päässä.
+
+7. **Ensimmäisen ajon tulos.** Ajon jälkeen:
+
+   ```
+   journalctl -u aivo-tiivista --since "20 min ago" --no-pager
+   ls -l /var/lib/aivo/tiivistelmat
+   ```
+
+   Odotettu tulos: journaalissa rivit `tiivistetty: <tunnus> viestit 0-N, kohtia K, hylattyja lainauksia X, pudotettuja kohtia Y`. Hakemistossa on tiedostoja `<tunnus>-0-N.json` oikeuksilla `-rw-------`.
+
+8. **Tiivistelmän katselu ja korjaus.** Tonyn korjaus kirjoittaa tiivistelmään kentän `tony_korjaus` ja vahvistaa kohdan:
+
+   ```
+   runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -m aivo.tiivistelma --kansio /var/lib/aivo/tiivistelmat lista
+   ```
+
+   Odotettu tulos: tiivistelmien tunnukset, yksi riville. Komento `nayta <tunnus>` näyttää lainaukset ja Aivon tulkinnan erillään.
+
+Jos päiväkatto täyttyy, loki sisältää rivin `lopetus: paivakatto 10/10 taynna, tiivistamatta N keskustelua`. Ajo jatkuu seuraavana vuorokautena. Jos tiivistys epäonnistuu, journaalissa on rivi `epaonnistui: ...` ja virheen tyyppi. Sama viestialue yritetään enintään kahdesti, joten rikkinäinen keskustelu ei kuluta koko päiväkattoa.
+
 ## Testit
 
 ```
-python3 -m unittest aivo.test_chat
+python3 -m unittest aivo.test_chat aivo.test_tiivista
 ```
 
 Testit kattavat salasanan tiivisteen ja lukituksen, osoite- ja Host-rajat, CSRF-suojan, muistin lukemisen (ei linkkejä kirjaston ulkopuolelle), lähdeviitteiden tarkistuksen, päätöksen kirjaamisen sanasta sanaan, GitHub-pushin eston ja sen, että Claude-kutsu ei käytä työkaluja eikä välittäjiä.
