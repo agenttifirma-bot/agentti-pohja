@@ -272,6 +272,21 @@ def _jarjestys(nimi):
     return (len(MUISTI_JARJESTYS), n)
 
 
+HAUN_ALKU = 5   # taivutusmuotojen haku: sanat yhdistetaan ensimmaisten merkkien perusteella
+_NORMALISOI = str.maketrans({"\u00e4": "a", "\u00f6": "o", "\u00e5": "a"})
+
+
+def _haun_runko(sana):
+    """Pienet kirjaimet, aakkoset ilman pisteita, vain sanan alku (HAUN_ALKU merkkia)."""
+    return sana.lower().translate(_NORMALISOI)[:HAUN_ALKU]
+
+
+def _alkuosumat(alut, teksti):
+    """Kuinka monta kysymyksen sananalkua loytyy tekstin sanoista (taivutusmuodot osuvat samaan alkuun)."""
+    sanat = {_haun_runko(w) for w in re.findall(r"\w{4,}", teksti)}
+    return sum(1 for a in alut if a in sanat)
+
+
 def lue_muisti(kirjasto, ylaraja=None, tiedosto_raja=None, kysymys=None):
     """Palauttaa (teksti, tiedostolista). Lukee vain .md/.txt-tiedostot kirjaston sisalta (ei .git, ei linkkeja
     kirjaston ulkopuolelle). Ylarajan ylittyessa loput jaavat pois ja puute mainitaan."""
@@ -292,13 +307,15 @@ def lue_muisti(kirjasto, ylaraja=None, tiedosto_raja=None, kysymys=None):
             tiedostot.append(str(p.relative_to(juuri)))
     if kysymys:      # yksityinen tila: pieni kehote, joten osuvimmat tiedostot ensin
         sanat = {w for w in re.findall(r"\w{4,}", kysymys.lower())}
+        alut = {_haun_runko(w) for w in sanat}
 
         def osuma(nimi):
             try:
                 alku = (juuri / nimi).read_bytes()[:tiedosto_raja].decode("utf-8", "replace").lower()
             except OSError:
                 return 0
-            return -sum(1 for w in sanat if w in alku)
+            osumat = sum(1 for w in sanat if w in alku)
+            return -(osumat + _alkuosumat(alut, alku))
         tiedostot.sort(key=lambda n: (osuma(n), _jarjestys(n)))
     else:
         tiedostot.sort(key=_jarjestys)
