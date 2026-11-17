@@ -1,5 +1,6 @@
 import contextlib
 import io
+import ipaddress
 import os
 import subprocess
 import tempfile
@@ -12,7 +13,14 @@ from agentti import docs_vienti as dv
 AVAIN_SK = "sk-" + "a1B2c3D4" * 4
 AVAIN_GH = "ghp_" + "x" * 30
 IP = "192.0.2.118"
-GITEA = ".".join(["192", "168", "7", "7"])
+# RFC 5737 -dokumentaatioalueet (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24): eivat ole oikeita osoitteita.
+GITEA = "192.0.2.50"
+MUU_SISA = "192.0.2.51"
+
+
+def ip(a, b, c, d):
+    """Yksityisen alueen osoite ilman kirjaimellista osoitetta lahdekoodissa (test_repo kieltaa sisaverkon osoitteet tiedostoissa)."""
+    return str(ipaddress.IPv4Address(bytes([a, b, c, d])))
 TS_IP = "198.51.100.110"
 TS_NIMI = "agenttifirma." + "tail1234" + ".ts.net"
 
@@ -34,9 +42,10 @@ class Pohja(unittest.TestCase):
             (self.jono / k).mkdir(parents=True)
         git("init", "-q", "--bare", "-b", "main", str(self.ete))
         # Testit eivat verkota: sallittu osoite korvataan paikallisella tyhjalla repolla (osoite_sallittu testataan erikseen).
-        p = mock.patch.object(dv, "osoite_sallittu", lambda o: o == str(self.ete))
-        p.start()
-        self.addCleanup(p.stop)
+        for kohde, korvike in (("osoite_sallittu", lambda o, i: o == str(self.ete)), ("isanta_kelvollinen", lambda i: True)):
+            p = mock.patch.object(dv, kohde, korvike)
+            p.start()
+            self.addCleanup(p.stop)
 
     def kirjoita(self, suht, teksti):
         p = self.jono / suht
@@ -154,21 +163,62 @@ class OsoiteJaMuuttumattomuus(Pohja):
         p.start()
         self.addCleanup(p.stop)
         polku = "/tony/agenttidata.git"
-        sallittu = ["ssh://git@" + GITEA + polku, "ssh://git@" + GITEA + ":2222" + polku, "ssh://git@" + GITEA + ":1" + polku, "ssh://git@" + ".".join(["10", "1", "2", "3"]) + polku,
-                    "ssh://git@" + ".".join(["100", "87", "1", "2"]) + polku, "ssh://git@" + ".".join(["172", "20", "0", "9"]) + polku]
-        kielletty = ["ssh://git@" + GITEA + "/tony/aivo.git", "ssh://git@" + GITEA + "/aivo/aivo.git",
-                     "ssh://git@evil.example" + polku, "ssh://git@" + ".".join(["8", "8", "8", "8"]) + polku, "ssh://git@" + ".".join(["127", "0", "0", "1"]) + polku,
-                     "ssh://git@" + ".".join(["100", "63", "255", "1"]) + polku, "ssh://git@" + ".".join(["172", "32", "0", "1"]) + polku,
-                     "https://" + GITEA + polku, "ssh://git@" + GITEA + ".evil.example" + polku,
-                     "ssh://git@" + GITEA + polku + "?x=1", "ssh://root@" + GITEA + polku,
+        ssh = "ssh://git@"
+        sallittu = [ssh + GITEA + polku, ssh + GITEA + ":2222" + polku, ssh + GITEA + ":1" + polku]
+        kielletty = [ssh + GITEA + "/tony/aivo.git", ssh + GITEA + "/aivo/aivo.git",
+                     # Muu sisaverkon osoite ei kelpaa, vaikka se olisi yksityisella alueella (vain asetuksen yksi isanta).
+                     ssh + MUU_SISA + polku, ssh + ip(10, 1, 2, 3) + polku, ssh + ip(100, 87, 1, 2) + polku, ssh + ip(172, 20, 0, 9) + polku,
+                     ssh + "evil.example" + polku, ssh + "8.8.8.8" + polku, ssh + "127.0.0.1" + polku,
+                     "https://" + GITEA + polku, ssh + GITEA + ".evil.example" + polku,
+                     ssh + GITEA + polku + "?x=1", "ssh://root@" + GITEA + polku,
                      "ssh://git:salasana@" + GITEA + polku, "git@" + GITEA + ":tony/agenttidata.git",
                      "git@github.com:tonyweckstrom1987/agenttifirma-docs.git", "/tmp/ete.git", "",
-                     "ssh://git@" + GITEA + ":abc" + polku, "ssh://git@" + GITEA + ":99999" + polku, "ssh://git@" + GITEA + ":0" + polku,
-                     "ssh://git@" + GITEA + polku + "/../x", "ssh://git@" + GITEA + polku + "x"]
+                     ssh + GITEA + ":abc" + polku, ssh + GITEA + ":99999" + polku, ssh + GITEA + ":0" + polku,
+                     ssh + GITEA + polku + "/../x", ssh + GITEA + polku + "x"]
         for o in sallittu:
-            self.assertIs(dv.osoite_sallittu(o), True, o)
+            self.assertIs(dv.osoite_sallittu(o, GITEA), True, o)
         for o in kielletty:
-            self.assertIs(dv.osoite_sallittu(o), False, o)
+            self.assertIs(dv.osoite_sallittu(o, GITEA), False, o)
+
+    def test_isanta_asetus_kelpaa_vain_sisaverkon_yhdelle_osoitteelle(self):
+        for kohde, alkup in (("isanta_kelvollinen", _ALKUP_ISANTA), ("osoite_sallittu", _ALKUP)):
+            p = mock.patch.object(dv, kohde, alkup)
+            p.start()
+            self.addCleanup(p.stop)
+        for i in (GITEA, ip(10, 1, 2, 3), ip(100, 87, 1, 2), ip(172, 20, 0, 9), ip(192, 168, 1, 1)):
+            self.assertIs(dv.isanta_kelvollinen(i), True, i)
+        for i in ("", None, "8.8.8.8", "127.0.0.1", "0.0.0.0", "169.254.1.1", "224.0.0.1", "192.0.2.0/24", ip(10, 0, 0, 0) + "/8", "git.example", "::1", "10.1.2"):
+            self.assertIs(dv.isanta_kelvollinen(i), False, str(i))
+        osoite = "ssh://git@" + GITEA + "/tony/agenttidata.git"
+        self.assertIs(dv.osoite_sallittu(osoite, ""), False)
+        self.assertIs(dv.osoite_sallittu(osoite, "8.8.8.8"), False)
+        self.assertIs(dv.osoite_sallittu("ssh://git@8.8.8.8/tony/agenttidata.git", "8.8.8.8"), False)
+
+    def test_puuttuva_isanta_estaa_pushin(self):
+        p = mock.patch.object(dv, "isanta_kelvollinen", _ALKUP_ISANTA)
+        p.start()
+        self.addCleanup(p.stop)
+        self.kirjoita("tulokset/a.md", "a")
+        with mock.patch.object(dv.subprocess, "run") as ajo:
+            with self.assertRaises(dv.ViennitVirhe):
+                dv.vie(self.lahde, self.tyo, "ssh://git@" + GITEA + "/tony/agenttidata.git", ssh=False)
+            ajo.assert_not_called()
+
+    def test_main_lukee_isannan_ymparistosta(self):
+        p = mock.patch.object(dv, "isanta_kelvollinen", _ALKUP_ISANTA)
+        p.start()
+        self.addCleanup(p.stop)
+        err = io.StringIO()
+        env = {"DOCS_VIENTI_OSOITE": "ssh://git@" + GITEA + "/tony/agenttidata.git", "DOCS_VIENTI_TYO": str(self.tyo)}
+        with mock.patch.dict(os.environ, env), mock.patch.object(dv, "osoite_sallittu", self._alkup):
+            os.environ.pop("DOCS_VIENTI_ISANTA", None)
+            with mock.patch.object(dv.subprocess, "run") as ajo, contextlib.redirect_stderr(err):
+                self.assertEqual(dv.main([]), 1)
+                ajo.assert_not_called()
+            os.environ["DOCS_VIENTI_ISANTA"] = GITEA
+            with mock.patch.object(dv, "vie", return_value="ok") as vie, contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(dv.main([]), 0)
+            self.assertEqual(vie.call_args.kwargs["isanta"], GITEA)
 
     def test_tyhja_osoite_asetus_estaa_ajon(self):
         err = io.StringIO()
@@ -183,7 +233,7 @@ class OsoiteJaMuuttumattomuus(Pohja):
         with mock.patch.object(dv, "osoite_sallittu", self._alkup):
             with mock.patch.object(dv.subprocess, "run") as ajo:
                 with self.assertRaises(dv.ViennitVirhe):
-                    dv.vie(self.lahde, self.tyo, "ssh://git@evil.example/tony/agenttidata.git", ssh=False)
+                    dv.vie(self.lahde, self.tyo, "ssh://git@evil.example/tony/agenttidata.git", ssh=False, isanta=GITEA)
                 ajo.assert_not_called()
         self.assertFalse(self.tyo.exists())
 
@@ -313,7 +363,42 @@ class Apurit(Pohja):
         self.assertNotIn("salainen", err.getvalue())
 
 
+class Yksikkomallit(unittest.TestCase):
+    """Systemd-mallien turvarajat ovat koodin osa: niiden poistaminen rikkoo testin."""
+    KANSIO = Path(__file__).resolve().parent.parent / "systemd"
+
+    def rivit(self, nimi):
+        return [r.strip() for r in (self.KANSIO / nimi).read_text(encoding="utf-8").splitlines() if r.strip() and not r.lstrip().startswith("#")]
+
+    def test_palvelu_ajetaan_omana_kayttajana_ei_rootina(self):
+        r = self.rivit("docs-vienti.service.mall")
+        self.assertIn("User=docs-vienti", r)
+        self.assertIn("Group=docs-vienti", r)
+        self.assertFalse([x for x in r if x.startswith("User=") and x != "User=docs-vienti"])
+
+    def test_verkko_rajattu_yhteen_osoitteeseen(self):
+        r = self.rivit("docs-vienti.service.mall")
+        self.assertIn("IPAddressDeny=any", r)
+        sallitut = [x for x in r if x.startswith("IPAddressAllow=")]
+        self.assertEqual(sallitut, ["IPAddressAllow=<GITEA-IP>"])
+        self.assertIn("NoNewPrivileges=yes", r)
+        self.assertIn("ProtectSystem=strict", r)
+
+    def test_docs_pull_on_wants_ja_after(self):
+        r = self.rivit("docs-vienti.service.mall")
+        wants = [x for x in r if x.startswith("Wants=")][0].split("=", 1)[1].split()
+        after = [x for x in r if x.startswith("After=")][0].split("=", 1)[1].split()
+        self.assertIn("docs-pull.service", wants)
+        self.assertIn("docs-pull.service", after)
+
+    def test_ohje_mainitsee_kayttajan_ja_isanta_asetuksen(self):
+        ohje = (self.KANSIO.parent / "docs" / "agenttidata.md").read_text(encoding="utf-8")
+        for pala in ("useradd", "DOCS_VIENTI_ISANTA", "docs-vienti", "Salli kirjoitus"):
+            self.assertIn(pala, ohje)
+
+
 _ALKUP = dv.osoite_sallittu
+_ALKUP_ISANTA = dv.isanta_kelvollinen
 
 if __name__ == "__main__":
     unittest.main()

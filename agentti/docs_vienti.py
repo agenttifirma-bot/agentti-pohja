@@ -13,7 +13,8 @@ Tiedostot yli 200 kt jatetaan pois. Symbolisia linkkeja ei seurata. Jos mikaan e
 
 Kaytto: python3 -m agentti.docs_vienti [--kompassi] [--kuiva]
 Ymparisto: DOCS_VIENTI_LAHDE (/opt/agenttifirma-docs), DOCS_VIENTI_TYO (/var/lib/docs-vienti/agenttidata),
-DOCS_VIENTI_OSOITE (PAKOLLINEN: ssh://git@<Gitean IP>[:portti]/tony/agenttidata.git; tarkistetaan sallittujen listaa vasten), DOCS_VIENTI_AVAIN (/etc/docs-vienti/avain).
+DOCS_VIENTI_OSOITE (PAKOLLINEN: ssh://git@<Gitean IP>[:portti]/tony/agenttidata.git), DOCS_VIENTI_ISANTA (PAKOLLINEN: tasmalleen Gitean IPv4-osoite;
+osoitteen isannan pitaa olla sama), DOCS_VIENTI_AVAIN (/etc/docs-vienti/avain).
 Virheista tulostetaan vain tyypin nimi tai lyhyt syy, ei gitin tulostetta (voi sisaltaa salaisuuksia).
 """
 import argparse
@@ -32,9 +33,8 @@ OLETUS_LAHDE = "/opt/agenttifirma-docs"
 OLETUS_TYO = "/var/lib/docs-vienti/agenttidata"
 OLETUS_AVAIN = "/etc/docs-vienti/avain"
 
-# Sallittu isanta: kirjaimellinen IPv4-osoite sisaverkossa (yksityiset alueet) tai tailnetissa (CGNAT-alue). Nimia ei hyvaksyta (ei DNS-kikkoja).
-# Tarkka osoite annetaan asetuksella DOCS_VIENTI_OSOITE (/etc/docs-vienti/asetukset.env); sita ei kirjoiteta repoon.
-SALLITUT_VERKOT = tuple(ipaddress.ip_network("%d.%d.0.0/%d" % v) for v in ((10, 0, 8), (172, 16, 12), (192, 168, 16), (100, 64, 10)))
+# Sallittu isanta: vain yksi, asetuksella DOCS_VIENTI_ISANTA annettu kirjaimellinen IPv4-osoite (ei verkkoalueita, ei nimia eli ei DNS-kikkoja).
+# Asetus ei saa olla julkinen, loopback-, linkki- tai monilahetysosoite; asetukset kirjoitetaan /etc/docs-vienti/asetukset.env, ei repoon.
 SALLITTU_POLKU = "/tony/agenttidata.git"
 HAARA = "main"
 MAX_TAVUA = 200_000
@@ -62,15 +62,26 @@ class ViennitVirhe(Exception):
     """Vienti pysaytetty (esim. kielletty osoite); viesti on lyhyt eika sisalla salaisuuksia."""
 
 
-def osoite_sallittu(osoite):
-    """Tosi vain, jos osoite on ssh://git@<sisaverkon IPv4>[:portti]/tony/agenttidata.git."""
+def isanta_kelvollinen(isanta):
+    """Tosi vain, jos asetus on yksi IPv4-osoite, joka ei ole julkinen eika loopback-, linkki-, monilahetys- tai maarittamaton osoite."""
+    try:
+        ip = ipaddress.IPv4Address(str(isanta))
+    except ValueError:
+        return False
+    return not (ip.is_global or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified)
+
+
+def osoite_sallittu(osoite, isanta):
+    """Tosi vain, jos osoite on ssh://git@<isanta>[:portti]/tony/agenttidata.git ja <isanta> on asetuksen yksi tarkka IPv4-osoite."""
+    if not isanta_kelvollinen(isanta):
+        return False
     try:
         u = urlparse(str(osoite))
         port = u.port
         host = ipaddress.IPv4Address(u.hostname or "")
     except ValueError:
         return False
-    return (u.scheme == "ssh" and u.username == "git" and u.password is None and any(host in v for v in SALLITUT_VERKOT)
+    return (u.scheme == "ssh" and u.username == "git" and u.password is None and host == ipaddress.IPv4Address(str(isanta))
             and (port is None or port > 0) and u.path == SALLITTU_POLKU and not u.query and not u.fragment)
 
 
@@ -153,14 +164,16 @@ def _ssh_env(avain, tyo):
                                "-o UserKnownHostsFile=%s" % (avain, tiedot)}
 
 
-def vie(lahde, tyo, osoite, avain=OLETUS_AVAIN, kompassi=False, kuiva=False, ssh=True):
+def vie(lahde, tyo, osoite, avain=OLETUS_AVAIN, kompassi=False, kuiva=False, ssh=True, isanta=""):
     """Koko vienti. Palauttaa yhteenvetorivin. Nostaa ViennitVirhe, jos osoite on kielletty tai git epaonnistuu.
 
     Pushaus tehdaan suoraan tarkistettuun osoitteeseen (ei etakohteen nimen kautta), joten tyoklooniin
     asetettu `origin` ei voi ohjata dataa muualle.
     """
-    if not osoite_sallittu(osoite):
-        raise ViennitVirhe("osoite ei ole sallittujen listalla; ei pushata")
+    if not isanta_kelvollinen(isanta):
+        raise ViennitVirhe("DOCS_VIENTI_ISANTA puuttuu tai ei ole kelvollinen sisaverkon IPv4-osoite; ei pushata")
+    if not osoite_sallittu(osoite, isanta):
+        raise ViennitVirhe("osoite ei ole sallittu (isanta, kayttaja tai polku); ei pushata")
     tyo = Path(tyo)
     env = _ssh_env(avain, tyo) if ssh else {}
     if not (tyo / ".git").is_dir():
@@ -215,7 +228,7 @@ def main(argv=None):
     try:
         print("docs-vienti: " + vie(env("DOCS_VIENTI_LAHDE", OLETUS_LAHDE), env("DOCS_VIENTI_TYO", OLETUS_TYO),
                                     env("DOCS_VIENTI_OSOITE", ""), env("DOCS_VIENTI_AVAIN", OLETUS_AVAIN),
-                                    a.kompassi, a.kuiva))
+                                    a.kompassi, a.kuiva, isanta=env("DOCS_VIENTI_ISANTA", "")))
     except ViennitVirhe as virhe:
         print("docs-vienti: VIRHE: %s" % virhe, file=sys.stderr)
         return 1

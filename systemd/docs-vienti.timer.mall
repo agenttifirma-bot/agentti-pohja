@@ -1,5 +1,5 @@
 # Mallitiedosto, ei asenna mitaan. Kopioi CT115:ssa: /etc/systemd/system/docs-vienti.timer.
-# Kerran 15 min valein; docs-pull.service on jarjestyksessa ennen (After=), joten kopio on tuore, jos pull sattuu samalle minuutille.
+# Kerran 15 min valein. docs-vienti.service on Wants=/After= docs-pull.service, joten pull ajetaan ensin ja kopio on tuore.
 [Unit]
 Description=Docs-vienti 15 min valein
 

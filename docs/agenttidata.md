@@ -21,7 +21,9 @@ Siivous ennen kopiota:
 - Yli 200 kt:n tiedosto jätetään pois. Jos `pohdinta-vastaukset.md` kasvaa tämän yli, se katoaa kopiosta ja tulosteessa lukee `ohitettu`. Silloin raja pitää päättää uudelleen.
 - Siivous ei ole täydellinen: se tunnistaa vain tunnetut muodot. Tonyn nimeä tai muuta henkilötietoa se ei poista.
 
-Push tehdään vain osoitteeseen `ssh://git@<GITEA-IP>[:portti]/tony/agenttidata.git`, jossa `<GITEA-IP>` on Gitean IPv4-osoite sisäverkossa tai tailnetissä (infrataulukossa kontti 113). Osoite annetaan asetustiedostossa, eikä sitä kirjoiteta repoon. Nimiä, muita polkuja ja muita käyttäjiä ei hyväksytä; mikä tahansa muu osoite estetään ennen kuin gitiä ajetaan. Push kohdistetaan suoraan tähän osoitteeseen, joten työkloonin `origin`-asetus ei voi ohjata dataa muualle. Jos mikään ei muuttunut, committia ei tehdä. Vienti ei koskaan kirjoita Aivon kirjastoon (`aivo/aivo`).
+Push tehdään vain osoitteeseen `ssh://git@<GITEA-IP>[:portti]/tony/agenttidata.git`, jossa `<GITEA-IP>` on Gitean yksi tarkka IPv4-osoite (infrataulukossa kontti 113). Osoite ja erillinen isäntäasetus `DOCS_VIENTI_ISANTA` annetaan asetustiedostossa, eikä niitä kirjoiteta repoon. Isäntäasetuksen pitää olla yksi sisäverkon tai tailnetin osoite (ei julkinen, ei loopback), ja osoitteen isännän pitää olla täsmälleen sama. Muut yksityisverkon osoitteet, nimet, muut polut ja muut käyttäjät estetään ennen kuin gitiä ajetaan. Lisäksi systemd-yksikkö sallii ulospäin vain tämän yhden osoitteen (`IPAddressAllow`).
+
+Palvelu ajetaan omana käyttäjänään `docs-vienti`, ei rootina. Push kohdistetaan suoraan tähän osoitteeseen, joten työkloonin `origin`-asetus ei voi ohjata dataa muualle. Jos mikään ei muuttunut, committia ei tehdä. Vienti ei koskaan kirjoita Aivon kirjastoon (`aivo/aivo`).
 
 Aivon yksityisessä tilassa lähdettä ei saa käyttää ennen kuin PR #322 on yhdistetty (suunnitelman riski 7).
 
@@ -119,20 +121,26 @@ tyhjä yksityinen repo tony/agenttidata, jossa on vain klooniohje
 
 ### Askel 5. Vientiavain kontissa 115 (kirjoitus)
 
-Yksityinen avain pysyy kontissa. Tulosta vain julkinen osa.
+Yksityinen avain pysyy kontissa ja kuuluu vain palvelun omalle käyttäjälle. Tulosta vain julkinen osa.
 
 ```
 pct enter 115
-install -d -m 700 /etc/docs-vienti /var/lib/docs-vienti
-ssh-keygen -t ed25519 -N '' -C docs-vienti-ct115 -f /etc/docs-vienti/avain
+useradd --system --no-create-home --home-dir /var/lib/docs-vienti --shell /usr/sbin/nologin docs-vienti
+install -d -m 700 -o docs-vienti -g docs-vienti /etc/docs-vienti /var/lib/docs-vienti
+sudo -u docs-vienti ssh-keygen -t ed25519 -N '' -C docs-vienti-ct115 -f /etc/docs-vienti/avain
+chmod 600 /etc/docs-vienti/avain
 cat /etc/docs-vienti/avain.pub
+test -r /opt/agenttifirma-docs/claude-jono && sudo -u docs-vienti test -r /opt/agenttifirma-docs/claude-jono && echo lahde-luettavissa
 exit
 ```
 
 Odotettu:
 ```
 yksi rivi, joka alkaa merkeillä ssh-ed25519 ja päättyy sanaan docs-vienti-ct115
+sen jälkeen rivi lahde-luettavissa
 ```
+
+Jos viimeistä riviä ei tule, käyttäjä `docs-vienti` ei voi lukea docs-kopiota. Älä silloin avaa oikeuksia laajalle: kerro, niin sovitaan lukuoikeus vain tälle käyttäjälle.
 
 Liitä rivi Giteassa: tony/agenttidata, Asetukset, Deploy-avaimet, Lisää avain. Nimi `docs-vienti`, ruksi "Salli kirjoitus".
 
@@ -181,7 +189,8 @@ moduuli-ok
 Kirjoita Gitean osoite asetustiedostoon (ei salaisuus; vain osoite). Ilman tätä vienti ei käynnisty. Jos portti on 22, jätä `:<SSH-PORTTI>` pois.
 
 ```
-printf 'DOCS_VIENTI_OSOITE=ssh://git@<GITEA-IP>:<SSH-PORTTI>/tony/agenttidata.git\n' > /etc/docs-vienti/asetukset.env
+printf 'DOCS_VIENTI_OSOITE=ssh://git@<GITEA-IP>:<SSH-PORTTI>/tony/agenttidata.git\nDOCS_VIENTI_ISANTA=<GITEA-IP>\n' > /etc/docs-vienti/asetukset.env
+chown docs-vienti:docs-vienti /etc/docs-vienti/asetukset.env
 chmod 600 /etc/docs-vienti/asetukset.env
 ```
 
@@ -189,8 +198,7 @@ Kuiva-ajo (ei committia, ei pushia; lukee kuitenkin etärepon tilan, joten askel
 
 ```
 cd /opt/agentti-pohja
-set -a; . /etc/docs-vienti/asetukset.env; set +a
-python3 -m agentti.docs_vienti --kuiva
+sudo -u docs-vienti env $(cat /etc/docs-vienti/asetukset.env) python3 -B -m agentti.docs_vienti --kuiva
 ```
 
 Odotettu:
@@ -202,6 +210,9 @@ Asenna yksiköt ja aja kerran käsin:
 
 ```
 cp /opt/agentti-pohja/systemd/docs-vienti.service.mall /etc/systemd/system/docs-vienti.service
+# korvaa OIKEA-IP Gitean osoitteella (sama kuin DOCS_VIENTI_ISANTA)
+sed -i 's/<GITEA-IP>/OIKEA-IP/' /etc/systemd/system/docs-vienti.service
+grep -n 'IPAddressAllow\|^User=' /etc/systemd/system/docs-vienti.service
 cp /opt/agentti-pohja/systemd/docs-vienti.timer.mall /etc/systemd/system/docs-vienti.timer
 systemctl daemon-reload
 systemctl start docs-vienti.service
@@ -226,7 +237,7 @@ Odotettu:
 ajastin näkyy listassa ja seuraava ajo on :07, :22, :37 tai :52
 ```
 
-Ajastin ajaa viennin 15 minuutin välein. Docs-pull ajaa omalla aikataulullaan, ja vienti käyttää sen jo hakemaa kopiota.
+Ajastin ajaa viennin 15 minuutin välein. Yksikössä on `Wants=` ja `After=` docs-pull.service, joten docs-pull käynnistyy ensin ja vienti odottaa sen valmistumista. Jos kontissa ei ole yksikköä `docs-pull.service`, systemd ohittaa `Wants=`-rivin ja vienti käyttää viimeksi haettua kopiota.
 
 ### Askel 8. Aivon luku ja tarkistus (kontti `<AIVO>`)
 
