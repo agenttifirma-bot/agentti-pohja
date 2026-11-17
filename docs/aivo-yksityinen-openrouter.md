@@ -41,8 +41,10 @@ Päiväkatto 10 €/vrk on huomattavasti suurempi kuin yksityisen tilan odotettu
 
 - Koodissa on yksi kiinteä kirjanpitokansio: `/var/lib/claude-jono` (`openrouter_kulut.OLETUS_TILA`). Sitä ei voi vaihtaa asetuksella. Kansion pitää olla olemassa, ja palvelun käyttäjän pitää päästä kirjoittamaan siihen. Muuten kutsu estyy (fail closed) eikä mitään lähde OpenRouteriin.
 - Kontissa 122 ei ole tätä kansiota valmiina. Ohje luo sen kontin 122 omaksi kansioksi, jonka omistaa `aivo-yksityinen`. Se ei ole ajurin kansio kontissa 115 eikä jaettu liitos.
-- Katto 10 €/vrk koskee kontin 122 omaa kirjanpitoa. Se ei nouse eikä muutu. Katto ei kuitenkaan näe ajurin kulutusta kontissa 115, joten OpenRouterin kokonaiskulu voi olla enintään noin 20 €/vrk (10 € kummassakin kontissa). Yhteistä kattoa varten tarvittaisiin koodimuutos tai jaettu kansio. Se on kattoa koskeva muutos, jota ei tehdä ilman Tonyn lupaa.
-- OpenRouterin avaimelle kannattaa silti asettaa kulutuskatto OpenRouterin omilla asetuksilla.
+- Päiväkatto on 10 €/vrk, ja se on konttikohtainen: kontilla 115 (ajuri) ja kontilla 122 (Aivo) on kummallakin oma kirjanpito ja oma 10 € katto. Katto ei näe toisen kontin kulutusta, joten OpenRouterin kokonaiskulu voi olla enintään noin 20 €/vrk (10 € + 10 €). Koodin arvo `PAIVAKATTO_EUR = 10` ei muutu tässä ohjeessa.
+- Tonyn päätös 17.11.2026 (A1005): Aivon kontille riittää päiväkatto. OpenRouter-avaimen kuukausiraja ei ole pakollinen askel, eikä ohje vaadi sitä.
+- Yhteistä kattoa ajurin ja Aivon välille varten tarvittaisiin koodimuutos tai jaettu kansio. Se on kattoa koskeva muutos, jota ei tehdä ilman Tonyn lupaa.
+- Ohje muuttaa palvelun `ReadWritePaths`-asetusta vain yhden kansion verran: lisättävä kansio on `/var/lib/claude-jono`. Syy: `ProtectSystem=strict` estää kirjoituksen kaikkialle muualle, ja kirjanpito on koodissa kiinteästi tässä kansiossa. Kansio on `aivo-yksityinen`-käyttäjän oma (tila 700), eikä muita kansioita avata.
 
 ## Käyttöönotto (Tony tekee kontissa 122)
 
@@ -180,5 +182,5 @@ Tee yksi komento kerrallaan ja tarkista Odotettu-rivi ennen seuraavaa. Avainta e
 
 ## Avoimet kohdat
 
-- Yhteinen katto ajurin ja Aivon välillä puuttuu (ks. kohta Katto ja kirjanpito). Jos Tony haluaa yhteisen kirjanpidon, se vaatii koodi- tai jakomuutoksen, ja siihen tarvitaan hänen lupansa erikseen.
+- Yhteinen katto ajurin ja Aivon välillä puuttuu, ja katto on konttikohtainen (ks. kohta Katto ja kirjanpito). Jos Tony haluaa yhteisen kirjanpidon, se vaatii koodi- tai jakomuutoksen, ja siihen tarvitaan hänen lupansa erikseen.
 - Mallin suomen kielen laatua ei ole mitattu.

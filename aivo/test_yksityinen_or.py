@@ -404,10 +404,6 @@ class KaynnistysTesti(unittest.TestCase):
                 self.tila(d, taustapaa="muu", malli_url="http://127.0.0.1:8081")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class KayttoonottoOhjeTesti(unittest.TestCase):
     """Ohje docs/aivo-yksityinen-openrouter.md vastaa koodia: kirjanpito on kontin 122 omassa kansiossa."""
 
@@ -428,3 +424,11 @@ class KayttoonottoOhjeTesti(unittest.TestCase):
         self.assertEqual(ok.PAIVAKATTO_EUR, 10)
         self.assertIn("10 \u20ac/vrk", self.OHJE)
         self.assertGreaterEqual(self.OHJE.count("Odotettu"), 10)
+        self.assertIn("konttikohtainen", self.OHJE)
+        self.assertIn("A1005", self.OHJE)
+        self.assertIn("kontilla 115", self.OHJE)
+        self.assertIn("kontilla 122", self.OHJE)
+
+
+if __name__ == "__main__":
+    unittest.main()
