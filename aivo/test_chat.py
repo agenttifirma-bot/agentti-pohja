@@ -496,6 +496,29 @@ class PalveluTesti(unittest.TestCase):
         self.assertIn(b'name="viewport"', d)
         self.assertEqual(h["Cache-Control"], "no-store")
 
+    def sivu_html(self):
+        ev = self.kirjaudu()
+        s, _, d = self.pyynto("GET", "/", None, {"Cookie": ev})
+        self.assertEqual(s, 200)
+        return d.decode("utf-8")
+
+    def test_enter_lahettaa_ja_shift_enter_rivinvaihto(self):
+        h = self.sivu_html()
+        self.assertIn("addEventListener('keydown'", h)
+        self.assertIn("e.key==='Enter'&&!e.shiftKey&&!e.isComposing", h)
+        self.assertIn("requestSubmit()", h)
+        # lahetyksen esto ja tyhjan viestin esto pysyvat lomakkeen kasittelijassa
+        self.assertIn("if(lahetyksessa)return;", h)
+        self.assertIn("if(!s)return;", h)
+
+    def test_nakyma_vierii_alas_ja_vihje_nakyy(self):
+        h = self.sivu_html()
+        self.assertIn("function alas()", h)
+        self.assertIn("scrollIntoView", h)
+        # vieritys: viestin lisays, vastauksen saapuminen, yhteysvirhe ja sivun lataus
+        self.assertGreaterEqual(h.count("alas();"), 4)
+        self.assertIn("Enter l\u00e4hett\u00e4\u00e4, Shift+Enter rivinvaihto", h)
+
 
 if __name__ == "__main__":
     unittest.main()

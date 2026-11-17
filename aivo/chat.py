@@ -101,12 +101,13 @@ textarea{resize:none;height:3.2rem}button{font:inherit;padding:.5rem .9rem;borde
 <option value="yksityinen" selected>{YKSITYINEN_TEKSTI}</option>
 <option value="tyokalu">Ty\u00f6kalu (Claude pilvess\u00e4)</option></select> <button id="uusi">Uusi keskustelu</button></span></header>
 <div id="viestit" aria-live="polite"></div>
-<form id="lomake"><textarea id="teksti" maxlength="4000" placeholder="Kirjoita Aivolle\u2026" required></textarea><button>L\u00e4het\u00e4</button></form>
+<form id="lomake"><textarea id="teksti" maxlength="4000" placeholder="Kirjoita Aivolle\u2026 (Enter l\u00e4hett\u00e4\u00e4, Shift+Enter rivinvaihto)" required></textarea><button>L\u00e4het\u00e4</button></form>
 <script>
 let kid=null;let nyt='yksityinen';const V=document.getElementById('viestit');
 const H={'Content-Type':'application/json','X-Aivo':'1'};
+function alas(){V.scrollTop=V.scrollHeight;const k=V.lastElementChild;if(k&&k.scrollIntoView)k.scrollIntoView({block:'end'});}
 function lisaa(rooli,teksti){const d=document.createElement('div');d.className='v '+rooli;d.textContent=teksti;
- V.appendChild(d);V.scrollTop=V.scrollHeight;return d;}
+ V.appendChild(d);alas();return d;}
 function painike(d,idx){const b=document.createElement('button');b.textContent='Kirjaa p\u00e4\u00e4t\u00f6kseksi (sanasi sellaisenaan)';
  b.onclick=async()=>{if(!confirm('Kirjataanko t\u00e4m\u00e4 viesti p\u00e4\u00e4t\u00f6skirjastoon sellaisenaan?'))return;
   const r=await fetch('/api/paatos',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,indeksi:idx})});
@@ -119,6 +120,7 @@ async function aloita(){const r=await fetch('/api/uusi',{method:'POST',headers:H
 document.getElementById('uusi').onclick=aloita;
 document.getElementById('tila').onchange=e=>{if(e.target.value==='tyokalu'&&!confirm('Ty\u00f6kalutilassa viestit kulkevat Clauden pilvipalveluun. Jatketaanko?')){e.target.value='yksityinen';return;}aloita();};
 let lahetyksessa=false;
+document.getElementById('teksti').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&e.keyCode!==229){e.preventDefault();document.getElementById('lomake').requestSubmit();}});
 document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();if(lahetyksessa)return;const t=document.getElementById('teksti');
  const s=t.value.trim();if(!s)return;lahetyksessa=true;t.value='';
  try{if(!kid)await aloita();if(!kid)return;
@@ -126,10 +128,10 @@ document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();if(lahet
   try{const r=await fetch('/api/viesti',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,teksti:s})});
    if(r.status===401){location.href='/kirjaudu';return;}
    const j=await r.json();odota.textContent=j.vastaus||('Virhe: '+(j.virhe||r.status));
-   if(Number.isInteger(j.indeksi))painike(oma,j.indeksi);}
-  catch(x){odota.textContent='Yhteysvirhe';}}
+   if(Number.isInteger(j.indeksi))painike(oma,j.indeksi);alas();}
+  catch(x){odota.textContent='Yhteysvirhe';alas();}}
  finally{lahetyksessa=false;}};
-aloita();
+aloita();alas();
 </script></body></html>
 """
 
