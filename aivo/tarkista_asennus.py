@@ -21,7 +21,7 @@ AIKARAJA = 10
 
 
 def aja(komento):
-    """Oletusajuri: (paluukoodi, stdout). Testit korvaavat tamän vaarennetulla."""
+    """Oletusajuri: (paluukoodi, stdout). Testit korvaavat taman vaarennetulla."""
     try:
         p = subprocess.run(komento, capture_output=True, text=True, timeout=AIKARAJA)
     except (OSError, subprocess.TimeoutExpired) as e:
