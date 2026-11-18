@@ -41,7 +41,7 @@ def muutokset(hakemisto, pohja):
 
 
 def arvioi(muutetut, poistetut):
-    """Palauttaa virheviestin tai None. Puhdas funktio testejä varten."""
+    """Palauttaa virheviestin tai None. Puhdas funktio testeja varten."""
     if CHANGELOG not in muutetut and CHANGELOG not in poistetut:
         return None
     if CHANGELOG in muutetut and any(_on_fragmentti(p) for p in poistetut):
