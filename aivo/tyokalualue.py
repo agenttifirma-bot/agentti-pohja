@@ -5,7 +5,8 @@ from aivo.alue import Alue
 
 OLETUS_JUURI = "/var/lib/aivo"
 ALIKANSIOT = ("chat", "kirjasto", "tiivistelmat", "indeksi")
+GIT_ALIKANSIOT = ("kirjasto",)    # kirjasto on git-klooni (.git sallitaan, muut alikansiot eivat)
 
 
 def tyokalualue(juuri=OLETUS_JUURI):
-    return Alue("tyokalu", juuri, ALIKANSIOT)
+    return Alue("tyokalu", juuri, ALIKANSIOT, git_alikansiot=GIT_ALIKANSIOT)
