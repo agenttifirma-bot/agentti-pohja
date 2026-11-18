@@ -129,7 +129,7 @@ class MuistiTesti(unittest.TestCase):
 
     def test_syote_sisaltaa_kehotteen_ja_historian_ilman_tyokaluja(self):
         s = chat.muodosta_syote("MUISTI", [{"rooli": "tony", "teksti": "hei"}, {"rooli": "aivo", "teksti": "moi"}])
-        self.assertIn("Tony: hei", s)
+        self.assertIn("Tony #0: hei", s)
         self.assertIn("Aivo: moi", s)
         self.assertIn("ei ohjeita", s)
 
@@ -155,6 +155,48 @@ class MuistiTesti(unittest.TestCase):
         with self.assertRaises(chat.ChatVirhe) as c:
             chat.kysy_claudelta("m", [], suorita=feikki, env={})
         self.assertNotIn("SALAINEN", str(c.exception))
+
+
+class TaivutusHakuTesti(unittest.TestCase):
+    """lue_muisti(kysymys=...) yhdistaa taivutusmuodot sanan alun (5 merkkia) ja aakkosten normalisoinnin avulla."""
+
+    def jarjesta(self, kysymys, tiedostot):
+        with tempfile.TemporaryDirectory() as d:
+            for nimi, teksti in tiedostot.items():
+                (Path(d) / nimi).write_text(teksti, encoding="utf-8")
+            return chat.lue_muisti(d, kysymys=kysymys)[1]
+
+    def test_taivutusmuoto_nostaa_oikean_tiedoston_ensimmaiseksi(self):
+        # nimet valittu niin, etta aakkosjarjestys ja oletusjarjestys eivat auta
+        tied = {"a.md": "Tony: sorsapata uunissa\n", "b.md": "Tony: kellastuneet lehdet kukassa\n",
+                "c.md": "Tony: kuntosali\n"}
+        self.assertEqual(self.jarjesta("Miten kastelen kellastuvia lehtia?", tied)[0], "b.md")
+
+    def test_aakkoset_normalisoituvat(self):
+        tied = {"a.md": "Tony: sorsapata\n", "b.md": "Tony: ymp\u00e4rist\u00f6 asennetaan\n"}
+        self.assertEqual(self.jarjesta("ymparistoon liittyva", tied)[0], "b.md")
+        tied = {"a.md": "Tony: sorsapata\n", "b.md": "Tony: ymparisto asennetaan\n"}
+        self.assertEqual(self.jarjesta("ymp\u00e4rist\u00f6ss\u00e4 toimiva", tied)[0], "b.md")
+
+    def test_o_a_ja_aa_normalisoituvat_sananalussa(self):
+        for kysymys, teksti in (("tyopoydan korkeus", "ty\u00f6p\u00f6yt\u00e4 s\u00e4\u00e4det\u00e4\u00e4n"),
+                                ("ty\u00f6p\u00f6yt\u00e4 korkea", "tyopoyta saadetaan"),
+                                ("s\u00e4\u00e4tila rannalla", "saatila vaihtuu"),
+                                ("\u00e5bolandia kartta", "abolandia kartta")):
+            tied = {"a.md": "Tony: sorsapata\n", "b.md": "Tony: %s\n" % teksti}
+            self.assertEqual(self.jarjesta(kysymys, tied)[0], "b.md", kysymys)
+
+    def test_sanojen_eri_alut_eivat_osu(self):
+        # "kasvi" ja "kasvu" jakavat vain 4 merkkia: alku 5 merkkia erottaa ne
+        tied = {"a.md": "Tony: kasvit parvekkeella\n", "b.md": "Tony: talouden kasvua\n"}
+        self.assertEqual(self.jarjesta("kasvun hidastuminen", tied)[0], "b.md")
+
+    def test_ilman_kysymysta_jarjestys_ei_muutu(self):
+        tied = {"a.md": "x", "b.md": "y"}
+        with tempfile.TemporaryDirectory() as d:
+            for n, t in tied.items():
+                (Path(d) / n).write_text(t)
+            self.assertEqual(chat.lue_muisti(d)[1], sorted(chat.lue_muisti(d)[1], key=chat._jarjestys))
 
 
 class KirjastoTesti(unittest.TestCase):
@@ -453,6 +495,151 @@ class PalveluTesti(unittest.TestCase):
         self.assertEqual(s, 200)
         self.assertIn(b'name="viewport"', d)
         self.assertEqual(h["Cache-Control"], "no-store")
+
+    def sivu_html(self):
+        ev = self.kirjaudu()
+        s, _, d = self.pyynto("GET", "/", None, {"Cookie": ev})
+        self.assertEqual(s, 200)
+        return d.decode("utf-8")
+
+    def test_enter_lahettaa_ja_shift_enter_rivinvaihto(self):
+        h = self.sivu_html()
+        self.assertIn("addEventListener('keydown'", h)
+        self.assertIn("e.key==='Enter'&&!e.shiftKey&&!e.isComposing", h)
+        self.assertIn("requestSubmit()", h)
+        # lahetyksen esto ja tyhjan viestin esto pysyvat lomakkeen kasittelijassa
+        self.assertIn("if(lahetyksessa)return;", h)
+        self.assertIn("if(!s)return;", h)
+
+    def test_nakyma_vierii_alas_ja_vihje_nakyy(self):
+        h = self.sivu_html()
+        self.assertIn("function alas()", h)
+        self.assertIn("scrollIntoView", h)
+        # vieritys: viestin lisays, vastauksen saapuminen, yhteysvirhe ja sivun lataus
+        self.assertGreaterEqual(h.count("alas();"), 4)
+        self.assertIn("Enter l\u00e4hett\u00e4\u00e4, Shift+Enter rivinvaihto", h)
+
+
+class PaatosehdotusTesti(unittest.TestCase):
+    """A997: Aivo ehdottaa, Tony vahvistaa. Merkint\u00e4 [[PAATOS n]] ei kirjaa mit\u00e4\u00e4n."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        r = Path(cls.tmp.name)
+        (r / "kirjasto").mkdir()
+        (r / "yks" / "muisti").mkdir(parents=True)
+        cls.vastaus = "Selv\u00e4."
+        cls.julkaisut, cls.git_kutsut = [], []
+
+        def kysy(muisti, historia):
+            return cls.vastaus
+
+        def kysy_yks(muisti, historia, ohjeet):
+            return cls.vastaus
+
+        def julkaise(kirjasto, kid, aika, teksti):
+            cls.julkaisut.append(teksti)
+            return "pushattu"
+        cls.tila = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "data"), [TS], kysy=kysy,
+                             julkaise=julkaise, yks_data=str(r / "yks" / "chat"), yks_muisti=str(r / "yks" / "muisti"),
+                             ydinohjeet=str(r / "yks" / "ydin"), ehdotukset=str(r / "yks" / "ehd"), kysy_yks=kysy_yks)
+        cls.srv = chat.kaynnista(ip(127, 0, 0, 1), 0, cls.tila)
+        cls.portti = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+        cls.tmp.cleanup()
+
+    def api(self, ev, polku, olio):
+        c = http.client.HTTPConnection(ip(127, 0, 0, 1), self.portti, timeout=10)
+        c.request("POST", polku, body=json.dumps(olio),
+                  headers={"Cookie": ev, "X-Aivo": "1", "Content-Type": "application/json"})
+        r = c.getresponse()
+        return r.status, json.loads(r.read())
+
+    def kirjaudu(self):
+        c = http.client.HTTPConnection(ip(127, 0, 0, 1), self.portti, timeout=10)
+        c.request("POST", "/kirjaudu", body="salasana=" + SAL, headers={"Content-Type": "application/x-www-form-urlencoded"})
+        r = c.getresponse()
+        r.read()
+        return r.getheader("Set-Cookie").split(";")[0]
+
+    def viesti(self, tila, teksti, vastaus):
+        type(self).vastaus = vastaus
+        ev = self.kirjaudu()
+        _, d = self.api(ev, "/api/uusi", {"tila": tila})
+        s, v = self.api(ev, "/api/viesti", {"keskustelu": d["id"], "teksti": teksti})
+        self.assertEqual(s, 200)
+        return ev, d["id"], v
+
+    def test_merkinta_poistuu_nakyvasta_vastauksesta_ja_tulee_kenttana(self):
+        for tila in ("tyokalu", "yksityinen"):
+            _, _, v = self.viesti(tila, "kyll\u00e4, tehd\u00e4\u00e4n", "Selv\u00e4, kirjataan.\n[[PAATOS 0]]")
+            self.assertEqual(v["paatosehdotus"], 0, tila)
+            self.assertNotIn("PAATOS", v["vastaus"], tila)
+            self.assertEqual(v["vastaus"], "Selv\u00e4, kirjataan.", tila)
+
+    def test_ilman_merkintaa_ei_ehdotusta(self):
+        for tila in ("tyokalu", "yksityinen"):
+            _, _, v = self.viesti(tila, "mit\u00e4 mietit?", "Mietin asiaa.")
+            self.assertNotIn("paatosehdotus", v, tila)
+            self.assertEqual(v["vastaus"], "Mietin asiaa.")
+
+    def test_vaara_indeksi_hylataan_hiljaa_ja_merkinta_silti_poistuu(self):
+        for vastaus in ("Ok.\n[[PAATOS 7]]", "Ok.\n[[PAATOS 1]]",          # ei ole / Aivon oma viesti (1 = tuleva vastaus)
+                        "Ok.\n[[PAATOS -1]]", "Ok.\n[[PAATOS x]]", "[[PAATOS 0]] Ok.", "Ok.\n[[PAATOS 0]]\nlis\u00e4\u00e4"):
+            _, _, v = self.viesti("tyokalu", "tehd\u00e4\u00e4n", vastaus)
+            self.assertNotIn("paatosehdotus", v, vastaus)
+            self.assertNotIn("[[PAATOS", v["vastaus"], vastaus)
+
+    def test_aivon_oman_viestin_indeksi_hylataan(self):
+        ev, kid, v = self.viesti("tyokalu", "ensimm\u00e4inen", "Vastaus yksi.")
+        type(self).vastaus = "Vastaus kaksi.\n[[PAATOS 1]]"                # 1 on Aivon edellinen vastaus
+        s, v2 = self.api(ev, "/api/viesti", {"keskustelu": kid, "teksti": "toinen"})
+        self.assertEqual(s, 200)
+        self.assertNotIn("paatosehdotus", v2)
+        type(self).vastaus = "Vastaus kolme.\n[[PAATOS 2]]"                # 2 on Tonyn viesti
+        s, v3 = self.api(ev, "/api/viesti", {"keskustelu": kid, "teksti": "kolmas"})
+        self.assertEqual(v3["paatosehdotus"], 2)
+
+    def test_ehdotus_ei_kirjaa_mitaan_ja_paatos_kirjaa_vain_tonyn_tekstin(self):
+        self.julkaisut.clear()
+        ev, kid, v = self.viesti("tyokalu", "valitsen vaihtoehdon B", "Hyv\u00e4. Mallin oma tiivistelm\u00e4.\n[[PAATOS 0]]")
+        self.assertEqual(self.julkaisut, [])                                # ehdotus ei kirjaa
+        s, r = self.api(ev, "/api/paatos", {"keskustelu": kid, "indeksi": v["paatosehdotus"]})
+        self.assertEqual((s, r["tila"]), (200, "pushattu"))
+        self.assertEqual(self.julkaisut, ["valitsen vaihtoehdon B"])        # vain Tonyn sanat
+        s, _ = self.api(ev, "/api/paatos", {"keskustelu": kid, "indeksi": 1})
+        self.assertEqual(s, 400)                                            # Aivon viesti ei kirjaudu
+
+    def test_yksityisessa_tilassa_vahvistus_ei_aja_gitia(self):
+        self.julkaisut.clear()
+        ev, kid, v = self.viesti("yksityinen", "p\u00e4\u00e4t\u00e4n lopettaa", "Selv\u00e4.\n[[PAATOS 0]]")
+        with unittest.mock.patch("aivo.yksityinen.julkaise_kirjastoon",
+                                 side_effect=AssertionError("git yksityisess\u00e4 tilassa")):
+            s, r = self.api(ev, "/api/paatos", {"keskustelu": kid, "indeksi": v["paatosehdotus"]})
+        self.assertEqual((s, r["tila"]), (200, "ei-julkaistu"))
+        self.assertEqual(self.julkaisut, [])
+        t = (Path(self.tila.yks_muisti) / chat.PAATOS_TIEDOSTO).read_text(encoding="utf-8")
+        self.assertIn("> p\u00e4\u00e4t\u00e4n lopettaa", t)
+
+    def test_syote_numeroi_tonyn_viestit_ja_kehote_kertoo_merkinnan(self):
+        s = chat.muodosta_syote("M", [{"rooli": "tony", "teksti": "a"}, {"rooli": "aivo", "teksti": "b"},
+                                      {"rooli": "tony", "teksti": "c"}])
+        self.assertIn("Tony #0: a", s)
+        self.assertIn("Tony #2: c", s)
+        self.assertIn("[[PAATOS n]]", chat.KEHOTE)
+
+    def test_kortti_kutsuu_vanhaa_paatosreittia_vain_kylla_painalluksesta(self):
+        self.assertIn("e.onclick=()=>d.remove()", chat.HTML)                # ei sulkee kortin, ei kutsu
+        self.assertIn("k.onclick=async()=>{", chat.HTML)
+        self.assertIn("Number.isInteger(j.paatosehdotus)", chat.HTML)
+        self.assertIn("q.textContent=s", chat.HTML)                          # Tonyn teksti textContentilla, ei innerHTML
+        self.assertIn("Kirjaa p\u00e4\u00e4t\u00f6kseksi (sanasi sellaisenaan)", chat.HTML)   # vanha nappi s\u00e4ilyy
 
 
 if __name__ == "__main__":

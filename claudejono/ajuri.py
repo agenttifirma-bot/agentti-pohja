@@ -70,7 +70,7 @@ JONO = "claude-jono"
 
 # Rinnakkaiset kaistat (tehtava 2026-11-03: aloitus 2, valmius 3). Kaistojen maara tulee yhdesta asetuksesta
 # CLAUDEJONO_KAISTOJA (oletus 1 = vanha toiminta); KAISTOJA_MAX on kova ylaraja koodissa (koodi on laki).
-KAISTOJA_MAX = 3
+KAISTOJA_MAX = 4   # 4 = Aivo-kaista (Tonyn paatos A991, 17.11.2026)
 VARAUS_HAK = "varattu"
 SUUNNITTELU_VARAUS = "_suunnittelu"   # ei kelpaa tehtavan nimeksi (TEHTAVA_RE), joten ei voi osua tehtavaan
 GIT_LUKKO = "git-lukko"
@@ -373,7 +373,7 @@ def lue_opit(repo):
 
 
 def kaistahuomautus(kaista):
-    """Kaistalla 2..3 agentti tyoskentelee omassa alihakemistossaan, jotta kaksi ajoa ei kayta samaa kloonia.
+    """Kaistalla 2..4 agentti tyoskentelee omassa alihakemistossaan, jotta kaksi ajoa ei kayta samaa kloonia.
     Polku pysyy /opt/agentscope/tyo:n alla, joten PR-tyokalun polkuraja ei muutu."""
     if kaista <= 1:
         return ""
@@ -470,7 +470,7 @@ RUNUSER = "/usr/sbin/runuser"
 
 
 def kaistan_tyohak(tyohak, kaista=1):
-    """Kaista 1: <tyohak>/tyo (vanha). Kaista 2..3: <tyohak>/tyo/k<N>, oma klooni-alue; sama /opt/agentscope/tyo -juuri kuin PR-tyokalulla."""
+    """Kaista 1: <tyohak>/tyo (vanha). Kaista 2..4: <tyohak>/tyo/k<N>, oma klooni-alue; sama /opt/agentscope/tyo -juuri kuin PR-tyokalulla."""
     return Path(tyohak) / "tyo" / (f"k{kaista}" if kaista > 1 else "")
 
 
@@ -1277,6 +1277,7 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
                 tila_nimi = "KESKEN"   # osa tyosta jai docs-repon ulkopuolelle; ei vaaraa valmista
             polku = kirjoita_tulos(repo, t.name, ok, docs_ohitus_huom(ohitetut) + teksti, tila=tila_nimi, malli=m.tunniste)
             pushattu = julkaise(repo, [polku] + docs)
+            aivo_arvio.kirjaa_tulos(tila, t.name, tila_nimi)   # lopputulos Aivon arvion viereen (osumat-vertailu); ei esta ajoa
             if tila_nimi == "VALMIS" and m.reitti == "claude":
                 uudet, _ = suodata_opit(poimi_uusi_oppi(teksti))
                 if uudet:
