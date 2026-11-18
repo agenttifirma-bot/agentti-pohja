@@ -1,0 +1,1 @@
+- Aivo: `osumat --luokittain` näyttää osumaprosentin tavoiteluokittain (Tavoite-rivi tai tehtävän nimi) ja kertoo, onko raja täynnä (oletus 90 % ja 100 vertailtavaa, säädettävissä valinnoilla `--raja-prosentti` ja `--raja-vertailtavat`). Uusi `miksi`-komento kirjaa yhden rivin selityksen väärälle ennusteelle. Tulosteessa ei näy tehtävien nimiä eikä selityksiä.
