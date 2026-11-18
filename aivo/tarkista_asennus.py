@@ -5,7 +5,6 @@ Tuloste: yksi rivi per tarkistus (OK/VIKA + lyhyt syy). Paluuarvo 0 vain, jos ka
 Avaintiedoston sisaltoa ei koskaan avata: vain os.stat (olemassaolo ja oikeudet)."""
 import argparse
 import http.client
-import importlib
 import os
 import stat
 import subprocess
@@ -66,17 +65,21 @@ def tarkista_terve(portti, hae):
 
 
 def tarkista_moduulit(koodi):
+    """Moduulit tarkistetaan tiedostoina --koodi-polusta: tiedosto on olemassa ja kaantyy.
+
+    Tuontia ei kayteta, koska (1) aivo on jo sys.modules-sanakirjassa, joten --koodi ei
+    vaikuttaisi, ja (2) tuonti ajaisi moduulin tuontiaikaisen koodin. compile() ei aja koodia."""
     puuttuu = []
-    vanha = list(sys.path)
-    sys.path.insert(0, koodi)
-    try:
-        for nimi in MODUULIT:
-            try:
-                importlib.import_module(nimi)
-            except Exception as e:   # vain tyyppi, viesti voi sisaltaa salaisuuksia
-                puuttuu.append("%s (%s)" % (nimi, type(e).__name__))
-    finally:
-        sys.path[:] = vanha
+    for nimi in MODUULIT:
+        polku = os.path.join(koodi, *nimi.split(".")) + ".py"
+        try:
+            with open(polku, "rb") as f:
+                lahde = f.read()
+            compile(lahde, polku, "exec", dont_inherit=True)
+        except FileNotFoundError:
+            puuttuu.append("%s (puuttuu)" % nimi)
+        except Exception as e:   # vain tyyppi, viesti voi sisaltaa salaisuuksia
+            puuttuu.append("%s (%s)" % (nimi, type(e).__name__))
     return (not puuttuu), ("; ".join(puuttuu) if puuttuu else "%d moduulia" % len(MODUULIT))
 
 
@@ -86,6 +89,8 @@ def tarkista_avain(polku):
         st = os.stat(polku)
     except FileNotFoundError:
         return False, "puuttuu"
+    except PermissionError:
+        return False, "ei oikeutta tarkistaa (PermissionError)"
     except OSError as e:
         return False, type(e).__name__
     if not stat.S_ISREG(st.st_mode):

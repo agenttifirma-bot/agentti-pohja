@@ -289,7 +289,9 @@ Päivityksen jälkeen kontissa 122 yksi komento kertoo, onko asennus kunnossa. A
 runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -m aivo.tarkista_asennus ODOTETTU_COMMIT
 ```
 
-Komento tarkistaa asennetun commitin, chat-palvelun ja tiivistysajastimen tilan (`systemctl is-active`), reitin `/terve` portissa 8780, Aivon moduulien tuonnin ja salasanatiedoston oikeudet. Tiedostoon käytetään vain `os.stat`ia: sisältöä ei avata eikä tulosteta. Paluuarvo on 0 vain, jos kaikki rivit ovat OK. Asentamattomassa ympäristössä tulos on esimerkiksi:
+Komento tarkistaa asennetun commitin, chat-palvelun ja tiivistysajastimen tilan (`systemctl is-active`), reitin `/terve` portissa 8780, Aivon moduulien olemassaolon ja käännettävyyden sekä salasanatiedoston oikeudet. Moduulit luetaan lähdetiedostoina polusta, jonka `--koodi` antaa (oletus `/opt/agentti-pohja`), ja ne käännetään `compile`-kutsulla. Moduuleja ei tuoda, joten niiden tuontiaikaista koodia ei ajeta. Tarkistus ei siis löydä ajonaikaisia vikoja. Salasanatiedostoon käytetään vain `os.stat`ia: sisältöä ei avata eikä tulosteta.
+
+`/etc/aivo` on `aivo:aivo` ja tilassa 700. Jos komennon ajaa muu käyttäjä kuin hakemiston omistaja (esimerkiksi palvelun `User=` on eri kuin `aivo`), `os.stat` ei pääse tiedostoon ja rivi on `VIKA avain /etc/aivo/chat-salasana: ei oikeutta tarkistaa (PermissionError)`. Komento ei kaadu. Aja silloin komento hakemiston omistajana (`runuser -u <omistaja> -- ...`). Paluuarvo on 0 vain, jos kaikki rivit ovat OK. Asentamattomassa ympäristössä tulos on esimerkiksi:
 
 ```
 VIKA commit: asennettu 7c01f795a607, odotettu 141ab0075ba5
