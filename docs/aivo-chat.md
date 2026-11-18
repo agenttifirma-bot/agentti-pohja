@@ -281,10 +281,31 @@ Ota ensin snapshot kontista 122. Ajastin ei asennu itsestään: tämä on ohje, 
 
 Jos päiväkatto täyttyy, loki sisältää rivin `lopetus: paivakatto 10/10 taynna, tiivistamatta N keskustelua`. Ajo jatkuu seuraavana vuorokautena. Jos tiivistys epäonnistuu, journaalissa on rivi `epaonnistui: ...` ja virheen tyyppi. Sama viestialue yritetään enintään kahdesti, joten rikkinäinen keskustelu ei kuluta koko päiväkattoa.
 
+## Asennuksen tilatarkistus (vain luku)
+
+Päivityksen jälkeen kontissa 122 yksi komento kertoo, onko asennus kunnossa. Anna argumenttina odotettu commit (`git rev-parse HEAD` agentti-pohjan kloonista, jonka PR on mergattu):
+
+```
+runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -m aivo.tarkista_asennus ODOTETTU_COMMIT
+```
+
+Komento tarkistaa asennetun commitin, chat-palvelun ja tiivistysajastimen tilan (`systemctl is-active`), reitin `/terve` portissa 8780, Aivon moduulien tuonnin ja salasanatiedoston oikeudet. Tiedostoon käytetään vain `os.stat`ia: sisältöä ei avata eikä tulosteta. Paluuarvo on 0 vain, jos kaikki rivit ovat OK. Asentamattomassa ympäristössä tulos on esimerkiksi:
+
+```
+VIKA commit: asennettu 7c01f795a607, odotettu 141ab0075ba5
+VIKA palvelu aivo-chat: inactive
+VIKA ajastin aivo-tiivista.timer: inactive
+VIKA terve /terve: ei yhteytta (ConnectionRefusedError)
+OK   moduulit: 3 moduulia
+VIKA avain /etc/aivo/chat-salasana: puuttuu
+```
+
+Valinnat `--koodi` (oletus `/opt/agentti-pohja`) ja `--portti` (oletus 8780) vaihtavat polun ja portin.
+
 ## Testit
 
 ```
-python3 -m unittest aivo.test_chat aivo.test_tiivista
+python3 -m unittest aivo.test_chat aivo.test_tiivista aivo.test_tarkista_asennus
 ```
 
 Testit kattavat salasanan tiivisteen ja lukituksen, osoite- ja Host-rajat, CSRF-suojan, muistin lukemisen (ei linkkejä kirjaston ulkopuolelle), lähdeviitteiden tarkistuksen, päätöksen kirjaamisen sanasta sanaan, GitHub-pushin eston ja sen, että Claude-kutsu ei käytä työkaluja eikä välittäjiä.
