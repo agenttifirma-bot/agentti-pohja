@@ -1,4 +1,4 @@
-"""Testit aivo/tiivista.py:lle ja aivo/tiivistelmat_kehote.py:lle (stdlib unittest).
+"""Testit aivo/tiivista_tyokalu.py:lle ja aivo/tiivistelmat_kehote.py:lle (stdlib unittest).
 Ei oikeita mallikutsuja eika verkkoa: malli on vaarennetty funktio, socket-testi kayttaa paikallista unix-socketia."""
 import ast
 import builtins
@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from aivo import alue, chat, tiivista, tiivistelma, tiivistelmat_kehote, tyokalualue
+from aivo import alue, chat, tiivista_tyokalu as tiivista, tiivistelma, tiivistelmat_kehote, tyokalualue
 
 NYT = datetime(2026, 11, 17, 12, 0, 0, tzinfo=timezone.utc)
 CANARY = "YKSITYINEN-KANARIA-7f3a9c"
@@ -643,7 +643,7 @@ class CliTesti(Pohja):
         self.assertEqual((rc, len(m.syotteet)), (0, 1))
 
     def test_virhe_tulostaa_vain_tyypin_nimen(self):
-        with mock.patch("aivo.tiivista.aja", side_effect=KeyError("SALAINEN-ARVO")), redirect_stderr(io.StringIO()) as err:
+        with mock.patch("aivo.tiivista_tyokalu.aja", side_effect=KeyError("SALAINEN-ARVO")), redirect_stderr(io.StringIO()) as err:
             rc = tiivista.main(["--alue", "tyokalu", "--juuri", str(self.juuri), "--kuiva"], env={})
         self.assertEqual(rc, 1)
         self.assertIn("KeyError", err.getvalue())
