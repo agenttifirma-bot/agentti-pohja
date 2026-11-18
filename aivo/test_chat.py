@@ -520,8 +520,8 @@ class PalveluTesti(unittest.TestCase):
         self.assertIn("Enter l\u00e4hett\u00e4\u00e4, Shift+Enter rivinvaihto", h)
 
 
-class PaatosehdotusTesti(unittest.TestCase):
-    """A997: Aivo ehdottaa, Tony vahvistaa. Merkint\u00e4 [[PAATOS n]] ei kirjaa mit\u00e4\u00e4n."""
+class ChatPalveluPohja(unittest.TestCase):
+    """Yhteinen palvelin ja apurit (ei omia testej\u00e4)."""
 
     @classmethod
     def setUpClass(cls):
@@ -575,6 +575,10 @@ class PaatosehdotusTesti(unittest.TestCase):
         s, v = self.api(ev, "/api/viesti", {"keskustelu": d["id"], "teksti": teksti})
         self.assertEqual(s, 200)
         return ev, d["id"], v
+
+
+class PaatosehdotusTesti(ChatPalveluPohja):
+    """A997: Aivo ehdottaa, Tony vahvistaa. Merkint\u00e4 [[PAATOS n]] ei kirjaa mit\u00e4\u00e4n."""
 
     def test_merkinta_poistuu_nakyvasta_vastauksesta_ja_tulee_kenttana(self):
         for tila in ("tyokalu", "yksityinen"):
@@ -640,6 +644,80 @@ class PaatosehdotusTesti(unittest.TestCase):
         self.assertIn("Number.isInteger(j.paatosehdotus)", chat.HTML)
         self.assertIn("q.textContent=s", chat.HTML)                          # Tonyn teksti textContentilla, ei innerHTML
         self.assertIn("Kirjaa p\u00e4\u00e4t\u00f6kseksi (sanasi sellaisenaan)", chat.HTML)   # vanha nappi s\u00e4ilyy
+
+
+class ValinnatTesti(ChatPalveluPohja):
+    """Monivalinta: [[VALINNAT: a | b]] -> painikkeet."""
+
+    def test_tunnistus_ja_poisto_molemmissa_tiloissa(self):
+        for tila in ("tyokalu", "yksityinen"):
+            _, _, v = self.viesti(tila, "mik\u00e4 v\u00e4ri?", "Valitse.\n[[VALINNAT: sininen | punainen | vihre\u00e4]]")
+            self.assertEqual(v["valinnat"], ["sininen", "punainen", "vihre\u00e4"], tila)
+            self.assertEqual(v["vastaus"], "Valitse.", tila)
+            self.assertNotIn("VALINNAT", v["vastaus"])
+
+    def test_ilman_merkintaa_ei_valintoja(self):
+        _, _, v = self.viesti("tyokalu", "moi", "Tavallinen vastaus.")
+        self.assertNotIn("valinnat", v)
+
+    def test_rajat(self):
+        self.assertEqual(chat.erota_valinnat("T\n[[VALINNAT: a | b]]"), ("T", ["a", "b"]))
+        self.assertEqual(chat.erota_valinnat("T\n[[VALINNAT: 1|2|3|4|5|6]]")[1], list("123456"))
+        self.assertEqual(chat.erota_valinnat("T\n[[VALINNAT: %s | b]]" % ("x" * 80))[1], ["x" * 80, "b"])
+        for huono in ("T\n[[VALINNAT: a]]",                          # yksi
+                      "T\n[[VALINNAT: 1|2|3|4|5|6|7]]",              # seitsem\u00e4n
+                      "T\n[[VALINNAT: %s | b]]" % ("x" * 81),        # liian pitk\u00e4
+                      "T\n[[VALINNAT: a | ]]", "T\n[[VALINNAT: a | | b]]",   # tyhj\u00e4
+                      "T\n[[VALINNAT: a | [[b]]",                     # sis\u00e4kk\u00e4inen merkint\u00e4
+                      "T\n[[VALINNAT: a | b\x07]]",                   # ohjausmerkki
+                      "[[VALINNAT: a | b]] j\u00e4lkeen", "[[VALINNAT: a | b]]\nlis\u00e4\u00e4",   # ei lopussa
+                      "T\n[[VALINNAT a | b]]", "T\n[[valinnat: a | b]]"):
+            self.assertEqual(chat.erota_valinnat(huono), (huono, None), huono)
+
+    def test_virheellinen_merkinta_nakyy_tavallisena_tekstina(self):
+        _, _, v = self.viesti("tyokalu", "moi", "Valitse.\n[[VALINNAT: vain yksi]]")
+        self.assertNotIn("valinnat", v)
+        self.assertIn("[[VALINNAT: vain yksi]]", v["vastaus"])
+
+    def test_html_ei_tulkita_palvelimella_ja_sivu_kayttaa_textcontentia(self):
+        _, _, v = self.viesti("tyokalu", "moi", "V.\n[[VALINNAT: <b>a</b> | <img src=x onerror=1>]]")
+        self.assertEqual(v["valinnat"], ["<b>a</b>", "<img src=x onerror=1>"])   # raakana datana; sivu escapoi
+        alku = chat.HTML.index("function valinnat(")
+        osa = chat.HTML[alku:chat.HTML.index("function painike(")]
+        self.assertIn("b.textContent=t", osa)
+        self.assertNotIn("innerHTML", chat.HTML)
+        self.assertNotIn("insertAdjacentHTML", chat.HTML)
+
+    def test_tonyn_viestin_merkinta_ei_laukaise(self):
+        for tila in ("tyokalu", "yksityinen"):
+            _, _, v = self.viesti(tila, "[[VALINNAT: a | b]]", "Selv\u00e4.")
+            self.assertNotIn("valinnat", v, tila)
+            self.assertEqual(v["vastaus"], "Selv\u00e4.")
+
+    def test_valinnan_lahetys_on_tavallinen_viesti_ja_tallentuu_tonyn_sanana(self):
+        ev, kid, v = self.viesti("tyokalu", "kysy", "Mik\u00e4?\n[[VALINNAT: sininen | punainen]]")
+        type(self).vastaus = "Hyv\u00e4.\n[[PAATOS 2]]"
+        s, v2 = self.api(ev, "/api/viesti", {"keskustelu": kid, "teksti": v["valinnat"][0]})   # sama reitti kuin kirjoitettu viesti
+        self.assertEqual(s, 200)
+        hist = self.tila.keskustelut.lue(kid)
+        self.assertEqual((hist[2]["rooli"], hist[2]["teksti"]), ("tony", "sininen"))
+        self.assertNotIn("VALINNAT", hist[1]["teksti"])
+        self.assertEqual(v2["paatosehdotus"], 2)                    # vastaus kelpaa my\u00f6s p\u00e4\u00e4t\u00f6saineistoksi
+
+    def test_sivu_lahettaa_painikkeen_normaalia_polkua_ja_lukitsee_painikkeet(self):
+        h = chat.HTML
+        self.assertIn("b.onclick=()=>laheta(t)", h)                 # painike -> sama laheta() kuin lomake
+        self.assertIn("await laheta(s)", h)
+        self.assertIn("Array.isArray(j.valinnat)", h)
+        self.assertIn("Muu vastaus", h)
+        self.assertIn("function lukitse()", h)
+        self.assertIn("querySelectorAll('button,input').forEach(x=>{x.disabled=true;})", h)   # sek\u00e4 painikkeet ett\u00e4 muu-kentt\u00e4
+        self.assertIn("lahetyksessa=true;lukitse();", h)            # painikkeet pois k\u00e4yt\u00f6st\u00e4 heti l\u00e4hetyksess\u00e4
+
+    def test_kehotteet_kertovat_merkinnan(self):
+        from aivo import yksityinen
+        self.assertIn("[[VALINNAT:", chat.KEHOTE)
+        self.assertIn("[[VALINNAT:", yksityinen.YKSITYINEN_KEHOTE)
 
 
 if __name__ == "__main__":

@@ -59,6 +59,9 @@ S\u00e4\u00e4nn\u00f6t:
 3. Voit ehdottaa muutosta ydinohjeisiin vain t\u00e4ss\u00e4 muodossa: [[EHDOTUS tiedosto.md]] uusi koko sis\u00e4lt\u00f6 [[/EHDOTUS]].
    Ehdotus ei tule voimaan, ennen kuin Tony hyv\u00e4ksyy sen. \u00c4l\u00e4 v\u00e4it\u00e4 muuttaneesi ohjeita.
 4. \u00c4l\u00e4 v\u00e4it\u00e4 Tonyn p\u00e4\u00e4tt\u00e4neen mit\u00e4\u00e4n, mit\u00e4 h\u00e4n ei ole sanonut. Saat olla Tonyn kanssa eri mielt\u00e4 perustelluin faktoin.
+5. Kun Tonyn vastaus on valinta muutamasta vaihtoehdosta, lis\u00e4\u00e4 vastauksen aivan viimeiselle riville merkint\u00e4
+   [[VALINNAT: vaihtoehto 1 | vaihtoehto 2 | vaihtoehto 3]] (2\u20136 vaihtoehtoa, kukin enint\u00e4\u00e4n 80 merkki\u00e4, ei
+   merkkej\u00e4 [ ] tai |). Muuten esit\u00e4 tavallinen kysymys ilman merkint\u00e4\u00e4.
 """
 
 
