@@ -435,7 +435,8 @@ class CliTesti(Pohja):
         self.assertIn("RuntimeError", err.getvalue())
 
     def test_loki_ei_sisalla_keskustelun_tekstia(self):
-        self.perus(tekstit=[("tony", "LOKIKANARIA haluan jotain."), ("aivo", "Ok.")])
+        # self.aja kayttaa kiinteaa kelloa NYT, joten keskustelun aika sidotaan siihen (ei oikeaan kelloon)
+        self.perus(tekstit=[("tony", "LOKIKANARIA haluan jotain."), ("aivo", "Ok.")], viimeinen=NYT - timedelta(hours=1))
         self.aja(Vaarennos(vastaus(kohta([0], lainaus="LOKIKANARIA haluan jotain.", tulkinta="LOKIKANARIA"))))
         loki = (self.a.polku("indeksi") / ty.LOKI_TIEDOSTO).read_text()
         self.assertNotIn("LOKIKANARIA", loki)
