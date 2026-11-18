@@ -646,7 +646,8 @@ class Tila:
         self.julkaise_yks = julkaise_yks
         self.vastauslukko = threading.Lock()   # yksi Claude-kutsu kerrallaan
         # Muistinakyman (vain luku) kansiot: tyokalutilalla oma, yksityisella oma. Tyokalutila ei koskaan lue yksityista.
-        self.tiivistelmat = str(tiivistelmat or Path(data).parent / "tiivistelmat")
+        # self.tiivistelmat pysyy None, kunnes tiivistelmat kytketaan kehotteeseen; nakyma tarvitsee kansion aina
+        self.nakyma_tiivistelmat = str(tiivistelmat or Path(data).parent / "tiivistelmat")
         self.yks_tiivistelmat = None
         self.yks = None
         self.taustapaa = taustapaa if taustapaa in YKSITYINEN_TEKSTIT else "loopback"
@@ -679,7 +680,7 @@ class Tila:
     def _tarkista_tiivistelmakansiot(self, yks_data):
         """Tyokalutilan tiivistelmakansio ei saa olla sama kuin yksityisen tilan kansio, sen sisalla eika sen ylakansio.
         Muuten tyokalutilan nakyma voisi lukea yksityisia tiivistelmia tai nakyma sekoittaisi tilat."""
-        tyokalu = Path(self.tiivistelmat).resolve()
+        tyokalu = Path(self.nakyma_tiivistelmat).resolve()
         yksityiset = [self.yks_tiivistelmat, str(yks_data), self.yks_muisti, self.ehdotukset]
         for y in yksityiset:
             y = Path(y).resolve()
@@ -767,7 +768,7 @@ def tee_kasittelija(tila):
                 if valittu == "tila=yksityinen" and tila.yks_tiivistelmat:
                     kansio, nimi = tila.yks_tiivistelmat, "yksityinen tila"
                 elif valittu in ("", "tila=tyokalu"):
-                    kansio, nimi = tila.tiivistelmat, "ty\u00f6kalutila"
+                    kansio, nimi = tila.nakyma_tiivistelmat, "ty\u00f6kalutila"
                 else:
                     return self._json(404, {"virhe": "ei loydy"})
                 return self._laheta(200, muistinakyma.sivu(kansio, nimi), "text/html; charset=utf-8")

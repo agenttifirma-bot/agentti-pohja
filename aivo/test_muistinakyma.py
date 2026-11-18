@@ -118,7 +118,7 @@ class NakymaTesti(unittest.TestCase):
         r = Path(self.tmp.name) / "erillaan"
         tila = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "aivo" / "chat"), [TS],
                          yks_data=str(r / "yks" / "chat"), kysy_yks=lambda m, h, o: "x")
-        self.assertNotEqual(tila.tiivistelmat, tila.yks_tiivistelmat)
+        self.assertNotEqual(tila.nakyma_tiivistelmat, tila.yks_tiivistelmat)
         self.assertEqual(os.stat(tila.yks_tiivistelmat).st_mode & 0o777, 0o700)
         os.symlink(self.tmp.name, r / "linkki")
         with self.assertRaises(yksityinen.YksityinenVirhe):
@@ -131,7 +131,7 @@ class NakymaTesti(unittest.TestCase):
         r = Path(self.tmp.name) / "oletus"
         t = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "aivo" / "chat"), [TS],
                       yks_data=str(r / "yks" / "chat"), kysy_yks=lambda m, h, o: "x")
-        self.assertEqual(Path(t.tiivistelmat), tyokalualue.tyokalualue(str(r / "aivo")).polku("tiivistelmat"))
+        self.assertEqual(Path(t.nakyma_tiivistelmat), tyokalualue.tyokalualue(str(r / "aivo")).polku("tiivistelmat"))
         self.assertEqual(Path(t.yks_tiivistelmat), yksityinen_alue.yksityinen_alue(str(r / "yks")).polku("tiivistelmat"))
         self.assertEqual(tyokalualue.ALIKANSIOT.count("chat"), 1)
         self.assertEqual(yksityinen_alue.ALIKANSIOT.count("chat"), 1)
