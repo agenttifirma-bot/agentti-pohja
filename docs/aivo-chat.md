@@ -302,7 +302,7 @@ Ota ensin snapshot kontista 122.
    systemctl restart aivo-chat
    ```
 
-   Muokkaukseen lisättävät rivit: `[Service]` ja `Environment=AIVO_KALENTERI_KAYTOSSA=1`. Välimuistin kansio on oletuksena `/var/lib/aivo/kalenteri` (muutettavissa asetuksella `AIVO_KALENTERI_DATA`). Palvelun pitää voida kirjoittaa sinne (`ReadWritePaths`).
+   Lisää muokkaukseen palveluosion alle rivi `Environment=AIVO_KALENTERI_KAYTOSSA=1`. Välimuistin kansio on oletuksena `/var/lib/aivo/kalenteri` (muutettavissa asetuksella `AIVO_KALENTERI_DATA`). Palvelun pitää voida kirjoittaa sinne (`ReadWritePaths`).
 
 3. **Tarkistus.** Kysy työkalutilassa chatissa: "Mitä menoja minulla on tällä viikolla?".
 
