@@ -399,8 +399,8 @@ class CliTesti(Pohja):
         kw.setdefault("viimeinen", datetime.now(timezone.utc) - timedelta(hours=1))
         super().perus(**kw)
 
-    def test_vain_yksityinen_alue_kelpaa(self):
-        for argv in (["--alue", "tyokalu"], ["--alue", "muu"], []):
+    def test_tuntematon_alue_hylataan(self):
+        for argv in (["--alue", "muu"], []):
             with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as e:
                 tiivista.main(argv)
             self.assertEqual(e.exception.code, 2)
@@ -435,7 +435,8 @@ class CliTesti(Pohja):
         self.assertIn("RuntimeError", err.getvalue())
 
     def test_loki_ei_sisalla_keskustelun_tekstia(self):
-        self.perus(tekstit=[("tony", "LOKIKANARIA haluan jotain."), ("aivo", "Ok.")])
+        # self.aja kayttaa kiinteaa kelloa NYT, joten keskustelun aika sidotaan siihen (ei oikeaan kelloon)
+        self.perus(tekstit=[("tony", "LOKIKANARIA haluan jotain."), ("aivo", "Ok.")], viimeinen=NYT - timedelta(hours=1))
         self.aja(Vaarennos(vastaus(kohta([0], lainaus="LOKIKANARIA haluan jotain.", tulkinta="LOKIKANARIA"))))
         loki = (self.a.polku("indeksi") / ty.LOKI_TIEDOSTO).read_text()
         self.assertNotIn("LOKIKANARIA", loki)

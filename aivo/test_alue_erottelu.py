@@ -374,7 +374,7 @@ def _merkkijonovakiot(puu):
 
 
 # Moduulit, jotka kuuluvat vain tyokalutilaan (ei sekaprosessia): ne eivat saa tuntea yksityista aluetta.
-TYOKALUMODUULIT = ("alue.py", "tyokalualue.py", "tyokalu_kaares.py")
+TYOKALUMODUULIT = ("alue.py", "tyokalualue.py", "tyokalu_kaares.py", "tiivista_tyokalu.py", "tiivistelmat_kehote.py")
 YKSITYISET_MODUULIT_NIMET = ("aivo.yksityinen", "aivo.yksityinen_alue", "yksityinen", "yksityinen_alue", "aivo.tiivista_yksityinen", "tiivista_yksityinen")
 
 

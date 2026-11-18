@@ -21,6 +21,10 @@ Turvarajat (koodi on laki):
     lopussa on rivi [[PAATOS n]], jonka palvelin poistaa nakyvasta tekstista ja palauttaa kenttana
     `paatosehdotus`, jos n on saman keskustelun Tonyn viesti. Ehdotus ei kirjaa mitaan: kortti kysyy
     "Kirjaanko?" ja vasta Tonyn kylla kutsuu /api/paatos-reittia.
+  * Monivalinta: vastauksen aivan lopussa voi olla rivi [[VALINNAT: a | b | c]] (2-6 vaihtoehtoa, kukin enintaan 80
+    merkkia). Palvelin poistaa sen nakyvasta tekstista ja palauttaa kenttana `valinnat`; virheellinen merkinta jaa
+    tavalliseksi tekstiksi. Sivu nayttaa painikkeet (textContent, ei HTML:aa); painallus lahettaa vaihtoehdon
+    tekstin Tonyn tavallisena viestina. Tonyn omia viesteja ei koskaan tulkita merkintoina.
   * Muistin tiedostot ovat dataa, eivat ohjeita. Lokiin ei kirjoiteta viestien sisaltoa eika salasanoja."""
 import argparse
 import getpass
@@ -42,7 +46,7 @@ from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from aivo import muistinakyma, yksityinen, yksityinen_or
+from aivo import muistinakyma, tiivistelmat_kehote, yksityinen, yksityinen_or
 from aivo.yksityinen import YksityinenVirhe as ChatVirhe, julkaise_kirjastoon   # sama poikkeus kaikkialla
 
 OLETUS_SALASANA = "/etc/aivo/chat-salasana"
@@ -81,6 +85,9 @@ S\u00e4\u00e4nn\u00f6t:
    [[PAATOS n]], jossa n on Tonyn viestin numero historiassa ("Tony #n"). \u00c4l\u00e4 lis\u00e4\u00e4 sit\u00e4 pohdinnan,
    kysymyksen tai ep\u00e4varman viestin per\u00e4\u00e4n. Merkint\u00e4 vain ehdottaa; Tony vahvistaa kirjauksen itse.
 6. Saat olla Tonyn kanssa eri mielt\u00e4 perustelluin faktoin.
+7. Kun Tonyn vastaus on valinta muutamasta vaihtoehdosta, lis\u00e4\u00e4 vastauksen aivan viimeiselle riville merkint\u00e4
+   [[VALINNAT: vaihtoehto 1 | vaihtoehto 2 | vaihtoehto 3]] (2\u20136 vaihtoehtoa, kukin enint\u00e4\u00e4n 80 merkki\u00e4, ei
+   merkkej\u00e4 [ ] tai |). Kysy vaihtoehdot my\u00f6s tekstiss\u00e4. Muuten esit\u00e4 tavallinen kysymys ilman merkint\u00e4\u00e4.
 """
 
 HTML = """<!doctype html>
@@ -120,6 +127,14 @@ const tonyn={};
 async function kirjaa(idx,b){const r=await fetch('/api/paatos',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,indeksi:idx})});
  let j={};try{j=await r.json();}catch(e){}
  b.textContent=j.teksti||('Kirjaus ep\u00e4onnistui ('+r.status+')');b.disabled=r.ok;return r.ok;}
+function lukitse(){document.querySelectorAll('.valinnat').forEach(g=>g.querySelectorAll('button,input').forEach(x=>{x.disabled=true;}));}
+function valinnat(lista){const g=document.createElement('div');g.className='valinnat kortti';
+ lista.forEach(t=>{if(typeof t!=='string')return;const b=document.createElement('button');b.textContent=t;b.onclick=()=>laheta(t);g.appendChild(b);});
+ const i=document.createElement('input');i.maxLength=4000;i.placeholder='Muu vastaus\u2026';i.setAttribute('aria-label','Muu vastaus');
+ const m=document.createElement('button');m.textContent='L\u00e4het\u00e4';
+ const muu=()=>{const s=i.value.trim();if(s)laheta(s);};m.onclick=muu;
+ i.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing&&e.keyCode!==229){e.preventDefault();muu();}});
+ g.append(i,m);V.appendChild(g);alas();}
 function painike(d,idx){const b=document.createElement('button');b.textContent='Kirjaa p\u00e4\u00e4t\u00f6kseksi (sanasi sellaisenaan)';
  b.onclick=async()=>{if(!confirm('Kirjataanko t\u00e4m\u00e4 viesti p\u00e4\u00e4t\u00f6skirjastoon sellaisenaan?'))return;await kirjaa(idx,b);};d.appendChild(b);}
 function kortti(idx){const s=tonyn[idx];if(typeof s!=='string')return;const d=document.createElement('div');d.className='kortti';
@@ -135,17 +150,19 @@ document.getElementById('uusi').onclick=aloita;
 document.getElementById('tila').onchange=e=>{if(e.target.value==='tyokalu'&&!confirm('Ty\u00f6kalutilassa viestit kulkevat Clauden pilvipalveluun. Jatketaanko?')){e.target.value='yksityinen';return;}aloita();};
 let lahetyksessa=false;
 document.getElementById('teksti').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&e.keyCode!==229){e.preventDefault();document.getElementById('lomake').requestSubmit();}});
-document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();if(lahetyksessa)return;const t=document.getElementById('teksti');
- const s=t.value.trim();if(!s)return;lahetyksessa=true;t.value='';
+async function laheta(s){if(lahetyksessa)return;lahetyksessa=true;lukitse();
  try{if(!kid)await aloita();if(!kid)return;
   const oma=lisaa('tony',s);const odota=lisaa('aivo','\u2026');
   try{const r=await fetch('/api/viesti',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,teksti:s})});
    if(r.status===401){location.href='/kirjaudu';return;}
    const j=await r.json();odota.textContent=j.vastaus||('Virhe: '+(j.virhe||r.status));
    if(Number.isInteger(j.indeksi)){tonyn[j.indeksi]=s;painike(oma,j.indeksi);}
-   if(Number.isInteger(j.paatosehdotus))kortti(j.paatosehdotus);alas();}
+   if(Number.isInteger(j.paatosehdotus))kortti(j.paatosehdotus);
+   if(Array.isArray(j.valinnat))valinnat(j.valinnat);alas();}
   catch(x){odota.textContent='Yhteysvirhe';alas();}}
- finally{lahetyksessa=false;}};
+ finally{lahetyksessa=false;}}
+document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();if(lahetyksessa)return;const t=document.getElementById('teksti');
+ const s=t.value.trim();if(!s)return;t.value='';await laheta(s);};
 aloita();alas();
 </script></body></html>
 """
@@ -366,6 +383,28 @@ def erota_paatosehdotus(vastaus, historia):
         if n < len(historia) and historia[n].get("rooli") == "tony":
             ehdotus = n
     return PAATOSMERKINTA_RE.sub("", vastaus).strip(), ehdotus
+
+
+VALINNAT_LOPUSSA_RE = re.compile(r"[ \t]*\[\[VALINNAT:([^\n]*)\]\][ \t]*\Z")
+VALINTA_MIN, VALINTA_MAX, VALINTA_PITUUS = 2, 6, 80
+
+
+def _valinta_kelpaa(v):
+    return (0 < len(v) <= VALINTA_PITUUS and not any(ord(c) < 32 or ord(c) == 127 for c in v)
+            and "[[" not in v and "]]" not in v)
+
+
+def erota_valinnat(vastaus):
+    """Poistaa vastauksen lopusta [[VALINNAT: a | b | c]] -merkinnan. Palauttaa (teksti, valinnat): valinnat on lista
+    vain, jos merkinta on aivan lopussa ja siina on 2-6 ei-tyhjaa, enintaan 80 merkin vaihtoehtoa ilman
+    ohjausmerkkeja. Virheellinen merkinta jaa tekstiin sellaisenaan (nakyy tavallisena tekstina), eika mitaan tulkita."""
+    m = VALINNAT_LOPUSSA_RE.search(vastaus)
+    if not m:
+        return vastaus, None
+    osat = [o.strip() for o in m.group(1).split("|")]
+    if not (VALINTA_MIN <= len(osat) <= VALINTA_MAX) or not all(_valinta_kelpaa(o) for o in osat):
+        return vastaus, None
+    return vastaus[:m.start()].rstrip(), osat
 
 
 def tarkista_lahteet(vastaus, tiedostot):
@@ -598,6 +637,7 @@ class Tila:
                  or_kulutila=None, tiivistelmat=None, yks_tiivistelmat=None):   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
+        self.tiivistelmat = tiivistelmat          # tyokalualueen tiivistelmakansio (vain tyokalutila lukee sita)
         self.keskustelut = Keskustelut(data)
         self.istunnot = Istunnot()
         self.hostit = sallitut_hostit
@@ -805,6 +845,7 @@ def tee_kasittelija(tila):
                     return
                 vastaus = yksityinen.irrota_ehdotukset(
                     vastaus, lambda n, t: yksityinen.tallenna_ehdotus(tila.ehdotukset, n, t))
+                vastaus, valinnat = erota_valinnat(vastaus)
                 vastaus, ehdotus = erota_paatosehdotus(vastaus, historia)
                 vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
                 tila.yks.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus])
@@ -812,6 +853,8 @@ def tee_kasittelija(tila):
                                "indeksi": oma_idx})
                 if ehdotus is not None:
                     tulos[1]["paatosehdotus"] = ehdotus
+                if valinnat:
+                    tulos[1]["valinnat"] = valinnat
             finally:
                 tila.yks_vastauslukko.release()
                 if tulos is not None:      # vastaus lahtee vasta lukon vapautuksen jalkeen: seuraava viesti ei saa 429:aa
@@ -833,17 +876,25 @@ def tee_kasittelija(tila):
                 historia = tila.keskustelut.lue(kid)
                 oma_idx = len(historia) - 1
                 muisti, tiedostot = lue_muisti(tila.kirjasto)
+                if tila.tiivistelmat:     # keskustelumuisti: tiivistelmat kirjaston rinnalle, enintaan 60 kt (A983 A3)
+                    tiiv, tiiv_tiedostot = tiivistelmat_kehote.muodosta(tila.tiivistelmat, teksti)
+                    if tiiv:
+                        muisti += tiiv + RAJA + "\n"
+                        tiedostot = tiedostot + tiiv_tiedostot
                 try:
                     vastaus = tila.kysy(muisti, historia)
                 except ChatVirhe as e:
                     tulos = (502, {"virhe": str(e), "indeksi": oma_idx})
                     return
+                vastaus, valinnat = erota_valinnat(vastaus)
                 vastaus, ehdotus = erota_paatosehdotus(vastaus, historia)
                 vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
                 tila.keskustelut.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus])
                 tulos = (200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "indeksi": oma_idx})
                 if ehdotus is not None:
                     tulos[1]["paatosehdotus"] = ehdotus
+                if valinnat:
+                    tulos[1]["valinnat"] = valinnat
             finally:
                 tila.vastauslukko.release()
                 if tulos is not None:
@@ -887,6 +938,12 @@ def main(argv=None):
     ap.add_argument("--yksityinen-muisti", default=os.environ.get("AIVO_YKSITYINEN_MUISTI"))
     ap.add_argument("--ydinohjeet", default=os.environ.get("AIVO_YDINOHJEET", yksityinen.OLETUS_YDINOHJEET))
     ap.add_argument("--ehdotukset", default=os.environ.get("AIVO_EHDOTUKSET"))
+    ap.add_argument("--tiivistelmat-kaytossa", action="store_true",
+                    default=os.environ.get("AIVO_TIIVISTELMAT_KAYTOSSA") == "1",
+                    help="liittaa tiivistelmat tyokalutilan kehotteeseen (oletus: pois paalta; kansion olemassaolo ei kytke)")
+    ap.add_argument("--tiivistelmat", default=os.environ.get("AIVO_TIIVISTELMAT"),
+                    help="tyokalutilan tiivistelmakansio (oletus: --datan viereinen 'tiivistelmat'); kaytossa vain, "
+                         "kun --tiivistelmat-kaytossa on annettu")
     ap.add_argument("--malli-url", default=os.environ.get("AIVO_MALLI_URL", yksityinen.OLETUS_MALLI_URL))
     ap.add_argument("--yksityinen-taustapaa", choices=("loopback", "openrouter"),
                     default=os.environ.get("AIVO_YKSITYINEN_TAUSTAPAA", "loopback"),
@@ -907,7 +964,9 @@ def main(argv=None):
         tila = Tila(lue_tiiviste(a.salasana_tiedosto), a.kirjasto, a.data, hostit, yks_data=a.yksityinen_data,
                     yks_muisti=a.yksityinen_muisti, ydinohjeet=a.ydinohjeet, ehdotukset=a.ehdotukset, malli_url=a.malli_url,
                     taustapaa=a.yksityinen_taustapaa, or_malli=a.openrouter_malli,
-                    or_avain=a.openrouter_avain_tiedosto)
+                    or_avain=a.openrouter_avain_tiedosto,
+                    tiivistelmat=(a.tiivistelmat or str(Path(a.data).parent / "tiivistelmat"))
+                    if a.tiivistelmat_kaytossa else None)
         palvelin = kaynnista(a.osoite, a.portti, tila)
     except ChatVirhe as e:
         print("virhe: %s" % e, file=sys.stderr)
