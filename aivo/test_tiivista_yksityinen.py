@@ -399,8 +399,8 @@ class CliTesti(Pohja):
         kw.setdefault("viimeinen", datetime.now(timezone.utc) - timedelta(hours=1))
         super().perus(**kw)
 
-    def test_vain_yksityinen_alue_kelpaa(self):
-        for argv in (["--alue", "tyokalu"], ["--alue", "muu"], []):
+    def test_tuntematon_alue_hylataan(self):
+        for argv in (["--alue", "muu"], []):
             with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as e:
                 tiivista.main(argv)
             self.assertEqual(e.exception.code, 2)
