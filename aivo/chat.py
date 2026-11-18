@@ -42,7 +42,7 @@ from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from aivo import yksityinen, yksityinen_or
+from aivo import tiivistelmat_kehote, yksityinen, yksityinen_or
 from aivo.yksityinen import YksityinenVirhe as ChatVirhe, julkaise_kirjastoon   # sama poikkeus kaikkialla
 
 OLETUS_SALASANA = "/etc/aivo/chat-salasana"
@@ -109,12 +109,13 @@ textarea{resize:none;height:3.2rem}button{font:inherit;padding:.5rem .9rem;borde
 <option value="yksityinen" selected>{YKSITYINEN_TEKSTI}</option>
 <option value="tyokalu">Ty\u00f6kalu (Claude pilvess\u00e4)</option></select> <button id="uusi">Uusi keskustelu</button></span></header>
 <div id="viestit" aria-live="polite"></div>
-<form id="lomake"><textarea id="teksti" maxlength="4000" placeholder="Kirjoita Aivolle\u2026" required></textarea><button>L\u00e4het\u00e4</button></form>
+<form id="lomake"><textarea id="teksti" maxlength="4000" placeholder="Kirjoita Aivolle\u2026 (Enter l\u00e4hett\u00e4\u00e4, Shift+Enter rivinvaihto)" required></textarea><button>L\u00e4het\u00e4</button></form>
 <script>
 let kid=null;let nyt='yksityinen';const V=document.getElementById('viestit');
 const H={'Content-Type':'application/json','X-Aivo':'1'};
+function alas(){V.scrollTop=V.scrollHeight;const k=V.lastElementChild;if(k&&k.scrollIntoView)k.scrollIntoView({block:'end'});}
 function lisaa(rooli,teksti){const d=document.createElement('div');d.className='v '+rooli;d.textContent=teksti;
- V.appendChild(d);V.scrollTop=V.scrollHeight;return d;}
+ V.appendChild(d);alas();return d;}
 const tonyn={};
 async function kirjaa(idx,b){const r=await fetch('/api/paatos',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,indeksi:idx})});
  let j={};try{j=await r.json();}catch(e){}
@@ -125,7 +126,7 @@ function kortti(idx){const s=tonyn[idx];if(typeof s!=='string')return;const d=do
  const o=document.createElement('div');o.textContent='Kirjaanko p\u00e4\u00e4t\u00f6kseksi:';const q=document.createElement('q');q.textContent=s;
  const k=document.createElement('button');k.textContent='kyll\u00e4';const e=document.createElement('button');e.textContent='ei';
  k.onclick=async()=>{k.disabled=e.disabled=true;if(await kirjaa(idx,k))e.remove();else{e.disabled=false;}};
- e.onclick=()=>d.remove();d.append(o,q,k,e);V.appendChild(d);V.scrollTop=V.scrollHeight;}
+ e.onclick=()=>d.remove();d.append(o,q,k,e);V.appendChild(d);alas();}
 async function aloita(){const r=await fetch('/api/uusi',{method:'POST',headers:H,body:JSON.stringify({tila:document.getElementById('tila').value})});
  if(r.status===401){location.href='/kirjaudu';return;}
  if(!r.ok){lisaa('aivo','Tilaa ei voi k\u00e4ytt\u00e4\u00e4 ('+r.status+')');return;}
@@ -133,6 +134,7 @@ async function aloita(){const r=await fetch('/api/uusi',{method:'POST',headers:H
 document.getElementById('uusi').onclick=aloita;
 document.getElementById('tila').onchange=e=>{if(e.target.value==='tyokalu'&&!confirm('Ty\u00f6kalutilassa viestit kulkevat Clauden pilvipalveluun. Jatketaanko?')){e.target.value='yksityinen';return;}aloita();};
 let lahetyksessa=false;
+document.getElementById('teksti').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&e.keyCode!==229){e.preventDefault();document.getElementById('lomake').requestSubmit();}});
 document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();if(lahetyksessa)return;const t=document.getElementById('teksti');
  const s=t.value.trim();if(!s)return;lahetyksessa=true;t.value='';
  try{if(!kid)await aloita();if(!kid)return;
@@ -141,10 +143,10 @@ document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();if(lahet
    if(r.status===401){location.href='/kirjaudu';return;}
    const j=await r.json();odota.textContent=j.vastaus||('Virhe: '+(j.virhe||r.status));
    if(Number.isInteger(j.indeksi)){tonyn[j.indeksi]=s;painike(oma,j.indeksi);}
-   if(Number.isInteger(j.paatosehdotus))kortti(j.paatosehdotus);}
-  catch(x){odota.textContent='Yhteysvirhe';}}
+   if(Number.isInteger(j.paatosehdotus))kortti(j.paatosehdotus);alas();}
+  catch(x){odota.textContent='Yhteysvirhe';alas();}}
  finally{lahetyksessa=false;}};
-aloita();
+aloita();alas();
 </script></body></html>
 """
 
@@ -593,9 +595,10 @@ class Tila:
                  yks_data=None, yks_muisti=None, ydinohjeet=None, ehdotukset=None,
                  malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None,
                  taustapaa="loopback", or_malli=None, or_avain=yksityinen_or.OLETUS_AVAIN,
-                 or_kulutila=None):   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
+                 or_kulutila=None, tiivistelmat=None):   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
+        self.tiivistelmat = tiivistelmat          # tyokalualueen tiivistelmakansio (vain tyokalutila lukee sita)
         self.keskustelut = Keskustelut(data)
         self.istunnot = Istunnot()
         self.hostit = sallitut_hostit
@@ -804,6 +807,11 @@ def tee_kasittelija(tila):
                 historia = tila.keskustelut.lue(kid)
                 oma_idx = len(historia) - 1
                 muisti, tiedostot = lue_muisti(tila.kirjasto)
+                if tila.tiivistelmat:     # keskustelumuisti: tiivistelmat kirjaston rinnalle, enintaan 60 kt (A983 A3)
+                    tiiv, tiiv_tiedostot = tiivistelmat_kehote.muodosta(tila.tiivistelmat, teksti)
+                    if tiiv:
+                        muisti += tiiv + RAJA + "\n"
+                        tiedostot = tiedostot + tiiv_tiedostot
                 try:
                     vastaus = tila.kysy(muisti, historia)
                 except ChatVirhe as e:
@@ -858,6 +866,12 @@ def main(argv=None):
     ap.add_argument("--yksityinen-muisti", default=os.environ.get("AIVO_YKSITYINEN_MUISTI"))
     ap.add_argument("--ydinohjeet", default=os.environ.get("AIVO_YDINOHJEET", yksityinen.OLETUS_YDINOHJEET))
     ap.add_argument("--ehdotukset", default=os.environ.get("AIVO_EHDOTUKSET"))
+    ap.add_argument("--tiivistelmat-kaytossa", action="store_true",
+                    default=os.environ.get("AIVO_TIIVISTELMAT_KAYTOSSA") == "1",
+                    help="liittaa tiivistelmat tyokalutilan kehotteeseen (oletus: pois paalta; kansion olemassaolo ei kytke)")
+    ap.add_argument("--tiivistelmat", default=os.environ.get("AIVO_TIIVISTELMAT"),
+                    help="tyokalutilan tiivistelmakansio (oletus: --datan viereinen 'tiivistelmat'); kaytossa vain, "
+                         "kun --tiivistelmat-kaytossa on annettu")
     ap.add_argument("--malli-url", default=os.environ.get("AIVO_MALLI_URL", yksityinen.OLETUS_MALLI_URL))
     ap.add_argument("--yksityinen-taustapaa", choices=("loopback", "openrouter"),
                     default=os.environ.get("AIVO_YKSITYINEN_TAUSTAPAA", "loopback"),
@@ -878,7 +892,9 @@ def main(argv=None):
         tila = Tila(lue_tiiviste(a.salasana_tiedosto), a.kirjasto, a.data, hostit, yks_data=a.yksityinen_data,
                     yks_muisti=a.yksityinen_muisti, ydinohjeet=a.ydinohjeet, ehdotukset=a.ehdotukset, malli_url=a.malli_url,
                     taustapaa=a.yksityinen_taustapaa, or_malli=a.openrouter_malli,
-                    or_avain=a.openrouter_avain_tiedosto)
+                    or_avain=a.openrouter_avain_tiedosto,
+                    tiivistelmat=(a.tiivistelmat or str(Path(a.data).parent / "tiivistelmat"))
+                    if a.tiivistelmat_kaytossa else None)
         palvelin = kaynnista(a.osoite, a.portti, tila)
     except ChatVirhe as e:
         print("virhe: %s" % e, file=sys.stderr)
