@@ -434,7 +434,7 @@ def tee_or_kysyja(malli, avain_tiedosto, **testi):
     return kysy, merkinta
 
 
-def main(argv=None, kysy=None, env=None):
+def main(argv=None, kysy=None, env=None, nyt=None):
     env = os.environ if env is None else env
     ap = argparse.ArgumentParser(prog="python3 -m aivo.tiivista --alue yksityinen", description=__doc__.split("\n")[0])
     ap.add_argument("--juuri", default=yksityinen_alue.OLETUS_JUURI, help="yksityisen alueen juuri")
@@ -461,7 +461,7 @@ def main(argv=None, kysy=None, env=None):
                 kysy = lambda ohje, data: kysy_paikalliselta(a.malli_url, ohje, data)
         elif kysy is None and not a.kuiva:
             kysy, malli = tee_or_kysyja(a.or_malli, a.or_avain)
-        aja(a.juuri, kysy, kuiva=a.kuiva, taustapaa=a.taustapaa, malli=malli)
+        aja(a.juuri, kysy, nyt=nyt, kuiva=a.kuiva, taustapaa=a.taustapaa, malli=malli)
         return 0
     except (TiivistaVirhe, TiivistelmaVirhe) as e:
         print("virhe:", e, file=sys.stderr)

@@ -175,7 +175,7 @@ class OpenRouterTaustapaaTesti(Pohja):
                 mock.patch.object(ty, "tee_or_kysyja", side_effect=AssertionError("ei saa kutsua")), \
                 redirect_stdout(io.StringIO()):
             self.keskustelu()
-            self.assertEqual(ty.main(["--juuri", str(self.juuri)], env={}), 0)
+            self.assertEqual(ty.main(["--juuri", str(self.juuri)], env={}, nyt=NYT), 0)
         self.assertEqual(m.call_count, 1)
         [nimi] = tiivistelma.luettele(self.a.polku("tiivistelmat"))
         self.assertEqual(tiivistelma.lue(self.a.polku("tiivistelmat"), nimi)["malli"], ty.MALLI)
