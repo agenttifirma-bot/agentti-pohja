@@ -87,7 +87,7 @@ class Pohja(unittest.TestCase):
                                 nyt=lambda: NYT)
 
     def keskustelu(self, n=1, teksti="Haluan lyhyet vastaukset."):
-        kirjoita_keskustelu(self.a.polku("chat"), kid_nro(n), [("tony", teksti), ("aivo", "Selvä.")],
+        kirjoita_keskustelu(self.a.polku("chat"), kid_nro(n), [("tony", teksti), ("aivo", "Selv\u00e4.")],
                             NYT - timedelta(hours=1))
 
     def aja(self, kysy, malli, taustapaa="openrouter", nyt=NYT):
@@ -170,7 +170,7 @@ class OpenRouterTaustapaaTesti(Pohja):
     def test_loopback_polku_ennallaan(self):
         with mock.patch.object(ty, "tee_or_kysyja", side_effect=AssertionError("ei saa kutsua")), \
                 redirect_stderr(io.StringIO()):
-            self.assertEqual(ty.main(["--juuri", str(self.juuri), "--malli-url", "http://10.0.0.5:8081"], env={}), 1)
+            self.assertEqual(ty.main(["--juuri", str(self.juuri), "--malli-url", "http://example.com:8081"], env={}), 1)
         with mock.patch.object(ty, "kysy_paikalliselta", return_value=mallin_vastaus()) as m, \
                 mock.patch.object(ty, "tee_or_kysyja", side_effect=AssertionError("ei saa kutsua")), \
                 redirect_stdout(io.StringIO()):
@@ -290,7 +290,7 @@ class KehoteTesti(unittest.TestCase):
 
         def kysy_yks(muisti, historia, ohjeet):
             cls.yks.append(muisti)
-            return "Muistan [lähde: %s]." % cls.yks_nimi
+            return "Muistan [l\u00e4hde: %s]." % cls.yks_nimi
 
         def tila(yks_tiivistelmat):
             return chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "data"), ["localhost"],
