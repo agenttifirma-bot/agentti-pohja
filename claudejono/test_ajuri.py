@@ -856,6 +856,20 @@ class OmaKayttaja(unittest.TestCase):
             self.assertNotIn(kielletty, alaenv)
         self.assertNotIn("/root", alaenv["PATH"])
 
+    def test_git_tekijatiedot_oletuksena(self):
+        _, alaenv, _ = ajuri.lapsen_ajo("k", {"CLAUDEJONO_KAYTTAJA": "claudejono"}, "/opt/agentscope")
+        for avain in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
+            self.assertEqual(alaenv[avain], "claudejono")
+        for avain in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
+            self.assertEqual(alaenv[avain], "claudejono@agentscope.local")
+
+    def test_git_tekijatietoja_ei_ylikirjoiteta(self):
+        env = {"CLAUDEJONO_KAYTTAJA": "claudejono", "GIT_AUTHOR_NAME": "Muu", "GIT_COMMITTER_EMAIL": "muu@example.org"}
+        _, alaenv, _ = ajuri.lapsen_ajo("k", env, "/opt/agentscope")
+        self.assertEqual(alaenv["GIT_AUTHOR_NAME"], "Muu")
+        self.assertEqual(alaenv["GIT_COMMITTER_EMAIL"], "muu@example.org")
+        self.assertEqual(alaenv["GIT_AUTHOR_EMAIL"], "claudejono@agentscope.local")
+
     def test_root_ja_virheellinen_nimi_hylataan(self):
         for nimi in ("root", "a b", "../x", "Claude"):
             with self.assertRaises(ajuri.JonoVirhe):

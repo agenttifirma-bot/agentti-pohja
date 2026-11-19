@@ -467,6 +467,11 @@ def claude_komento(kehote, env, malli=None):
 
 
 RUNUSER = "/usr/sbin/runuser"
+# Tehtavaajon commitit: oletustekija, jos ajurin ymparistossa ei ole omaa (kayttajalla ei ole globaalia git-identiteettia).
+GIT_TEKIJA_OLETUS = {
+    "GIT_AUTHOR_NAME": "claudejono", "GIT_AUTHOR_EMAIL": "claudejono@agentscope.local",
+    "GIT_COMMITTER_NAME": "claudejono", "GIT_COMMITTER_EMAIL": "claudejono@agentscope.local",
+}
 
 
 def kaistan_tyohak(tyohak, kaista=1):
@@ -490,6 +495,8 @@ def lapsen_ajo(kehote, env, tyohak, kaista=1, malli=None, lisaliput=()):
     koti = env.get("CLAUDEJONO_KOTI", f"/var/lib/{kayttaja}")
     alaenv = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": koti, "USER": kayttaja, "LOGNAME": kayttaja,
               "LANG": env.get("LANG", "C.UTF-8")}
+    for avain, oletus in GIT_TEKIJA_OLETUS.items():
+        alaenv.setdefault(avain, env.get(avain) or oletus)
     # Absoluuttinen polku: Popen etsii komennon lapsen PATHista, jossa ei ole /usr/sbin:ia (vika 30.10.2026).
     return [RUNUSER, "-u", kayttaja, "--", *kom], alaenv, str(kaistan_tyohak(tyohak, kaista))
 
