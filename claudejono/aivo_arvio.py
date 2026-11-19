@@ -366,33 +366,37 @@ def main(argv=None):
     t.add_argument("tehtava")
     t.add_argument("tuomio", choices=("kylla", "ei"))
     a = p.parse_args(argv)
-    if a.komento == "otos":
-        print(viikkoosio(a.tila), end="")
-    elif a.komento == "osumat":
-        try:
-            with open(a.polku, encoding="utf-8", errors="replace") as f:
-                l = laske_osumat(f)
-        except OSError as e:   # vain tyyppi (viesti voisi sisaltaa polun tai muuta)
-            print(f"virhe: tiedostoa ei voi lukea ({type(e).__name__})", file=sys.stderr)
-            return 1
-        print(osumat_teksti(l), end="")
-        if a.luokittain:
-            print(luokittain_teksti(l, a.raja_prosentti, a.raja_vertailtavat), end="")
-    elif a.komento == "miksi":
-        try:
-            kirjaa_miksi(a.tila, a.tehtava, a.teksti)
-        except (KeyError, ValueError) as e:
-            print(f"virhe: {e.args[0]}", file=sys.stderr)
-            return 1
-        print("selitys kirjattu")
-    elif a.komento == "osuma":
-        print(osuma(a.tila))
-    else:
-        try:
-            tarkista(a.tila, a.tehtava, a.tuomio == "kylla")
-        except KeyError as e:
-            print(f"virhe: {e.args[0]}", file=sys.stderr)
-            return 1
+    try:
+        if a.komento == "otos":
+            print(viikkoosio(a.tila), end="")
+        elif a.komento == "osumat":
+            try:
+                with open(a.polku, encoding="utf-8", errors="replace") as f:
+                    l = laske_osumat(f)
+            except OSError as e:   # vain tyyppi (viesti voisi sisaltaa polun tai muuta)
+                print(f"virhe: tiedostoa ei voi lukea ({type(e).__name__})", file=sys.stderr)
+                return 1
+            print(osumat_teksti(l), end="")
+            if a.luokittain:
+                print(luokittain_teksti(l, a.raja_prosentti, a.raja_vertailtavat), end="")
+        elif a.komento == "miksi":
+            try:
+                kirjaa_miksi(a.tila, a.tehtava, a.teksti)
+            except (KeyError, ValueError) as e:
+                print(f"virhe: {e.args[0]}", file=sys.stderr)
+                return 1
+            print("selitys kirjattu")
+        elif a.komento == "osuma":
+            print(osuma(a.tila))
+        else:
+            try:
+                tarkista(a.tila, a.tehtava, a.tuomio == "kylla")
+            except KeyError as e:
+                print(f"virhe: {e.args[0]}", file=sys.stderr)
+                return 1
+    except OSError as e:   # tilatiedosto puuttuu, ei lukuoikeutta tms.; vain tyyppi, ei tracebackia
+        print(f"virhe: tilatiedostoa ei voi lukea tai kirjoittaa ({type(e).__name__})", file=sys.stderr)
+        return 1
     return 0
 
 

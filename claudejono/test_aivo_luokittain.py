@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 from claudejono import aivo_arvio
 
@@ -188,6 +189,26 @@ class Kirjaus(unittest.TestCase):
             f.write(rivi("tulos", "orpo.md", tulos="HYLATTY") + "\n")
         with self.assertRaises(KeyError):
             aivo_arvio.kirjaa_miksi(self.tila, "orpo.md", "syy")
+
+    def test_lukukelvoton_tilatiedosto_ei_kaada(self):
+        # tiedosto ei ole luettavissa (OSError): selkea virhe ja paluukoodi 1, ei tracebackia
+        for tyyppi in (PermissionError, OSError):
+            with mock.patch.object(aivo_arvio, "lue", side_effect=tyyppi("salainen/polku")):
+                rc, ulos, e = self.miksi("a.md", "syy")
+            self.assertEqual(rc, 1)
+            self.assertEqual(ulos, "")
+            self.assertTrue(e.startswith("virhe: "))
+            self.assertIn(tyyppi.__name__, e)
+            self.assertNotIn("salainen", e)
+            self.assertNotIn("Traceback", e)
+
+    def test_puuttuva_arviotiedosto_osumat(self):
+        o, e = io.StringIO(), io.StringIO()
+        with redirect_stdout(o), redirect_stderr(e):
+            rc = aivo_arvio.main(["osumat", "--luokittain", "--polku", str(Path(self.tila) / "ei-ole.jsonl")])
+        self.assertEqual((rc, o.getvalue()), (1, ""))
+        self.assertTrue(e.getvalue().startswith("virhe: "))
+        self.assertNotIn("Traceback", e.getvalue())
 
 
 if __name__ == "__main__":
