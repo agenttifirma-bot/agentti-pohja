@@ -38,7 +38,13 @@ YDINOHJE_YLARAJA = 20_000
 VASTAUS_AIKARAJA_S = 900
 MAX_TOKENIA = 700
 HISTORIA_YLARAJA = 12
+# Ehdotus on ydinohjetiedoston koko uusi sisalto, ja sen pitaa mahtua samaan vastaukseen selityksen kanssa.
+# MAX_TOKENIA (700) on noin 1 800-2 100 merkkia suomea; 1 200 merkkia jattaa tilaa selitykselle ja sulkevalle tagille.
+# Rajaa ei nosteta: YDINOHJE_YLARAJA (20 000 merkkia, noin 7 000 tokenia) ei ehtisi i5-8400:lla aikarajan sisalla.
+EHDOTUS_KEHOTE_RAJA = 1_200
+KATKENNUT_EHDOTUS = "[ehdotusta ei tallennettu: vastaus katkesi]"
 EHDOTUS_RE = re.compile(r"\[\[EHDOTUS ([a-z0-9][a-z0-9-]{0,60}\.md)\]\]\n?(.*?)\[\[/EHDOTUS\]\]", re.S)
+KATKENNUT_EHDOTUS_RE = re.compile(r"\[\[EHDOTUS [^\]\n]*\]\].*\Z", re.S)   # avaava tagi ilman sulkevaa
 EHDOTUS_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 YDINOHJE_NIMI_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,60}\.md$")
 
@@ -58,6 +64,8 @@ S\u00e4\u00e4nn\u00f6t:
    \u00c4l\u00e4 keksi l\u00e4hteit\u00e4. Jos muisti ei kerro asiasta, sano "muistissani ei ole t\u00e4st\u00e4 tietoa".
 3. Voit ehdottaa muutosta ydinohjeisiin vain t\u00e4ss\u00e4 muodossa: [[EHDOTUS tiedosto.md]] uusi koko sis\u00e4lt\u00f6 [[/EHDOTUS]].
    Ehdotus ei tule voimaan, ennen kuin Tony hyv\u00e4ksyy sen. \u00c4l\u00e4 v\u00e4it\u00e4 muuttaneesi ohjeita.
+   Ehdotuksen sis\u00e4lt\u00f6 saa olla enint\u00e4\u00e4n 1200 merkki\u00e4, ja sulkeva [[/EHDOTUS]] on aina kirjoitettava. Jos muutettava
+   tiedosto on pidempi, ehdota uutta lyhytt\u00e4 tiedostoa (esim. lisays-aihe.md) tai kerro muutos Tonylle tavallisena tekstin\u00e4.
 4. \u00c4l\u00e4 v\u00e4it\u00e4 Tonyn p\u00e4\u00e4tt\u00e4neen mit\u00e4\u00e4n, mit\u00e4 h\u00e4n ei ole sanonut. Saat olla Tonyn kanssa eri mielt\u00e4 perustelluin faktoin.
 5. Kun Tonyn vastaus on valinta muutamasta vaihtoehdosta, lis\u00e4\u00e4 vastauksen aivan viimeiselle riville merkint\u00e4
    [[VALINNAT: vaihtoehto 1 | vaihtoehto 2 | vaihtoehto 3]] (2\u20136 vaihtoehtoa, kukin enint\u00e4\u00e4n 80 merkki\u00e4, ei
@@ -179,14 +187,15 @@ def sha(teksti):
 
 def irrota_ehdotukset(vastaus, tallenna):
     """Poistaa vastauksesta [[EHDOTUS ..]]-lohkot, tallentaa ne ehdotuksiksi (tallenna(nimi, teksti) -> id) ja
-    korvaa lohkon huomautuksella. Ehdotus ei muuta mitaan."""
+    korvaa lohkon huomautuksella. Ehdotus ei muuta mitaan.
+    Jos vastaus katkesi ennen sulkevaa tagia, lohkon alusta loppuun korvataan nakyvalla KATKENNUT_EHDOTUS-tekstilla."""
     def korvaa(m):
         try:
             eid = tallenna(m.group(1), m.group(2).strip() + "\n")
         except YksityinenVirhe:
             return "[ehdotusta ei tallennettu]"
         return "[Ehdotus ydinohjeeseen %s tallennettu (tunnus %s). Se ei ole voimassa ennen kuin Tony hyv\u00e4ksyy sen.]" % (m.group(1), eid)
-    return EHDOTUS_RE.sub(korvaa, vastaus)
+    return KATKENNUT_EHDOTUS_RE.sub(lambda m: KATKENNUT_EHDOTUS, EHDOTUS_RE.sub(korvaa, vastaus))
 
 
 def tallenna_ehdotus(hakemisto, nimi, teksti):
@@ -219,6 +228,39 @@ def lue_ehdotus(hakemisto, eid):
 def listaa_ehdotukset(hakemisto):
     h = Path(hakemisto)
     return sorted(p.stem for p in h.glob("*.json") if EHDOTUS_ID_RE.match(p.stem)) if h.is_dir() else []
+
+
+def ehdotuksen_ero(ehdotukset, ydinohjeet, eid):
+    """Palauttaa (ehdotus, rivit): unified diff voimassa olevaan ohjeeseen, ohjausmerkit puhdistettuina naytolle."""
+    d = lue_ehdotus(ehdotukset, eid)
+    kohde = Path(ydinohjeet) / d["tiedosto"]
+    try:
+        vanha = kohde.read_text(encoding="utf-8").split("\n") if kohde.is_file() else []
+    except (OSError, ValueError):
+        raise YksityinenVirhe("voimassa olevaa ohjetta ei voi lukea")
+    eroa = [puhdista_naytolle(x) for x in
+            difflib.unified_diff(vanha, d["teksti"].split("\n"), "voimassa", "ehdotus", lineterm="")]
+    return d, eroa
+
+
+def hylkaa_ehdotus(ehdotukset, eid):
+    """Siirtaa ehdotuksen alikansioon hylatyt/ (0700). Ei poista mitaan eika korvaa aiempaa hylattya."""
+    if not EHDOTUS_ID_RE.match(eid or ""):
+        raise YksityinenVirhe("virheellinen ehdotuksen tunnus")
+    lahde = Path(ehdotukset) / (eid + ".json")
+    try:
+        st = os.lstat(lahde)
+    except OSError:
+        raise YksityinenVirhe("ehdotusta ei loydy")
+    if not stat.S_ISREG(st.st_mode):
+        raise YksityinenVirhe("ehdotusta ei voi lukea")
+    kohde = tarkista_yksityinen_hakemisto(Path(ehdotukset) / "hylatyt") / (eid + ".json")
+    try:
+        os.link(lahde, kohde)          # epaonnistuu, jos kohde on jo olemassa: aiempaa ei korvata
+        os.unlink(lahde)
+    except OSError as e:
+        raise YksityinenVirhe("ehdotusta ei voitu siirtaa (%s)" % type(e).__name__)
+    return str(kohde)
 
 
 def hyvaksy_ehdotus(ehdotukset, ydinohjeet, eid, vahvistus, suorita=subprocess.run, sallitut=None):
@@ -362,7 +404,7 @@ def puhdista_naytolle(teksti):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="aivo.yksityinen", description="Ydinohjeiden ehdotukset (Tony hyvaksyy)")
-    ap.add_argument("komento", choices=("ehdotukset", "nayta", "hyvaksy"))
+    ap.add_argument("komento", choices=("ehdotukset", "nayta", "hyvaksy", "hylkaa"))
     ap.add_argument("tunnus", nargs="?")
     ap.add_argument("--ehdotukset", default=os.environ.get("AIVO_EHDOTUKSET", OLETUS_EHDOTUKSET))
     ap.add_argument("--ydinohjeet", default=os.environ.get("AIVO_YDINOHJEET", OLETUS_YDINOHJEET))
@@ -377,14 +419,10 @@ def main(argv=None):
                 except YksityinenVirhe:
                     print(e, "(viallinen ehdotus, ohitettu)")
             return 0
-        d = lue_ehdotus(a.ehdotukset, a.tunnus)
-        kohde = Path(a.ydinohjeet) / d["tiedosto"]
-        try:
-            vanha = kohde.read_text(encoding="utf-8").split("\n") if kohde.is_file() else []
-        except (OSError, ValueError):
-            raise YksityinenVirhe("voimassa olevaa ohjetta ei voi lukea")
-        eroa = [puhdista_naytolle(x) for x in
-                difflib.unified_diff(vanha, d["teksti"].split("\n"), "voimassa", "ehdotus", lineterm="")]
+        if a.komento == "hylkaa":
+            print("siirretty:", hylkaa_ehdotus(a.ehdotukset, a.tunnus))
+            return 0
+        d, eroa = ehdotuksen_ero(a.ehdotukset, a.ydinohjeet, a.tunnus)
         if a.komento == "nayta":
             print("\n".join(eroa))
             return 0
