@@ -1,0 +1,1 @@
+- aivo: `CliTesti.perus` käyttää kiinteää `NYT`-kelloa oikean kellon sijaan, joten tiivistystestit eivät riipu kellonajasta eivätkä kaadu, kun ne yhdistetään muihin kiinteällä kellolla ajettuihin testeihin.
