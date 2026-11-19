@@ -209,6 +209,17 @@ class PaasyTesti(Pohja):
         self.assertEqual(self.odottavat(self.uusi()), [eid])     # vertailu: yksityinen keskustelu nakee saman ehdotuksen
 
 
+class PelkkaEhdotusTesti(Pohja):
+    def test_pelkka_ehdotus_palauttaa_200_tunnuksen_ja_ilmoituksen_ilman_paikkatekstia(self):
+        kid = self.uusi()
+        self.vastaus = "[[EHDOTUS saannot.md]]\nuusi saanto\n[[/EHDOTUS]]"
+        s, v = self.pyynto("POST", "/api/viesti", {"keskustelu": kid, "teksti": "ehdota"})
+        self.assertEqual(s, 200)
+        self.assertEqual(len(v["ehdotukset"]), 1)
+        self.assertIn("Ehdotus ydinohjeeseen saannot.md tallennettu", v["vastaus"])
+        self.assertNotIn(chat.TYHJA_VASTAUS, v["vastaus"])
+
+
 class IlmanYksityistaTesti(Pohja):
     yks = False
 
@@ -296,6 +307,13 @@ class SivuTesti(unittest.TestCase):
         self.assertNotIn("innerHTML", h)
         self.assertNotIn("outerHTML", h)
         self.assertNotIn("insertAdjacentHTML", h)
+
+    def test_onnistunut_tyhja_vastaus_ei_nay_virheena(self):
+        for taustapaa in ("loopback", "openrouter"):
+            h = chat.sivu_html(taustapaa)
+            self.assertNotIn("j.vastaus||('Virhe: '", h)
+            self.assertIn("if(!r.ok)odota.textContent='Virhe: '", h)
+            self.assertIn("Array.isArray(j.ehdotukset)", h)
 
 
 class JarjestelmamerkintaTesti(Pohja):
