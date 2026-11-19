@@ -1009,6 +1009,8 @@ def tee_kasittelija(tila):
         def _ehdotus_hylkaa(self, d):
             if not self._yks_keskustelu(d):
                 return self._json(404, {"virhe": "ei loydy"})
+            if not isinstance(d.get("tunnus"), str):
+                return self._json(400, {"virhe": "virheellinen ehdotuksen tunnus"})
             if not tila.ehdotuslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
             try:

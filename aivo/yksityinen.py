@@ -43,7 +43,9 @@ HISTORIA_YLARAJA = 12
 # Rajaa ei nosteta: YDINOHJE_YLARAJA (20 000 merkkia, noin 7 000 tokenia) ei ehtisi i5-8400:lla aikarajan sisalla.
 EHDOTUS_KEHOTE_RAJA = 1_200
 KATKENNUT_EHDOTUS = "[ehdotusta ei tallennettu: vastaus katkesi]"
+VIRHEELLINEN_EHDOTUS = "[ehdotusta ei tallennettu: virheellinen tiedostonimi]"
 EHDOTUS_RE = re.compile(r"\[\[EHDOTUS ([a-z0-9][a-z0-9-]{0,60}\.md)\]\]\n?(.*?)\[\[/EHDOTUS\]\]", re.S)
+VIRHEELLINEN_EHDOTUS_RE = re.compile(r"\[\[EHDOTUS [^\]\n]*\]\].*?\[\[/EHDOTUS\]\]", re.S)  # nimi ei kelpaa, sulkeva on
 KATKENNUT_EHDOTUS_RE = re.compile(r"\[\[EHDOTUS [^\]\n]*\]\].*\Z", re.S)   # avaava tagi ilman sulkevaa
 EHDOTUS_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 YDINOHJE_NIMI_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,60}\.md$")
@@ -188,14 +190,18 @@ def sha(teksti):
 def irrota_ehdotukset(vastaus, tallenna):
     """Poistaa vastauksesta [[EHDOTUS ..]]-lohkot, tallentaa ne ehdotuksiksi (tallenna(nimi, teksti) -> id) ja
     korvaa lohkon huomautuksella. Ehdotus ei muuta mitaan.
-    Jos vastaus katkesi ennen sulkevaa tagia, lohkon alusta loppuun korvataan nakyvalla KATKENNUT_EHDOTUS-tekstilla."""
+    Jos tiedostonimi ei kelpaa mutta sulkeva tagi on, vain lohko korvataan VIRHEELLINEN_EHDOTUS-tekstilla ja
+    tagin jalkeinen teksti sailyy. Vain jos sulkevaa tagia ei ole (vastaus katkesi), lohkon alusta loppuun
+    korvataan nakyvalla KATKENNUT_EHDOTUS-tekstilla."""
     def korvaa(m):
         try:
             eid = tallenna(m.group(1), m.group(2).strip() + "\n")
         except YksityinenVirhe:
             return "[ehdotusta ei tallennettu]"
         return "[Ehdotus ydinohjeeseen %s tallennettu (tunnus %s). Se ei ole voimassa ennen kuin Tony hyv\u00e4ksyy sen.]" % (m.group(1), eid)
-    return KATKENNUT_EHDOTUS_RE.sub(lambda m: KATKENNUT_EHDOTUS, EHDOTUS_RE.sub(korvaa, vastaus))
+    vastaus = EHDOTUS_RE.sub(korvaa, vastaus)
+    vastaus = VIRHEELLINEN_EHDOTUS_RE.sub(lambda m: VIRHEELLINEN_EHDOTUS, vastaus)
+    return KATKENNUT_EHDOTUS_RE.sub(lambda m: KATKENNUT_EHDOTUS, vastaus)
 
 
 def tallenna_ehdotus(hakemisto, nimi, teksti):
@@ -211,7 +217,7 @@ def tallenna_ehdotus(hakemisto, nimi, teksti):
 
 
 def lue_ehdotus(hakemisto, eid):
-    if not EHDOTUS_ID_RE.match(eid or ""):
+    if not isinstance(eid, str) or not EHDOTUS_ID_RE.match(eid):
         raise YksityinenVirhe("virheellinen ehdotuksen tunnus")
     try:
         d = json.loads((Path(hakemisto) / (eid + ".json")).read_text(encoding="utf-8"))
@@ -245,7 +251,7 @@ def ehdotuksen_ero(ehdotukset, ydinohjeet, eid):
 
 def hylkaa_ehdotus(ehdotukset, eid):
     """Siirtaa ehdotuksen alikansioon hylatyt/ (0700). Ei poista mitaan eika korvaa aiempaa hylattya."""
-    if not EHDOTUS_ID_RE.match(eid or ""):
+    if not isinstance(eid, str) or not EHDOTUS_ID_RE.match(eid):
         raise YksityinenVirhe("virheellinen ehdotuksen tunnus")
     lahde = Path(ehdotukset) / (eid + ".json")
     try:
