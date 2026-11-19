@@ -270,13 +270,17 @@ class TyokalutilaTesti(Pohja):
 
     def test_vain_yksityinen_moduuli_ja_chat_tuovat_openrouter_koodia(self):
         sallitut = {"yksityinen_or.py", "openrouter_kulut.py", "openrouter_zdr.py", "chat.py"}
+        # yksityisen alueen tiivistys saa tuoda vain yksityinen_or-moduulin (ZDR, avoin malli, katto), ei muuta
+        vain_yksityinen_or = {"tiivista_yksityinen.py"}
         for p in sorted(AIVO.glob("*.py")):
             if p.name.startswith("test_") or p.name in sallitut:
                 continue
             for n in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
                 if isinstance(n, (ast.Import, ast.ImportFrom)):
                     nimet = [a.name for a in n.names] + [getattr(n, "module", "") or ""]
-                    self.assertFalse([x for x in nimet if "yksityinen_or" in x or "openrouter" in x], p.name)
+                    self.assertFalse([x for x in nimet if "openrouter" in x], p.name)
+                    if p.name not in vain_yksityinen_or:
+                        self.assertFalse([x for x in nimet if "yksityinen_or" in x], p.name)
 
     def test_tyokalutilan_viesti_ei_kutsu_openrouteria(self):
         r = self.d

@@ -21,7 +21,11 @@ Saannot (koodi on laki):
     Virheista nakyy vain tyyppi ja HTTP-tila.
   * Avain luetaan jokaisella kutsulla (Tony voi vaihtaa tiedoston kayttamatta palvelun uudelleenkaynnistysta) ja ennen
     paivakattovarausta: puuttuva avain ei jata varausta eika anna arvoituksellista virhetta.
-  * Tyokalutila ei kayta tata moduulia (testi tarkistaa)."""
+  * Tyokalutila ei kayta tata moduulia (testi tarkistaa).
+  * Yksityisen alueen keskustelujen tiivistys (aivo/tiivista_yksityinen.py) kayttaa OpenRouteria vain funktion
+    `kysy_tiivistys` kautta: sama avain, sama avoimen mallin tarkistus, sama `openrouter_kulut.kutsu` (ZDR,
+    data_collection=deny, yhteinen 10 EUR/vrk katto ja kirjaus) ja lippu `yksityinen_chat=True`. Tehtavan tunniste
+    on oma (TIIVISTYS_TEHTAVA), jotta tiivistyksen osuus nakyy kulukirjanpidossa."""
 from __future__ import annotations
 
 import json
@@ -48,6 +52,11 @@ MAX_TOKENIA = yksityinen.MAX_TOKENIA
 # muisti 16 000, ydinohjeet 20 000 ja kehote noin 4 000 merkkia = noin 160 000 merkkia, alle 80 000 tokenia
 # varovaisellakin 2 merkkia/token-arviolla. Suositusmallin qwen3-235b-a22b-2507 konteksti on 262 144 tokenia.
 HISTORIA_YLARAJA = 40
+
+TIIVISTYS_TEHTAVA = "aivo-yksityinen-tiivistys"
+# Tiivistys palauttaa JSON:n (enintaan tiivistelma.MAX_KOHDAT kohtaa, tulkinta enintaan 300 merkkia). 700 tokenia
+# (paikallisen mallin raja) katkaisee pitkan vastauksen kesken; 1 500 riittaa ja maksaa avoimella mallilla senttien osia.
+TIIVISTYS_MAX_TOKENIA = 1_500
 
 AVOIMET_MALLIT = openrouter_kulut.AVOIMET_MALLIT      # lista on saantomoduulissa (A984); uudelleenvienti
 _VANHA_LAUSE = ("sinua ajetaan Tonyn omalla\nkoneella, eik\u00e4 t\u00e4m\u00e4 keskustelu l\u00e4hde millek\u00e4\u00e4n ulkoiselle palvelulle.")
@@ -148,6 +157,50 @@ def kysy_openrouterilta(
         raise YksityinenVirhe("ZDR-s\u00e4\u00e4nt\u00f6 est\u00e4\u00e4 pyynn\u00f6n; kutsua ei tehty") from None
     try:
         teksti = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise YksityinenVirhe("OpenRouterin vastauksessa ei ollut tekstia") from None
+    if not isinstance(teksti, str) or not teksti.strip():
+        raise YksityinenVirhe("OpenRouter antoi tyhjan vastauksen")
+    return teksti.strip()
+
+
+class PaivakattoTaynna(YksityinenVirhe):
+    """Yhteinen 10 EUR/vrk katto on taynna tai kirjanpito ei kelpaa: kutsua ei tehty eika kulua syntynyt."""
+
+
+def tiivistyksen_malli(malli: str) -> str:
+    """Tiivistelman `malli`-kentan arvo (enintaan 100 merkkia; tiivistelma.py tarkistaa)."""
+    return ("zdr:" + tarkista_malli(malli))[:100]
+
+
+def kysy_tiivistys(
+    ohje: str,
+    data: str,
+    *,
+    malli: str,
+    avain_tiedosto: str = OLETUS_AVAIN,
+    kulutila: str | None = None,
+    avaa: Callable[..., Any] | None = None,
+    nyt: Callable[[], datetime] | None = None,
+) -> str:
+    """Yksityisen alueen keskusteluosan tiivistys OpenRouterin avoimella mallilla (ZDR pakotettu).
+    `ohje` on jarjestelmaviesti ja `data` keskusteluosa. Virheet: YksityinenVirhe (viestissa ei sisaltoa eika avainta);
+    katon tayttyminen: PaivakattoTaynna."""
+    tarkista_malli(malli)
+    avain = lue_avain(avain_tiedosto)                     # ennen varausta: puuttuva avain ei jata varausta
+    laheta = tee_kuljetin(avain, avaa)
+    viestit = [{"role": "system", "content": ohje}, {"role": "user", "content": data}]
+    try:
+        vastaus = openrouter_kulut.kutsu(
+            malli, viestit, laheta, tehtava=TIIVISTYS_TEHTAVA, nyt=nyt, tila=kulutila,
+            max_tokens=TIIVISTYS_MAX_TOKENIA, temperature=0.2, stream=False, usage={"include": True},
+            yksityinen_chat=True)
+    except openrouter_kulut.KutsuEstetty:
+        raise PaivakattoTaynna("OpenRouterin p\u00e4iv\u00e4katto on t\u00e4ynn\u00e4 tai kulukirjanpito ei kelpaa; kutsua ei tehty") from None
+    except openrouter_kulut.ZdrVirhe:
+        raise YksityinenVirhe("ZDR-s\u00e4\u00e4nt\u00f6 est\u00e4\u00e4 pyynn\u00f6n; kutsua ei tehty") from None
+    try:
+        teksti = vastaus["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
         raise YksityinenVirhe("OpenRouterin vastauksessa ei ollut tekstia") from None
     if not isinstance(teksti, str) or not teksti.strip():
