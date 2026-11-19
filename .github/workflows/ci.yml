@@ -33,6 +33,19 @@ jobs:
           python luo.py testiagentti
           python -m agentti --agentti testiagentti --tila "$RUNNER_TEMP/tila"
 
+  # CHANGELOG.md:ta ei muokata PR:ssa: rivi kuuluu fragmenttiin docs/muutokset/ (kokoaja: tools/changelog_kokoa.py).
+  # Oma tyo, ei matriisissa eika vaadittu tarkistus.
+  changelog:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: CHANGELOG.md ei saa muuttua suoraan
+        run: python3 tools/changelog_tarkista.py --pohja "origin/${{ github.base_ref }}" .
+
   # README lupaa "Linux tai macOS": tama pitaa lupauksen todennettuna. Oma tyo (ei matriisissa), jotta
   # vaaditut tarkistukset `test (3.10)` ... `test (3.13)` pysyvat ennallaan. Ei ole vaadittu tarkistus.
   test-macos:
