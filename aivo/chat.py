@@ -114,7 +114,7 @@ textarea{resize:none;height:3.2rem}button{font:inherit;padding:.5rem .9rem;borde
 </style></head><body>
 <header><strong>Aivo</strong><span><select id="tila" aria-label="Tila">
 <option value="yksityinen" selected>{YKSITYINEN_TEKSTI}</option>
-<option value="tyokalu">Ty\u00f6kalu (Claude pilvess\u00e4)</option></select> <a id="muisti" href="/muisti?tila=yksityinen" target="_blank" rel="noopener">Muisti</a> <button id="uusi">Uusi keskustelu</button></span></header>
+<option value="tyokalu">Ty\u00f6kalu (Claude pilvess\u00e4)</option></select> <a id="muisti" href="/muisti" target="_blank" rel="noopener" title="Vain ty\u00f6kalutilan tiivistelm\u00e4t">Muisti (ty\u00f6kalu)</a> <button id="uusi">Uusi keskustelu</button></span></header>
 <div id="viestit" aria-live="polite"></div>
 <form id="lomake"><textarea id="teksti" maxlength="4000" placeholder="Kirjoita Aivolle\u2026 (Enter l\u00e4hett\u00e4\u00e4, Shift+Enter rivinvaihto)" required></textarea><button>L\u00e4het\u00e4</button></form>
 <script>
@@ -145,7 +145,7 @@ function kortti(idx){const s=tonyn[idx];if(typeof s!=='string')return;const d=do
 async function aloita(){const r=await fetch('/api/uusi',{method:'POST',headers:H,body:JSON.stringify({tila:document.getElementById('tila').value})});
  if(r.status===401){location.href='/kirjaudu';return;}
  if(!r.ok){lisaa('aivo','Tilaa ei voi k\u00e4ytt\u00e4\u00e4 ('+r.status+')');return;}
- const j=await r.json();kid=j.id;nyt=j.tila;document.getElementById('muisti').href='/muisti?tila='+encodeURIComponent(nyt);V.textContent='';}
+ const j=await r.json();kid=j.id;nyt=j.tila;V.textContent='';}
 document.getElementById('uusi').onclick=aloita;
 document.getElementById('tila').onchange=e=>{if(e.target.value==='tyokalu'&&!confirm('Ty\u00f6kalutilassa viestit kulkevat Clauden pilvipalveluun. Jatketaanko?')){e.target.value='yksityinen';return;}aloita();};
 let lahetyksessa=false;
@@ -626,6 +626,16 @@ def sallittu_host(host_otsake, sallitut):
     return any(nimi == s or (s.startswith(".") and nimi.endswith(s)) for s in sallitut)
 
 
+def tiivistelmakansio_ristiriita(tyokalu, yksityiset):
+    """True, jos tyokalutilan kansio on sama kuin jokin yksityinen kansio, sen sisalla tai sen ylakansio (puhdas polkuvertailu)."""
+    tyokalu = Path(tyokalu).resolve()
+    for y in yksityiset:
+        y = Path(y).resolve()
+        if tyokalu == y or y in tyokalu.parents or tyokalu in y.parents:
+            return True
+    return False
+
+
 class Tila:
     """Kaksi tilaa: "yksityinen" (oletus; paikallinen malli, oma muisti, ydinohjeet) ja "tyokalu" (Claude, kirjasto).
     Yksityinen tila on kaytossa vain, jos yks_data on annettu; sen kansioiden pitaa olla palvelun kayttajan 0700."""
@@ -634,7 +644,7 @@ class Tila:
                  yks_data=None, yks_muisti=None, ydinohjeet=None, ehdotukset=None,
                  malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None,
                  taustapaa="loopback", or_malli=None, or_avain=yksityinen_or.OLETUS_AVAIN,
-                 or_kulutila=None, tiivistelmat=None, yks_tiivistelmat=None):   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
+                 or_kulutila=None, tiivistelmat=None):   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
         self.tiivistelmat = tiivistelmat          # tyokalualueen tiivistelmakansio (vain tyokalutila lukee sita)
@@ -645,10 +655,10 @@ class Tila:
         self.julkaise = julkaise
         self.julkaise_yks = julkaise_yks
         self.vastauslukko = threading.Lock()   # yksi Claude-kutsu kerrallaan
-        # Muistinakyman (vain luku) kansiot: tyokalutilalla oma, yksityisella oma. Tyokalutila ei koskaan lue yksityista.
+        # Muistinakyma (vain luku) lukee vain tyokalutilan tiivistelmia. Yksityisen tilan tiivistelmia ei voi lukea HTTP:n kautta
+        # lainkaan, eika yksityiselle tilalle luoda tiivistelmakansiota kaynnistyksessa.
         # self.tiivistelmat pysyy None, kunnes tiivistelmat kytketaan kehotteeseen; nakyma tarvitsee kansion aina
         self.nakyma_tiivistelmat = str(tiivistelmat or Path(data).parent / "tiivistelmat")
-        self.yks_tiivistelmat = None
         self.yks = None
         self.taustapaa = taustapaa if taustapaa in YKSITYINEN_TEKSTIT else "loopback"
         if yks_data:
@@ -664,8 +674,6 @@ class Tila:
             self.ehdotukset = str(yksityinen.tarkista_yksityinen_hakemisto(
                 ehdotukset or str(Path(yks_data).parent / "ehdotukset")))
             self.taustapaa = taustapaa
-            self.yks_tiivistelmat = str(yksityinen.tarkista_yksityinen_hakemisto(
-                yks_tiivistelmat or str(Path(yks_data).parent / "tiivistelmat")))
             self._tarkista_tiivistelmakansiot(yks_data)
             if kysy_yks:
                 self.kysy_yks = kysy_yks
@@ -678,14 +686,10 @@ class Tila:
         self.yks_vastauslukko = threading.Lock()
 
     def _tarkista_tiivistelmakansiot(self, yks_data):
-        """Tyokalutilan tiivistelmakansio ei saa olla sama kuin yksityisen tilan kansio, sen sisalla eika sen ylakansio.
-        Muuten tyokalutilan nakyma voisi lukea yksityisia tiivistelmia tai nakyma sekoittaisi tilat."""
-        tyokalu = Path(self.nakyma_tiivistelmat).resolve()
-        yksityiset = [self.yks_tiivistelmat, str(yks_data), self.yks_muisti, self.ehdotukset]
-        for y in yksityiset:
-            y = Path(y).resolve()
-            if tyokalu == y or y in tyokalu.parents or tyokalu in y.parents:
-                raise ChatVirhe("tyokalutilan tiivistelmakansio on yksityisen tilan kansio tai sen sisalla; kieltaydyn kaynnistymasta")
+        """Kieltaytyy kaynnistymasta vain, jos tyokalutilan kansio on yksityisen alueen kansio, sen sisalla tai ylakansio.
+        Ei luo kansioita eika koske levyyn (vain polkujen vertailu)."""
+        if tiivistelmakansio_ristiriita(self.nakyma_tiivistelmat, [yks_data, self.yks_muisti, self.ehdotukset]):
+            raise ChatVirhe("tyokalutilan tiivistelmakansio on yksityisen tilan kansio tai sen sisalla; kieltaydyn kaynnistymasta")
 
     def tila_ja_kasittelija(self, kid):
         """Palauttaa (tila, keskustelut) sen mukaan, kummassa kansiossa keskustelu on."""
@@ -764,14 +768,10 @@ def tee_kasittelija(tila):
             if self.path.split("?", 1)[0] == "/muisti":
                 if not self._kirjautunut():
                     return self._laheta(302, "", "text/plain", [("Location", "/kirjaudu")])
-                valittu = self.path.partition("?")[2]
-                if valittu == "tila=yksityinen" and tila.yks_tiivistelmat:
-                    kansio, nimi = tila.yks_tiivistelmat, "yksityinen tila"
-                elif valittu in ("", "tila=tyokalu"):
-                    kansio, nimi = tila.nakyma_tiivistelmat, "ty\u00f6kalutila"
-                else:
+                if self.path.partition("?")[2] not in ("", "tila=tyokalu"):      # yksityista tilaa ei voi lukea HTTP:lla
                     return self._json(404, {"virhe": "ei loydy"})
-                return self._laheta(200, muistinakyma.sivu(kansio, nimi), "text/html; charset=utf-8")
+                return self._laheta(200, muistinakyma.sivu(tila.nakyma_tiivistelmat, "ty\u00f6kalutila"),
+                                    "text/html; charset=utf-8")
             if self.path == "/terve":
                 return self._json(200, {"tila": "ok"})
             self._json(404, {"virhe": "ei loydy"})

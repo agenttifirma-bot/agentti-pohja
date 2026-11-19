@@ -10,7 +10,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from aivo import chat, muistinakyma, tyokalualue, yksityinen, yksityinen_alue
+from aivo import chat, muistinakyma, tyokalualue, yksityinen
 from aivo import tiivistelma as tv
 
 SAL = "oikea-salasana-123"
@@ -91,69 +91,43 @@ class NakymaTesti(unittest.TestCase):
             self.assertEqual(s, 404, p)
             self.assertNotIn(self.kanaria, runko)
 
-    def test_yksityinen_sivu_nayttaa_vain_yksityisen(self):
+    def test_yksityista_tilaa_ei_voi_lukea_http_lla(self):
+        """Yksityisen tilan tiivistelmat eivat ole luettavissa HTTP:n kautta lainkaan (kirjautuneenakaan)."""
         ev = self.kirjaudu()
-        s, runko = self.hae("GET", "/muisti?tila=yksityinen", ev)
+        for p in ("/muisti?tila=yksityinen", "/muisti?tila=yksityinen&tila=tyokalu", "/muisti?tila=%79ksityinen"):
+            s, runko = self.hae("GET", p, ev)
+            self.assertEqual(s, 404, p)
+            self.assertNotIn(self.kanaria, runko)
+        s, runko = self.hae("GET", "/muisti", ev)
         self.assertEqual(s, 200)
-        self.assertIn(self.kanaria, runko)
-        self.assertNotIn(self.tyokalu_merkki, runko)
-
-    def test_yhteinen_ylakansio_hylataan(self):
-        """data ja yks_data samassa ylakansiossa => oletuskansiot yhtyisivat: kaynnistys kielletaan."""
-        r = Path(self.tmp.name) / "yhteinen"
-        with self.assertRaises(chat.ChatVirhe):
-            chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "chat"), [TS],
-                      yks_data=str(r / "yks-chat"), kysy_yks=lambda m, h, o: "x")
+        self.assertNotIn(self.kanaria, runko)
+        self.assertNotIn("tila=yksityinen", self.hae("GET", "/", ev)[1])
 
     def test_tyokalukansio_yksityisen_alueen_sisalla_hylataan(self):
         r = Path(self.tmp.name) / "sisalla"
-        for tyokalu in (r / "yks" / "muisti", r / "yks", r / "yks" / "tiivistelmat", r):
+        for tyokalu in (r / "yks" / "muisti", r / "yks", r):
             with self.assertRaises(chat.ChatVirhe, msg=str(tyokalu)):
                 chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "aivo" / "chat"), [TS],
                           yks_data=str(r / "yks" / "chat"), yks_muisti=str(r / "yks" / "muisti"),
                           ehdotukset=str(r / "yks" / "ehdotukset"), tiivistelmat=str(tyokalu),
                           kysy_yks=lambda m, h, o: "x")
 
-    def test_yksityinen_tiivistelmakansio_tarkistetaan_ja_erottuu(self):
+    def test_kaynnistys_ei_luo_tiivistelmakansioita(self):
         r = Path(self.tmp.name) / "erillaan"
         tila = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "aivo" / "chat"), [TS],
                          yks_data=str(r / "yks" / "chat"), kysy_yks=lambda m, h, o: "x")
-        self.assertNotEqual(tila.nakyma_tiivistelmat, tila.yks_tiivistelmat)
-        self.assertEqual(os.stat(tila.yks_tiivistelmat).st_mode & 0o777, 0o700)
-        os.symlink(self.tmp.name, r / "linkki")
-        with self.assertRaises(yksityinen.YksityinenVirhe):
-            chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "aivo" / "chat"), [TS],
-                      yks_data=str(r / "yks" / "chat"), yks_tiivistelmat=str(r / "linkki"), kysy_yks=lambda m, h, o: "x")
+        self.assertFalse(hasattr(tila, "yks_tiivistelmat"))
+        self.assertFalse((r / "yks" / "tiivistelmat").exists())
+        self.assertFalse((r / "aivo" / "tiivistelmat").exists())
 
-    def test_oletuskansiot_vastaavat_tiivistajan_alueita(self):
-        """Oletus (data-kansion ylakansio/tiivistelmat) on sama polku kuin alue-moduulit antavat samalla juurella
-        (tuotannossa data = JUURI/chat, ks. docs/aivo-yksityinen.md)."""
-        r = Path(self.tmp.name) / "oletus"
-        t = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "aivo" / "chat"), [TS],
-                      yks_data=str(r / "yks" / "chat"), kysy_yks=lambda m, h, o: "x")
-        self.assertEqual(Path(t.nakyma_tiivistelmat), tyokalualue.tyokalualue(str(r / "aivo")).polku("tiivistelmat"))
-        self.assertEqual(Path(t.yks_tiivistelmat), yksityinen_alue.yksityinen_alue(str(r / "yks")).polku("tiivistelmat"))
-        self.assertEqual(tyokalualue.ALIKANSIOT.count("chat"), 1)
-        self.assertEqual(yksityinen_alue.ALIKANSIOT.count("chat"), 1)
-
-    def test_ilman_yksityista_tilaa_yksityinen_reitti_ei_lue_mitaan(self):
-        r = Path(self.tmp.name)
-        tila = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "aivo" / "chat"), [TS])
-        self.assertIsNone(tila.yks_tiivistelmat)
-        srv = chat.kaynnista("127.0.0.1", 0, tila)
-        threading.Thread(target=srv.serve_forever, daemon=True).start()
-        try:
-            vanha, self.portti = self.portti, srv.server_address[1]
-            try:
-                ev = self.kirjaudu()
-                s, runko = self.hae("GET", "/muisti?tila=yksityinen", ev)
-            finally:
-                self.portti = vanha
-        finally:
-            srv.shutdown()
-            srv.server_close()
-        self.assertEqual(s, 404)
-        self.assertNotIn(self.kanaria, runko)
+    def test_tuotannon_oletuspolut_eivat_ole_ristiriidassa(self):
+        """Kayttoonoton oletuspolut (chat.OLETUS_DATA ja yksityinen.OLETUS_*): tarkistus ei saa kaataa palvelua.
+        Puhdas polkuvertailu, ei kosketa levyyn."""
+        tyokalu = Path(chat.OLETUS_DATA).parent / "tiivistelmat"
+        yksityiset = [yksityinen.OLETUS_DATA, yksityinen.OLETUS_MUISTI, yksityinen.OLETUS_EHDOTUKSET,
+                      yksityinen.OLETUS_YDINOHJEET]
+        self.assertFalse(chat.tiivistelmakansio_ristiriita(tyokalu, yksityiset))
+        self.assertTrue(chat.tiivistelmakansio_ristiriita(Path(yksityinen.OLETUS_MUISTI), yksityiset))
 
     def test_html_escapetaan_script_merkkijono(self):
         """Tiivistelma on dataa, ei ohje: <script> ei saa paatya sivulle sellaisenaan (suunnitelma 5.1)."""
