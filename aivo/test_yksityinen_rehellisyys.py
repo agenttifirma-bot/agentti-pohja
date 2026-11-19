@@ -14,8 +14,8 @@ from aivo import openrouter_kulut as ok, yksityinen, yksityinen_or as yo
 MALLI = "meta-llama/llama-3.3-70b-instruct"
 AVAIN = "sk-testi-" + "x" * 30          # keksitty, ei oikea avain
 NYT = datetime(2026, 11, 19, 12, 0, tzinfo=ok.TZ)
-EI_TYOKALUJA = "Tässä tilassa sinulla ei ole työkaluja, verkkoa eikä taustaprosesseja."
-EI_LUPAUKSIA = "Älä koskaan sano aloittavasi, suorittavasi tai jatkavasi tehtävää myöhemmin, äläkä arvioi kestoa."
+EI_TYOKALUJA = "T\u00e4ss\u00e4 tilassa sinulla ei ole ty\u00f6kaluja, verkkoa eik\u00e4 taustaprosesseja."
+EI_LUPAUKSIA = "\u00c4l\u00e4 koskaan sano aloittavasi, suorittavasi tai jatkavasi teht\u00e4v\u00e4\u00e4 my\u00f6hemmin, \u00e4l\u00e4k\u00e4 arvioi kestoa."
 
 
 def historia(n):
@@ -73,8 +73,8 @@ class EiTyokalujaSaantoTesti(Taustapaat):
         k = self.paikallinen(historia(1))[0]["content"]
         self.assertIn(EI_TYOKALUJA, k)
         self.assertIn(EI_LUPAUKSIA, k)
-        self.assertIn("tee se heti tässä vastauksessa", k)
-        self.assertIn("ettei se onnistu tässä tilassa", k)
+        self.assertIn("tee se heti t\u00e4ss\u00e4 vastauksessa", k)
+        self.assertIn("ettei se onnistu t\u00e4ss\u00e4 tilassa", k)
 
     def test_openrouter_kehote(self):
         k = self.openrouter(historia(1))[0]["content"]
@@ -91,9 +91,9 @@ class Saanto2Testi(Taustapaat):
     def test_saanto2_mainitsee_keskustelun_aiemmat_viestit(self):
         for k in (self.paikallinen(historia(1))[0]["content"], self.openrouter(historia(1))[0]["content"]):
             saanto2 = k.split("\n2. ", 1)[1].split("\n3. ", 1)[0]
-            self.assertIn("muistissani ei ole tästä tietoa", saanto2)
-            self.assertIn("eikä tämän\n   keskustelun aiemmista viesteistä", saanto2)
-            self.assertIn("keskustelun aiemmat viestit ovat käytettävissäsi", saanto2)
+            self.assertIn("muistissani ei ole t\u00e4st\u00e4 tietoa", saanto2)
+            self.assertIn("eik\u00e4 t\u00e4m\u00e4n\n   keskustelun aiemmista viesteist\u00e4", saanto2)
+            self.assertIn("keskustelun aiemmat viestit ovat k\u00e4ytett\u00e4viss\u00e4si", saanto2)
             self.assertNotIn('Jos muisti ei kerro asiasta, sano "muistissani', saanto2)   # vanha ehdoton muoto
 
 
