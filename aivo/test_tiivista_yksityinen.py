@@ -395,8 +395,15 @@ class VaarennosTesti(Pohja):
 
 
 class CliTesti(Pohja):
-    def perus(self, **kw):                         # main kayttaa oikeaa kelloa: keskustelu on tunnin vanha oikean ajan mukaan
-        kw.setdefault("viimeinen", datetime.now(timezone.utc) - timedelta(hours=1))
+    def setUp(self):
+        super().setUp()
+        # main() kutsuu ty._nyt() (oikea kello); kiinnitetaan se NYT:iin, jotta testin aika ja ohjelman aika ovat sama
+        p = mock.patch.object(ty, "_nyt", return_value=NYT)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def perus(self, **kw):
+        kw.setdefault("viimeinen", NYT - timedelta(hours=1))
         super().perus(**kw)
 
     def test_tuntematon_alue_hylataan(self):
