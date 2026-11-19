@@ -46,7 +46,7 @@ from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from aivo import tiivistelmat_kehote, yksityinen, yksityinen_or
+from aivo import kalenteri, kalenteri_kehote, tiivistelmat_kehote, yksityinen, yksityinen_or
 from aivo.yksityinen import YksityinenVirhe as ChatVirhe, julkaise_kirjastoon   # sama poikkeus kaikkialla
 
 OLETUS_SALASANA = "/etc/aivo/chat-salasana"
@@ -634,10 +634,11 @@ class Tila:
                  yks_data=None, yks_muisti=None, ydinohjeet=None, ehdotukset=None,
                  malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None,
                  taustapaa="loopback", or_malli=None, or_avain=yksityinen_or.OLETUS_AVAIN,
-                 or_kulutila=None, tiivistelmat=None):   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
+                 or_kulutila=None, tiivistelmat=None, kalenteri_lahde=None):   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
         self.tiivistelmat = tiivistelmat          # tyokalualueen tiivistelmakansio (vain tyokalutila lukee sita)
+        self.kalenteri = kalenteri_lahde          # kalenteri.Lahde tai None; vain tyokalutila lukee sita
         self.keskustelut = Keskustelut(data)
         self.istunnot = Istunnot()
         self.hostit = sallitut_hostit
@@ -854,6 +855,10 @@ def tee_kasittelija(tila):
                     if tiiv:
                         muisti += tiiv + RAJA + "\n"
                         tiedostot = tiedostot + tiiv_tiedostot
+                if tila.kalenteri is not None:    # seuraavat 14 paivaa; virhe => osio puuttuu, chat jatkaa (A988/A992)
+                    kal = kalenteri_kehote.muodosta(tila.kalenteri)
+                    if kal:
+                        muisti += kal + RAJA + "\n"
                 try:
                     vastaus = tila.kysy(muisti, historia)
                 except ChatVirhe as e:
@@ -917,6 +922,13 @@ def main(argv=None):
     ap.add_argument("--tiivistelmat", default=os.environ.get("AIVO_TIIVISTELMAT"),
                     help="tyokalutilan tiivistelmakansio (oletus: --datan viereinen 'tiivistelmat'); kaytossa vain, "
                          "kun --tiivistelmat-kaytossa on annettu")
+    ap.add_argument("--kalenteri-kaytossa", action="store_true",
+                    default=os.environ.get("AIVO_KALENTERI_KAYTOSSA") == "1",
+                    help="liittaa seuraavan 14 paivan tapahtumat tyokalutilan kehotteeseen (oletus: pois paalta)")
+    ap.add_argument("--kalenteri-osoitetiedosto", default=os.environ.get("AIVO_KALENTERI_OSOITE", kalenteri.OLETUS_OSOITETIEDOSTO),
+                    help="tiedosto (0600), jossa iCal-osoite on; osoitetta ei anneta komentorivilla eika ymparistomuuttujalla")
+    ap.add_argument("--kalenteri-data", default=os.environ.get("AIVO_KALENTERI_DATA", kalenteri.OLETUS_DATAKANSIO),
+                    help="kalenterin valimuistin kansio")
     ap.add_argument("--malli-url", default=os.environ.get("AIVO_MALLI_URL", yksityinen.OLETUS_MALLI_URL))
     ap.add_argument("--yksityinen-taustapaa", choices=("loopback", "openrouter"),
                     default=os.environ.get("AIVO_YKSITYINEN_TAUSTAPAA", "loopback"),
@@ -939,7 +951,9 @@ def main(argv=None):
                     taustapaa=a.yksityinen_taustapaa, or_malli=a.openrouter_malli,
                     or_avain=a.openrouter_avain_tiedosto,
                     tiivistelmat=(a.tiivistelmat or str(Path(a.data).parent / "tiivistelmat"))
-                    if a.tiivistelmat_kaytossa else None)
+                    if a.tiivistelmat_kaytossa else None,
+                    kalenteri_lahde=kalenteri.IcalLahde(a.kalenteri_osoitetiedosto, a.kalenteri_data)
+                    if a.kalenteri_kaytossa else None)
         palvelin = kaynnista(a.osoite, a.portti, tila)
     except ChatVirhe as e:
         print("virhe: %s" % e, file=sys.stderr)

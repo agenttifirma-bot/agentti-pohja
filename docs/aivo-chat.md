@@ -281,10 +281,55 @@ Ota ensin snapshot kontista 122. Ajastin ei asennu itsestään: tämä on ohje, 
 
 Jos päiväkatto täyttyy, loki sisältää rivin `lopetus: paivakatto 10/10 taynna, tiivistamatta N keskustelua`. Ajo jatkuu seuraavana vuorokautena. Jos tiivistys epäonnistuu, journaalissa on rivi `epaonnistui: ...` ja virheen tyyppi. Sama viestialue yritetään enintään kahdesti, joten rikkinäinen keskustelu ei kuluta koko päiväkattoa.
 
+## Kalenteri työkalutilan kehotteeseen (Tony tekee kontissa 122)
+
+Chat voi liittää työkalutilan kehotteeseen tiiviin listan Tonyn seuraavien 14 päivän tapahtumista (otsikko, aika Europe/Helsinki -aikavyöhykkeellä, paikka). Lista alkaa tämän päivän alusta ja päättyy 14 päivän kuluttua keskiyöhön. Kytkentä on oletuksena pois päältä. Yksityinen tila ei saa kalenteria koskaan. Kalenterin teksti merkitään kehotteessa dataksi, ei ohjeiksi. Osio on enintään 4000 tavua ja enintään 40 tapahtumaa. Jos osoitetiedostoa ei ole, haku epäonnistuu tai välimuisti puuttuu, chat toimii ilman kalenteria ja lokiin kirjataan vain virheen tyyppi. Osoite ei näy kehotteessa, lokissa eikä virheissä.
+
+Ota ensin snapshot kontista 122.
+
+1. **Osoitetiedosto.** Kirjoita Googlen salainen iCal-osoite itse tiedostoon `/etc/aivo/kalenteri-ical` (oikeudet 600, omistajana palvelun käyttäjä). Osoitetta ei anneta komentorivillä eikä ympäristömuuttujalla. Tarkistus, joka ei näytä sisältöä:
+
+   ```
+   stat -c '%U %a' /etc/aivo/kalenteri-ical
+   ```
+
+   Odotettu tulos: rivi `aivo 600`. Jos käyttäjä tai oikeudet ovat muut, kalenteri jää pois käytöstä.
+
+2. **Kytke päälle.** Lisää chatin ympäristöön `AIVO_KALENTERI_KAYTOSSA=1` (tai käynnistysasetus `--kalenteri-kaytossa`) ja käynnistä chat uudelleen:
+
+   ```
+   systemctl edit aivo-chat
+   systemctl restart aivo-chat
+   ```
+
+   Lisää muokkaukseen palveluosion alle rivi `Environment=AIVO_KALENTERI_KAYTOSSA=1`. Välimuistin kansio on oletuksena `/var/lib/aivo/kalenteri` (muutettavissa asetuksella `AIVO_KALENTERI_DATA`). Palvelun pitää voida kirjoittaa sinne (`ReadWritePaths`).
+
+3. **Tarkistus.** Kysy työkalutilassa chatissa: "Mitä menoja minulla on tällä viikolla?".
+
+   Odotettu tulos: Aivo kertoo kalenterin tapahtumat kellonaikoineen. Välimuistitiedosto on olemassa:
+
+   ```
+   ls -l /var/lib/aivo/kalenteri
+   ```
+
+   Odotettu tulos: tiedosto `kalenteri.ics` oikeuksilla `-rw-------`.
+
+4. **Vianetsintä.** Jos Aivo ei tiedä menoja, katso lokista kalenteririvit:
+
+   ```
+   journalctl -u aivo-chat --since "10 min ago" --no-pager | grep -i kalenteri
+   ```
+
+   Odotettu tulos: rivi `kalenteriosio puuttuu (<virheen tyyppi>)` tai rivi `kalenterin haku epaonnistui: ...` ja HTTP-tila. Osoitetta ei ole riveillä.
+
+5. **Poiskytkentä.** Poista asetus `AIVO_KALENTERI_KAYTOSSA=1` (tai aseta arvoksi `0`) ja käynnistä chat uudelleen. Välimuistitiedoston voi jättää paikalleen.
+
+   Odotettu tulos: seuraavan vastauksen kehotteessa ei ole kalenteriosiota, eikä Aivo tiedä menoja.
+
 ## Testit
 
 ```
-python3 -m unittest aivo.test_chat aivo.test_tiivista
+python3 -m unittest aivo.test_chat aivo.test_tiivista aivo.test_kalenteri_kytkenta
 ```
 
 Testit kattavat salasanan tiivisteen ja lukituksen, osoite- ja Host-rajat, CSRF-suojan, muistin lukemisen (ei linkkejä kirjaston ulkopuolelle), lähdeviitteiden tarkistuksen, päätöksen kirjaamisen sanasta sanaan, GitHub-pushin eston ja sen, että Claude-kutsu ei käytä työkaluja eikä välittäjiä.
