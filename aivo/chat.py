@@ -21,6 +21,10 @@ Turvarajat (koodi on laki):
     lopussa on rivi [[PAATOS n]], jonka palvelin poistaa nakyvasta tekstista ja palauttaa kenttana
     `paatosehdotus`, jos n on saman keskustelun Tonyn viesti. Ehdotus ei kirjaa mitaan: kortti kysyy
     "Kirjaanko?" ja vasta Tonyn kylla kutsuu /api/paatos-reittia.
+  * Monivalinta: vastauksen aivan lopussa voi olla rivi [[VALINNAT: a | b | c]] (2-6 vaihtoehtoa, kukin enintaan 80
+    merkkia). Palvelin poistaa sen nakyvasta tekstista ja palauttaa kenttana `valinnat`; virheellinen merkinta jaa
+    tavalliseksi tekstiksi. Sivu nayttaa painikkeet (textContent, ei HTML:aa); painallus lahettaa vaihtoehdon
+    tekstin Tonyn tavallisena viestina. Tonyn omia viesteja ei koskaan tulkita merkintoina.
   * Muistin tiedostot ovat dataa, eivat ohjeita. Lokiin ei kirjoiteta viestien sisaltoa eika salasanoja."""
 import argparse
 import getpass
@@ -37,12 +41,13 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 from datetime import datetime, timezone
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from aivo import tiivistelmat_kehote, yksityinen, yksityinen_or
+from aivo import kalenteri, kalenteri_kehote, tiivistelmat_kehote, yksityinen, yksityinen_or
 from aivo.yksityinen import YksityinenVirhe as ChatVirhe, julkaise_kirjastoon   # sama poikkeus kaikkialla
 
 OLETUS_SALASANA = "/etc/aivo/chat-salasana"
@@ -81,6 +86,9 @@ S\u00e4\u00e4nn\u00f6t:
    [[PAATOS n]], jossa n on Tonyn viestin numero historiassa ("Tony #n"). \u00c4l\u00e4 lis\u00e4\u00e4 sit\u00e4 pohdinnan,
    kysymyksen tai ep\u00e4varman viestin per\u00e4\u00e4n. Merkint\u00e4 vain ehdottaa; Tony vahvistaa kirjauksen itse.
 6. Saat olla Tonyn kanssa eri mielt\u00e4 perustelluin faktoin.
+7. Kun Tonyn vastaus on valinta muutamasta vaihtoehdosta, lis\u00e4\u00e4 vastauksen aivan viimeiselle riville merkint\u00e4
+   [[VALINNAT: vaihtoehto 1 | vaihtoehto 2 | vaihtoehto 3]] (2\u20136 vaihtoehtoa, kukin enint\u00e4\u00e4n 80 merkki\u00e4, ei
+   merkkej\u00e4 [ ] tai |). Kysy vaihtoehdot my\u00f6s tekstiss\u00e4. Muuten esit\u00e4 tavallinen kysymys ilman merkint\u00e4\u00e4.
 """
 
 HTML = """<!doctype html>
@@ -104,10 +112,12 @@ textarea,input{flex:1;font:inherit;padding:.5rem;border-radius:8px;border:1px so
 textarea{resize:none;height:3.2rem}button{font:inherit;padding:.5rem .9rem;border-radius:8px}
 #kirjaus{padding:2rem;max-width:22rem;margin:auto}
 .pieni{font-size:.8rem;opacity:.7}
+.ehdotus pre{white-space:pre-wrap;word-wrap:break-word;max-height:40vh;overflow:auto;font-size:.8rem;margin:.4rem 0}
 </style></head><body>
 <header><strong>Aivo</strong><span><select id="tila" aria-label="Tila">
 <option value="yksityinen" selected>{YKSITYINEN_TEKSTI}</option>
-<option value="tyokalu">Ty\u00f6kalu (Claude pilvess\u00e4)</option></select> <button id="uusi">Uusi keskustelu</button></span></header>
+<option value="tyokalu">Ty\u00f6kalu (Claude pilvess\u00e4)</option></select> <button id="uusi">Uusi keskustelu</button>
+<a href="#" id="odottavat" class="pieni" hidden>Odottavat ehdotukset</a></span></header>
 <div id="viestit" aria-live="polite"></div>
 <form id="lomake"><textarea id="teksti" maxlength="4000" placeholder="Kirjoita Aivolle\u2026 (Enter l\u00e4hett\u00e4\u00e4, Shift+Enter rivinvaihto)" required></textarea><button>L\u00e4het\u00e4</button></form>
 <script>
@@ -120,6 +130,14 @@ const tonyn={};
 async function kirjaa(idx,b){const r=await fetch('/api/paatos',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,indeksi:idx})});
  let j={};try{j=await r.json();}catch(e){}
  b.textContent=j.teksti||('Kirjaus ep\u00e4onnistui ('+r.status+')');b.disabled=r.ok;return r.ok;}
+function lukitse(){document.querySelectorAll('.valinnat').forEach(g=>g.querySelectorAll('button,input').forEach(x=>{x.disabled=true;}));}
+function valinnat(lista){const g=document.createElement('div');g.className='valinnat kortti';
+ lista.forEach(t=>{if(typeof t!=='string')return;const b=document.createElement('button');b.textContent=t;b.onclick=()=>laheta(t);g.appendChild(b);});
+ const i=document.createElement('input');i.maxLength=4000;i.placeholder='Muu vastaus\u2026';i.setAttribute('aria-label','Muu vastaus');
+ const m=document.createElement('button');m.textContent='L\u00e4het\u00e4';
+ const muu=()=>{const s=i.value.trim();if(s)laheta(s);};m.onclick=muu;
+ i.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing&&e.keyCode!==229){e.preventDefault();muu();}});
+ g.append(i,m);V.appendChild(g);alas();}
 function painike(d,idx){const b=document.createElement('button');b.textContent='Kirjaa p\u00e4\u00e4t\u00f6kseksi (sanasi sellaisenaan)';
  b.onclick=async()=>{if(!confirm('Kirjataanko t\u00e4m\u00e4 viesti p\u00e4\u00e4t\u00f6skirjastoon sellaisenaan?'))return;await kirjaa(idx,b);};d.appendChild(b);}
 function kortti(idx){const s=tonyn[idx];if(typeof s!=='string')return;const d=document.createElement('div');d.className='kortti';
@@ -130,22 +148,55 @@ function kortti(idx){const s=tonyn[idx];if(typeof s!=='string')return;const d=do
 async function aloita(){const r=await fetch('/api/uusi',{method:'POST',headers:H,body:JSON.stringify({tila:document.getElementById('tila').value})});
  if(r.status===401){location.href='/kirjaudu';return;}
  if(!r.ok){lisaa('aivo','Tilaa ei voi k\u00e4ytt\u00e4\u00e4 ('+r.status+')');return;}
- const j=await r.json();kid=j.id;nyt=j.tila;V.textContent='';}
+ const j=await r.json();kid=j.id;nyt=j.tila;V.textContent='';document.getElementById('odottavat').hidden=(nyt!=='yksityinen');}
+function q(t){return encodeURIComponent(t);}
+async function haeJson(url){const r=await fetch(url,{headers:H});if(r.status===401){location.href='/kirjaudu';return null;}
+ let j={};try{j=await r.json();}catch(e){}return {r:r,j:j};}
+async function ehdotus(t){const d=document.createElement('div');d.className='kortti ehdotus';const o=document.createElement('div');
+ o.textContent='Haetaan ehdotusta\u2026';d.appendChild(o);V.appendChild(d);
+ const x=await haeJson('/api/ehdotus?keskustelu='+q(kid)+'&tunnus='+q(t));if(!x)return;
+ if(!x.r.ok){o.textContent='Ehdotusta ei voi n\u00e4ytt\u00e4\u00e4: '+(x.j.virhe||x.r.status);return;}
+ const e=x.j;o.textContent='Ehdotus ydinohjeeseen '+e.tiedosto+' (tunnus '+e.tunnus+', sha '+e.sha8+')';
+ const pre=document.createElement('pre');pre.textContent=e.ero||'(ei eroa voimassa olevaan ohjeeseen)';
+ const h=document.createElement('button');h.textContent='Hyv\u00e4ksy';const y=document.createElement('button');y.textContent='Hylk\u00e4\u00e4';
+ const ti=document.createElement('div');ti.className='pieni';
+ const kasittele=async(polku,lisa)=>{h.disabled=y.disabled=true;
+  const r=await fetch(polku,{method:'POST',headers:H,body:JSON.stringify(Object.assign({keskustelu:kid,tunnus:e.tunnus},lisa))});
+  if(r.status===401){location.href='/kirjaudu';return;}
+  let j={};try{j=await r.json();}catch(z){}
+  ti.textContent=j.teksti||('Ei tehty: '+(j.virhe||r.status)+(r.status===409?'. Avaa ehdotus uudelleen.':''));
+  if(!r.ok&&r.status!==409){h.disabled=y.disabled=false;}alas();};
+ h.onclick=()=>{if(confirm('Hyv\u00e4ksyt\u00e4\u00e4nk\u00f6 muutos ydinohjeeseen '+e.tiedosto+' (sha '+e.sha8+')?'))kasittele('/api/ehdotus/hyvaksy',{vahvistus:'kyll\u00e4 '+e.sha8});};
+ y.onclick=()=>{if(confirm('Hyl\u00e4t\u00e4\u00e4nk\u00f6 ehdotus? Se siirret\u00e4\u00e4n kansioon hylatyt/ eik\u00e4 sit\u00e4 poisteta.'))kasittele('/api/ehdotus/hylkaa',{});};
+ d.append(pre,h,y,ti);alas();}
+async function odottavat(){if(!kid)await aloita();if(!kid||nyt!=='yksityinen')return;
+ const x=await haeJson('/api/ehdotukset?keskustelu='+q(kid));if(!x)return;
+ if(!x.r.ok||!Array.isArray(x.j.ehdotukset)){lisaa('aivo','Ehdotuksia ei voi hakea ('+x.r.status+')');return;}
+ if(!x.j.ehdotukset.length){lisaa('aivo','Ei odottavia ehdotuksia.');return;}
+ for(const e of x.j.ehdotukset){if(e&&typeof e.tunnus==='string')await ehdotus(e.tunnus);}}
+document.getElementById('odottavat').onclick=e=>{e.preventDefault();odottavat();};
 document.getElementById('uusi').onclick=aloita;
 document.getElementById('tila').onchange=e=>{if(e.target.value==='tyokalu'&&!confirm('Ty\u00f6kalutilassa viestit kulkevat Clauden pilvipalveluun. Jatketaanko?')){e.target.value='yksityinen';return;}aloita();};
 let lahetyksessa=false;
 document.getElementById('teksti').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&e.keyCode!==229){e.preventDefault();document.getElementById('lomake').requestSubmit();}});
-document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();if(lahetyksessa)return;const t=document.getElementById('teksti');
- const s=t.value.trim();if(!s)return;lahetyksessa=true;t.value='';
+async function laheta(s){if(lahetyksessa)return;lahetyksessa=true;lukitse();
  try{if(!kid)await aloita();if(!kid)return;
   const oma=lisaa('tony',s);const odota=lisaa('aivo','\u2026');
   try{const r=await fetch('/api/viesti',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,teksti:s})});
    if(r.status===401){location.href='/kirjaudu';return;}
-   const j=await r.json();odota.textContent=j.vastaus||('Virhe: '+(j.virhe||r.status));
+   const j=await r.json();
+   if(!r.ok)odota.textContent='Virhe: '+(j.virhe||r.status);
+   else if(j.vastaus)odota.textContent=j.vastaus;
+   else if(Array.isArray(j.valinnat)||Array.isArray(j.ehdotukset)||Number.isInteger(j.paatosehdotus))odota.hidden=true;
+   else odota.textContent='(Aivo ei antanut vastausta. Kokeile uudelleen.)';
    if(Number.isInteger(j.indeksi)){tonyn[j.indeksi]=s;painike(oma,j.indeksi);}
-   if(Number.isInteger(j.paatosehdotus))kortti(j.paatosehdotus);alas();}
+   if(Number.isInteger(j.paatosehdotus))kortti(j.paatosehdotus);
+   if(Array.isArray(j.ehdotukset))j.ehdotukset.forEach(t=>{if(typeof t==='string')ehdotus(t);});
+   if(Array.isArray(j.valinnat))valinnat(j.valinnat);alas();}
   catch(x){odota.textContent='Yhteysvirhe';alas();}}
- finally{lahetyksessa=false;}};
+ finally{lahetyksessa=false;}}
+document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();if(lahetyksessa)return;const t=document.getElementById('teksti');
+ const s=t.value.trim();if(!s)return;t.value='';await laheta(s);};
 aloita();alas();
 </script></body></html>
 """
@@ -368,6 +419,39 @@ def erota_paatosehdotus(vastaus, historia):
     return PAATOSMERKINTA_RE.sub("", vastaus).strip(), ehdotus
 
 
+VALINNAT_LOPUSSA_RE = re.compile(r"[ \t]*\[\[VALINNAT:([^\n]*)\]\][ \t]*\Z")
+VALINTA_MIN, VALINTA_MAX, VALINTA_PITUUS = 2, 6, 80
+
+
+def _valinta_kelpaa(v):
+    return (0 < len(v) <= VALINTA_PITUUS and not any(ord(c) < 32 or ord(c) == 127 for c in v)
+            and "[[" not in v and "]]" not in v)
+
+
+TYHJA_VASTAUS = "(Aivo ei antanut vastausta. Kokeile uudelleen.)"
+
+
+def tyhjan_paikka(vastaus, muuta_on):
+    """Jos erottimien jalkeen ei jaa tekstia eika muuta naytettavaa (valinnat, ehdotukset, paatosehdotus),
+    palautetaan paikkateksti: selain ei nayta tyhjaa kuplaa eika historiaan tallennu tyhjaa vastausta."""
+    if vastaus.strip() or muuta_on:
+        return vastaus
+    return TYHJA_VASTAUS
+
+
+def erota_valinnat(vastaus):
+    """Poistaa vastauksen lopusta [[VALINNAT: a | b | c]] -merkinnan. Palauttaa (teksti, valinnat): valinnat on lista
+    vain, jos merkinta on aivan lopussa ja siina on 2-6 ei-tyhjaa, enintaan 80 merkin vaihtoehtoa ilman
+    ohjausmerkkeja. Virheellinen merkinta jaa tekstiin sellaisenaan (nakyy tavallisena tekstina), eika mitaan tulkita."""
+    m = VALINNAT_LOPUSSA_RE.search(vastaus)
+    if not m:
+        return vastaus, None
+    osat = [o.strip() for o in m.group(1).split("|")]
+    if not (VALINTA_MIN <= len(osat) <= VALINTA_MAX) or not all(_valinta_kelpaa(o) for o in osat):
+        return vastaus, None
+    return vastaus[:m.start()].rstrip(), osat
+
+
 def tarkista_lahteet(vastaus, tiedostot):
     """Merkitsee viitteet, joita vastaavaa muistitiedostoa ei ole. Palauttaa (teksti, tuntemattomat)."""
     tunn = []
@@ -505,6 +589,18 @@ class Keskustelut:
         return [json.loads(r) for r in p.read_text(encoding="utf-8").splitlines() if r.strip()]
 
 
+# Ydinohjeen hyvaksynta chat-sivulta: vahvistus tasmalleen "kylla <sha8>" (a-kirjaimella, pienin kirjaimin), sitten
+# yksityinen.hyvaksy_ehdotus sellaisenaan (sha-sidonta ja jarjestys (1)-(5) ovat siella).
+VAHVISTUS_RE = re.compile(r"\Akyll\u00e4 [0-9a-f]{8}\Z")
+EHDOTUS_TULOKSET = {
+    "pushattu": "Hyv\u00e4ksytty: ydinohje p\u00e4ivitetty, commitoitu ja pushattu.",
+    "push-epaonnistui": "Hyv\u00e4ksytty ja commitoitu, mutta push ep\u00e4onnistui.",
+    "ei-etaa": "Hyv\u00e4ksytty ja commitoitu (ei et\u00e4repoa).",
+    "ei-gitissa": "Hyv\u00e4ksytty: ydinohje p\u00e4ivitetty (kansio ei ole git-repo).",
+    "ei-muutosta": "Hyv\u00e4ksytty: sis\u00e4lt\u00f6 oli jo sama.",
+}
+
+
 # Paatoksen kirjauksen tulos -> (HTTP-tila, naytettava teksti). "Kirjattu" nakyy vain, kun paatos on oikeasti perilla:
 # pushattu Giteaan (tyokalutila) tai kirjattu yksityiseen muistiin (yksityinen tila). Tuntematon tulos on virhe.
 PAATOS_TULOKSET = {
@@ -595,10 +691,11 @@ class Tila:
                  yks_data=None, yks_muisti=None, ydinohjeet=None, ehdotukset=None,
                  malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None,
                  taustapaa="loopback", or_malli=None, or_avain=yksityinen_or.OLETUS_AVAIN,
-                 or_kulutila=None, tiivistelmat=None):   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
+                 or_kulutila=None, tiivistelmat=None, kalenteri_lahde=None):   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
         self.tiivistelmat = tiivistelmat          # tyokalualueen tiivistelmakansio (vain tyokalutila lukee sita)
+        self.kalenteri = kalenteri_lahde          # kalenteri.Lahde tai None; vain tyokalutila lukee sita
         self.keskustelut = Keskustelut(data)
         self.istunnot = Istunnot()
         self.hostit = sallitut_hostit
@@ -630,6 +727,7 @@ class Tila:
                 self.kysy_yks = lambda muisti, historia, ohjeet: yksityinen.kysy_paikalliselta(
                     muisti, historia, ohjeet, malli_url)
         self.yks_vastauslukko = threading.Lock()
+        self.ehdotuslukko = threading.Lock()      # yksi hyvaksynta tai hylkays kerrallaan
 
     def tila_ja_kasittelija(self, kid):
         """Palauttaa (tila, keskustelut) sen mukaan, kummassa kansiossa keskustelu on."""
@@ -707,6 +805,20 @@ def tee_kasittelija(tila):
                 return self._laheta(200, sivu_html(tila.taustapaa), "text/html; charset=utf-8")
             if self.path == "/terve":
                 return self._json(200, {"tila": "ok"})
+            osat = urllib.parse.urlsplit(self.path)
+            if osat.path.startswith("/api/"):
+                if not self._kirjautunut():
+                    return self._json(401, {"virhe": "ei kirjautunut"})
+                if not self._muutos_ok():
+                    return self._json(403, {"virhe": "kielletty"})
+                kysely = {k: v[0] for k, v in urllib.parse.parse_qs(osat.query).items()}
+                try:
+                    if osat.path == "/api/ehdotukset":
+                        return self._ehdotukset(kysely)
+                    if osat.path == "/api/ehdotus":
+                        return self._ehdotus(kysely)
+                except ChatVirhe as e:
+                    return self._json(400, {"virhe": str(e)})
             self._json(404, {"virhe": "ei loydy"})
 
         def do_POST(self):
@@ -735,6 +847,10 @@ def tee_kasittelija(tila):
                     return self._viesti(d)
                 if self.path == "/api/paatos":
                     return self._paatos(d)
+                if self.path == "/api/ehdotus/hyvaksy":
+                    return self._ehdotus_hyvaksy(d)
+                if self.path == "/api/ehdotus/hylkaa":
+                    return self._ehdotus_hylkaa(d)
             except ChatVirhe as e:
                 return self._json(400, {"virhe": str(e)})
             self._json(404, {"virhe": "ei loydy"})
@@ -777,15 +893,26 @@ def tee_kasittelija(tila):
                 except ChatVirhe as e:
                     tulos = (502, {"virhe": str(e), "indeksi": oma_idx})
                     return
-                vastaus = yksityinen.irrota_ehdotukset(
-                    vastaus, lambda n, t: yksityinen.tallenna_ehdotus(tila.ehdotukset, n, t))
+                tallennetut = []
+
+                def tallenna(n, t):
+                    eid = yksityinen.tallenna_ehdotus(tila.ehdotukset, n, t)
+                    tallennetut.append(eid)
+                    return eid
+                vastaus = yksityinen.irrota_ehdotukset(vastaus, tallenna)
+                vastaus, valinnat = erota_valinnat(vastaus)
                 vastaus, ehdotus = erota_paatosehdotus(vastaus, historia)
                 vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
+                vastaus = tyhjan_paikka(vastaus, bool(valinnat) or ehdotus is not None or bool(tallennetut))
                 tila.yks.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus])
                 tulos = (200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "tila": "yksityinen",
                                "indeksi": oma_idx})
+                if tallennetut:                # vain palvelimen itse tallentamat tunnukset; selain hakee ne erikseen
+                    tulos[1]["ehdotukset"] = tallennetut
                 if ehdotus is not None:
                     tulos[1]["paatosehdotus"] = ehdotus
+                if valinnat:
+                    tulos[1]["valinnat"] = valinnat
             finally:
                 tila.yks_vastauslukko.release()
                 if tulos is not None:      # vastaus lahtee vasta lukon vapautuksen jalkeen: seuraava viesti ei saa 429:aa
@@ -812,17 +939,25 @@ def tee_kasittelija(tila):
                     if tiiv:
                         muisti += tiiv + RAJA + "\n"
                         tiedostot = tiedostot + tiiv_tiedostot
+                if tila.kalenteri is not None:    # seuraavat 14 paivaa; virhe => osio puuttuu, chat jatkaa (A988/A992)
+                    kal = kalenteri_kehote.muodosta(tila.kalenteri)
+                    if kal:
+                        muisti += kal + RAJA + "\n"
                 try:
                     vastaus = tila.kysy(muisti, historia)
                 except ChatVirhe as e:
                     tulos = (502, {"virhe": str(e), "indeksi": oma_idx})
                     return
+                vastaus, valinnat = erota_valinnat(vastaus)
                 vastaus, ehdotus = erota_paatosehdotus(vastaus, historia)
                 vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
+                vastaus = tyhjan_paikka(vastaus, bool(valinnat) or ehdotus is not None)
                 tila.keskustelut.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus])
                 tulos = (200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "indeksi": oma_idx})
                 if ehdotus is not None:
                     tulos[1]["paatosehdotus"] = ehdotus
+                if valinnat:
+                    tulos[1]["valinnat"] = valinnat
             finally:
                 tila.vastauslukko.release()
                 if tulos is not None:
@@ -840,6 +975,66 @@ def tee_kasittelija(tila):
             else:
                 tulos = tila.julkaise(tila.kirjasto, kid, v["aika"], v["teksti"])
             self._json(*paatoksen_vastaus(tulos, valittu == "yksityinen"))
+
+        # --- Ydinohjeiden ehdotukset (vain yksityinen tila). Hyvaksynta tulee vain naista reiteista, ei viestin
+        # tai mallin vastauksen tekstista. Tyokalutilan keskustelulle ja ilman yksityista tilaa reitit ovat 404.
+
+        def _yks_keskustelu(self, d):
+            if tila.yks is None:
+                return False
+            kid = d.get("keskustelu")
+            valittu, _ = tila.tila_ja_kasittelija(kid)
+            return valittu == "yksityinen"
+
+        def _ehdotukset(self, d):
+            if not self._yks_keskustelu(d):
+                return self._json(404, {"virhe": "ei loydy"})
+            lista = []
+            for eid in yksityinen.listaa_ehdotukset(tila.ehdotukset):
+                try:
+                    e = yksityinen.lue_ehdotus(tila.ehdotukset, eid)
+                except ChatVirhe:
+                    continue                                  # viallinen ehdotus ohitetaan kuten paatteessa
+                lista.append({"tunnus": eid, "tiedosto": e["tiedosto"], "sha8": e["sha"][:8]})
+            return self._json(200, {"ehdotukset": lista})
+
+        def _ehdotus(self, d):
+            if not self._yks_keskustelu(d):
+                return self._json(404, {"virhe": "ei loydy"})
+            e, eroa = yksityinen.ehdotuksen_ero(tila.ehdotukset, tila.ydinohjeet, d.get("tunnus"))
+            return self._json(200, {"tunnus": d.get("tunnus"), "tiedosto": e["tiedosto"], "sha8": e["sha"][:8],
+                                    "ero": "\n".join(eroa)})
+
+        def _ehdotus_hyvaksy(self, d):
+            if not self._yks_keskustelu(d):
+                return self._json(404, {"virhe": "ei loydy"})
+            eid, vahvistus = d.get("tunnus"), d.get("vahvistus")
+            if not isinstance(eid, str) or not isinstance(vahvistus, str) or not VAHVISTUS_RE.match(vahvistus):
+                return self._json(400, {"virhe": "vahvistuksen pit\u00e4\u00e4 olla t\u00e4sm\u00e4lleen 'kyll\u00e4 <sha8>'"})
+            if not tila.ehdotuslukko.acquire(blocking=False):
+                return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
+            try:
+                tulos = yksityinen.hyvaksy_ehdotus(tila.ehdotukset, tila.ydinohjeet, eid, vahvistus)
+            except ChatVirhe as e:
+                return self._json(409, {"virhe": str(e)})
+            except OSError as e:
+                return self._json(500, {"virhe": "tallennus ep\u00e4onnistui (%s)" % type(e).__name__})
+            finally:
+                tila.ehdotuslukko.release()
+            return self._json(200, {"tulos": tulos, "teksti": EHDOTUS_TULOKSET.get(tulos, "Hyv\u00e4ksytty (%s)." % tulos)})
+
+        def _ehdotus_hylkaa(self, d):
+            if not self._yks_keskustelu(d):
+                return self._json(404, {"virhe": "ei loydy"})
+            if not tila.ehdotuslukko.acquire(blocking=False):
+                return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
+            try:
+                yksityinen.hylkaa_ehdotus(tila.ehdotukset, d.get("tunnus"))
+            except ChatVirhe as e:
+                return self._json(409, {"virhe": str(e)})
+            finally:
+                tila.ehdotuslukko.release()
+            return self._json(200, {"tulos": "hylatty", "teksti": "Ehdotus hyl\u00e4tty ja siirretty kansioon hylatyt/."})
 
     return K
 
@@ -872,6 +1067,13 @@ def main(argv=None):
     ap.add_argument("--tiivistelmat", default=os.environ.get("AIVO_TIIVISTELMAT"),
                     help="tyokalutilan tiivistelmakansio (oletus: --datan viereinen 'tiivistelmat'); kaytossa vain, "
                          "kun --tiivistelmat-kaytossa on annettu")
+    ap.add_argument("--kalenteri-kaytossa", action="store_true",
+                    default=os.environ.get("AIVO_KALENTERI_KAYTOSSA") == "1",
+                    help="liittaa seuraavan 14 paivan tapahtumat tyokalutilan kehotteeseen (oletus: pois paalta)")
+    ap.add_argument("--kalenteri-osoitetiedosto", default=os.environ.get("AIVO_KALENTERI_OSOITE", kalenteri.OLETUS_OSOITETIEDOSTO),
+                    help="tiedosto (0600), jossa iCal-osoite on; osoitetta ei anneta komentorivilla eika ymparistomuuttujalla")
+    ap.add_argument("--kalenteri-data", default=os.environ.get("AIVO_KALENTERI_DATA", kalenteri.OLETUS_DATAKANSIO),
+                    help="kalenterin valimuistin kansio")
     ap.add_argument("--malli-url", default=os.environ.get("AIVO_MALLI_URL", yksityinen.OLETUS_MALLI_URL))
     ap.add_argument("--yksityinen-taustapaa", choices=("loopback", "openrouter"),
                     default=os.environ.get("AIVO_YKSITYINEN_TAUSTAPAA", "loopback"),
@@ -894,7 +1096,9 @@ def main(argv=None):
                     taustapaa=a.yksityinen_taustapaa, or_malli=a.openrouter_malli,
                     or_avain=a.openrouter_avain_tiedosto,
                     tiivistelmat=(a.tiivistelmat or str(Path(a.data).parent / "tiivistelmat"))
-                    if a.tiivistelmat_kaytossa else None)
+                    if a.tiivistelmat_kaytossa else None,
+                    kalenteri_lahde=kalenteri.IcalLahde(a.kalenteri_osoitetiedosto, a.kalenteri_data)
+                    if a.kalenteri_kaytossa else None)
         palvelin = kaynnista(a.osoite, a.portti, tila)
     except ChatVirhe as e:
         print("virhe: %s" % e, file=sys.stderr)

@@ -51,5 +51,14 @@ if [ "$rc" -ne 0 ] || [ "$n" = "0" ]; then
 fi
 
 echo "TESTIT: OK $n"
+# CHANGELOG.md:ta ei muokata PR:ssa (fragmentti docs/muutokset/). Vain repoissa, joissa tarkistin on.
+if [ "$vain_testit" -eq 0 ] && [ -f tools/changelog_tarkista.py ]; then
+  cl_rc=0
+  python3 tools/changelog_tarkista.py . || cl_rc=$?
+  if [ "$cl_rc" -ne 0 ]; then
+    echo "tarkista-ja-pushaa: CHANGELOG-tarkistus ei mene lapi (paluuarvo $cl_rc). Ei pushata." >&2
+    exit 1
+  fi
+fi
 if [ "$vain_testit" -eq 1 ]; then exit 0; fi
 git push "$@"

@@ -13,6 +13,7 @@ Tämä ohje on Tonylle. Chat on asennettu omaan konttiinsa (Tonyn päätös A976
 - Keskustelut tallentuvat isännälle tiedostoihin (`/var/lib/aivo/chat/*.jsonl`, oikeudet 600). Mitään ei lähetetä GitHubiin.
 - **Päätösehdotus (A997):** kun Tony sanoo selvästi päättävänsä jotain, Aivo voi lisätä vastauksensa viimeiselle riville merkinnän `[[PAATOS n]]` (n = Tonyn viestin numero). Palvelin poistaa merkinnän näkyvästä tekstistä ja palauttaa kentän `paatosehdotus`, jos n on saman keskustelun Tonyn viesti; muuten ehdotus hylätään hiljaa. Sivu näyttää vastauksen alla kortin "Kirjaanko päätökseksi: '…'?" (Tonyn viesti sanasta sanaan) ja napit kyllä / ei. Vain kyllä kutsuu `/api/paatos`-reittiä, ja kirjataan edelleen vain Tonyn oma viesti. Aivo ei kirjaa mitään itse. Kehote (`KEHOTE`) opastaa ehdotuksen vain työkalutilassa; yksityisessä tilassa merkintä käsitellään samoin, mutta sen ohjeet ovat isännän ydinohjeissa, joita tämä muutos ei koske.
 - **Päätökset:** jokaisessa Tonyn viestissä on painike "Kirjaa päätökseksi". Painikkeen painallus liittää Tonyn viestin sanasta sanaan lainauksena kirjaston tiedostoon `aivo-paatoskirjasto.md` ja pushaa kirjaston Giteaan. Sivu näyttää "Kirjattu" vain, kun push onnistui (työkalutila) tai päätös kirjattiin yksityiseen muistiin (yksityinen tila). Jos push epäonnistuu, palvelin vastaa virhekoodilla 502 ja sivu kertoo, ettei päätöstä kirjattu Giteaan; commit jää silloin kirjaston paikalliseen kloonaan. Jos päätös on jo kirjattu, sivu näyttää "Ei muutosta". Aivon omia lauseita tai päätelmiä ei kirjata päätökseksi koskaan. Kirjaston etärepo ei saa osoittaa GitHubiin; muuten koodi kieltäytyy pushaamasta.
+- **Tyhjä vastaus:** jos vastauksessa on pelkkä valinta-, ehdotus- tai päätösmerkintä, tekstikupla piilotetaan ja sivu näyttää vain painikkeet tai kortin. Jos merkintöjen poistamisen jälkeen ei jää mitään näytettävää, palvelin palauttaa ja tallentaa historiaan tekstin "(Aivo ei antanut vastausta. Kokeile uudelleen.)". Sivu näyttää "Virhe: …" vain, kun pyyntö epäonnistui (HTTP-tila ei ole 2xx).
 
 ## Turvarajat
 
@@ -281,10 +282,106 @@ Ota ensin snapshot kontista 122. Ajastin ei asennu itsestään: tämä on ohje, 
 
 Jos päiväkatto täyttyy, loki sisältää rivin `lopetus: paivakatto 10/10 taynna, tiivistamatta N keskustelua`. Ajo jatkuu seuraavana vuorokautena. Jos tiivistys epäonnistuu, journaalissa on rivi `epaonnistui: ...` ja virheen tyyppi. Sama viestialue yritetään enintään kahdesti, joten rikkinäinen keskustelu ei kuluta koko päiväkattoa.
 
+## Kalenteri työkalutilan kehotteeseen (Tony tekee kontissa 122)
+
+Chat voi liittää työkalutilan kehotteeseen tiiviin listan Tonyn seuraavien 14 päivän tapahtumista (otsikko, aika Europe/Helsinki -aikavyöhykkeellä, paikka). Lista alkaa tämän päivän alusta ja päättyy 14 päivän kuluttua keskiyöhön. Kytkentä on oletuksena pois päältä. Yksityinen tila ei saa kalenteria koskaan. Kalenterin teksti merkitään kehotteessa dataksi, ei ohjeiksi. Osio on enintään 4000 tavua ja enintään 40 tapahtumaa. Jos osoitetiedostoa ei ole, haku epäonnistuu tai välimuisti puuttuu, chat toimii ilman kalenteria ja lokiin kirjataan vain virheen tyyppi. Osoite ei näy kehotteessa, lokissa eikä virheissä.
+
+Ota ensin snapshot kontista 122.
+
+1. **Osoitetiedosto.** Kirjoita Googlen salainen iCal-osoite itse tiedostoon `/etc/aivo/kalenteri-ical` (oikeudet 600, omistajana palvelun käyttäjä). Osoitetta ei anneta komentorivillä eikä ympäristömuuttujalla. Tarkistus, joka ei näytä sisältöä:
+
+   ```
+   stat -c '%U %a' /etc/aivo/kalenteri-ical
+   ```
+
+   Odotettu tulos: rivi `aivo 600`. Jos käyttäjä tai oikeudet ovat muut, kalenteri jää pois käytöstä.
+
+2. **Kytke päälle.** Lisää chatin ympäristöön `AIVO_KALENTERI_KAYTOSSA=1` (tai käynnistysasetus `--kalenteri-kaytossa`) ja käynnistä chat uudelleen:
+
+   ```
+   systemctl edit aivo-chat
+   systemctl restart aivo-chat
+   ```
+
+   Lisää muokkaukseen palveluosion alle rivi `Environment=AIVO_KALENTERI_KAYTOSSA=1`. Välimuistin kansio on oletuksena `/var/lib/aivo/kalenteri` (muutettavissa asetuksella `AIVO_KALENTERI_DATA`). Palvelun pitää voida kirjoittaa sinne (`ReadWritePaths`).
+
+3. **Tarkistus.** Kysy työkalutilassa chatissa: "Mitä menoja minulla on tällä viikolla?".
+
+   Odotettu tulos: Aivo kertoo kalenterin tapahtumat kellonaikoineen. Välimuistitiedosto on olemassa:
+
+   ```
+   ls -l /var/lib/aivo/kalenteri
+   ```
+
+   Odotettu tulos: tiedosto `kalenteri.ics` oikeuksilla `-rw-------`.
+
+4. **Vianetsintä.** Jos Aivo ei tiedä menoja, katso lokista kalenteririvit:
+
+   ```
+   journalctl -u aivo-chat --since "10 min ago" --no-pager | grep -i kalenteri
+   ```
+
+   Odotettu tulos: rivi `kalenteriosio puuttuu (<virheen tyyppi>)` tai rivi `kalenterin haku epaonnistui: ...` ja HTTP-tila. Osoitetta ei ole riveillä.
+
+5. **Poiskytkentä.** Poista asetus `AIVO_KALENTERI_KAYTOSSA=1` (tai aseta arvoksi `0`) ja käynnistä chat uudelleen. Välimuistitiedoston voi jättää paikalleen.
+
+   Odotettu tulos: seuraavan vastauksen kehotteessa ei ole kalenteriosiota, eikä Aivo tiedä menoja.
+
+## Ydinohjeiden ehdotukset chat-sivulla (A1018)
+
+Yksityisen tilan ydinohjemuutoksen voi hyväksyä tai hylätä myös chat-sivulla. Päätteen komento (`python3 -m aivo.yksityinen hyvaksy TUNNUS`) toimii edelleen.
+
+- Kun Aivon vastauksesta tallentuu ehdotus, palvelin palauttaa kentän `ehdotukset` (palvelimen itse tallentamat tunnukset). Sivu näyttää vastauksen alla laatikon, jossa on ero voimassa olevaan ohjeeseen sekä painikkeet "Hyväksy" ja "Hylkää".
+- Linkki "Odottavat ehdotukset" yläpalkissa näyttää kaikki odottavat ehdotukset samanlaisina laatikoina. Linkki näkyy vain yksityisessä tilassa.
+- "Hyväksy" lähettää vahvistuksen `kyllä <sha8>` sen ehdotuksen tiivisteellä, joka laatikossa näytettiin. Palvelin hyväksyy vain täsmälleen tämän muodon ja kutsuu sen jälkeen funktiota `yksityinen.hyvaksy_ehdotus` sellaisenaan: sha-sidonta ja järjestys (etäkohteen tarkistus, kirjoitus ja commit, palautus virheessä, ehdotuksen poisto, push) ovat samat kuin päätteessä. Jos ehdotuksen sisältö on muuttunut näyttämisen jälkeen, tiiviste ei täsmää ja palvelin vastaa 409.
+- "Hylkää" siirtää ehdotuksen alikansioon `hylatyt/` (0700). Mitään ei poisteta, eikä aiempaa samannimistä hylättyä korvata.
+- Mallin vastaus tai Tonyn chat-viesti ei voi hyväksyä mitään, vaikka siinä lukisi `kyllä <sha8>`. Vain hyväksyntäreitti hyväksyy.
+- Kaikki dynaaminen sisältö lisätään sivulle `textContent`-ominaisuudella. Ero puhdistetaan kuten päätteen `nayta`-komennossa (ohjausmerkit näkyvät `\x1b`-tyylisinä merkintöinä).
+
+Reitit (kirjautuminen, `Host`-otsake, `X-Aivo`-otsake ja sama alkuperä tarkistetaan kuten muillakin `/api`-reiteillä):
+
+| Reitti | Kuvaus |
+|---|---|
+| `GET /api/ehdotukset?keskustelu=ID` | lista: tunnus, tiedosto, sha8 |
+| `GET /api/ehdotus?keskustelu=ID&tunnus=T` | yksi ehdotus ja ero voimassa olevaan ohjeeseen |
+| `POST /api/ehdotus/hyvaksy` `{keskustelu, tunnus, vahvistus}` | vahvistus täsmälleen `kyllä <sha8>` |
+| `POST /api/ehdotus/hylkaa` `{keskustelu, tunnus}` | siirto kansioon `hylatyt/` |
+
+Keskustelun pitää olla yksityisen tilan keskustelu. Työkalutilan keskustelulle ja palvelulle, jossa yksityinen tila ei ole käytössä, reitit vastaavat 404.
+
+**Kirjoitusoikeus.** `docs/aivo-yksityinen.md` neuvoo asettamaan chat-palveluun `ReadOnlyPaths=/var/lib/aivo-yksityinen/ydinohjeet`. Tällä asetuksella hyväksyntä chat-sivulla ei onnistu: palvelin vastaa 500 (`tallennus epäonnistui (PermissionError)` tai vastaava tyyppi), ohje ei muutu ja ehdotus jää odottamaan. Asetuksen muuttaminen on Tonyn päätös, eikä tämä muutos koske siihen.
+
+**Ehdotuksen pituus.** Ehdotus on ydinohjetiedoston koko uusi sisältö, ja vastauksen enimmäispituus on `MAX_TOKENIA` = 700 tokenia. Rajaa ei nosteta, koska ydinohjeiden yläraja (20 000 merkkiä, noin 7 000 tokenia) ei ehtisi i5-8400:lla vastausajan sisällä. Kehote pyytää siksi pitämään ehdotuksen enintään 1 200 merkissä ja ehdottamaan pidemmän tiedoston sijaan uutta lyhyttä tiedostoa. Jos vastaus katkeaa ennen sulkevaa `[[/EHDOTUS]]`-merkintää, mitään ei tallenneta ja vastauksessa näkyy `[ehdotusta ei tallennettu: vastaus katkesi]`.
+
+**Kehotteen taustapää.** Paikallisella mallilla kehote kertoo, että malli ajetaan Tonyn omalla koneella. OpenRouter-taustapäällä kehote kertoo, että käytössä on avoin malli OpenRouterin kautta nollasäilytyksellä (ZDR) ja että ulos lähtee vain kulloinenkin kehote (`aivo/yksityinen_or.py`, `KEHOTE`).
+
+## Asennuksen tilatarkistus (vain luku)
+
+Päivityksen jälkeen kontissa 122 yksi komento kertoo, onko asennus kunnossa. Anna argumenttina odotettu commit (`git rev-parse HEAD` agentti-pohjan kloonista, jonka PR on mergattu):
+
+```
+runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -m aivo.tarkista_asennus ODOTETTU_COMMIT
+```
+
+Komento tarkistaa asennetun commitin, chat-palvelun ja tiivistysajastimen tilan (`systemctl is-active`), reitin `/terve` portissa 8780, Aivon moduulien olemassaolon ja käännettävyyden sekä salasanatiedoston oikeudet. Moduulit luetaan lähdetiedostoina polusta, jonka `--koodi` antaa (oletus `/opt/agentti-pohja`), ja ne käännetään `compile`-kutsulla. Moduuleja ei tuoda, joten niiden tuontiaikaista koodia ei ajeta. Tarkistus ei siis löydä ajonaikaisia vikoja. Salasanatiedostoon käytetään vain `os.stat`ia: sisältöä ei avata eikä tulosteta.
+
+`/etc/aivo` on `aivo:aivo` ja tilassa 700. Jos komennon ajaa muu käyttäjä kuin hakemiston omistaja (esimerkiksi palvelun `User=` on eri kuin `aivo`), `os.stat` ei pääse tiedostoon ja rivi on `VIKA avain /etc/aivo/chat-salasana: ei oikeutta tarkistaa (PermissionError)`. Komento ei kaadu. Aja silloin komento hakemiston omistajana (`runuser -u <omistaja> -- ...`). Paluuarvo on 0 vain, jos kaikki rivit ovat OK. Asentamattomassa ympäristössä tulos on esimerkiksi:
+
+```
+VIKA commit: asennettu 7c01f795a607, odotettu 141ab0075ba5
+VIKA palvelu aivo-chat: inactive
+VIKA ajastin aivo-tiivista.timer: inactive
+VIKA terve /terve: ei yhteytta (ConnectionRefusedError)
+OK   moduulit: 3 moduulia
+VIKA avain /etc/aivo/chat-salasana: puuttuu
+```
+
+Valinnat `--koodi` (oletus `/opt/agentti-pohja`) ja `--portti` (oletus 8780) vaihtavat polun ja portin.
+
 ## Testit
 
 ```
-python3 -m unittest aivo.test_chat aivo.test_tiivista
+python3 -m unittest aivo.test_chat aivo.test_tiivista aivo.test_kalenteri_kytkenta aivo.test_yksityinen_hyvaksynta aivo.test_tarkista_asennus
 ```
 
 Testit kattavat salasanan tiivisteen ja lukituksen, osoite- ja Host-rajat, CSRF-suojan, muistin lukemisen (ei linkkejä kirjaston ulkopuolelle), lähdeviitteiden tarkistuksen, päätöksen kirjaamisen sanasta sanaan, GitHub-pushin eston ja sen, että Claude-kutsu ei käytä työkaluja eikä välittäjiä.
