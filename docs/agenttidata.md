@@ -10,9 +10,24 @@ Kontin 115 vienti (`python3 -m agentti.docs_vienti`) kopioi docs-repon kopiosta 
 |---|---|
 | `claude-jono/tulokset/*.md` | kaikki muu docs-repossa (koulu, matka, ura, kauppa, `isanta-kasin`, `tonylle.md`, ajurin tilatiedostot) |
 | `claude-jono/tehtavat/*.md` | alikansiot, muut tiedostopäätteet, piilotiedostot, symboliset linkit |
-| `claude-jono/pohdinta-vastaukset.md` | `claude-jono/kompassi.md` (vain valinnalla `--kompassi`; sinun päätöksesi) |
+| `claude-jono/pohdinta-vastaukset.md` | |
+| `claude-jono/kompassi.md` (Aivon ajo, kerran tunnissa) | |
+| `claude-jono/faktat.md` (Aivon ajo, kerran tunnissa) | |
 
-Kohderepossa polut ovat `tulokset/`, `tehtavat/` ja `pohdinta-vastaukset.md`.
+Kohderepossa polut ovat `tulokset/`, `tehtavat/`, `pohdinta-vastaukset.md`, `kompassi.md` ja `faktat.md`.
+
+Vientiajoja on kaksi, ja kumpikin muuttaa vain omia tiedostojaan:
+
+| Ajo | Ajastin | Tiedostot kohderepossa |
+|---|---|---|
+| perusajo `python3 -m agentti.docs_vienti` | `docs-vienti.timer`, 15 minuutin välein | `tulokset/`, `tehtavat/`, `pohdinta-vastaukset.md` |
+| Aivon ajo `python3 -m agentti.docs_vienti --aivo` | `docs-vienti-aivo.timer`, kerran tunnissa (minuutti 45) | `kompassi.md`, `faktat.md` |
+
+Molemmat käyttävät samaa työkloonia, samaa avainta, samaa siivousta ja samaa osoitetarkistusta. Lukko (`/var/lib/docs-vienti/agenttidata.lukko`) estää kahta ajoa toimimasta samaan aikaan. Jos lukko on varattu yli minuutin, ajo päättyy virheeseen ja seuraava ajo yrittää uudelleen.
+
+Aivon kirjasto: Aivo lukee kompassin ja faktat kloonistaan `/var/lib/aivo/agenttidata` (askel 8), joten käsin viety kopio ei enää ole tarpeen. Vanhan tiedoston `aivo-kompassi-2026-11-05.md` poistamisesta Aivon kirjastosta päätät sinä. Vienti ei koske Aivon kirjastoon.
+
+Osumaprosentti luokittain ei ole vielä mukana. Se tulee PR #341:stä, joka ei ole vielä mainissa. Osumat lisätään vientiin erillisellä PR:llä sen jälkeen.
 
 Siivous ennen kopiota:
 
@@ -237,7 +252,30 @@ Odotettu:
 ajastin näkyy listassa ja seuraava ajo on :07, :22, :37 tai :52
 ```
 
-Ajastin ajaa viennin 15 minuutin välein. Yksikössä on `Wants=` ja `After=` docs-pull.service, joten docs-pull käynnistyy ensin ja vienti odottaa sen valmistumista. Jos kontissa ei ole yksikköä `docs-pull.service`, systemd ohittaa `Wants=`-rivin ja vienti käyttää viimeksi haettua kopiota.
+Ajastin ajaa viennin 15 minuutin välein.
+
+Aivon ajo (kompassi ja faktat) asennetaan samalla tavalla. Kokeile ensin kuiva-ajo:
+
+```
+cd /opt/agentti-pohja
+sudo -u docs-vienti env $(cat /etc/docs-vienti/asetukset.env) python3 -B -m agentti.docs_vienti --aivo --kuiva
+cp /opt/agentti-pohja/systemd/docs-vienti-aivo.service.mall /etc/systemd/system/docs-vienti-aivo.service
+sed -i 's/<GITEA-IP>/OIKEA-IP/' /etc/systemd/system/docs-vienti-aivo.service
+cp /opt/agentti-pohja/systemd/docs-vienti-aivo.timer.mall /etc/systemd/system/docs-vienti-aivo.timer
+systemctl daemon-reload
+systemctl start docs-vienti-aivo.service
+journalctl -u docs-vienti-aivo -n 5 --no-pager
+systemctl enable --now docs-vienti-aivo.timer
+```
+
+Odotettu:
+```
+kuiva-ajo: "docs-vienti: kuiva-ajo: 2 tiedostoa muuttuisi (kopioitu 2); ei committia"
+journal: "docs-vienti: pushattu: 2 tiedostoa muuttui (kopioitu 2)"
+list-timers näyttää docs-vienti-aivo.timer, seuraava ajo minuutilla 45
+```
+
+Molemmissa yksiköissä on `Wants=` ja `After=` docs-pull.service, joten docs-pull käynnistyy ensin ja vienti odottaa sen valmistumista. Jos kontissa ei ole yksikköä `docs-pull.service`, systemd ohittaa `Wants=`-rivin ja vienti käyttää viimeksi haettua kopiota.
 
 ### Askel 8. Aivon luku ja tarkistus (kontti `<AIVO>`)
 
@@ -300,7 +338,7 @@ Jos tulostuu tiedostonimiä, älä käytä lähdettä Aivolle ennen kuin asia on
 
 ## Palautus
 
-- Ajastin pois: `systemctl disable --now docs-vienti.timer` (kontti 115) ja `agenttidata-pull.timer` (Aivon kontti).
+- Ajastin pois: `systemctl disable --now docs-vienti.timer docs-vienti-aivo.timer` (kontti 115) ja `agenttidata-pull.timer` (Aivon kontti).
 - Avaimen peruutus: poista deploy-avain Gitean repon asetuksista. Se katkaisee yhteyden heti.
 - Snapshot: `pct rollback 115 ennen-agenttidata` (sinun päätöksesi; palauttaa koko kontin).
 
@@ -310,4 +348,4 @@ Jos tulostuu tiedostonimiä, älä käytä lähdettä Aivolle ennen kuin asia on
 python3 -m unittest test.test_docs_vienti
 ```
 
-Testit kattavat sallitut polut, siivouksen, väärän osoitteen estämisen, `origin`-asetuksen ohituksen ja sen, ettei muuttumaton sisältö tee committia. Ne käyttävät paikallista tyhjää repoa eivätkä käytä verkkoa.
+Testit kattavat sallitut polut, Aivon ajon (kompassi ja faktat), lukon, siivouksen, väärän osoitteen estämisen, `origin`-asetuksen ohituksen ja sen, ettei muuttumaton sisältö tee committia. Ne käyttävät paikallista tyhjää repoa eivätkä käytä verkkoa.

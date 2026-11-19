@@ -3,27 +3,33 @@
 Suunnitelma: claude-jono/suunnitelmat/aivo-tietolahde-1-tulokset.md (vaihtoehto a, Tonyn paatos A1003).
 Vain nimetyt polut (allowlist), siivous ennen kopiota, push vain sallittuun osoitteeseen. Ei muuta mitaan muualle.
 
-Lahde (docs-repon kopio, vain luku):  claude-jono/tulokset/*.md, claude-jono/tehtavat/*.md, claude-jono/pohdinta-vastaukset.md,
-                                     valinnaisesti claude-jono/kompassi.md (--kompassi; oletuksena EI mukana).
-Kohde (tyoklooni): tulokset/, tehtavat/, pohdinta-vastaukset.md, kompassi.md.
+Lahde (docs-repon kopio, vain luku):  claude-jono/tulokset/*.md, claude-jono/tehtavat/*.md, claude-jono/pohdinta-vastaukset.md
+                                     (perusajo, 15 min valein) seka claude-jono/kompassi.md ja claude-jono/faktat.md
+                                     (--aivo, kerran tunnissa; Tonyn paatos 19.11.2026, tehtava "Aivo: agenttidatan vientiin kompassi...").
+Kohde (tyoklooni): tulokset/, tehtavat/, pohdinta-vastaukset.md, kompassi.md, faktat.md.
+Kumpikin ajo hallitsee vain omia polkujaan: perusajo ei koske kompassiin eika faktoihin, --aivo ei koske tuloksiin.
+Samaan tyoklooniin ajetaan yksi vienti kerrallaan (lukko <tyo>.lukko).
 
 Siivous: tiedosto, jossa on avaimen muotoinen merkkijono (sk-, ghp_, github_pat_, Telegram-token, yksityisen avaimen otsake),
 jatetaan kokonaan pois (kirjataan vain nimi). Muuten poistetaan avain=arvo-parit sekka IPv4-osoitteet ja *.ts.net-nimet.
 Tiedostot yli 200 kt jatetaan pois. Symbolisia linkkeja ei seurata. Jos mikaan ei muuttunut, committia ei tehda.
 
-Kaytto: python3 -m agentti.docs_vienti [--kompassi] [--kuiva]
+Kaytto: python3 -m agentti.docs_vienti [--aivo] [--kuiva]
 Ymparisto: DOCS_VIENTI_LAHDE (/opt/agenttifirma-docs), DOCS_VIENTI_TYO (/var/lib/docs-vienti/agenttidata),
 DOCS_VIENTI_OSOITE (PAKOLLINEN: ssh://git@<Gitean IP>[:portti]/tony/agenttidata.git), DOCS_VIENTI_ISANTA (PAKOLLINEN: tasmalleen Gitean IPv4-osoite;
 osoitteen isannan pitaa olla sama), DOCS_VIENTI_AVAIN (/etc/docs-vienti/avain).
 Virheista tulostetaan vain tyypin nimi tai lyhyt syy, ei gitin tulostetta (voi sisaltaa salaisuuksia).
 """
 import argparse
+import contextlib
+import fcntl
 import ipaddress
 import os
 import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -44,7 +50,9 @@ NIMI_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*\.md$")
 LAHDE_KANSIO = "claude-jono"
 KANSIOT = ("tulokset", "tehtavat")
 YKSITTAISET = ("pohdinta-vastaukset.md",)
-VALINNAISET = ("kompassi.md",)
+# Aivon kirjaston tiedostot (--aivo, kerran tunnissa). Viedaan sellaisinaan siivouksen jalkeen.
+AIVO = ("kompassi.md", "faktat.md")
+LUKKO_ODOTUS_S = 60
 
 # Avaimen muotoiset merkkijonot: tiedosto jatetaan pois kokonaan. sk-: ei sanan keskelta (risk-assessment-framework).
 AVAIN_MUOTOISET = [
@@ -97,40 +105,43 @@ def siivoa(teksti):
     return IPV4.sub("[ip-poistettu]", teksti)
 
 
-def _lahteet(lahde, kompassi):
+def _lahteet(lahde, aivo):
     """Palauttaa (suhteellinen kohdepolku, lahdepolku) vain allowlistasta; symlinkit ja epakelvot nimet ohitetaan."""
     perus = Path(lahde) / LAHDE_KANSIO
     tulos = []
-    for kansio in KANSIOT:
+    for kansio in (() if aivo else KANSIOT):
         k = perus / kansio
         if not k.is_dir() or k.is_symlink():
             continue
         for p in sorted(k.iterdir()):
             if NIMI_RE.match(p.name) and p.is_file() and not p.is_symlink():
                 tulos.append((kansio + "/" + p.name, p))
-    for nimi in YKSITTAISET + (VALINNAISET if kompassi else ()):
+    for nimi in (AIVO if aivo else YKSITTAISET):
         p = perus / nimi
         if p.is_file() and not p.is_symlink():
             tulos.append((nimi, p))
     return tulos
 
 
-def _sallittu_kohde(polku, kompassi):
-    if polku in YKSITTAISET or (kompassi and polku in VALINNAISET):
+def _sallittu_kohde(polku, aivo):
+    """Ajo saa muuttaa vain omia polkujaan: --aivo vain AIVO-tiedostoja, perusajo vain tuloksia, tehtavia ja YKSITTAISET."""
+    if aivo:
+        return polku in AIVO
+    if polku in YKSITTAISET:
         return True
     osat = polku.split("/")
     return len(osat) == 2 and osat[0] in KANSIOT and bool(NIMI_RE.match(osat[1]))
 
 
-def valmista(lahde, kohde, kompassi=False):
-    """Kirjoittaa siivotun kopion tyoklooniin (poistaa ensin hallitut polut). Palauttaa (kopioitu, ohitetut: [(nimi, syy)])."""
+def valmista(lahde, kohde, aivo=False):
+    """Kirjoittaa siivotun kopion tyoklooniin (poistaa ensin taman ajon hallitut polut). Palauttaa (kopioitu, ohitetut: [(nimi, syy)])."""
     kohde = Path(kohde)
-    for kansio in KANSIOT:
+    for kansio in (() if aivo else KANSIOT):
         shutil.rmtree(kohde / kansio, ignore_errors=True)
-    for nimi in YKSITTAISET + VALINNAISET:
+    for nimi in (AIVO if aivo else YKSITTAISET):
         (kohde / nimi).unlink(missing_ok=True)
     kopioitu, ohitetut = 0, []
-    for suht, p in _lahteet(lahde, kompassi):
+    for suht, p in _lahteet(lahde, aivo):
         try:
             if p.stat().st_size > MAX_TAVUA:
                 ohitetut.append((suht, "yli %d tavua" % MAX_TAVUA))
@@ -164,7 +175,28 @@ def _ssh_env(avain, tyo):
                                "-o UserKnownHostsFile=%s" % (avain, tiedot)}
 
 
-def vie(lahde, tyo, osoite, avain=OLETUS_AVAIN, kompassi=False, kuiva=False, ssh=True, isanta=""):
+@contextlib.contextmanager
+def _lukko(tyo, odotus_s=LUKKO_ODOTUS_S):
+    """Yksi vienti kerrallaan samaan tyoklooniin (perusajo ja --aivo voivat osua samaan aikaan). Lukko vapautuu prosessin paattyessa."""
+    polku = Path(str(tyo) + ".lukko")
+    polku.parent.mkdir(parents=True, exist_ok=True)
+    with open(polku, "a") as f:
+        loppu = time.monotonic() + odotus_s
+        while True:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= loppu:
+                    raise ViennitVirhe("toinen vienti on kaynnissa; yritetaan seuraavalla ajolla")
+                time.sleep(1)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def vie(lahde, tyo, osoite, avain=OLETUS_AVAIN, aivo=False, kuiva=False, ssh=True, isanta="", lukko_odotus_s=LUKKO_ODOTUS_S):
     """Koko vienti. Palauttaa yhteenvetorivin. Nostaa ViennitVirhe, jos osoite on kielletty tai git epaonnistuu.
 
     Pushaus tehdaan suoraan tarkistettuun osoitteeseen (ei etakohteen nimen kautta), joten tyoklooniin
@@ -175,9 +207,14 @@ def vie(lahde, tyo, osoite, avain=OLETUS_AVAIN, kompassi=False, kuiva=False, ssh
     if not osoite_sallittu(osoite, isanta):
         raise ViennitVirhe("osoite ei ole sallittu (isanta, kayttaja tai polku); ei pushata")
     tyo = Path(tyo)
+    with _lukko(tyo, lukko_odotus_s):
+        return _vie_lukittuna(lahde, tyo, osoite, avain, aivo, kuiva, ssh)
+
+
+def _vie_lukittuna(lahde, tyo, osoite, avain, aivo, kuiva, ssh):
+    """vie() lukon sisalla; osoite ja isanta on jo tarkistettu."""
     env = _ssh_env(avain, tyo) if ssh else {}
     if not (tyo / ".git").is_dir():
-        tyo.parent.mkdir(parents=True, exist_ok=True)
         tyo.mkdir(exist_ok=True)
         rc, _ = _git(tyo, "init", "-q", "-b", HAARA)
         if rc != 0:
@@ -193,13 +230,13 @@ def vie(lahde, tyo, osoite, avain=OLETUS_AVAIN, kompassi=False, kuiva=False, ssh
         rc, _ = _git(tyo, "reset", "-q", "--hard", "FETCH_HEAD")
         if rc != 0:
             raise ViennitVirhe("git reset epaonnistui")
-    kopioitu, ohitetut = valmista(lahde, tyo, kompassi)
+    kopioitu, ohitetut = valmista(lahde, tyo, aivo)
     _git(tyo, "add", "-A")
     rc, nimet = _git(tyo, "diff", "--cached", "--name-only")
     if rc != 0:
         raise ViennitVirhe("git diff epaonnistui")
     muuttuneet = [n for n in nimet.splitlines() if n]
-    vaarat = [n for n in muuttuneet if not _sallittu_kohde(n, kompassi)]
+    vaarat = [n for n in muuttuneet if not _sallittu_kohde(n, aivo)]
     if vaarat:
         _git(tyo, "reset", "-q")
         raise ViennitVirhe("allowlistin ulkopuolisia polkuja (%d); ei committia" % len(vaarat))
@@ -210,7 +247,7 @@ def vie(lahde, tyo, osoite, avain=OLETUS_AVAIN, kompassi=False, kuiva=False, ssh
         _git(tyo, "reset", "-q")
         return "kuiva-ajo: %d tiedostoa muuttuisi (kopioitu %d)%s; ei committia" % (len(muuttuneet), kopioitu, ohit)
     rc, _ = _git(tyo, "-c", "user.name=docs-vienti", "-c", "user.email=docs-vienti@localhost",
-                 "commit", "-q", "-m", "docs-vienti: %d tiedostoa muuttui" % len(muuttuneet))
+                 "commit", "-q", "-m", "docs-vienti%s: %d tiedostoa muuttui" % (" (aivo)" if aivo else "", len(muuttuneet)))
     if rc != 0:
         raise ViennitVirhe("git commit epaonnistui")
     rc, _ = _git(tyo, "push", "-q", osoite, "HEAD:refs/heads/" + HAARA, env=env)
@@ -221,14 +258,14 @@ def vie(lahde, tyo, osoite, avain=OLETUS_AVAIN, kompassi=False, kuiva=False, ssh
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog="agentti.docs_vienti", description="Siivottu kopio agenttien tuloksista Gitean repoon tony/agenttidata")
-    p.add_argument("--kompassi", action="store_true", help="ota mukaan claude-jono/kompassi.md (oletuksena ei)")
+    p.add_argument("--aivo", action="store_true", help="vie vain Aivon tiedostot: claude-jono/kompassi.md ja faktat.md (ajastin kerran tunnissa)")
     p.add_argument("--kuiva", action="store_true", help="ala committaa eika pushaa")
     a = p.parse_args(argv)
     env = os.environ.get
     try:
         print("docs-vienti: " + vie(env("DOCS_VIENTI_LAHDE", OLETUS_LAHDE), env("DOCS_VIENTI_TYO", OLETUS_TYO),
                                     env("DOCS_VIENTI_OSOITE", ""), env("DOCS_VIENTI_AVAIN", OLETUS_AVAIN),
-                                    a.kompassi, a.kuiva, isanta=env("DOCS_VIENTI_ISANTA", "")))
+                                    a.aivo, a.kuiva, isanta=env("DOCS_VIENTI_ISANTA", "")))
     except ViennitVirhe as virhe:
         print("docs-vienti: VIRHE: %s" % virhe, file=sys.stderr)
         return 1

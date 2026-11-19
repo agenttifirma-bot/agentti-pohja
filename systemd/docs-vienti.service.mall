@@ -14,7 +14,7 @@ WorkingDirectory=/opt/agentti-pohja
 Environment=PYTHONDONTWRITEBYTECODE=1
 # Pakolliset: DOCS_VIENTI_OSOITE=ssh://git@<Gitean IP>[:portti]/tony/agenttidata.git ja DOCS_VIENTI_ISANTA=<Gitean IP> (ei salaisuuksia; koodi sallii vain taman yhden isannan).
 EnvironmentFile=/etc/docs-vienti/asetukset.env
-# Ensin kuiva-ajo omalla kasin: python3 -m agentti.docs_vienti --kuiva. Kompassi ei ole oletuksena mukana (lisaa --kompassi vain Tonyn luvalla).
+# Ensin kuiva-ajo omalla kasin: python3 -m agentti.docs_vienti --kuiva. Kompassi ja faktat viedaan erikseen: docs-vienti-aivo.service (--aivo, kerran tunnissa).
 ExecStart=/usr/bin/python3 -B -m agentti.docs_vienti
 TimeoutStartSec=5min
 NoNewPrivileges=yes

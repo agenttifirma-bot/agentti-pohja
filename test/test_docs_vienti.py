@@ -84,11 +84,51 @@ class SallitutPolut(Pohja):
         self.assertIn("pushattu", self.vie())
         self.assertEqual(sorted(self.etepolut()), ["pohdinta-vastaukset.md", "tehtavat/2026-11-17-01-x.md", "tulokset/a.md"])
 
-    def test_kompassi_vain_valinnalla(self):
+    def test_aivo_vie_vain_kompassin_ja_faktat(self):
         self.kirjoita("kompassi.md", "kompassi")
+        self.kirjoita("faktat.md", "faktat")
+        self.kirjoita("pohdinta-vastaukset.md", "A1")
         self.kirjoita("tulokset/a.md", "x")
-        self.vie(kompassi=True)
-        self.assertIn("kompassi.md", self.etepolut())
+        self.kirjoita("tonylle.md", "ei")
+        self.assertIn("pushattu: 2", self.vie(aivo=True))
+        self.assertEqual(sorted(self.etepolut()), ["faktat.md", "kompassi.md"])
+        self.assertEqual(self.eteteksti("kompassi.md"), "kompassi")
+        self.assertIn("(aivo)", git("--git-dir", str(self.ete), "log", "-1", "--format=%s", "main"))
+
+    def test_perusajo_ja_aivo_eivat_poista_toistensa_tiedostoja(self):
+        self.kirjoita("kompassi.md", "k1")
+        self.kirjoita("faktat.md", "f1")
+        self.kirjoita("tulokset/a.md", "a")
+        self.vie()
+        self.vie(aivo=True)
+        kaikki = ["faktat.md", "kompassi.md", "tulokset/a.md"]
+        self.assertEqual(sorted(self.etepolut()), kaikki)
+        self.kirjoita("tulokset/b.md", "b")
+        self.vie()
+        self.assertEqual(sorted(self.etepolut()), kaikki + ["tulokset/b.md"])
+        (self.jono / "faktat.md").unlink()
+        self.kirjoita("kompassi.md", "k2")
+        self.vie(aivo=True)
+        self.assertEqual(sorted(self.etepolut()), ["kompassi.md", "tulokset/a.md", "tulokset/b.md"])
+        self.assertEqual(self.eteteksti("kompassi.md"), "k2")
+
+    def test_aivo_muuttumaton_ei_committia(self):
+        self.kirjoita("kompassi.md", "k")
+        self.kirjoita("faktat.md", "f")
+        self.vie(aivo=True)
+        self.kirjoita("tulokset/a.md", "muuttui, mutta ei kuulu aivo-ajoon")
+        self.assertIn("ei muutoksia", self.vie(aivo=True))
+        self.assertEqual(self.etelkm(), 1)
+
+    def test_aivo_ajo_pysahtyy_tulosten_muutokseen_tyoklooonissa(self):
+        self.kirjoita("kompassi.md", "k")
+        self.vie(aivo=True)
+        (self.tyo / "tulokset").mkdir()
+        (self.tyo / "tulokset" / "x.md").write_text("eksynyt")
+        self.kirjoita("kompassi.md", "k2")
+        with self.assertRaises(dv.ViennitVirhe):
+            self.vie(aivo=True)
+        self.assertEqual(self.etelkm(), 1)
 
     def test_symlink_ei_seurata(self):
         salainen = Path(self._t.name) / "ulkona.md"
@@ -124,6 +164,25 @@ class SallitutPolut(Pohja):
 
 
 class Siivous(Pohja):
+    def test_aivo_tiedostoista_tunnus_ja_ip_pois(self):
+        tunnus = "abcdefgh12345678"
+        self.kirjoita("kompassi.md", "# Kompassi\ntoken: %s\nGitea %s, holvi %s, %s\nA984: paatos pysyy\n" % (tunnus, IP, ip(10, 0, 0, 7), TS_NIMI))
+        self.kirjoita("faktat.md", "api_key=%s\nkone %s\n" % (tunnus, TS_IP))
+        self.vie(aivo=True)
+        for nimi in ("kompassi.md", "faktat.md"):
+            t = self.eteteksti(nimi)
+            for kielletty in (tunnus, IP, ip(10, 0, 0, 7), TS_IP, TS_NIMI, "tail1234"):
+                self.assertNotIn(kielletty, t, nimi)
+        self.assertIn("A984: paatos pysyy", self.eteteksti("kompassi.md"))
+        self.assertIn("[ip-poistettu]", self.eteteksti("kompassi.md"))
+
+    def test_aivo_avainmuotoinen_kompassi_jaa_pois(self):
+        self.kirjoita("kompassi.md", "vahingossa %s" % AVAIN_GH)
+        self.kirjoita("faktat.md", "f")
+        tulos = self.vie(aivo=True)
+        self.assertIn("ohitettu 1", tulos)
+        self.assertEqual(self.etepolut(), ["faktat.md"])
+
     def test_testisalaisuudet_ja_osoitteet_pois(self):
         self.kirjoita("tulokset/a.md", "token: abcdefgh12345678\nkone %s ja %s ja %s loppu\n" % (IP, TS_IP, TS_NIMI))
         self.vie()
@@ -297,13 +356,16 @@ class OsoiteJaMuuttumattomuus(Pohja):
 class Apurit(Pohja):
     def test_valmista_oletus_ei_ota_kompassia_ja_laskee(self):
         self.kirjoita("kompassi.md", "k")
+        self.kirjoita("faktat.md", "f")
         self.kirjoita("tulokset/a.md", "a")
         self.kirjoita("tulokset/b.md", "b")
         ei_olemassa = Path(self._t.name) / "uusi" / "syva"
         kopioitu, ohitetut = dv.valmista(self.lahde, ei_olemassa)
         self.assertEqual((kopioitu, ohitetut), (2, []))
         self.assertFalse((ei_olemassa / "kompassi.md").exists())
-        self.assertEqual(dv.valmista(self.lahde, ei_olemassa, True)[0], 3)
+        self.assertEqual(dv.valmista(self.lahde, ei_olemassa, True), (2, []))
+        self.assertTrue((ei_olemassa / "faktat.md").exists())
+        self.assertTrue((ei_olemassa / "tulokset" / "a.md").exists())
 
     def test_symlink_kansio_ei_seurata(self):
         ulko = Path(self._t.name) / "ulko"
@@ -316,8 +378,13 @@ class Apurit(Pohja):
 
     def test_sallittu_kohde(self):
         self.assertFalse(dv._sallittu_kohde("kompassi.md", False))
+        self.assertFalse(dv._sallittu_kohde("faktat.md", False))
         self.assertTrue(dv._sallittu_kohde("kompassi.md", True))
+        self.assertTrue(dv._sallittu_kohde("faktat.md", True))
         self.assertTrue(dv._sallittu_kohde("pohdinta-vastaukset.md", False))
+        self.assertFalse(dv._sallittu_kohde("pohdinta-vastaukset.md", True))
+        self.assertFalse(dv._sallittu_kohde("tulokset/a.md", True))
+        self.assertTrue(dv._sallittu_kohde("tulokset/a.md", False))
         self.assertFalse(dv._sallittu_kohde("tulokset/sisa/a.md", False))
         self.assertFalse(dv._sallittu_kohde("muu/a.md", True))
         self.assertFalse(dv._sallittu_kohde("tulokset/a.py", True))
@@ -355,6 +422,40 @@ class Apurit(Pohja):
         self.assertTrue(ulos.getvalue().startswith("docs-vienti: pushattu"))
         self.assertEqual(self.etelkm(), 1)
 
+    def test_main_aivo_valitsin(self):
+        self.kirjoita("kompassi.md", "k")
+        self.kirjoita("tulokset/a.md", "a")
+        env = {"DOCS_VIENTI_LAHDE": str(self.lahde), "DOCS_VIENTI_TYO": str(self.tyo), "DOCS_VIENTI_OSOITE": str(self.ete)}
+        with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(io.StringIO()):
+            with mock.patch.object(dv, "_ssh_env", lambda a, t: {}):
+                self.assertEqual(dv.main(["--aivo"]), 0)
+        self.assertEqual(self.etepolut(), ["kompassi.md"])
+
+    def test_lukko_estaa_paallekkaisen_ajon(self):
+        import fcntl
+        self.kirjoita("tulokset/a.md", "a")
+        self.tyo.parent.mkdir(parents=True, exist_ok=True)
+        with open(str(self.tyo) + ".lukko", "a") as f:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaises(dv.ViennitVirhe) as k:
+                self.vie(lukko_odotus_s=0)
+            self.assertIn("toinen vienti", str(k.exception))
+        self.assertEqual(self.etelkm(), 0)
+        self.assertIn("pushattu", self.vie(lukko_odotus_s=0))
+        self.assertFalse((self.tyo / "agenttidata.lukko").exists())
+
+    def test_lukko_odottaa_ja_luovuttaa(self):
+        import fcntl
+        self.tyo.parent.mkdir(parents=True, exist_ok=True)
+        unet = []
+        with open(str(self.tyo) + ".lukko", "a") as f, mock.patch.object(dv.time, "sleep", unet.append):
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with mock.patch.object(dv.time, "monotonic", side_effect=[0.0, 0.0, 5.0]):
+                with self.assertRaises(dv.ViennitVirhe):
+                    with dv._lukko(self.tyo, 2):
+                        pass
+        self.assertEqual(unet, [1])
+
     def test_main_oserror_tulostaa_vain_tyypin(self):
         err = io.StringIO()
         with mock.patch.object(dv, "vie", side_effect=PermissionError("salainen polku")), contextlib.redirect_stderr(err):
@@ -391,9 +492,24 @@ class Yksikkomallit(unittest.TestCase):
         self.assertIn("docs-pull.service", wants)
         self.assertIn("docs-pull.service", after)
 
+    def test_aivo_palvelulla_samat_turvarajat(self):
+        perus = self.rivit("docs-vienti.service.mall")
+        aivo = self.rivit("docs-vienti-aivo.service.mall")
+        erot = lambda r: [x for x in r if not x.startswith(("Description=", "ExecStart="))]
+        self.assertEqual(erot(perus), erot(aivo))
+        self.assertEqual([x for x in aivo if x.startswith("ExecStart=")], ["ExecStart=/usr/bin/python3 -B -m agentti.docs_vienti --aivo"])
+        self.assertEqual([x for x in perus if x.startswith("ExecStart=")], ["ExecStart=/usr/bin/python3 -B -m agentti.docs_vienti"])
+
+    def test_aivo_ajastin_kerran_tunnissa(self):
+        r = self.rivit("docs-vienti-aivo.timer.mall")
+        self.assertIn("OnCalendar=*:45", r)
+        self.assertIn("Unit=docs-vienti-aivo.service", r)
+        perus = [x for x in self.rivit("docs-vienti.timer.mall") if x.startswith("OnCalendar=")][0]
+        self.assertNotIn("45", perus.split("=", 1)[1].split(","))
+
     def test_ohje_mainitsee_kayttajan_ja_isanta_asetuksen(self):
         ohje = (self.KANSIO.parent / "docs" / "agenttidata.md").read_text(encoding="utf-8")
-        for pala in ("useradd", "DOCS_VIENTI_ISANTA", "docs-vienti", "Salli kirjoitus"):
+        for pala in ("useradd", "DOCS_VIENTI_ISANTA", "docs-vienti", "Salli kirjoitus", "docs-vienti-aivo.timer", "faktat.md", "kompassi.md"):
             self.assertIn(pala, ohje)
 
 
