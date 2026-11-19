@@ -9,7 +9,7 @@ Tämä ohje on Tonylle. Rajattu ulkoinen mallipalvelu (A728). Tonyn sha-sidottu 
 - Yksityisellä tilalla on kaksi taustapäätä. Oletus on edelleen paikallinen mallipalvelin (loopback). Uusi vaihtoehto on OpenRouterin avoin malli: `--yksityinen-taustapaa openrouter`.
 - Muisti, keskustelut, ydinohjeet ja ehdotukset pysyvät kontissa 122. OpenRouterille lähtee vain kulloinenkin kehote (ydinohjeet, muistista valitut otteet ja keskusteluhistoria).
 - Jokainen kutsu kulkee `openrouter_kulut.kutsu`n kautta. Se tarkistaa yhteisen päiväkatkaisimen (10 €/vrk, sama kirjanpito ja sama katto kuin ajurilla, #309; yksityisellä tilalla ei ole omaa kulutilaa), rakentaa pyynnön `openrouter_zdr.rakenna_runko`lla (ZDR ja `data_collection=deny` pakotettuina) ja kirjaa kulun. Kuljetin kieltäytyy lähettämästä, jos ZDR puuttuu rungosta.
-- Mallin pitää kuulua avoimiin perheisiin (`AVOIMET_MALLIT` tiedostossa `aivo/openrouter_zdr.py`). Suljetut mallit, `:free`-versiot ja `:online`-liitteet hylätään. Oletusmallia ei ole.
+- Mallin pitää olla täsmälleen listalla `AVOIMET_MALLIT` tiedostossa `aivo/openrouter_zdr.py`. Lista on tarkka luettelo mallitunnisteista, ei etuliitteitä, ja jokaisen rivin kommentissa on mallin `hugging_face_id`. Suljetut mallit (esim. `qwen/qwen3.7-max`) ja kaikki liitteet (`:free`, `:batch`, `:online`, `:nitro` ja muut) hylätään. Oletusmallia ei ole.
 - Avain luetaan tiedostosta, jonka omistaa palvelun käyttäjä ja jonka oikeudet ovat 0600. Ympäristömuuttujaa ei lueta. Avain luetaan joka kutsulla, joten sen voi vaihtaa ilman uudelleenkäynnistystä.
 - Puuttuva tai väärin suojattu avain antaa selkeän virheen (HTTP 502 ja teksti "OpenRouter-avain puuttuu…"), eikä päiväkattovarausta kirjata.
 - Työkalutila ei käytä tätä taustapäätä. Testit tarkistavat sen.

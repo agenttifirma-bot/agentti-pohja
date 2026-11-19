@@ -14,8 +14,8 @@ Saannot (koodi on laki):
     Tama moduuli ei rakenna `provider`-rungon osaa eika tuo katon arvoja ulos muutettavaksi.
   * Kuljetin kieltaytyy lahettamasta, jos runko ei sisalla `provider.zdr == True` ja `provider.data_collection == "deny"`
     (toinen lukko ZDR:lle).
-  * Malli on asetus eika oletusta ole. Vain avoimien mallien perheet (AVOIMET_MALLIT) kelpaavat; suljetut mallit,
-    `:free`-versiot ja `:online`-tyyppiset liitteet hylataan jo asetuksessa.
+  * Malli on asetus eika oletusta ole. Vain tarkan listan AVOIMET_MALLIT mallit kelpaavat; suljetut mallit
+    ja kaikki liitteet (`:free`, `:batch`, `:online` ym.) hylataan jo asetuksessa.
   * Avain luetaan tiedostosta, jonka omistaa palvelun kayttaja ja jonka oikeudet ovat 0600 tai tiukemmat (ei linkki).
     Avainta ei lueta ymparistomuuttujasta, eika sita kirjoiteta lokiin, virheviesteihin eika muualle.
     Virheista nakyy vain tyyppi ja HTTP-tila.

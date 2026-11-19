@@ -1,6 +1,7 @@
 """Testit aivo/yksityinen_or.py:lle (yksityisen tilan OpenRouter-taustapaa). Ei verkkoa, ei oikeita avaimia."""
 import ast
 import http.client
+import io
 import json
 import os
 import tempfile
@@ -391,6 +392,31 @@ class KaynnistysTesti(unittest.TestCase):
             for m in (None, "openai/gpt-4o", MALLI + ":free"):
                 with self.assertRaises(chat.ChatVirhe):
                     self.tila(d, taustapaa="openrouter", or_malli=m)
+
+    def test_suljettu_qwen_ja_batch_estavat_kaynnistyksen(self):
+        """AIVO_OPENROUTER_MALLI suljetulla qwen3.x-mallilla tai :batch-liitteella: palvelu ei kaynnisty."""
+        with tempfile.TemporaryDirectory() as d:
+            for m in ("qwen/qwen3.7-max", "qwen/qwen3.8-max-0902", "qwen/qwen3.6-plus", "qwen/qwen3-coder-flash",
+                      "qwen/qwen3-235b-a22b-2507:batch"):
+                with self.subTest(m=m), self.assertRaises(chat.ChatVirhe):
+                    self.tila(d, taustapaa="openrouter", or_malli=m)
+
+    def test_suljettu_ymparistomuuttuja_estaa_mainin(self):
+        """main() lukee AIVO_OPENROUTER_MALLI:n ja palauttaa 1 ennen kuin palvelin kaynnistyy."""
+        with tempfile.TemporaryDirectory() as d:
+            salasana = Path(d) / "salasana"
+            salasana.write_text(chat.tiivista_salasana("oikea-salasana-123"))
+            os.chmod(salasana, 0o600)
+            yks = Path(d) / "y"
+            yks.mkdir(mode=0o700)
+            ymp = {"AIVO_OPENROUTER_MALLI": "qwen/qwen3.7-max", "AIVO_YKSITYINEN_TAUSTAPAA": "openrouter"}
+            with mock.patch.dict(os.environ, ymp), mock.patch.object(chat, "kaynnista") as k, \
+                    mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+                rc = chat.main(["palvele", "--salasana-tiedosto", str(salasana), "--kirjasto", d, "--data", d,
+                                "--yksityinen-data", str(yks)])
+            self.assertEqual(rc, 1)
+            k.assert_not_called()
+            self.assertIn("avoin malli", err.getvalue())
 
     def test_avain_ei_ole_kaynnistyksen_edellytys(self):
         with tempfile.TemporaryDirectory() as d:
