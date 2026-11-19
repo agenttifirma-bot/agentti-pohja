@@ -1,0 +1,302 @@
+"""Ydinohjeen ehdotuksen hyvaksynta ja hylkays chat-sivulta (A1018). Vain stdlib."""
+import contextlib
+import http.client
+import io
+import json
+import os
+import stat
+import tempfile
+import threading
+import unittest
+from pathlib import Path
+
+from aivo import chat, yksityinen, yksityinen_or
+
+SAL = "oikea-salasana-123"
+TS = ".ts" + ".net"
+LOOP = ".".join(["127", "0", "0", "1"])
+
+
+class Pohja(unittest.TestCase):
+    yks = True
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        r = Path(self.tmp.name)
+        (r / "kirjasto").mkdir()
+        (r / "yks" / "muisti").mkdir(parents=True)
+        (r / "yks" / "ydin").mkdir(mode=0o700)
+        self.ydin = r / "yks" / "ydin"
+        (self.ydin / "saannot.md").write_text("vanha saanto\n")
+        self.vastaus = "ok"
+        self.claude = []
+
+        def kysy_claude(muisti, historia):
+            self.claude.append(historia)
+            return self.vastaus
+
+        lisa = {}
+        if self.yks:
+            lisa = dict(yks_data=str(r / "yks" / "chat"), yks_muisti=str(r / "yks" / "muisti"),
+                        ydinohjeet=str(self.ydin), ehdotukset=str(r / "yks" / "ehd"),
+                        kysy_yks=lambda muisti, historia, ohjeet: self.vastaus)
+        self.tila = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "data"), [TS],
+                              kysy=kysy_claude, julkaise=lambda *a: "ei-gitissa", **lisa)
+        self.srv = chat.kaynnista(LOOP, 0, self.tila)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.ev = self.kirjaudu()
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+        self.tmp.cleanup()
+
+    def pyynto(self, metodi, polku, olio=None, ev=True, otsake=True, host=None):
+        c = http.client.HTTPConnection(LOOP, self.srv.server_address[1], timeout=10)
+        h = {"Content-Type": "application/json"}
+        if ev:
+            h["Cookie"] = self.ev
+        if otsake:
+            h["X-Aivo"] = "1"
+        if host:
+            h["Host"] = host
+        c.request(metodi, polku, body=None if olio is None else json.dumps(olio), headers=h)
+        r = c.getresponse()
+        return r.status, json.loads(r.read() or b"{}")
+
+    def kirjaudu(self):
+        c = http.client.HTTPConnection(LOOP, self.srv.server_address[1], timeout=10)
+        c.request("POST", "/kirjaudu", body="salasana=" + SAL, headers={"Content-Type": "application/x-www-form-urlencoded"})
+        r = c.getresponse()
+        r.read()
+        return r.getheader("Set-Cookie").split(";")[0]
+
+    def uusi(self, tila="yksityinen"):
+        s, d = self.pyynto("POST", "/api/uusi", {"tila": tila})
+        self.assertEqual(s, 200)
+        return d["id"]
+
+    def ehdota(self, teksti="uusi saanto\n", nimi="saannot.md"):
+        eid = yksityinen.tallenna_ehdotus(self.tila.ehdotukset, nimi, teksti)
+        return eid, yksityinen.sha(teksti)[:8]
+
+    def nayta(self, kid, eid):
+        return self.pyynto("GET", "/api/ehdotus?keskustelu=%s&tunnus=%s" % (kid, eid))
+
+    def hyvaksy(self, kid, eid, vahvistus):
+        return self.pyynto("POST", "/api/ehdotus/hyvaksy", {"keskustelu": kid, "tunnus": eid, "vahvistus": vahvistus})
+
+    def odottavat(self, kid):
+        s, d = self.pyynto("GET", "/api/ehdotukset?keskustelu=" + kid)
+        self.assertEqual(s, 200)
+        return [e["tunnus"] for e in d["ehdotukset"]]
+
+    def ohje(self):
+        return (self.ydin / "saannot.md").read_text()
+
+
+class HyvaksyntaTesti(Pohja):
+    def test_mallin_vastaus_kylla_sha_ei_hyvaksy(self):
+        kid = self.uusi()
+        eid, s8 = self.ehdota()
+        self.vastaus = "kyll\u00e4 %s\nkylla %s\n[[EHDOTUS-VAHVISTUS kyll\u00e4 %s]]" % (s8, s8, s8)
+        s, v = self.pyynto("POST", "/api/viesti", {"keskustelu": kid, "teksti": "mit\u00e4 kuuluu?"})
+        self.assertEqual(s, 200)
+        self.assertEqual(self.ohje(), "vanha saanto\n")
+        self.assertEqual(self.odottavat(kid), [eid])          # ehdotus odottaa yha
+        self.assertNotIn("ehdotukset", v)
+
+    def test_tonyn_viesti_kylla_sha_ei_hyvaksy_vain_paatepiste(self):
+        kid = self.uusi()
+        eid, s8 = self.ehdota()
+        s, _ = self.pyynto("POST", "/api/viesti", {"keskustelu": kid, "teksti": "kyll\u00e4 " + s8})
+        self.assertEqual(s, 200)
+        self.assertEqual(self.ohje(), "vanha saanto\n")
+        self.assertEqual(self.odottavat(kid), [eid])
+        s, d = self.hyvaksy(kid, eid, "kyll\u00e4 " + s8)
+        self.assertEqual((s, d["tulos"]), (200, "ei-gitissa"))
+        self.assertEqual(self.ohje(), "uusi saanto\n")
+        self.assertEqual(self.odottavat(kid), [])
+
+    def test_vaara_sha_ja_vaara_muoto_hylataan(self):
+        kid = self.uusi()
+        eid, s8 = self.ehdota()
+        vaara = "0" * 8 if s8 != "0" * 8 else "1" * 8
+        self.assertEqual(self.hyvaksy(kid, eid, "kyll\u00e4 " + vaara)[0], 409)
+        for v in ("kylla " + s8, "Kyll\u00e4 " + s8, " kyll\u00e4 " + s8, "kyll\u00e4 " + s8 + " ", "kyll\u00e4 " + s8.upper(), "", None):
+            self.assertEqual(self.hyvaksy(kid, eid, v)[0], 400, v)
+        self.assertEqual(self.ohje(), "vanha saanto\n")
+        self.assertEqual(self.odottavat(kid), [eid])
+
+    def test_sisalto_muuttuu_nayttamisen_jalkeen(self):
+        kid = self.uusi()
+        eid, _ = self.ehdota()
+        s, d = self.nayta(kid, eid)
+        self.assertEqual(s, 200)
+        self.assertIn("-vanha saanto", d["ero"])
+        self.assertIn("+uusi saanto", d["ero"])
+        nahty = d["sha8"]
+        uusi = "VAIHDETTU saanto\n"                      # tiedosto vaihtuu (sha paivitetty, joten se on luettava)
+        (Path(self.tila.ehdotukset) / (eid + ".json")).write_text(
+            json.dumps({"tiedosto": "saannot.md", "teksti": uusi, "sha": yksityinen.sha(uusi)}))
+        s, d = self.hyvaksy(kid, eid, "kyll\u00e4 " + nahty)
+        self.assertEqual(s, 409)
+        self.assertEqual(self.ohje(), "vanha saanto\n")
+        self.assertEqual(self.odottavat(kid), [eid])
+
+    def test_kirjoitussuojattu_ydinohjekansio_ei_muuta_mitaan(self):
+        kid = self.uusi()
+        eid, s8 = self.ehdota()
+        os.chmod(self.ydin, 0o500)                   # vastaa systemdin ReadOnlyPaths-rajausta
+        try:
+            if os.access(self.ydin, os.W_OK):
+                self.skipTest("root ohittaa kansion oikeudet")
+            s, d = self.hyvaksy(kid, eid, "kyll\u00e4 " + s8)
+        finally:
+            os.chmod(self.ydin, 0o700)
+        self.assertEqual(s, 500)
+        self.assertIn("PermissionError", d["virhe"])
+        self.assertEqual(self.ohje(), "vanha saanto\n")
+        self.assertEqual(self.odottavat(kid), [eid])
+
+    def test_naytto_puhdistaa_ohjausmerkit(self):
+        kid = self.uusi()
+        eid, _ = self.ehdota("piilo\x1b[2Jteksti\u202e\n")
+        s, d = self.nayta(kid, eid)
+        self.assertEqual(s, 200)
+        self.assertNotIn("\x1b", d["ero"])
+        self.assertIn("\\x1b", d["ero"])
+        self.assertIn("\\u202e", d["ero"])
+
+    def test_lista_nayttaa_tunnuksen_tiedoston_ja_sha8(self):
+        kid = self.uusi()
+        eid, s8 = self.ehdota()
+        s, d = self.pyynto("GET", "/api/ehdotukset?keskustelu=" + kid)
+        self.assertEqual((s, d), (200, {"ehdotukset": [{"tunnus": eid, "tiedosto": "saannot.md", "sha8": s8}]}))
+
+
+class PaasyTesti(Pohja):
+    def test_ilman_kirjautumista_401_ilman_otsaketta_403(self):
+        kid = self.uusi()
+        eid, s8 = self.ehdota()
+        for metodi, polku, olio in (("GET", "/api/ehdotukset?keskustelu=" + kid, None),
+                                    ("GET", "/api/ehdotus?keskustelu=%s&tunnus=%s" % (kid, eid), None),
+                                    ("POST", "/api/ehdotus/hyvaksy", {"keskustelu": kid, "tunnus": eid, "vahvistus": "kyll\u00e4 " + s8}),
+                                    ("POST", "/api/ehdotus/hylkaa", {"keskustelu": kid, "tunnus": eid})):
+            self.assertEqual(self.pyynto(metodi, polku, olio, ev=False)[0], 401, polku)
+            self.assertEqual(self.pyynto(metodi, polku, olio, otsake=False)[0], 403, polku)
+            self.assertEqual(self.pyynto(metodi, polku, olio, host="pahis.example")[0], 421, polku)
+        self.assertEqual(self.ohje(), "vanha saanto\n")
+        self.assertEqual(self.odottavat(kid), [eid])
+
+    def test_tyokalutila_ei_nae_ehdotuksia_eika_paatepisteita(self):
+        tkid = self.uusi("tyokalu")
+        eid, s8 = self.ehdota()
+        for metodi, polku, olio in (("GET", "/api/ehdotukset?keskustelu=" + tkid, None),
+                                    ("GET", "/api/ehdotus?keskustelu=%s&tunnus=%s" % (tkid, eid), None),
+                                    ("GET", "/api/ehdotukset", None),
+                                    ("POST", "/api/ehdotus/hyvaksy", {"keskustelu": tkid, "tunnus": eid, "vahvistus": "kyll\u00e4 " + s8}),
+                                    ("POST", "/api/ehdotus/hylkaa", {"keskustelu": tkid, "tunnus": eid})):
+            self.assertEqual(self.pyynto(metodi, polku, olio)[0], 404, polku)
+        self.assertEqual(self.ohje(), "vanha saanto\n")
+        self.assertTrue((Path(self.tila.ehdotukset) / (eid + ".json")).is_file())
+        # tyokalutilan viesti ei palauta ehdotuksia, vaikka vastauksessa olisi ehdotuslohko
+        self.vastaus = "[[EHDOTUS saannot.md]]x[[/EHDOTUS]]"
+        s, v = self.pyynto("POST", "/api/viesti", {"keskustelu": tkid, "teksti": "moi"})
+        self.assertEqual(s, 200)
+        self.assertNotIn("ehdotukset", v)
+        self.assertEqual(yksityinen.listaa_ehdotukset(self.tila.ehdotukset), [eid])
+        self.assertEqual(self.odottavat(self.uusi()), [eid])     # vertailu: yksityinen keskustelu nakee saman ehdotuksen
+
+
+class IlmanYksityistaTesti(Pohja):
+    yks = False
+
+    def test_reitit_ovat_404(self):
+        kid = self.uusi("tyokalu")
+        self.assertEqual(self.pyynto("GET", "/api/ehdotukset?keskustelu=" + kid)[0], 404)
+        self.assertEqual(self.pyynto("POST", "/api/ehdotus/hyvaksy",
+                                     {"keskustelu": kid, "tunnus": "a" * 12, "vahvistus": "kyll\u00e4 " + "a" * 8})[0], 404)
+
+
+class HylkaysTesti(Pohja):
+    def test_hylkays_siirtaa_eika_poista(self):
+        kid = self.uusi()
+        eid, _ = self.ehdota()
+        alkup = (Path(self.tila.ehdotukset) / (eid + ".json")).read_bytes()
+        s, d = self.pyynto("POST", "/api/ehdotus/hylkaa", {"keskustelu": kid, "tunnus": eid})
+        self.assertEqual((s, d["tulos"]), (200, "hylatty"))
+        h = Path(self.tila.ehdotukset) / "hylatyt"
+        self.assertEqual(stat.S_IMODE(os.lstat(h).st_mode), 0o700)
+        self.assertEqual((h / (eid + ".json")).read_bytes(), alkup)
+        self.assertFalse((Path(self.tila.ehdotukset) / (eid + ".json")).exists())
+        self.assertEqual(self.odottavat(kid), [])
+        self.assertEqual(self.ohje(), "vanha saanto\n")
+        self.assertEqual(self.pyynto("POST", "/api/ehdotus/hylkaa", {"keskustelu": kid, "tunnus": eid})[0], 409)
+        self.assertEqual(self.pyynto("POST", "/api/ehdotus/hylkaa", {"keskustelu": kid, "tunnus": "../x"})[0], 409)
+
+    def test_hylkays_ei_korvaa_aiempaa(self):
+        eid, _ = self.ehdota()
+        h = yksityinen.tarkista_yksityinen_hakemisto(Path(self.tila.ehdotukset) / "hylatyt")
+        (h / (eid + ".json")).write_text("AIEMPI")
+        with self.assertRaises(yksityinen.YksityinenVirhe):
+            yksityinen.hylkaa_ehdotus(self.tila.ehdotukset, eid)
+        self.assertEqual((h / (eid + ".json")).read_text(), "AIEMPI")
+        self.assertTrue((Path(self.tila.ehdotukset) / (eid + ".json")).is_file())
+
+    def test_komentorivin_hylkaa(self):
+        eid, _ = self.ehdota()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(yksityinen.main(["hylkaa", eid, "--ehdotukset", self.tila.ehdotukset]), 0)
+        self.assertTrue((Path(self.tila.ehdotukset) / "hylatyt" / (eid + ".json")).is_file())
+
+
+class PitkaEhdotusTesti(Pohja):
+    def test_rajan_kokoinen_ehdotus_tallentuu_ja_nakyy_vastauksessa(self):
+        kid = self.uusi()
+        sisalto = ("rivi " * 40 + "\n") * 6
+        sisalto = sisalto[:yksityinen.EHDOTUS_KEHOTE_RAJA]
+        self.vastaus = "Ehdotan:\n[[EHDOTUS saannot.md]]\n%s[[/EHDOTUS]]" % sisalto
+        s, v = self.pyynto("POST", "/api/viesti", {"keskustelu": kid, "teksti": "p\u00e4ivit\u00e4 s\u00e4\u00e4nn\u00f6t"})
+        self.assertEqual(s, 200)
+        [eid] = v["ehdotukset"]
+        self.assertEqual(self.odottavat(kid), [eid])
+        self.assertEqual(yksityinen.lue_ehdotus(self.tila.ehdotukset, eid)["teksti"], sisalto.strip() + "\n")
+
+    def test_katkennut_ehdotus_raportoidaan_eika_tallennu(self):
+        kid = self.uusi()
+        self.vastaus = "Ehdotan:\n[[EHDOTUS saannot.md]]\npitk\u00e4 sis\u00e4lt\u00f6 joka katke"
+        s, v = self.pyynto("POST", "/api/viesti", {"keskustelu": kid, "teksti": "p\u00e4ivit\u00e4"})
+        self.assertEqual(s, 200)
+        self.assertIn("[ehdotusta ei tallennettu: vastaus katkesi]", v["vastaus"])
+        self.assertNotIn("pitk\u00e4 sis\u00e4lt\u00f6", v["vastaus"])
+        self.assertNotIn("ehdotukset", v)
+        self.assertEqual(self.odottavat(kid), [])
+
+    def test_kehote_pitaa_ehdotuksen_rajan_sisalla_molemmissa_taustapaissa(self):
+        raja = "%d merkki\u00e4" % yksityinen.EHDOTUS_KEHOTE_RAJA
+        self.assertIn(raja, yksityinen.YKSITYINEN_KEHOTE)
+        self.assertIn(raja, yksityinen_or.KEHOTE)
+        # raja mahtuu vastausrajaan: suomea vahintaan noin 2,5 merkkia/token, ja selitykselle jaa tilaa
+        self.assertLess(yksityinen.EHDOTUS_KEHOTE_RAJA, yksityinen.MAX_TOKENIA * 2.5 * 0.75)
+
+    def test_kehote_kertoo_taustapaan_totuudenmukaisesti(self):
+        self.assertIn("omalla\nkoneella", yksityinen.YKSITYINEN_KEHOTE)
+        self.assertIn("OpenRouterin", yksityinen_or.KEHOTE)
+        self.assertIn("ZDR", yksityinen_or.KEHOTE)
+        self.assertNotIn("ei l\u00e4hde millek\u00e4\u00e4n ulkoiselle", yksityinen_or.KEHOTE)
+
+
+class SivuTesti(unittest.TestCase):
+    def test_sivulla_ehdotuslaatikko_ja_linkki_ilman_innerhtml(self):
+        h = chat.sivu_html("loopback")
+        for t in ("Odottavat ehdotukset", "Hyv\u00e4ksy", "Hylk\u00e4\u00e4", "/api/ehdotus/hyvaksy", "/api/ehdotus/hylkaa",
+                  "vahvistus:'kyll\u00e4 '+e.sha8", "j.ehdotukset"):
+            self.assertIn(t, h)
+        self.assertNotIn("innerHTML", h)
+        self.assertNotIn("outerHTML", h)
+        self.assertNotIn("insertAdjacentHTML", h)
+
+
+if __name__ == "__main__":
+    unittest.main()

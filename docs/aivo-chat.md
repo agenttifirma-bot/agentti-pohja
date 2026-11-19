@@ -326,10 +326,38 @@ Ota ensin snapshot kontista 122.
 
    Odotettu tulos: seuraavan vastauksen kehotteessa ei ole kalenteriosiota, eikä Aivo tiedä menoja.
 
+## Ydinohjeiden ehdotukset chat-sivulla (A1018)
+
+Yksityisen tilan ydinohjemuutoksen voi hyväksyä tai hylätä myös chat-sivulla. Päätteen komento (`python3 -m aivo.yksityinen hyvaksy TUNNUS`) toimii edelleen.
+
+- Kun Aivon vastauksesta tallentuu ehdotus, palvelin palauttaa kentän `ehdotukset` (palvelimen itse tallentamat tunnukset). Sivu näyttää vastauksen alla laatikon, jossa on ero voimassa olevaan ohjeeseen sekä painikkeet "Hyväksy" ja "Hylkää".
+- Linkki "Odottavat ehdotukset" yläpalkissa näyttää kaikki odottavat ehdotukset samanlaisina laatikoina. Linkki näkyy vain yksityisessä tilassa.
+- "Hyväksy" lähettää vahvistuksen `kyllä <sha8>` sen ehdotuksen tiivisteellä, joka laatikossa näytettiin. Palvelin hyväksyy vain täsmälleen tämän muodon ja kutsuu sen jälkeen funktiota `yksityinen.hyvaksy_ehdotus` sellaisenaan: sha-sidonta ja järjestys (etäkohteen tarkistus, kirjoitus ja commit, palautus virheessä, ehdotuksen poisto, push) ovat samat kuin päätteessä. Jos ehdotuksen sisältö on muuttunut näyttämisen jälkeen, tiiviste ei täsmää ja palvelin vastaa 409.
+- "Hylkää" siirtää ehdotuksen alikansioon `hylatyt/` (0700). Mitään ei poisteta, eikä aiempaa samannimistä hylättyä korvata.
+- Mallin vastaus tai Tonyn chat-viesti ei voi hyväksyä mitään, vaikka siinä lukisi `kyllä <sha8>`. Vain hyväksyntäreitti hyväksyy.
+- Kaikki dynaaminen sisältö lisätään sivulle `textContent`-ominaisuudella. Ero puhdistetaan kuten päätteen `nayta`-komennossa (ohjausmerkit näkyvät `\x1b`-tyylisinä merkintöinä).
+
+Reitit (kirjautuminen, `Host`-otsake, `X-Aivo`-otsake ja sama alkuperä tarkistetaan kuten muillakin `/api`-reiteillä):
+
+| Reitti | Kuvaus |
+|---|---|
+| `GET /api/ehdotukset?keskustelu=ID` | lista: tunnus, tiedosto, sha8 |
+| `GET /api/ehdotus?keskustelu=ID&tunnus=T` | yksi ehdotus ja ero voimassa olevaan ohjeeseen |
+| `POST /api/ehdotus/hyvaksy` `{keskustelu, tunnus, vahvistus}` | vahvistus täsmälleen `kyllä <sha8>` |
+| `POST /api/ehdotus/hylkaa` `{keskustelu, tunnus}` | siirto kansioon `hylatyt/` |
+
+Keskustelun pitää olla yksityisen tilan keskustelu. Työkalutilan keskustelulle ja palvelulle, jossa yksityinen tila ei ole käytössä, reitit vastaavat 404.
+
+**Kirjoitusoikeus.** `docs/aivo-yksityinen.md` neuvoo asettamaan chat-palveluun `ReadOnlyPaths=/var/lib/aivo-yksityinen/ydinohjeet`. Tällä asetuksella hyväksyntä chat-sivulla ei onnistu: palvelin vastaa 500 (`tallennus epäonnistui (PermissionError)` tai vastaava tyyppi), ohje ei muutu ja ehdotus jää odottamaan. Asetuksen muuttaminen on Tonyn päätös, eikä tämä muutos koske siihen.
+
+**Ehdotuksen pituus.** Ehdotus on ydinohjetiedoston koko uusi sisältö, ja vastauksen enimmäispituus on `MAX_TOKENIA` = 700 tokenia. Rajaa ei nosteta, koska ydinohjeiden yläraja (20 000 merkkiä, noin 7 000 tokenia) ei ehtisi i5-8400:lla vastausajan sisällä. Kehote pyytää siksi pitämään ehdotuksen enintään 1 200 merkissä ja ehdottamaan pidemmän tiedoston sijaan uutta lyhyttä tiedostoa. Jos vastaus katkeaa ennen sulkevaa `[[/EHDOTUS]]`-merkintää, mitään ei tallenneta ja vastauksessa näkyy `[ehdotusta ei tallennettu: vastaus katkesi]`.
+
+**Kehotteen taustapää.** Paikallisella mallilla kehote kertoo, että malli ajetaan Tonyn omalla koneella. OpenRouter-taustapäällä kehote kertoo, että käytössä on avoin malli OpenRouterin kautta nollasäilytyksellä (ZDR) ja että ulos lähtee vain kulloinenkin kehote (`aivo/yksityinen_or.py`, `KEHOTE`).
+
 ## Testit
 
 ```
-python3 -m unittest aivo.test_chat aivo.test_tiivista aivo.test_kalenteri_kytkenta
+python3 -m unittest aivo.test_chat aivo.test_tiivista aivo.test_kalenteri_kytkenta aivo.test_yksityinen_hyvaksynta
 ```
 
 Testit kattavat salasanan tiivisteen ja lukituksen, osoite- ja Host-rajat, CSRF-suojan, muistin lukemisen (ei linkkejä kirjaston ulkopuolelle), lähdeviitteiden tarkistuksen, päätöksen kirjaamisen sanasta sanaan, GitHub-pushin eston ja sen, että Claude-kutsu ei käytä työkaluja eikä välittäjiä.
