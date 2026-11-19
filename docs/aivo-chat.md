@@ -378,10 +378,28 @@ VIKA avain /etc/aivo/chat-salasana: puuttuu
 
 Valinnat `--koodi` (oletus `/opt/agentti-pohja`) ja `--portti` (oletus 8780) vaihtavat polun ja portin.
 
+## OpenRouter-kulut chat-sivulla
+
+Yläpalkissa on pieni teksti, esimerkiksi "Tänään 0,42 € / 10 €". Luku on Aivon OpenRouter-kulujen summa kuluvalta vuorokaudelta (Europe/Helsinki), ja 10 € on päiväkatto (A963, A1005). Kun kulusta on käytetty 80 % katosta, teksti muuttuu varoitusväriseksi. Teksti päivittyy, kun sivu avataan ja kun vastaus on tullut. Tekstin painallus avaa keskusteluun erittelyn:
+
+- tämän päivän sekä viimeisen 7 ja 30 vuorokauden summat (kuluva päivä mukaan lukien) euroina ja dollareina
+- jakauma käyttötarkoituksittain (chat, tiivistys, muu) ja malleittain (enintään 20 mallia, loput rivillä "muut")
+- käytetty osuus päiväkatosta ja tieto, onko katto täynnä.
+
+Sivu näyttää kaiken `textContent`-ominaisuudella, ei HTML:nä.
+
+**Reitti.** `GET /api/kulut` vaatii saman kirjautumisen, sallitun `Host`-otsakkeen, `X-Aivo`-otsakkeen ja saman alkuperän (`Origin`) kuin muut API-reitit. Ilman kirjautumista vastaus on 401. Reitti palauttaa vain summat. Se ei palauta keskustelujen sisältöä eikä kirjanpidon tehtävätunnisteita.
+
+**Lähde.** Reitti lukee yhteistä kirjanpitoa `/var/lib/claude-jono/openrouter-kulut.jsonl` (`aivo/openrouter_kulut.py`) vain lukien. Se ei luo tiedostoa eikä lukkoa, eikä se muuta katkaisinta tai kattoa. Kirjanpidossa on jo kentät `malli` ja `tehtava`, joten uusia kenttiä ei tarvittu. Käyttötarkoitus päätellään tehtävästä: `aivo-yksityinen` on chat, tunniste, jossa on sana `tiivist`, on tiivistys, ja muut ovat muu. Avoimet varaukset lasketaan mukaan kuten katkaisimessa. Puuttuva tai tyhjä kirjanpito näkyy nollina. Jos kirjanpitoa ei voi lukea (esimerkiksi rikkinäinen rivi), sivu näyttää "kirjanpito ei luettavissa" varoitusvärillä. Silloin myös katkaisin estää OpenRouter-kutsut.
+
+**Valuutta.** Kirjanpito on dollareina. Sivu näyttää sekä $- että €-luvut ja kertoo, että €-luku on arvio. Näytön muunnoskerroin on asetus: `--kulut-kerroin` tai ympäristömuuttuja `AIVO_KULUT_USD_EUR` (oletus 0,92, sallittu väli 0–10). Kerroin vaikuttaa vain näyttöön. Päiväkatto ja 80 %:n varoitusraja lasketaan aina katkaisimen omalla kiinteällä kertoimella (`openrouter_kulut.USD_EUR`), jotta varoitus vastaa katkaisimen todellista tilaa. Jos asetat eri kertoimen, €-summa ja varoitusraja voivat siksi poiketa toisistaan hieman.
+
+**Oikeudet.** Chat-palvelun käyttäjän pitää pystyä lukemaan kirjanpito. Yksityisen tilan OpenRouter-taustapää kirjoittaa samaan tiedostoon, joten oikeus on jo olemassa, jos taustapää on käytössä.
+
 ## Testit
 
 ```
-python3 -m unittest aivo.test_chat aivo.test_tiivista aivo.test_kalenteri_kytkenta aivo.test_yksityinen_hyvaksynta aivo.test_tarkista_asennus
+python3 -m unittest aivo.test_chat aivo.test_tiivista aivo.test_kalenteri_kytkenta aivo.test_yksityinen_hyvaksynta aivo.test_tarkista_asennus aivo.test_kulunakyma
 ```
 
 Testit kattavat salasanan tiivisteen ja lukituksen, osoite- ja Host-rajat, CSRF-suojan, muistin lukemisen (ei linkkejä kirjaston ulkopuolelle), lähdeviitteiden tarkistuksen, päätöksen kirjaamisen sanasta sanaan, GitHub-pushin eston ja sen, että Claude-kutsu ei käytä työkaluja eikä välittäjiä.
