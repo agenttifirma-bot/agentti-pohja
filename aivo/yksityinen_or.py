@@ -42,6 +42,12 @@ TEHTAVA = "aivo-yksityinen"
 VASTAUS_AIKARAJA_S = 120
 MAX_VASTAUS_TAVUA = 2_000_000
 MAX_TOKENIA = yksityinen.MAX_TOKENIA
+# Historia on taustapaakohtainen. Paikallinen malli (yksityinen.HISTORIA_YLARAJA = 12) kasittelee kehotteen hitaasti
+# 900 s aikarajan sisalla; OpenRouterin malli kasittelee pitkan kehotteen sekunneissa, joten raja on sama 40 kuin
+# tyokalutilassa (chat.HISTORIA_YLARAJA). Pahin tapaus: 40 viestia (20 x 4 000 merkkia + 20 x 700 tokenia),
+# muisti 16 000, ydinohjeet 20 000 ja kehote noin 4 000 merkkia = noin 160 000 merkkia, alle 80 000 tokenia
+# varovaisellakin 2 merkkia/token-arviolla. Suositusmallin qwen3-235b-a22b-2507 konteksti on 262 144 tokenia.
+HISTORIA_YLARAJA = 40
 
 AVOIMET_MALLIT = openrouter_kulut.AVOIMET_MALLIT      # lista on saantomoduulissa (A984); uudelleenvienti
 _VANHA_LAUSE = ("sinua ajetaan Tonyn omalla\nkoneella, eik\u00e4 t\u00e4m\u00e4 keskustelu l\u00e4hde millek\u00e4\u00e4n ulkoiselle palvelulle.")
@@ -130,7 +136,7 @@ def kysy_openrouterilta(
     tarkista_malli(malli)
     avain = lue_avain(avain_tiedosto)                     # ennen varausta: puuttuva avain ei jata varausta
     laheta = tee_kuljetin(avain, avaa)
-    viestit = yksityinen.muodosta_viestit(muisti, historia, ohjeet, KEHOTE)
+    viestit = yksityinen.muodosta_viestit(muisti, historia, ohjeet, KEHOTE, HISTORIA_YLARAJA)
     try:
         data = openrouter_kulut.kutsu(
             malli, viestit, laheta, tehtava=TEHTAVA, nyt=nyt, tila=kulutila, ilmoita=ilmoita,
