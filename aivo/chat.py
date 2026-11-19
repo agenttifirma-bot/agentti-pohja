@@ -196,8 +196,12 @@ async function laheta(s){if(lahetyksessa)return;lahetyksessa=true;lukitse();
   const oma=lisaa('tony',s);const odota=lisaa('aivo','\u2026');
   try{const r=await fetch('/api/viesti',{method:'POST',headers:H,body:JSON.stringify(mallikentta({keskustelu:kid,teksti:s}))});
    if(r.status===401){location.href='/kirjaudu';return;}
-   const j=await r.json();odota.textContent=j.vastaus||('Virhe: '+(j.virhe||r.status));
-   if(typeof j.malli==='string'){const mn=document.createElement('span');mn.className='mallinimi';mn.textContent='Malli: '+j.malli;odota.appendChild(mn);}
+   const j=await r.json();
+   if(!r.ok)odota.textContent='Virhe: '+(j.virhe||r.status);
+   else if(j.vastaus)odota.textContent=j.vastaus;
+   else if(Array.isArray(j.valinnat)||Array.isArray(j.ehdotukset)||Number.isInteger(j.paatosehdotus))odota.hidden=true;
+   else odota.textContent='(Aivo ei antanut vastausta. Kokeile uudelleen.)';
+   if(r.ok&&typeof j.malli==='string'){const mn=document.createElement('span');mn.className='mallinimi';mn.textContent='Malli: '+j.malli;odota.appendChild(mn);}
    if(Number.isInteger(j.indeksi)){tonyn[j.indeksi]=s;painike(oma,j.indeksi);}
    if(Number.isInteger(j.paatosehdotus))kortti(j.paatosehdotus);
    if(Array.isArray(j.ehdotukset))j.ehdotukset.forEach(t=>{if(typeof t==='string')ehdotus(t);});
@@ -435,6 +439,17 @@ VALINTA_MIN, VALINTA_MAX, VALINTA_PITUUS = 2, 6, 80
 def _valinta_kelpaa(v):
     return (0 < len(v) <= VALINTA_PITUUS and not any(ord(c) < 32 or ord(c) == 127 for c in v)
             and "[[" not in v and "]]" not in v)
+
+
+TYHJA_VASTAUS = "(Aivo ei antanut vastausta. Kokeile uudelleen.)"
+
+
+def tyhjan_paikka(vastaus, muuta_on):
+    """Jos erottimien jalkeen ei jaa tekstia eika muuta naytettavaa (valinnat, ehdotukset, paatosehdotus),
+    palautetaan paikkateksti: selain ei nayta tyhjaa kuplaa eika historiaan tallennu tyhjaa vastausta."""
+    if vastaus.strip() or muuta_on:
+        return vastaus
+    return TYHJA_VASTAUS
 
 
 def erota_valinnat(vastaus):
@@ -959,6 +974,7 @@ def tee_kasittelija(tila):
                 vastaus, valinnat = erota_valinnat(vastaus)
                 vastaus, ehdotus = erota_paatosehdotus(vastaus, historia)
                 vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
+                vastaus = tyhjan_paikka(vastaus, bool(valinnat) or ehdotus is not None or bool(tallennetut))
                 tila.yks.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus], malli=malli)
                 tulos = (200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "tila": "yksityinen",
                                "indeksi": oma_idx})
@@ -1010,6 +1026,7 @@ def tee_kasittelija(tila):
                 vastaus, valinnat = erota_valinnat(vastaus)
                 vastaus, ehdotus = erota_paatosehdotus(vastaus, historia)
                 vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
+                vastaus = tyhjan_paikka(vastaus, bool(valinnat) or ehdotus is not None)
                 tila.keskustelut.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus])
                 tulos = (200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "indeksi": oma_idx})
                 if ehdotus is not None:

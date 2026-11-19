@@ -206,6 +206,7 @@ class Kayttoliittyma(unittest.TestCase):
         sivu = chat.sivu_html("openrouter")
         self.assertIn('<select id="malli" aria-label="Malli" hidden></select>', sivu)
         self.assertIn("'Malli: '+j.malli", sivu)
+        self.assertIn("if(r.ok&&typeof j.malli==='string')", sivu)
         self.assertIn("mn.textContent=", sivu)              # mallin nimi tekstina, ei HTML:na
 
     @unittest.skipUnless(shutil.which("node"), "node puuttuu")
