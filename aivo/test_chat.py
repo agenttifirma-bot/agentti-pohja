@@ -720,5 +720,39 @@ class ValinnatTesti(ChatPalveluPohja):
         self.assertIn("[[VALINNAT:", yksityinen.YKSITYINEN_KEHOTE)
 
 
+class TyhjaVastausTesti(ChatPalveluPohja):
+    """Erottimien jalkeen tyhja vastaus ei ole virhe (Tonyn havainto 19.11.2026: "Virhe: 200")."""
+
+    def test_pelkka_valinnat_palauttaa_200_ja_valinnat_ilman_paikkatekstia(self):
+        for tila in ("tyokalu", "yksityinen"):
+            ev, kid, v = self.viesti(tila, "kumpi?", "[[VALINNAT: a | b]]")
+            self.assertEqual(v["valinnat"], ["a", "b"], tila)
+            self.assertEqual(v["vastaus"], "", tila)                # valinnat riittavat; kupla piilotetaan selaimessa
+
+    def test_pelkka_paatosmerkinta_palauttaa_200_ja_paatosehdotuksen(self):
+        for tila in ("tyokalu", "yksityinen"):
+            _, _, v = self.viesti(tila, "p\u00e4\u00e4t\u00e4n n\u00e4in", "[[PAATOS 0]]")
+            self.assertEqual(v["paatosehdotus"], 0, tila)
+            self.assertEqual(v["vastaus"], "", tila)
+
+    def test_taysin_tyhja_vastaus_saa_paikkatekstin_myos_historiaan(self):
+        for tila in ("tyokalu", "yksityinen"):
+            for raaka in ("", "  \n ", "[[PAATOS 99]]"):
+                _, kid, v = self.viesti(tila, "moi", raaka)
+                self.assertEqual(v["vastaus"], chat.TYHJA_VASTAUS, (tila, raaka))
+                self.assertNotIn("valinnat", v)
+                ks = self.tila.yks if tila == "yksityinen" else self.tila.keskustelut
+                self.assertEqual(ks.lue(kid)[-1]["teksti"], chat.TYHJA_VASTAUS, (tila, raaka))
+
+    def test_sivu_nayttaa_virheen_vain_kun_pyynto_epaonnistui(self):
+        h = chat.HTML
+        self.assertNotIn("j.vastaus||('Virhe: '", h)             # vanha polku: tyhja vastaus + 200 -> "Virhe: 200"
+        self.assertIn("if(!r.ok)odota.textContent='Virhe: '+(j.virhe||r.status);", h)
+        self.assertEqual(h.count("'Virhe: '"), 1)
+        self.assertIn("else if(j.vastaus)odota.textContent=j.vastaus;", h)
+        self.assertIn("odota.hidden=true", h)                      # vain valinnat/ehdotukset: tyhja kupla piiloon
+        self.assertIn(chat.TYHJA_VASTAUS, h)
+
+
 if __name__ == "__main__":
     unittest.main()
