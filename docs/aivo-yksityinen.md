@@ -191,6 +191,25 @@ OpenRouter-taustapään pahin tapaus: 20 Tonyn viestiä (enintään 4 000 merkki
 
 Kehotteen sääntö 2 kertoo mallille, että keskustelun aiemmat viestit ovat käytettävissä, ja sääntö 6 kieltää lupaamasta taustatyötä tai arvioimasta kestoa: yksityisessä tilassa ei ole työkaluja, verkkoa eikä taustaprosesseja.
 
+## Mallin valinta (OpenRouter-taustapää)
+
+OpenRouter-taustapäässä mallin voi valita keskustelukohtaisesti. Sallitut mallit annetaan palvelun asetuksena:
+
+- `AIVO_OPENROUTER_MALLIT` (tai `--openrouter-mallit`) on pilkuin erotettu lista, esimerkiksi `qwen/qwen3-235b-a22b-2507,meta-llama/llama-3.3-70b-instruct`. Ensimmäinen on oletus.
+- Jokaisen mallin pitää läpäistä `avoin_malli()`. Jos yksikin on suljettu malli, `:free`-versio, tyhjä kohta tai sama malli kahdesti, palvelu ei käynnisty. Listassa voi olla enintään 10 mallia.
+- Vanha `AIVO_OPENROUTER_MALLI` (tai `--openrouter-malli`) toimii edelleen yhden mallin listana. Jos molemmat on annettu, `AIVO_OPENROUTER_MALLIT` voittaa.
+
+Käyttöliittymä:
+
+- Yksityisessä tilassa otsikkorivillä näkyy mallivalitsin, kun listassa on vähintään kaksi mallia. Yhden mallin listalla ja paikallisella taustapäällä valitsinta ei näytetä.
+- Valinta tallentuu keskustelun metatietoihin (tiedosto `<keskustelu>.meta.json` keskustelun vieressä, oikeudet 600). Valinnan voi vaihtaa kesken keskustelun: seuraava viesti käyttää uutta mallia ja tallentaa sen.
+- Jokaisen vastauksen alla on pieni teksti "Malli: …", ja keskustelutiedoston Aivon rivillä on kenttä `malli`.
+- Työkalutilassa valitsinta ei ole, eikä työkalutila hyväksy kenttää `malli` (400).
+
+Palvelin hyväksyy vain listalla olevan mallin. Selaimen lähettämä muu arvo (myös avoin malli, joka ei ole listalla) saa vastauksen 400, eikä viestiä silloin tallenneta. Kaikki mallit kulkevat saman `openrouter_kulut.kutsu`n kautta: kulukirjanpito, päiväkatto ja ZDR-pakotus ovat kaikille malleille yhteiset.
+
+Rajapinta: `GET /api/mallit` palauttaa sallitut mallit (`{"mallit": [...]}`; paikallisella taustapäällä tyhjä lista). `POST /api/uusi` ja `POST /api/viesti` hyväksyvät valinnaisen kentän `malli`, ja vastaus kertoo käytetyn mallin kentässä `malli`.
+
 ## Rajat ja avoimet asiat
 
 - Yksityinen tila ja työkalutila ovat samassa prosessissa. Erottelu perustuu siihen, että työkalutilan Claude-kutsu ajetaan toisena käyttäjänä (kohta 2, socket) eikä saa työkaluja (`--tools ""`). Jos `AIVO_TYOKALU_SOCKET`-asetusta ei käytetä, erottelu on vain koodin tasolla, ei tiedosto-oikeuksilla.

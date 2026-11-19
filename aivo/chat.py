@@ -113,16 +113,22 @@ textarea,input{flex:1;font:inherit;padding:.5rem;border-radius:8px;border:1px so
 textarea{resize:none;height:3.2rem}button{font:inherit;padding:.5rem .9rem;border-radius:8px}
 #kirjaus{padding:2rem;max-width:22rem;margin:auto}
 .pieni{font-size:.8rem;opacity:.7}
+.mallinimi{display:block;margin-top:.3rem;font-size:.75rem;opacity:.6}
 .ehdotus pre{white-space:pre-wrap;word-wrap:break-word;max-height:40vh;overflow:auto;font-size:.8rem;margin:.4rem 0}
 </style></head><body>
 <header><strong>Aivo</strong><span><select id="tila" aria-label="Tila">
 <option value="yksityinen" selected>{YKSITYINEN_TEKSTI}</option>
-<option value="tyokalu">Ty\u00f6kalu (Claude pilvess\u00e4)</option></select> <button id="uusi">Uusi keskustelu</button>
+<option value="tyokalu">Ty\u00f6kalu (Claude pilvess\u00e4)</option></select>
+<select id="malli" aria-label="Malli" hidden></select> <button id="uusi">Uusi keskustelu</button>
 <a href="#" id="odottavat" class="pieni" hidden>Odottavat ehdotukset</a></span></header>
 <div id="viestit" aria-live="polite"></div>
 <form id="lomake"><textarea id="teksti" maxlength="4000" placeholder="Kirjoita Aivolle\u2026 (Enter l\u00e4hett\u00e4\u00e4, Shift+Enter rivinvaihto)" required></textarea><button>L\u00e4het\u00e4</button></form>
 <script>
 let kid=null;let nyt='yksityinen';const V=document.getElementById('viestit');
+let mallit=[];const M=document.getElementById('malli');
+function valitsinNakyy(t,l){return t==='yksityinen'&&Array.isArray(l)&&l.length>=2;}
+function nayta(){M.hidden=!valitsinNakyy(nyt,mallit);}
+function mallikentta(b){if(valitsinNakyy(b.tila||nyt,mallit))b.malli=M.value;return b;}
 const H={'Content-Type':'application/json','X-Aivo':'1'};
 function alas(){V.scrollTop=V.scrollHeight;const k=V.lastElementChild;if(k&&k.scrollIntoView)k.scrollIntoView({block:'end'});}
 function lisaa(rooli,teksti){const d=document.createElement('div');d.className='v '+rooli;d.textContent=teksti;
@@ -146,10 +152,14 @@ function kortti(idx){const s=tonyn[idx];if(typeof s!=='string')return;const d=do
  const k=document.createElement('button');k.textContent='kyll\u00e4';const e=document.createElement('button');e.textContent='ei';
  k.onclick=async()=>{k.disabled=e.disabled=true;if(await kirjaa(idx,k))e.remove();else{e.disabled=false;}};
  e.onclick=()=>d.remove();d.append(o,q,k,e);V.appendChild(d);alas();}
-async function aloita(){const r=await fetch('/api/uusi',{method:'POST',headers:H,body:JSON.stringify({tila:document.getElementById('tila').value})});
+async function aloita(){const r=await fetch('/api/uusi',{method:'POST',headers:H,body:JSON.stringify(mallikentta({tila:document.getElementById('tila').value}))});
  if(r.status===401){location.href='/kirjaudu';return;}
  if(!r.ok){lisaa('aivo','Tilaa ei voi k\u00e4ytt\u00e4\u00e4 ('+r.status+')');return;}
- const j=await r.json();kid=j.id;nyt=j.tila;V.textContent='';document.getElementById('odottavat').hidden=(nyt!=='yksityinen');}
+ const j=await r.json();kid=j.id;nyt=j.tila;V.textContent='';document.getElementById('odottavat').hidden=(nyt!=='yksityinen');
+ if(typeof j.malli==='string'&&mallit.includes(j.malli))M.value=j.malli;nayta();}
+async function haeMallit(){const x=await haeJson('/api/mallit');if(!x||!x.r.ok||!Array.isArray(x.j.mallit))return;
+ mallit=x.j.mallit.filter(m=>typeof m==='string');M.textContent='';
+ mallit.forEach(m=>{const o=document.createElement('option');o.value=m;o.textContent=m;M.appendChild(o);});nayta();}
 function q(t){return encodeURIComponent(t);}
 async function haeJson(url){const r=await fetch(url,{headers:H});if(r.status===401){location.href='/kirjaudu';return null;}
  let j={};try{j=await r.json();}catch(e){}return {r:r,j:j};}
@@ -184,9 +194,10 @@ document.getElementById('teksti').addEventListener('keydown',e=>{if(e.key==='Ent
 async function laheta(s){if(lahetyksessa)return;lahetyksessa=true;lukitse();
  try{if(!kid)await aloita();if(!kid)return;
   const oma=lisaa('tony',s);const odota=lisaa('aivo','\u2026');
-  try{const r=await fetch('/api/viesti',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,teksti:s})});
+  try{const r=await fetch('/api/viesti',{method:'POST',headers:H,body:JSON.stringify(mallikentta({keskustelu:kid,teksti:s}))});
    if(r.status===401){location.href='/kirjaudu';return;}
    const j=await r.json();odota.textContent=j.vastaus||('Virhe: '+(j.virhe||r.status));
+   if(typeof j.malli==='string'){const mn=document.createElement('span');mn.className='mallinimi';mn.textContent='Malli: '+j.malli;odota.appendChild(mn);}
    if(Number.isInteger(j.indeksi)){tonyn[j.indeksi]=s;painike(oma,j.indeksi);}
    if(Number.isInteger(j.paatosehdotus))kortti(j.paatosehdotus);
    if(Array.isArray(j.ehdotukset))j.ehdotukset.forEach(t=>{if(typeof t==='string')ehdotus(t);});
@@ -195,7 +206,7 @@ async function laheta(s){if(lahetyksessa)return;lahetyksessa=true;lukitse();
  finally{lahetyksessa=false;}}
 document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();if(lahetyksessa)return;const t=document.getElementById('teksti');
  const s=t.value.trim();if(!s)return;t.value='';await laheta(s);};
-aloita();alas();
+haeMallit().finally(aloita);alas();
 </script></body></html>
 """
 
@@ -556,10 +567,31 @@ class Keskustelut:
             raise ChatVirhe("virheellinen keskustelun tunniste")
         return self.data / (kid + ".jsonl")
 
-    def lisaa(self, kid, rooli, teksti, lahteet=None):
+    def _meta_polku(self, kid):
+        return self.data / (self._polku(kid).stem + ".meta.json")
+
+    def aseta_malli(self, kid, malli):
+        """Keskustelun metatieto: valittu malli (yksityinen tila, OpenRouter). Erillinen tiedosto (600), ei viestirivi."""
+        if not self._polku(kid).exists():
+            raise ChatVirhe("keskustelua ei ole")
+        with self._lukko:
+            kirjoita_600(self._meta_polku(kid), json.dumps({"malli": malli}, ensure_ascii=False))
+
+    def lue_malli(self, kid):
+        try:
+            d = json.loads(self._meta_polku(kid).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        m = d.get("malli") if isinstance(d, dict) else None
+        return m if isinstance(m, str) else None
+
+    def lisaa(self, kid, rooli, teksti, lahteet=None, malli=None):
         p = self._polku(kid)
-        rivi = json.dumps({"aika": _nyt().isoformat(timespec="seconds"), "rooli": rooli, "teksti": teksti,
-                           "lahteet": lahteet or []}, ensure_ascii=False)
+        tietue = {"aika": _nyt().isoformat(timespec="seconds"), "rooli": rooli, "teksti": teksti,
+                  "lahteet": lahteet or []}
+        if malli:
+            tietue["malli"] = malli                  # vastauksen tuottanut malli (yksityinen tila, OpenRouter)
+        rivi = json.dumps(tietue, ensure_ascii=False)
         with self._lukko:
             if not p.exists():
                 raise ChatVirhe("keskustelua ei ole")
@@ -677,7 +709,7 @@ class Tila:
     def __init__(self, tiiviste, kirjasto, data, sallitut_hostit, kysy=kysy_claudelta, julkaise=kirjaa_paatos, julkaise_yks=kirjaa_paatos_yksityinen,
                  yks_data=None, yks_muisti=None, ydinohjeet=None, ehdotukset=None,
                  malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None,
-                 taustapaa="loopback", or_malli=None, or_avain=yksityinen_or.OLETUS_AVAIN,
+                 taustapaa="loopback", or_malli=None, or_avain=yksityinen_or.OLETUS_AVAIN, or_mallit=None,
                  or_kulutila=None, tiivistelmat=None, kalenteri_lahde=None):   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
@@ -691,12 +723,14 @@ class Tila:
         self.julkaise_yks = julkaise_yks
         self.vastauslukko = threading.Lock()   # yksi Claude-kutsu kerrallaan
         self.yks = None
+        self.or_mallit = ()                       # sallitut OpenRouter-mallit; ensimmainen on oletus (vain openrouter)
         self.taustapaa = taustapaa if taustapaa in YKSITYINEN_TEKSTIT else "loopback"
         if yks_data:
             if taustapaa not in ("loopback", "openrouter"):
                 raise ChatVirhe("tuntematon yksityisen tilan taustapaa")
             if taustapaa == "openrouter":
-                yksityinen_or.tarkista_malli(or_malli)       # avain luetaan vasta kutsussa; puuttuva avain nakyy virheena
+                # avain luetaan vasta kutsussa; puuttuva avain nakyy virheena. or_mallit (lista) voittaa or_mallin.
+                self.or_mallit = yksityinen_or.tarkista_mallit(or_mallit if or_mallit else or_malli)
             elif not yksityinen.sallittu_malli_osoite(malli_url):
                 raise ChatVirhe("mallipalvelimen osoite ei ole loopback; kieltaydyn kaynnistymasta")
             self.yks = Keskustelut(yksityinen.tarkista_yksityinen_hakemisto(yks_data))
@@ -708,13 +742,27 @@ class Tila:
             if kysy_yks:
                 self.kysy_yks = kysy_yks
             elif taustapaa == "openrouter":
-                self.kysy_yks = lambda muisti, historia, ohjeet: yksityinen_or.kysy_openrouterilta(
-                    muisti, historia, ohjeet, malli=or_malli, avain_tiedosto=or_avain, kulutila=or_kulutila)
+                self.kysy_yks = lambda muisti, historia, ohjeet, malli=None: yksityinen_or.kysy_openrouterilta(
+                    muisti, historia, ohjeet, malli=malli or self.or_mallit[0], avain_tiedosto=or_avain,
+                    kulutila=or_kulutila)
             else:
                 self.kysy_yks = lambda muisti, historia, ohjeet: yksityinen.kysy_paikalliselta(
                     muisti, historia, ohjeet, malli_url)
         self.yks_vastauslukko = threading.Lock()
         self.ehdotuslukko = threading.Lock()      # yksi hyvaksynta tai hylkays kerrallaan
+
+    def valitse_malli(self, pyydetty):
+        """Selaimen lahettama malli kelpaa vain, jos se on asetuksen listalla (muuten ChatVirhe -> 400)."""
+        if not isinstance(pyydetty, str) or pyydetty not in self.or_mallit:
+            raise ChatVirhe("malli ei ole sallittujen mallien listalla")
+        return pyydetty
+
+    def keskustelun_malli(self, kid):
+        """Keskustelun metatietoihin tallennettu malli; puuttuva tai listalta poistunut -> oletus (ensimmainen)."""
+        if not self.or_mallit:
+            return None
+        m = self.yks.lue_malli(kid)
+        return m if m in self.or_mallit else self.or_mallit[0]
 
     def tila_ja_kasittelija(self, kid):
         """Palauttaa (tila, keskustelut) sen mukaan, kummassa kansiossa keskustelu on."""
@@ -804,6 +852,8 @@ def tee_kasittelija(tila):
                         return self._ehdotukset(kysely)
                     if osat.path == "/api/ehdotus":
                         return self._ehdotus(kysely)
+                    if osat.path == "/api/mallit":
+                        return self._json(200, {"mallit": list(tila.or_mallit)})
                 except ChatVirhe as e:
                     return self._json(400, {"virhe": str(e)})
             self._json(404, {"virhe": "ei loydy"})
@@ -862,21 +912,39 @@ def tee_kasittelija(tila):
             if valinta == "yksityinen":
                 if tila.yks is None:
                     return self._json(503, {"virhe": "yksityinen tila ei ole kaytossa"})
-                return self._json(200, {"id": tila.yks.uusi(), "tila": valinta})
+                malli = tila.valitse_malli(d["malli"]) if "malli" in d else (tila.or_mallit[:1] or (None,))[0]
+                kid = tila.yks.uusi()
+                vastaus = {"id": kid, "tila": valinta}
+                if malli:
+                    tila.yks.aseta_malli(kid, malli)
+                    vastaus["malli"] = malli
+                return self._json(200, vastaus)
+            if "malli" in d:
+                return self._json(400, {"virhe": "tyokalutilassa ei valita mallia"})
             return self._json(200, {"id": tila.keskustelut.uusi(), "tila": valinta})
 
-        def _viesti_yksityinen(self, kid, teksti):
+        def _viesti_yksityinen(self, kid, teksti, d):
+            if "malli" in d:                         # tarkistus ennen kuin mitaan kirjoitetaan (400 eika viestirivia)
+                malli = tila.valitse_malli(d["malli"])
+            else:
+                malli = tila.keskustelun_malli(kid)
             if not tila.yks_vastauslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen vastaus on kesken"})
             tulos = None
             try:
+                if malli and malli != tila.yks.lue_malli(kid):
+                    tila.yks.aseta_malli(kid, malli)      # valinta voi vaihtua kesken keskustelun
                 tila.yks.lisaa(kid, "tony", teksti.strip())
                 historia = tila.yks.lue(kid)
                 oma_idx = len(historia) - 1          # palvelin kertoo Tonyn viestin paikan; selain ei arvaa
                 muisti, tiedostot = lue_muisti(tila.yks_muisti, yksityinen.MUISTI_YLARAJA,
                                                yksityinen.MUISTI_YLARAJA // 4, teksti)
                 try:
-                    vastaus = tila.kysy_yks(muisti, historia, yksityinen.lue_ydinohjeet(tila.ydinohjeet))
+                    ohjeet = yksityinen.lue_ydinohjeet(tila.ydinohjeet)
+                    if malli:
+                        vastaus = tila.kysy_yks(muisti, historia, ohjeet, malli=malli)
+                    else:
+                        vastaus = tila.kysy_yks(muisti, historia, ohjeet)
                 except ChatVirhe as e:
                     tulos = (502, {"virhe": str(e), "indeksi": oma_idx})
                     return
@@ -891,9 +959,11 @@ def tee_kasittelija(tila):
                 vastaus, valinnat = erota_valinnat(vastaus)
                 vastaus, ehdotus = erota_paatosehdotus(vastaus, historia)
                 vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
-                tila.yks.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus])
+                tila.yks.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus], malli=malli)
                 tulos = (200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "tila": "yksityinen",
                                "indeksi": oma_idx})
+                if malli:
+                    tulos[1]["malli"] = malli
                 if tallennetut:                # vain palvelimen itse tallentamat tunnukset; selain hakee ne erikseen
                     tulos[1]["ehdotukset"] = tallennetut
                 if ehdotus is not None:
@@ -912,7 +982,9 @@ def tee_kasittelija(tila):
             valittu, ks = tila.tila_ja_kasittelija(kid)
             ks.lue(kid)       # tarkistaa tunnisteen
             if valittu == "yksityinen":
-                return self._viesti_yksityinen(kid, teksti)
+                return self._viesti_yksityinen(kid, teksti, d)
+            if "malli" in d:                             # tyokalutila ennallaan: mallia ei valita
+                return self._json(400, {"virhe": "tyokalutilassa ei valita mallia"})
             if not tila.vastauslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen vastaus on kesken"})
             tulos = None
@@ -1085,6 +1157,8 @@ def main(argv=None):
                     help="yksityisen tilan mallin lahde: paikallinen palvelin (loopback) tai OpenRouterin avoin malli (ZDR)")
     ap.add_argument("--openrouter-malli", default=os.environ.get("AIVO_OPENROUTER_MALLI"),
                     help="avoin malli, esim. meta-llama/llama-3.3-70b-instruct (vain avointen perheiden lista)")
+    ap.add_argument("--openrouter-mallit", default=os.environ.get("AIVO_OPENROUTER_MALLIT"),
+                    help="pilkuin erotettu lista avoimia malleja; ensimmainen on oletus. Voittaa --openrouter-mallin")
     ap.add_argument("--openrouter-avain-tiedosto", default=os.environ.get("AIVO_OPENROUTER_AVAIN", yksityinen_or.OLETUS_AVAIN),
                     help="tiedosto (0600, palvelun kayttajan), jossa avain on; avainta ei anneta ymparistomuuttujalla")
     a = ap.parse_args(argv)
@@ -1098,7 +1172,7 @@ def main(argv=None):
         # ilman --host sallitaan vain localhost
         tila = Tila(lue_tiiviste(a.salasana_tiedosto), a.kirjasto, a.data, hostit, yks_data=a.yksityinen_data,
                     yks_muisti=a.yksityinen_muisti, ydinohjeet=a.ydinohjeet, ehdotukset=a.ehdotukset, malli_url=a.malli_url,
-                    taustapaa=a.yksityinen_taustapaa, or_malli=a.openrouter_malli,
+                    taustapaa=a.yksityinen_taustapaa, or_malli=a.openrouter_malli, or_mallit=a.openrouter_mallit,
                     or_avain=a.openrouter_avain_tiedosto,
                     tiivistelmat=(a.tiivistelmat or str(Path(a.data).parent / "tiivistelmat"))
                     if a.tiivistelmat_kaytossa else None,
