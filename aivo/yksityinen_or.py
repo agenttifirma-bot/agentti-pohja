@@ -85,7 +85,7 @@ def tarkista_mallit(mallit: Any) -> tuple[str, ...]:
     if not osat or osat == [""]:
         raise YksityinenVirhe("OpenRouter-malli puuttuu tai ei ole sallittu avoin malli (AVOIMET_MALLIT)")
     if len(osat) > MALLIT_YLARAJA:
-        raise YksityinenVirhe("OpenRouter-malleja on liikaa (enintaan %d)" % MALLIT_YLARAJA)
+        raise YksityinenVirhe("OpenRouter-malleja on liikaa (enintaan 10, MALLIT_YLARAJA)")
     for m in osat:
         tarkista_malli(m)
     if len(set(osat)) != len(osat):
