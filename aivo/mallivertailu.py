@@ -1,9 +1,10 @@
 """Yksityisen tilan mallivertailu: synteettinen testisarja, ZDR-ajo, mekaaninen pisteytys ja sokkoutettu tuomaripaketti.
 
-Tony ajaa kontissa 122 palvelun kayttajana (avain luetaan samalla tavalla kuin tuotannossa):
-  sudo -u aivo-yksityinen python3 -m aivo.mallivertailu aja --ulos /var/lib/aivo-yksityinen/mallivertailu
-  python3 -m aivo.mallivertailu paketti --ulos <sama>        # tuomari_syote.jsonl + tuomari_avain.json
-  python3 -m aivo.mallivertailu taulukko --ulos <sama> [--tuomari tuomari_pisteet.json]
+Tony ajaa kontissa 122 palvelun kayttajana aivo (avain luetaan samalla tavalla kuin tuotannossa), ks. docs/aivo-mallivertailu.md:
+  runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -B -m aivo.mallivertailu aja --ulos /var/lib/aivo-yksityinen/mallivertailu
+  ... -m aivo.mallivertailu paketti --ulos <sama>        # tuomari_syote.jsonl + tuomari_avain.json
+  ... -m aivo.mallivertailu taulukko --ulos <sama> [--tuomari tuomari_pisteet.json]
+Tyokalua ei ole kytketty palveluun.
 
 Saannot:
   * Vain synteettinen data (aivo/testidata/mallivertailu_tehtavat.json). Ei muistia, keskusteluja eika ydinohjeita levylta.
@@ -129,7 +130,7 @@ def aja(mallit: list[str], ulos: Path, laheta_tehdas: Callable[[], Callable[[dic
     """Ajaa sarjan. Kirjoittaa vastaukset.jsonl (yksi rivi per kutsu). Palauttaa yhteenvedon (kulut, virheet)."""
     sarja = lue_tehtavat()
     liput = {m: tarkista_malli(m) for m in mallit}           # kaikki tarkistetaan ennen ensimmaista kutsua
-    ulos.mkdir(parents=True, exist_ok=True)
+    ulos.mkdir(mode=0o700, parents=True, exist_ok=True)               # uusi kansio vain omistajalle
     tiedosto = ulos / "vastaukset.jsonl"
     kulut, virheet, suurin, pysahtyi = 0.0, 0, 0.0, ""
     with tiedosto.open("a", encoding="utf-8") as f:

@@ -1,14 +1,17 @@
 """Testit aivo/mallivertailu.py:lle. Ei verkkoa, ei oikeita avaimia: kuljetin on feikki ja kulukirjanpito tilapainen."""
+import ast
 import json
 import tempfile
 import unittest
 from collections import Counter
 from pathlib import Path
+from unittest import mock
 
 from aivo import mallivertailu as mv, openrouter_kulut as ok, openrouter_zdr, yksityinen, yksityinen_or
 
 LISTALTA = mv.NYKYINEN                       # AVOIMET_MALLIT-listalla
 LISTAN_ULKOPUOLELTA = "z-ai/glm-5.3"         # ehdokas, jota lista ei kata
+AIVO = Path(mv.__file__).resolve().parent
 
 
 class SarjaTesti(unittest.TestCase):
@@ -112,6 +115,7 @@ class AjoTesti(unittest.TestCase):
         self.assertIsNone(yv["pysahtyi"])
         rivit = mv.lue_vastaukset(self.d / "ulos")
         self.assertEqual({r["malli"] for r in rivit}, {LISTALTA, LISTAN_ULKOPUOLELTA})
+        self.assertEqual((self.d / "ulos").stat().st_mode & 0o777, 0o700)
 
     def test_kuluraja_pysayttaa(self):
         yv = self.aja([LISTALTA], kulu=0.4, raja=1.0)
@@ -145,6 +149,104 @@ class AjoTesti(unittest.TestCase):
         self.assertNotIn("qwen", sokko)
         self.assertIn("**A:**", sokko)
         self.assertEqual(sorted(json.loads((ulos / "sokko_avain.json").read_text()).values()), ["A", "B", "C"])
+
+
+class RakenneTesti(unittest.TestCase):
+    """mallivertailu.py ei rakenna runkoa itse eika kutsu verkkoa muuten kuin openrouter_kulut.kutsun kautta."""
+
+    def setUp(self):
+        self.puu = ast.parse((AIVO / "mallivertailu.py").read_text(encoding="utf-8"))
+
+    def test_ei_verkkomoduuleja_eika_runkoa(self):
+        kielletyt = {"urllib", "http", "socket", "ssl", "requests", "httpx", "subprocess", "aiohttp"}
+        for n in ast.walk(self.puu):
+            if isinstance(n, (ast.Import, ast.ImportFrom)):
+                nimet = [a.name for a in n.names] + [getattr(n, "module", "") or ""]
+                self.assertFalse({x.split(".")[0] for x in nimet} & kielletyt, nimet)
+            if isinstance(n, ast.Attribute):
+                self.assertNotIn(n.attr, {"rakenna_runko", "OSOITE", "urlopen", "_zdr_kunnossa"})
+            if isinstance(n, ast.Constant) and isinstance(n.value, str):
+                self.assertNotIn("openrouter.ai", n.value)
+            if isinstance(n, ast.Dict):        # ei itse koottua pyyntoa
+                avaimet = {k.value for k in n.keys if isinstance(k, ast.Constant)}
+                self.assertFalse(avaimet & {"provider", "zdr", "data_collection", "messages", "model"}, avaimet)
+
+    def test_kuljetinta_kaytetaan_vain_kutsun_kautta(self):
+        funktiot = {f.name: f for f in self.puu.body if isinstance(f, ast.FunctionDef)}
+        # tee_kuljetin vain main()-funktiossa, ja sen tulos menee suoraan aja()-funktiolle
+        kayttajat = {nimi for nimi, f in funktiot.items()
+                     if any(isinstance(n, ast.Attribute) and n.attr == "tee_kuljetin" for n in ast.walk(f))}
+        self.assertEqual(kayttajat, {"main"})
+        # aja(): laheta-oliota ei kutsuta suoraan, se annetaan vain openrouter_kulut.kutsulle
+        aja = funktiot["aja"]
+        kutsut = [n for n in ast.walk(aja) if isinstance(n, ast.Call)]
+        self.assertFalse([n for n in kutsut if isinstance(n.func, ast.Name) and n.func.id == "laheta"])
+        lahetyt = [n for n in kutsut if any(isinstance(a, ast.Name) and a.id == "laheta" for a in n.args)]
+        self.assertEqual(len(lahetyt), 1)
+        f = lahetyt[0].func
+        self.assertTrue(isinstance(f, ast.Attribute) and f.attr == "kutsu"
+                        and isinstance(f.value, ast.Name) and f.value.id == "openrouter_kulut")
+
+
+class LippuTesti(unittest.TestCase):
+    """yksityinen_chat=False vain mallivertailussa; ZDR ja deny pysyvat jokaisessa rungossa."""
+
+    def test_tuotanto_ei_kayta_lippua_false(self):
+        for p in sorted(AIVO.glob("*.py")):
+            if p.name.startswith("test_") or p.name in ("mallivertailu.py", "openrouter_zdr.py"):
+                continue
+            for n in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
+                if isinstance(n, ast.keyword) and n.arg == "yksityinen_chat":
+                    self.assertTrue(isinstance(n.value, ast.Constant) and n.value.value is True, p.name)
+                if isinstance(n, ast.Dict):
+                    for k, v in zip(n.keys, n.values):
+                        if isinstance(k, ast.Constant) and k.value == "yksityinen_chat":
+                            self.assertTrue(isinstance(v, ast.Constant) and v.value is True, p.name)
+
+    def test_tuotannon_yksityinen_kutsu_kayttaa_lippua_true(self):
+        nahty = []
+        aito = ok.kutsu
+
+        def vakoja(*a, **kw):
+            nahty.append(kw.get("yksityinen_chat"))
+            return {"choices": [{"message": {"content": "ok"}}], "usage": {"cost": 0}}
+        with mock.patch.object(ok, "kutsu", vakoja), mock.patch.object(yksityinen_or, "lue_avain", lambda p: "x"):
+            yksityinen_or.kysy_openrouterilta("", [{"rooli": "tony", "teksti": "hei"}], malli=LISTALTA)
+        self.assertEqual(nahty, [True])
+        self.assertIs(ok.kutsu, aito)
+
+    def test_ajo_kayttaa_lippua_listan_mukaan_ja_zdr_pysyy(self):
+        nahty = []
+        aito = ok.kutsu
+
+        def vakoja(malli, viestit, laheta, **kw):
+            nahty.append((malli, kw["yksityinen_chat"]))
+            return aito(malli, viestit, laheta, **kw)
+        rungot = []
+
+        def tehdas():
+            def laheta(runko):
+                rungot.append(runko)
+                return {"choices": [{"message": {"content": "v"}}], "usage": {"cost": 0.0}}
+            return laheta
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "kulut").mkdir(mode=0o700)
+            with mock.patch.object(ok, "kutsu", vakoja):
+                mv.aja([LISTALTA, LISTAN_ULKOPUOLELTA], Path(d) / "ulos", tehdas, toistot=1,
+                       kulutila=str(Path(d) / "kulut"), loki=lambda s: None)
+        self.assertEqual({x for x in nahty}, {(LISTALTA, True), (LISTAN_ULKOPUOLELTA, False)})
+        self.assertEqual(len(rungot), 40)
+        for r in rungot:
+            self.assertEqual(r["provider"], {"zdr": True, "data_collection": "deny"})
+            self.assertTrue(yksityinen_or._zdr_kunnossa(r))
+
+    def test_lippu_false_ei_salli_zdr_ohitusta(self):
+        for m in mv.EHDOKKAAT:
+            r = openrouter_zdr.rakenna_runko(m, [], yksityinen_chat=False)
+            self.assertEqual(r["provider"], {"zdr": True, "data_collection": "deny"})
+            for ohitus in ({"zdr": False}, {"data_collection": "allow"}):
+                with self.assertRaises(openrouter_zdr.ZdrVirhe):
+                    openrouter_zdr.rakenna_runko(m, [], yksityinen_chat=False, provider=ohitus)
 
 
 if __name__ == "__main__":
