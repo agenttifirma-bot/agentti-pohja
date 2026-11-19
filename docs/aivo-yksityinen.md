@@ -210,6 +210,44 @@ Palvelin hyväksyy vain listalla olevan mallin. Selaimen lähettämä muu arvo (
 
 Rajapinta: `GET /api/mallit` palauttaa sallitut mallit (`{"mallit": [...]}`; paikallisella taustapäällä tyhjä lista). `POST /api/uusi` ja `POST /api/viesti` hyväksyvät valinnaisen kentän `malli`, ja vastaus kertoo käytetyn mallin kentässä `malli`.
 
+## Usean mallin yhdistelmät (OpenRouter-taustapää)
+
+Yksityisen tilan vastauksen voi tuottaa useamman mallin yhteistyönä. Yhdistelmä valitaan asetuksella, ja sen voi vaihtaa keskustelukohtaisesti mallivalitsimesta. Oletus on `yksi`, eli toiminta on sama kuin ennen.
+
+Mallivertailu (19-50) ja yhdistelmävertailu (19-54) ovat vielä ajamatta, joten parasta yhdistelmää ei ole mitattu. Siksi kaikki kolme yhdistelmää on toteutettu asetuksina, ja oletus on yksi malli.
+
+| Yhdistelmä | Kutsut järjestyksessä | Roolit |
+|---|---|---|
+| `yksi` | keskustelun malli | – |
+| `tarkastus` | vastaaja kirjoittaa luonnoksen, tarkastaja kirjoittaa lopullisen vastauksen | `vastaaja`, `tarkastaja` |
+| `rinnakkais` | kaksi vastaajaa samanaikaisesti, kokoaja yhdistää | `vastaaja`, `vastaaja2`, `kokoaja` |
+| `reititys` | reititin luokittelee viestin (kevyt tai vaativa), valittu malli vastaa | `reititin`, `kevyt`, `vaativa` |
+
+Asetukset:
+
+- `AIVO_YKSITYINEN_YHDISTELMA` (tai `--yksityinen-yhdistelma`): oletusyhdistelmä uusille keskusteluille. Tuntematon arvo estää käynnistyksen. Paikallisella taustapäällä vain `yksi` kelpaa.
+- `AIVO_YKSITYINEN_ROOLIT` (tai `--yksityinen-roolit`): esimerkiksi `vastaaja:qwen/qwen3-235b-a22b-2507,tarkastaja:meta-llama/llama-3.3-70b-instruct`. Jokaisen roolin mallin pitää olla `AIVO_OPENROUTER_MALLIT`-listalla, joten se on jo läpäissyt `avoin_malli()`-tarkistuksen. Tuntematon rooli, sama rooli kahdesti tai listalta puuttuva malli estää käynnistyksen. Puuttuva rooli käyttää keskustelun mallia.
+
+Rajat (koodin vakioita, `aivo/yhdistelma.py`):
+
+- Enintään 4 mallikutsua per viesti (`MAX_KUTSUT_VIESTI`). Laskuri estää ylimääräisen kutsun ennen kuin mallia kutsutaan.
+- Enintään 3 eri mallia per yhdistelmä (`MAX_MALLEJA`).
+- Kokonaisaikaraja 240 s per viesti (`AIKARAJA_S`). Jokainen osakutsu saa aikarajaksi enintään jäljellä olevan ajan, eikä uutta kutsua aloiteta, kun aika on lopussa.
+- Jokainen osakutsu kulkee `yksityinen_or._kysy_viestit`-funktion ja `openrouter_kulut.kutsu`n kautta: ZDR on pakotettu, kulu kirjataan ja päiväkatto (A1005) koskee jokaista kutsua. Kun katto täyttyy, seuraavia kutsuja ei tehdä.
+- Jos osakutsu epäonnistuu, palataan yhden mallin vastaukseen (tarkastuksessa luonnos, rinnakkaisessa ensimmäinen onnistunut vastaus, reitityksessä kevyt malli), ja vastauksen alla näkyy merkintä. Jos yhtään vastausta ei saatu, näytetään virhe kuten yhden mallin tilassa.
+
+Merkinnät: ehdotus-, valinta-, luovutus- ja päätösmerkinnät (`[[EHDOTUS …]]`, `[[VALINNAT: …]]`, `[[LUOVUTUS]]`, `[[PAATOS n]]`) tulevat lopulliseen vastaukseen vain ensisijaisen vastaajan luonnoksesta sanasta sanaan. Tarkastaja ja kokoaja eivät näe niitä syötteessään, ja niiden kirjoittamat merkinnät poistetaan. Näin tarkastaja ei voi lisätä, muuttaa eikä pudottaa ehdotuksia. `[[VALINNAT: …]]` siirretään aina vastauksen loppuun.
+
+Käyttöliittymä:
+
+- Mallivalitsimessa ovat mallit ja niiden perässä vaihtoehdot "Yhdistelmä: tarkastus" ja niin edelleen. Mallin valinta tarkoittaa yhdistelmää `yksi`. Valinta tallentuu keskustelun metatietoihin (`yhdistelma`-kenttä).
+- Yhdistelmän vastauksen alla on pieni teksti "Mallit: a, b · kutsuja: 2". Mahdollinen paluumerkintä näkyy sen alla.
+- Linkki "Näytä luonnos" näyttää tarkastajan saaman luonnoksen tai rinnakkaiset vastaukset A ja B. Teksti asetetaan `textContent`-ominaisuudella. Luonnosta ei tallenneta keskustelutiedostoon.
+
+Rajapinta: `GET /api/mallit` palauttaa OpenRouter-taustapäällä myös kentät `yhdistelmat` ja `yhdistelma` (oletus). `POST /api/uusi` ja `POST /api/viesti` hyväksyvät kentän `yhdistelma`. Muu arvo saa vastauksen 400, eikä viestiä silloin tallenneta. Työkalutila ei hyväksy kenttää (400). Yhdistelmän vastaus sisältää kentät `yhdistelma`, `mallit`, `kutsuja` sekä tarvittaessa `luonnos` ja `merkinta`. Keskustelutiedoston Aivon rivillä ovat `yhdistelma`, `mallit`, `kutsuja` ja `merkinta`.
+
+Kulut: tarkastus ja reititys tekevät 2 kutsua ja rinnakkais 3 kutsua viestiä kohden. Tarkastajan ja kokoajan syöte sisältää luonnoksen, joten se on yhden mallin kutsua pidempi.
+
 ## Rajat ja avoimet asiat
 
 - Yksityinen tila ja työkalutila ovat samassa prosessissa. Erottelu perustuu siihen, että työkalutilan Claude-kutsu ajetaan toisena käyttäjänä (kohta 2, socket) eikä saa työkaluja (`--tools ""`). Jos `AIVO_TYOKALU_SOCKET`-asetusta ei käytetä, erottelu on vain koodin tasolla, ei tiedosto-oikeuksilla.

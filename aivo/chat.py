@@ -49,6 +49,7 @@ from pathlib import Path
 
 from aivo import kalenteri, kalenteri_kehote, tiivistelmat_kehote, yksityinen, yksityinen_or
 from aivo.yksityinen import YksityinenVirhe as ChatVirhe, julkaise_kirjastoon   # sama poikkeus kaikkialla
+from aivo import yhdistelma        # usean mallin yhdistelmat (oma rivi: ei ristiriitaa rinnakkaisten tuontimuutosten kanssa)
 
 OLETUS_SALASANA = "/etc/aivo/chat-salasana"
 OLETUS_KIRJASTO = "/var/lib/aivo/kirjasto"
@@ -114,6 +115,7 @@ textarea{resize:none;height:3.2rem}button{font:inherit;padding:.5rem .9rem;borde
 #kirjaus{padding:2rem;max-width:22rem;margin:auto}
 .pieni{font-size:.8rem;opacity:.7}
 .mallinimi{display:block;margin-top:.3rem;font-size:.75rem;opacity:.6}
+.luonnos{white-space:pre-wrap;word-wrap:break-word;max-height:40vh;overflow:auto;font-size:.8rem;margin:.4rem 0;opacity:.8}
 .ehdotus pre{white-space:pre-wrap;word-wrap:break-word;max-height:40vh;overflow:auto;font-size:.8rem;margin:.4rem 0}
 </style></head><body>
 <header><strong>Aivo</strong><span><select id="tila" aria-label="Tila">
@@ -128,7 +130,13 @@ let kid=null;let nyt='yksityinen';const V=document.getElementById('viestit');
 let mallit=[];const M=document.getElementById('malli');
 function valitsinNakyy(t,l){return t==='yksityinen'&&Array.isArray(l)&&l.length>=2;}
 function nayta(){M.hidden=!valitsinNakyy(nyt,mallit);}
-function mallikentta(b){if(valitsinNakyy(b.tila||nyt,mallit))b.malli=M.value;return b;}
+function mallikentta(b){const v=M.value;if(valitsinNakyy(b.tila||nyt,mallit))String(v).indexOf('yhdistelma:')===0?(b.yhdistelma=v.slice(11)):(b.malli=v);return b;}
+function yhdistelmatieto(d,mn,j){if(!Array.isArray(j.mallit))return;
+ mn.textContent='Mallit: '+Array.from(new Set(j.mallit.filter(m=>typeof m==='string'))).join(', ')+' \u00b7 kutsuja: '+(Number.isInteger(j.kutsuja)?j.kutsuja:'?');
+ if(typeof j.merkinta==='string'){const k=document.createElement('span');k.className='mallinimi';k.textContent=j.merkinta;d.appendChild(k);}
+ if(typeof j.luonnos==='string'){const a=document.createElement('a');a.href='#';a.className='mallinimi';a.textContent='N\u00e4yt\u00e4 luonnos';
+  const pre=document.createElement('pre');pre.className='luonnos';pre.hidden=true;pre.textContent=j.luonnos;
+  a.onclick=e=>{e.preventDefault();pre.hidden=!pre.hidden;a.textContent=pre.hidden?'N\u00e4yt\u00e4 luonnos':'Piilota luonnos';};d.append(a,pre);}}
 const H={'Content-Type':'application/json','X-Aivo':'1'};
 function alas(){V.scrollTop=V.scrollHeight;const k=V.lastElementChild;if(k&&k.scrollIntoView)k.scrollIntoView({block:'end'});}
 function lisaa(rooli,teksti){const d=document.createElement('div');d.className='v '+rooli;d.textContent=teksti;
@@ -156,10 +164,14 @@ async function aloita(){const r=await fetch('/api/uusi',{method:'POST',headers:H
  if(r.status===401){location.href='/kirjaudu';return;}
  if(!r.ok){lisaa('aivo','Tilaa ei voi k\u00e4ytt\u00e4\u00e4 ('+r.status+')');return;}
  const j=await r.json();kid=j.id;nyt=j.tila;V.textContent='';document.getElementById('odottavat').hidden=(nyt!=='yksityinen');
- if(typeof j.malli==='string'&&mallit.includes(j.malli))M.value=j.malli;nayta();}
+ if(typeof j.malli==='string'&&mallit.includes(j.malli))M.value=j.malli;
+ if(typeof j.yhdistelma==='string'&&mallit.includes('yhdistelma:'+j.yhdistelma)&&j.yhdistelma!=='yksi')M.value='yhdistelma:'+j.yhdistelma;nayta();}
 async function haeMallit(){const x=await haeJson('/api/mallit');if(!x||!x.r.ok||!Array.isArray(x.j.mallit))return;
  mallit=x.j.mallit.filter(m=>typeof m==='string');M.textContent='';
- mallit.forEach(m=>{const o=document.createElement('option');o.value=m;o.textContent=m;M.appendChild(o);});nayta();}
+ mallit.forEach(m=>{const o=document.createElement('option');o.value=m;o.textContent=m;M.appendChild(o);});
+ const yh=Array.isArray(x.j.yhdistelmat)?x.j.yhdistelmat.filter(y=>typeof y==='string'&&y!=='yksi'):[];
+ yh.forEach(y=>{const o=document.createElement('option');o.value='yhdistelma:'+y;o.textContent='Yhdistelm\u00e4: '+y;M.appendChild(o);mallit.push(o.value);});
+ if(typeof x.j.yhdistelma==='string'&&yh.includes(x.j.yhdistelma))M.value='yhdistelma:'+x.j.yhdistelma;nayta();}
 function q(t){return encodeURIComponent(t);}
 async function haeJson(url){const r=await fetch(url,{headers:H});if(r.status===401){location.href='/kirjaudu';return null;}
  let j={};try{j=await r.json();}catch(e){}return {r:r,j:j};}
@@ -201,7 +213,7 @@ async function laheta(s){if(lahetyksessa)return;lahetyksessa=true;lukitse();
    else if(j.vastaus)odota.textContent=j.vastaus;
    else if(Array.isArray(j.valinnat)||Array.isArray(j.ehdotukset)||Number.isInteger(j.paatosehdotus))odota.hidden=true;
    else odota.textContent='(Aivo ei antanut vastausta. Kokeile uudelleen.)';
-   if(r.ok&&typeof j.malli==='string'){const mn=document.createElement('span');mn.className='mallinimi';mn.textContent='Malli: '+j.malli;odota.appendChild(mn);}
+   if(r.ok&&typeof j.malli==='string'){const mn=document.createElement('span');mn.className='mallinimi';mn.textContent='Malli: '+j.malli;odota.appendChild(mn);yhdistelmatieto(odota,mn,j);}
    if(Number.isInteger(j.indeksi)){tonyn[j.indeksi]=s;painike(oma,j.indeksi);}
    if(Number.isInteger(j.paatosehdotus))kortti(j.paatosehdotus);
    if(Array.isArray(j.ehdotukset))j.ehdotukset.forEach(t=>{if(typeof t==='string')ehdotus(t);});
@@ -585,27 +597,41 @@ class Keskustelut:
     def _meta_polku(self, kid):
         return self.data / (self._polku(kid).stem + ".meta.json")
 
-    def aseta_malli(self, kid, malli):
-        """Keskustelun metatieto: valittu malli (yksityinen tila, OpenRouter). Erillinen tiedosto (600), ei viestirivi."""
+    def aseta_malli(self, kid, malli, yhdistelma_nimi=None):
+        """Keskustelun metatieto: valittu malli ja yhdistelma (yksityinen tila, OpenRouter). Erillinen tiedosto (600),
+        ei viestirivi. yhdistelma_nimi=None sailyttaa aiemman yhdistelman."""
         if not self._polku(kid).exists():
             raise ChatVirhe("keskustelua ei ole")
         with self._lukko:
-            kirjoita_600(self._meta_polku(kid), json.dumps({"malli": malli}, ensure_ascii=False))
+            meta = {"malli": malli}
+            yh = yhdistelma_nimi if yhdistelma_nimi is not None else self._lue_meta(kid).get("yhdistelma")
+            if isinstance(yh, str):
+                meta["yhdistelma"] = yh
+            kirjoita_600(self._meta_polku(kid), json.dumps(meta, ensure_ascii=False))
 
-    def lue_malli(self, kid):
+    def _lue_meta(self, kid):
         try:
             d = json.loads(self._meta_polku(kid).read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return None
-        m = d.get("malli") if isinstance(d, dict) else None
+            return {}
+        return d if isinstance(d, dict) else {}
+
+    def lue_malli(self, kid):
+        m = self._lue_meta(kid).get("malli")
         return m if isinstance(m, str) else None
 
-    def lisaa(self, kid, rooli, teksti, lahteet=None, malli=None):
+    def lue_yhdistelma(self, kid):
+        y = self._lue_meta(kid).get("yhdistelma")
+        return y if isinstance(y, str) else None
+
+    def lisaa(self, kid, rooli, teksti, lahteet=None, malli=None, lisatiedot=None):
         p = self._polku(kid)
         tietue = {"aika": _nyt().isoformat(timespec="seconds"), "rooli": rooli, "teksti": teksti,
                   "lahteet": lahteet or []}
         if malli:
             tietue["malli"] = malli                  # vastauksen tuottanut malli (yksityinen tila, OpenRouter)
+        for k, v in (lisatiedot or {}).items():      # yhdistelma: kutsutut mallit, kutsujen maara, merkinta
+            tietue.setdefault(k, v)
         rivi = json.dumps(tietue, ensure_ascii=False)
         with self._lukko:
             if not p.exists():
@@ -725,7 +751,8 @@ class Tila:
                  yks_data=None, yks_muisti=None, ydinohjeet=None, ehdotukset=None,
                  malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None,
                  taustapaa="loopback", or_malli=None, or_avain=yksityinen_or.OLETUS_AVAIN, or_mallit=None,
-                 or_kulutila=None, tiivistelmat=None, kalenteri_lahde=None):   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
+                 or_kulutila=None, tiivistelmat=None, kalenteri_lahde=None,   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
+                 yhdistelma_oletus=None, roolit=None, kysy_yhd=None):
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
         self.tiivistelmat = tiivistelmat          # tyokalualueen tiivistelmakansio (vain tyokalutila lukee sita)
@@ -739,6 +766,9 @@ class Tila:
         self.vastauslukko = threading.Lock()   # yksi Claude-kutsu kerrallaan
         self.yks = None
         self.or_mallit = ()                       # sallitut OpenRouter-mallit; ensimmainen on oletus (vain openrouter)
+        self.yhdistelmat = (yhdistelma.OLETUS,)   # usean mallin yhdistelmat ovat kaytossa vain OpenRouter-taustapaalla
+        self.yhdistelma_oletus = yhdistelma.tarkista_yhdistelma(yhdistelma_oletus)
+        self.roolit = {}
         self.taustapaa = taustapaa if taustapaa in YKSITYINEN_TEKSTIT else "loopback"
         if yks_data:
             if taustapaa not in ("loopback", "openrouter"):
@@ -746,6 +776,10 @@ class Tila:
             if taustapaa == "openrouter":
                 # avain luetaan vasta kutsussa; puuttuva avain nakyy virheena. or_mallit (lista) voittaa or_mallin.
                 self.or_mallit = yksityinen_or.tarkista_mallit(or_mallit if or_mallit else or_malli)
+                self.roolit = yhdistelma.jasenna_roolit(roolit, self.or_mallit)
+                self.yhdistelmat = yhdistelma.YHDISTELMAT
+            elif self.yhdistelma_oletus != yhdistelma.OLETUS or roolit:
+                raise ChatVirhe("usean mallin yhdistelm\u00e4 vaatii OpenRouter-taustap\u00e4\u00e4n")
             elif not yksityinen.sallittu_malli_osoite(malli_url):
                 raise ChatVirhe("mallipalvelimen osoite ei ole loopback; kieltaydyn kaynnistymasta")
             self.yks = Keskustelut(yksityinen.tarkista_yksityinen_hakemisto(yks_data))
@@ -763,6 +797,13 @@ class Tila:
             else:
                 self.kysy_yks = lambda muisti, historia, ohjeet: yksityinen.kysy_paikalliselta(
                     muisti, historia, ohjeet, malli_url)
+        if not yks_data and (self.yhdistelma_oletus != yhdistelma.OLETUS or roolit):
+            raise ChatVirhe("usean mallin yhdistelm\u00e4 vaatii yksityisen tilan ja OpenRouter-taustap\u00e4\u00e4n")
+        self.kysy_yhd = kysy_yhd
+        if kysy_yhd is None and self.taustapaa == "openrouter" and yks_data:
+            self.kysy_yhd = lambda muisti, historia, ohjeet, malli, yhdistelma_nimi: yksityinen_or.kysy_yhdistelmalla(
+                muisti, historia, ohjeet, malli=malli, yhdistelma_nimi=yhdistelma_nimi, roolit=self.roolit,
+                avain_tiedosto=or_avain, kulutila=or_kulutila)
         self.yks_vastauslukko = threading.Lock()
         self.ehdotuslukko = threading.Lock()      # yksi hyvaksynta tai hylkays kerrallaan
 
@@ -771,6 +812,17 @@ class Tila:
         if not isinstance(pyydetty, str) or pyydetty not in self.or_mallit:
             raise ChatVirhe("malli ei ole sallittujen mallien listalla")
         return pyydetty
+
+    def valitse_yhdistelma(self, pyydetty):
+        """Selaimen lahettama yhdistelma kelpaa vain OpenRouter-taustapaalla ja vain tunnettuna nimena (muuten 400)."""
+        if not isinstance(pyydetty, str) or pyydetty not in self.yhdistelmat:
+            raise ChatVirhe("yhdistelm\u00e4 ei ole k\u00e4ytett\u00e4viss\u00e4")
+        return pyydetty
+
+    def keskustelun_yhdistelma(self, kid):
+        """Keskustelun yhdistelma; puuttuva tai tuntematon -> asetuksen oletus (AIVO_YKSITYINEN_YHDISTELMA)."""
+        y = self.yks.lue_yhdistelma(kid) if self.yks is not None else None
+        return y if y in self.yhdistelmat else self.yhdistelma_oletus
 
     def keskustelun_malli(self, kid):
         """Keskustelun metatietoihin tallennettu malli; puuttuva tai listalta poistunut -> oletus (ensimmainen)."""
@@ -868,7 +920,10 @@ def tee_kasittelija(tila):
                     if osat.path == "/api/ehdotus":
                         return self._ehdotus(kysely)
                     if osat.path == "/api/mallit":
-                        return self._json(200, {"mallit": list(tila.or_mallit)})
+                        vastaus = {"mallit": list(tila.or_mallit)}
+                        if tila.or_mallit:            # yhdistelmat vain OpenRouter-taustapaalla
+                            vastaus.update(yhdistelmat=list(tila.yhdistelmat), yhdistelma=tila.yhdistelma_oletus)
+                        return self._json(200, vastaus)
                 except ChatVirhe as e:
                     return self._json(400, {"virhe": str(e)})
             self._json(404, {"virhe": "ei loydy"})
@@ -928,27 +983,39 @@ def tee_kasittelija(tila):
                 if tila.yks is None:
                     return self._json(503, {"virhe": "yksityinen tila ei ole kaytossa"})
                 malli = tila.valitse_malli(d["malli"]) if "malli" in d else (tila.or_mallit[:1] or (None,))[0]
+                yh = self._pyydetty_yhdistelma(d)
                 kid = tila.yks.uusi()
                 vastaus = {"id": kid, "tila": valinta}
                 if malli:
-                    tila.yks.aseta_malli(kid, malli)
+                    yh = yh or tila.yhdistelma_oletus
+                    tila.yks.aseta_malli(kid, malli, yh)
                     vastaus["malli"] = malli
+                    vastaus["yhdistelma"] = yh
                 return self._json(200, vastaus)
-            if "malli" in d:
+            if "malli" in d or "yhdistelma" in d:
                 return self._json(400, {"virhe": "tyokalutilassa ei valita mallia"})
             return self._json(200, {"id": tila.keskustelut.uusi(), "tila": valinta})
+
+        def _pyydetty_yhdistelma(self, d):
+            """Valitsimessa on yksi valinta: malli (= yhdistelma 'yksi') tai yhdistelma. Ei kumpaakaan -> None."""
+            if "yhdistelma" in d:
+                return tila.valitse_yhdistelma(d["yhdistelma"])
+            if "malli" in d and tila.or_mallit:
+                return yhdistelma.OLETUS
+            return None
 
         def _viesti_yksityinen(self, kid, teksti, d):
             if "malli" in d:                         # tarkistus ennen kuin mitaan kirjoitetaan (400 eika viestirivia)
                 malli = tila.valitse_malli(d["malli"])
             else:
                 malli = tila.keskustelun_malli(kid)
+            yh = self._pyydetty_yhdistelma(d) or (tila.keskustelun_yhdistelma(kid) if malli else yhdistelma.OLETUS)
             if not tila.yks_vastauslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen vastaus on kesken"})
             tulos = None
             try:
-                if malli and malli != tila.yks.lue_malli(kid):
-                    tila.yks.aseta_malli(kid, malli)      # valinta voi vaihtua kesken keskustelun
+                if malli and (malli != tila.yks.lue_malli(kid) or yh != tila.yks.lue_yhdistelma(kid)):
+                    tila.yks.aseta_malli(kid, malli, yh)  # valinta voi vaihtua kesken keskustelun
                 tila.yks.lisaa(kid, "tony", teksti.strip())
                 historia = tila.yks.lue(kid)
                 oma_idx = len(historia) - 1          # palvelin kertoo Tonyn viestin paikan; selain ei arvaa
@@ -956,7 +1023,11 @@ def tee_kasittelija(tila):
                                                yksityinen.MUISTI_YLARAJA // 4, teksti)
                 try:
                     ohjeet = yksityinen.lue_ydinohjeet(tila.ydinohjeet)
-                    if malli:
+                    yhd = None
+                    if malli and yh != yhdistelma.OLETUS and tila.kysy_yhd:
+                        yhd = tila.kysy_yhd(muisti, historia, ohjeet, malli, yh)
+                        vastaus, malli = yhd.teksti, yhd.malli
+                    elif malli:
                         vastaus = tila.kysy_yks(muisti, historia, ohjeet, malli=malli)
                     else:
                         vastaus = tila.kysy_yks(muisti, historia, ohjeet)
@@ -975,11 +1046,21 @@ def tee_kasittelija(tila):
                 vastaus, ehdotus = erota_paatosehdotus(vastaus, historia)
                 vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
                 vastaus = tyhjan_paikka(vastaus, bool(valinnat) or ehdotus is not None or bool(tallennetut))
-                tila.yks.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus], malli=malli)
+                lisatiedot = None
+                if yhd is not None:
+                    lisatiedot = {"yhdistelma": yhd.yhdistelma, "mallit": yhd.mallit, "kutsuja": yhd.kutsuja}
+                    if yhd.merkinta:
+                        lisatiedot["merkinta"] = yhd.merkinta
+                tila.yks.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus], malli=malli,
+                               lisatiedot=lisatiedot)
                 tulos = (200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "tila": "yksityinen",
                                "indeksi": oma_idx})
                 if malli:
                     tulos[1]["malli"] = malli
+                if yhd is not None:
+                    tulos[1].update(lisatiedot)
+                    if yhd.luonnos:
+                        tulos[1]["luonnos"] = yhd.luonnos
                 if tallennetut:                # vain palvelimen itse tallentamat tunnukset; selain hakee ne erikseen
                     tulos[1]["ehdotukset"] = tallennetut
                 if ehdotus is not None:
@@ -999,7 +1080,7 @@ def tee_kasittelija(tila):
             ks.lue(kid)       # tarkistaa tunnisteen
             if valittu == "yksityinen":
                 return self._viesti_yksityinen(kid, teksti, d)
-            if "malli" in d:                             # tyokalutila ennallaan: mallia ei valita
+            if "malli" in d or "yhdistelma" in d:        # tyokalutila ennallaan: mallia ei valita
                 return self._json(400, {"virhe": "tyokalutilassa ei valita mallia"})
             if not tila.vastauslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen vastaus on kesken"})
@@ -1178,6 +1259,10 @@ def main(argv=None):
                     help="pilkuin erotettu lista avoimia malleja; ensimmainen on oletus. Voittaa --openrouter-mallin")
     ap.add_argument("--openrouter-avain-tiedosto", default=os.environ.get("AIVO_OPENROUTER_AVAIN", yksityinen_or.OLETUS_AVAIN),
                     help="tiedosto (0600, palvelun kayttajan), jossa avain on; avainta ei anneta ymparistomuuttujalla")
+    ap.add_argument("--yksityinen-yhdistelma", default=os.environ.get("AIVO_YKSITYINEN_YHDISTELMA"),
+                    help="oletusyhdistelma: yksi, tarkastus, rinnakkais tai reititys (vain OpenRouter-taustapaa)")
+    ap.add_argument("--yksityinen-roolit", default=os.environ.get("AIVO_YKSITYINEN_ROOLIT"),
+                    help="roolit muodossa vastaaja:malli,tarkastaja:malli; mallit --openrouter-mallit-listalta")
     a = ap.parse_args(argv)
     try:
         if a.komento == "aseta-salasana":
@@ -1191,6 +1276,7 @@ def main(argv=None):
                     yks_muisti=a.yksityinen_muisti, ydinohjeet=a.ydinohjeet, ehdotukset=a.ehdotukset, malli_url=a.malli_url,
                     taustapaa=a.yksityinen_taustapaa, or_malli=a.openrouter_malli, or_mallit=a.openrouter_mallit,
                     or_avain=a.openrouter_avain_tiedosto,
+                    yhdistelma_oletus=a.yksityinen_yhdistelma, roolit=a.yksityinen_roolit,
                     tiivistelmat=(a.tiivistelmat or str(Path(a.data).parent / "tiivistelmat"))
                     if a.tiivistelmat_kaytossa else None,
                     kalenteri_lahde=kalenteri.IcalLahde(a.kalenteri_osoitetiedosto, a.kalenteri_data)
