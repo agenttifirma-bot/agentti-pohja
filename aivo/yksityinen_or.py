@@ -79,7 +79,7 @@ def lue_avain(polku: Any) -> str:
         raise YksityinenVirhe("OpenRouter-avaintiedostoa ei voi lukea") from None
     if not avain:
         raise YksityinenVirhe("OpenRouter-avain puuttuu: avaintiedosto on tyhja")
-    if not _AVAIN_RE.match(avain):
+    if not _AVAIN_RE.fullmatch(avain):
         raise YksityinenVirhe("OpenRouter-avaintiedoston sisalto ei ole avaimen nakoinen")
     return avain
 

@@ -520,7 +520,7 @@ class Keskustelut:
         return kid
 
     def _polku(self, kid):
-        if not isinstance(kid, str) or not ID_RE.match(kid):
+        if not isinstance(kid, str) or not ID_RE.fullmatch(kid):
             raise ChatVirhe("virheellinen keskustelun tunniste")
         return self.data / (kid + ".jsonl")
 
