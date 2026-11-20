@@ -4,6 +4,7 @@ import stat
 import tempfile
 import unittest
 import urllib.error
+from unittest import mock
 
 from agentti import github_luku as g
 
@@ -112,16 +113,10 @@ class PrTilaTesti(unittest.TestCase):
         self.assertEqual(t.datahaut(), [])
 
     def test_main_palauttaa_3_kun_raja_taynna(self):
-        vanha = g.raja_alussa
-        g.raja_alussa = lambda **kw: g.Raja(60, 0, 1800000000)
-        try:
-            os.environ["HOME"], h = self.hak, os.environ.get("HOME")
-            try:
-                self.assertEqual(g.main(["pr", "o/r", "22"]), g.EI_RAJAA)
-            finally:
-                os.environ["HOME"] = h
-        finally:
-            g.raja_alussa = vanha
+        # patch.dict palauttaa HOME:n myos silloin, kun se puuttui ymparistosta (esim. yojonon root-ajo).
+        with mock.patch.object(g, "raja_alussa", lambda **kw: g.Raja(60, 0, 1800000000)), \
+                mock.patch.dict(os.environ, {"HOME": self.hak}):
+            self.assertEqual(g.main(["pr", "o/r", "22"]), g.EI_RAJAA)
 
     def test_authorization_vain_api_githubiin(self):
         with open(self.polku, "w") as f:
