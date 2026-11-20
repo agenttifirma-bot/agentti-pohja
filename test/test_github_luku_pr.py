@@ -2,6 +2,7 @@ import json
 import os
 import stat
 import tempfile
+import time
 import unittest
 import urllib.error
 from unittest import mock
@@ -114,7 +115,7 @@ class PrTilaTesti(unittest.TestCase):
 
     def test_main_palauttaa_3_kun_raja_taynna(self):
         # patch.dict palauttaa HOME:n myos silloin, kun se puuttui ymparistosta (esim. yojonon root-ajo).
-        with mock.patch.object(g, "raja_alussa", lambda **kw: g.Raja(60, 0, 1800000000)), \
+        with mock.patch.object(g, "raja_alussa", lambda **kw: g.Raja(60, 0, int(time.time()) + 3600)), \
                 mock.patch.dict(os.environ, {"HOME": self.hak}):
             self.assertEqual(g.main(["pr", "o/r", "22"]), g.EI_RAJAA)
 
