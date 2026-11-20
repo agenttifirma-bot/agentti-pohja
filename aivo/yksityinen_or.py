@@ -24,6 +24,9 @@ Saannot (koodi on laki):
     Virheista nakyy vain tyyppi ja HTTP-tila.
   * Avain luetaan jokaisella kutsulla (Tony voi vaihtaa tiedoston kayttamatta palvelun uudelleenkaynnistysta) ja ennen
     paivakattovarausta: puuttuva avain ei jata varausta eika anna arvoituksellista virhetta.
+  * Usean mallin yhdistelmat (aivo/yhdistelma.py, AIVO_YKSITYINEN_YHDISTELMA): jokainen osakutsu kulkee taman
+    moduulin `_kysy_viestit`-funktion kautta, joka tarkistaa mallin (avoin_malli) ja kutsuu `openrouter_kulut.kutsu`a
+    lipulla `yksityinen_chat=True`. Paivakatto nostaa yhdistelma.Katkaisu, joka lopettaa seuraavat osakutsut.
   * Tyokalutila ei kayta tata moduulia (testi tarkistaa).
   * Yksityisen alueen keskustelujen tiivistys (aivo/tiivista_yksityinen.py) kayttaa OpenRouteria vain funktion
     `kysy_tiivistys` kautta: sama avain, sama avoimen mallin tarkistus, sama `openrouter_kulut.kutsu` (ZDR,
@@ -41,7 +44,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from . import openrouter_kulut, yksityinen
+from . import openrouter_kulut, yhdistelma, yksityinen
 from .yksityinen import YKSITYINEN_KEHOTE, YksityinenVirhe
 
 OLETUS_AVAIN = "/var/lib/aivo-yksityinen/openrouter-avain"
@@ -131,8 +134,11 @@ def _zdr_kunnossa(runko: Any) -> bool:
     return isinstance(prov, Mapping) and prov.get("zdr") is True and prov.get("data_collection") == "deny"
 
 
-def tee_kuljetin(avain: str, avaa: Callable[..., Any] | None = None) -> Callable[[dict[str, Any]], Mapping[str, Any]]:
-    """Kuljetin `openrouter_kulut.kutsu`lle: lahettaa rungon OpenRouteriin. Kieltaytyy, ellei ZDR ole rungossa."""
+def tee_kuljetin(avain: str, avaa: Callable[..., Any] | None = None,
+                 aikaraja_s: float | None = None) -> Callable[[dict[str, Any]], Mapping[str, Any]]:
+    """Kuljetin `openrouter_kulut.kutsu`lle: lahettaa rungon OpenRouteriin. Kieltaytyy, ellei ZDR ole rungossa.
+    `aikaraja_s` voi vain lyhentaa VASTAUS_AIKARAJA_S:aa (yhdistelman kokonaisaikaraja)."""
+    aikaraja = VASTAUS_AIKARAJA_S if aikaraja_s is None else max(1.0, min(float(aikaraja_s), VASTAUS_AIKARAJA_S))
     if avaa is None:
         avaa = urllib.request.build_opener(urllib.request.ProxyHandler({})).open     # ei valityspalvelinta
 
@@ -143,7 +149,7 @@ def tee_kuljetin(avain: str, avaa: Callable[..., Any] | None = None) -> Callable
             openrouter_kulut.OSOITE, data=json.dumps(runko).encode("utf-8"), method="POST",
             headers={"Content-Type": "application/json", "Authorization": "Bearer " + avain})
         try:
-            with avaa(pyynto, timeout=VASTAUS_AIKARAJA_S) as r:
+            with avaa(pyynto, timeout=aikaraja) as r:
                 data = json.loads(r.read(MAX_VASTAUS_TAVUA))
         except urllib.error.HTTPError as e:
             raise YksityinenVirhe("mallipalvelu hylkasi pyynnon (HTTP %s)" % e.code) from None
@@ -153,6 +159,42 @@ def tee_kuljetin(avain: str, avaa: Callable[..., Any] | None = None) -> Callable
             raise YksityinenVirhe("OpenRouter antoi odottamattoman vastauksen")
         return data
     return laheta
+
+
+def _kysy_viestit(
+    malli: str,
+    viestit: list[dict[str, Any]],
+    *,
+    avain_tiedosto: str = OLETUS_AVAIN,
+    kulutila: str | None = None,
+    avaa: Callable[..., Any] | None = None,
+    nyt: Callable[[], datetime] | None = None,
+    ilmoita: Callable[[str], Any] | None = None,
+    aikaraja_s: float | None = None,
+    max_tokens: int | None = None,
+    **lisa: Any,
+) -> str:
+    """Yksi kutsu valmiilla viestilistalla. Ainoa reitti, jota kysy_openrouterilta ja yhdistelmat kayttavat."""
+    tarkista_malli(malli)
+    avain = lue_avain(avain_tiedosto)                     # ennen varausta: puuttuva avain ei jata varausta
+    laheta = tee_kuljetin(avain, avaa, aikaraja_s)
+    tokenit = MAX_TOKENIA if max_tokens is None else max(1, min(int(max_tokens), MAX_TOKENIA))
+    try:
+        data = openrouter_kulut.kutsu(
+            malli, viestit, laheta, tehtava=TEHTAVA, nyt=nyt, tila=kulutila, ilmoita=ilmoita,
+            max_tokens=tokenit, temperature=0.3, stream=False, usage={"include": True},
+            **{**lisa, "yksityinen_chat": True})
+    except openrouter_kulut.KutsuEstetty:
+        raise yhdistelma.Katkaisu("OpenRouterin p\u00e4iv\u00e4katto on t\u00e4ynn\u00e4 tai kulukirjanpito ei kelpaa; kutsua ei tehty") from None
+    except openrouter_kulut.ZdrVirhe:
+        raise YksityinenVirhe("ZDR-s\u00e4\u00e4nt\u00f6 est\u00e4\u00e4 pyynn\u00f6n; kutsua ei tehty") from None
+    try:
+        teksti = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise YksityinenVirhe("OpenRouterin vastauksessa ei ollut tekstia") from None
+    if not isinstance(teksti, str) or not teksti.strip():
+        raise YksityinenVirhe("OpenRouter antoi tyhjan vastauksen")
+    return teksti.strip()
 
 
 def kysy_openrouterilta(
@@ -170,25 +212,32 @@ def kysy_openrouterilta(
 ) -> str:
     """Yksityisen tilan vastaus OpenRouterin avoimelta mallilta. Nostaa aina YksityinenVirhe (turvallinen viesti)."""
     tarkista_malli(malli)
-    avain = lue_avain(avain_tiedosto)                     # ennen varausta: puuttuva avain ei jata varausta
-    laheta = tee_kuljetin(avain, avaa)
     viestit = yksityinen.muodosta_viestit(muisti, historia, ohjeet, KEHOTE, HISTORIA_YLARAJA)
-    try:
-        data = openrouter_kulut.kutsu(
-            malli, viestit, laheta, tehtava=TEHTAVA, nyt=nyt, tila=kulutila, ilmoita=ilmoita,
-            max_tokens=MAX_TOKENIA, temperature=0.3, stream=False, usage={"include": True},
-            **{**lisa, "yksityinen_chat": True})
-    except openrouter_kulut.KutsuEstetty:
-        raise YksityinenVirhe("OpenRouterin p\u00e4iv\u00e4katto on t\u00e4ynn\u00e4 tai kulukirjanpito ei kelpaa; kutsua ei tehty") from None
-    except openrouter_kulut.ZdrVirhe:
-        raise YksityinenVirhe("ZDR-s\u00e4\u00e4nt\u00f6 est\u00e4\u00e4 pyynn\u00f6n; kutsua ei tehty") from None
-    try:
-        teksti = data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError):
-        raise YksityinenVirhe("OpenRouterin vastauksessa ei ollut tekstia") from None
-    if not isinstance(teksti, str) or not teksti.strip():
-        raise YksityinenVirhe("OpenRouter antoi tyhjan vastauksen")
-    return teksti.strip()
+    return _kysy_viestit(malli, viestit, avain_tiedosto=avain_tiedosto, kulutila=kulutila, avaa=avaa, nyt=nyt,
+                         ilmoita=ilmoita, **lisa)
+
+
+def kysy_yhdistelmalla(
+    muisti: str,
+    historia: list[dict[str, Any]],
+    ohjeet: str = "",
+    *,
+    malli: str,
+    yhdistelma_nimi: str = yhdistelma.OLETUS,
+    roolit: Mapping[str, str] | None = None,
+    kello: Callable[[], float] | None = None,
+    **kw: Any,
+) -> "yhdistelma.Tulos":
+    """Usean mallin yhdistelma (yhdistelma.aja). Jokainen osakutsu kulkee _kysy_viestit-funktion kautta."""
+    tarkista_malli(malli)
+    for m in (roolit or {}).values():
+        tarkista_malli(m)
+    viestit = yksityinen.muodosta_viestit(muisti, historia, ohjeet, KEHOTE, HISTORIA_YLARAJA)
+
+    def kysy(m: str, v: list[dict[str, Any]], aikaraja_s: float | None = None, max_tokens: int | None = None) -> str:
+        return _kysy_viestit(m, v, aikaraja_s=aikaraja_s, max_tokens=max_tokens, **kw)
+    return yhdistelma.aja(yhdistelma_nimi, roolit or {}, malli, viestit, kysy,
+                          **({"kello": kello} if kello is not None else {}))
 
 
 class PaivakattoTaynna(YksityinenVirhe):
