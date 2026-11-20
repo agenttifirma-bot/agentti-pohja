@@ -104,6 +104,7 @@ header{padding:.6rem 1rem;border-bottom:1px solid var(--rk);display:flex;justify
 #viestit{flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:.6rem}
 .v{max-width:92%;padding:.6rem .8rem;border-radius:12px;white-space:pre-wrap;word-wrap:break-word}
 .tony{background:var(--tony);align-self:flex-end}.aivo{background:var(--aivo);align-self:flex-start}
+.jarjestelma{align-self:center;font-size:.85rem;font-style:italic;border:1px dashed var(--rk)}
 .v button{display:block;margin-top:.4rem;font-size:.8rem}
 .kortti{align-self:flex-start;max-width:92%;padding:.6rem .8rem;border-radius:12px;border:2px solid var(--rk)}
 .kortti q{display:block;white-space:pre-wrap;margin:.3rem 0}.kortti button{display:inline-block;margin-right:.4rem;font-size:.9rem}
@@ -165,6 +166,7 @@ async function ehdotus(t){const d=document.createElement('div');d.className='kor
   if(r.status===401){location.href='/kirjaudu';return;}
   let j={};try{j=await r.json();}catch(z){}
   ti.textContent=j.teksti||('Ei tehty: '+(j.virhe||r.status)+(r.status===409?'. Avaa ehdotus uudelleen.':''));
+  if(r.ok&&typeof j.merkinta==='string')lisaa('jarjestelma',j.merkinta);
   if(!r.ok&&r.status!==409){h.disabled=y.disabled=false;}alas();};
  h.onclick=()=>{if(confirm('Hyv\u00e4ksyt\u00e4\u00e4nk\u00f6 muutos ydinohjeeseen '+e.tiedosto+' (sha '+e.sha8+')?'))kasittele('/api/ehdotus/hyvaksy',{vahvistus:'kyll\u00e4 '+e.sha8});};
  y.onclick=()=>{if(confirm('Hyl\u00e4t\u00e4\u00e4nk\u00f6 ehdotus? Se siirret\u00e4\u00e4n kansioon hylatyt/ eik\u00e4 sit\u00e4 poisteta.'))kasittele('/api/ehdotus/hylkaa',{});};
@@ -900,6 +902,7 @@ def tee_kasittelija(tila):
                     tallennetut.append(eid)
                     return eid
                 vastaus = yksityinen.irrota_ehdotukset(vastaus, tallenna)
+                vastaus = yksityinen.neutraloi_merkinnat(vastaus)     # vain palvelin kirjoittaa jarjestelmamerkinnat
                 vastaus, valinnat = erota_valinnat(vastaus)
                 vastaus, ehdotus = erota_paatosehdotus(vastaus, historia)
                 vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
@@ -1005,6 +1008,15 @@ def tee_kasittelija(tila):
             return self._json(200, {"tunnus": d.get("tunnus"), "tiedosto": e["tiedosto"], "sha8": e["sha"][:8],
                                     "ero": "\n".join(eroa)})
 
+        def _merkitse(self, d, teksti):
+            """Lisaa jarjestelmamerkinnan keskusteluun vasta onnistuneen kasittelyn jalkeen. Merkinta on tiedoksi
+            (ei anna oikeuksia). Jos kirjoitus epaonnistuu, kasittely on silti tehty: palautetaan None."""
+            try:
+                tila.yks.lisaa(d.get("keskustelu"), yksityinen.JARJESTELMA_ROOLI, teksti)
+            except (ChatVirhe, OSError):
+                return None
+            return teksti
+
         def _ehdotus_hyvaksy(self, d):
             if not self._yks_keskustelu(d):
                 return self._json(404, {"virhe": "ei loydy"})
@@ -1014,27 +1026,37 @@ def tee_kasittelija(tila):
             if not tila.ehdotuslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
             try:
+                e = yksityinen.lue_ehdotus(tila.ehdotukset, eid)          # merkintaa varten; ehdotus poistuu hyvaksyttaessa
                 tulos = yksityinen.hyvaksy_ehdotus(tila.ehdotukset, tila.ydinohjeet, eid, vahvistus)
+                merkinta = self._merkitse(d, yksityinen.hyvaksynta_merkinta(e["tiedosto"], e["sha"][:8]))
             except ChatVirhe as e:
                 return self._json(409, {"virhe": str(e)})
             except OSError as e:
                 return self._json(500, {"virhe": "tallennus ep\u00e4onnistui (%s)" % type(e).__name__})
             finally:
                 tila.ehdotuslukko.release()
-            return self._json(200, {"tulos": tulos, "teksti": EHDOTUS_TULOKSET.get(tulos, "Hyv\u00e4ksytty (%s)." % tulos)})
+            return self._json(200, {"tulos": tulos, "teksti": EHDOTUS_TULOKSET.get(tulos, "Hyv\u00e4ksytty (%s)." % tulos),
+                                    "merkinta": merkinta})
 
         def _ehdotus_hylkaa(self, d):
             if not self._yks_keskustelu(d):
                 return self._json(404, {"virhe": "ei loydy"})
             if not tila.ehdotuslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
+            eid = d.get("tunnus")
             try:
-                yksityinen.hylkaa_ehdotus(tila.ehdotukset, d.get("tunnus"))
+                try:
+                    tiedosto = yksityinen.lue_ehdotus(tila.ehdotukset, eid)["tiedosto"]
+                except ChatVirhe:
+                    tiedosto = "(tuntematon)"                     # viallisenkin ehdotuksen voi hylata
+                yksityinen.hylkaa_ehdotus(tila.ehdotukset, eid)
+                merkinta = self._merkitse(d, yksityinen.hylkays_merkinta(tiedosto, eid))
             except ChatVirhe as e:
                 return self._json(409, {"virhe": str(e)})
             finally:
                 tila.ehdotuslukko.release()
-            return self._json(200, {"tulos": "hylatty", "teksti": "Ehdotus hyl\u00e4tty ja siirretty kansioon hylatyt/."})
+            return self._json(200, {"tulos": "hylatty", "teksti": "Ehdotus hyl\u00e4tty ja siirretty kansioon hylatyt/.",
+                                    "merkinta": merkinta})
 
     return K
 

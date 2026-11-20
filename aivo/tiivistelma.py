@@ -7,7 +7,8 @@ Tama moduuli EI kutsu mallia eika verkkoa (vain stdlib; AST-testi valvoo). Se va
   * tallentaa tiivistelmat (kansio 0700, tiedostot 0600) ja antaa Tonille komennot lista/nayta/poista/korjaa.
 
 Tiivistelma on DATAA, ei ohjeita: mikaan tassa ei suorita tai tulkitse sisaltoa kaskyna.
-Lahdekeskustelu on aivo/chat.py:n jsonl (rivi: {"aika","rooli","teksti","lahteet"}; rooli "tony" tai "aivo").
+Lahdekeskustelu on aivo/chat.py:n jsonl (rivi: {"aika","rooli","teksti","lahteet"}; rooli "tony", "aivo" tai
+"jarjestelma" = palvelimen merkinta yksityisessa tilassa, ei koskaan Tonyn sanoja).
 
 Kaytto: python3 -m aivo.tiivistelma --kansio KANSIO lista | nayta TUNNUS | poista TUNNUS | korjaa TUNNUS KOHTA TEKSTI
 """
@@ -95,7 +96,7 @@ def lue_keskustelu(polku):
             d = json.loads(r)
         except ValueError:
             raise TiivistelmaVirhe("keskustelun rivi ei ole JSON:ia")
-        if (not isinstance(d, dict) or d.get("rooli") not in ("tony", "aivo") or not isinstance(d.get("teksti"), str)
+        if (not isinstance(d, dict) or d.get("rooli") not in ("tony", "aivo", "jarjestelma") or not isinstance(d.get("teksti"), str)
                 or not isinstance(d.get("aika"), str)):
             raise TiivistelmaVirhe("keskustelun rivin muoto on virheellinen")
         viestit.append({"rooli": d["rooli"], "teksti": d["teksti"], "aika": d["aika"]})

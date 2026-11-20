@@ -203,7 +203,8 @@ def muodosta_data(viestit, alku, loppu):
     rivit = []
     for i in range(alku, loppu + 1):
         v = viestit[i]
-        rivit.append("#%d %s: %s" % (i, "Tony" if v["rooli"] == "tony" else "Aivo", siivoa_viesti(v["teksti"])))
+        kuka = {"tony": "Tony", "jarjestelma": "J\u00e4rjestelm\u00e4"}.get(v["rooli"], "Aivo")
+        rivit.append("#%d %s: %s" % (i, kuka, siivoa_viesti(v["teksti"])))
     return "%s\n%s\n%s" % (tiivistelma.RAJA, "\n\n".join(rivit), tiivistelma.RAJA)
 
 
