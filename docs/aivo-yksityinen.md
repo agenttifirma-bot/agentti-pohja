@@ -111,48 +111,68 @@ Yksityisen tilan päätös kirjataan vain yksityiseen muistiin (tiedosto 0600) e
 
 ## Keskustelujen tiivistys (komento)
 
-Komento `python3 -m aivo.tiivista --alue yksityinen` tiivistää yksityisen alueen keskustelut paikallisella mallilla. Se käyttää samaa loopback-osoitetta kuin chat (`--malli-url` tai `AIVO_MALLI_URL`, oletus `http://127.0.0.1:8081`) eikä hyväksy mitään muuta osoitetta. Keskustelu tiivistetään vasta, kun sen viimeisestä viestistä on 30 minuuttia. Pitkä keskustelu pilkotaan osiin, ja jokainen osa tallentuu omaksi tiivistelmäkseen kansioon `tiivistelmat`. Valinta `--kuiva` listaa tiivistettävät alueet ilman mallikutsua. Komentoa voi ajaa käsin `aivo-yksityinen`-käyttäjänä tai ajastimella (alla).
+Komento `python3 -m aivo.tiivista --alue yksityinen` tiivistää yksityisen alueen keskustelut. Keskustelu tiivistetään vasta, kun sen viimeisestä viestistä on 30 minuuttia. Pitkä keskustelu pilkotaan osiin, ja jokainen osa tallentuu omaksi tiivistelmäkseen kansioon `tiivistelmat`. Valinta `--kuiva` listaa tiivistettävät alueet ilman mallikutsua.
+
+Mallin lähde valitaan samalla asetuksella kuin chatissa: `AIVO_YKSITYINEN_TAUSTAPAA` (tai `--taustapaa`), oletus `loopback`.
+
+- **loopback**: paikallinen malli samassa loopback-osoitteessa kuin chatissa (`--malli-url` tai `AIVO_MALLI_URL`, oletus `http://127.0.0.1:8081`). Muuta osoitetta ei hyväksytä. Kulukattoa ei ole, koska paikallinen malli ei maksa mitään.
+- **openrouter**: OpenRouterin avoin malli nollasäilytyksellä (ZDR). Malli on sama kuin chatissa (`AIVO_OPENROUTER_MALLI`), ja avain luetaan samasta tiedostosta (`AIVO_OPENROUTER_AVAIN`, oletus `/var/lib/aivo-yksityinen/openrouter-avain`). Kutsu kulkee vain funktion `yksityinen_or.kysy_tiivistys` ja sitä kautta `openrouter_kulut.kutsu`n läpi. Pyynnössä on aina `provider.zdr=true` ja `data_collection=deny`, suljettu malli hylätään ennen kutsua, ja kulut kirjataan tiedostoon `/var/lib/claude-jono/openrouter-kulut.jsonl` tehtävän tunnisteella `aivo-yksityinen-tiivistys`. Muita verkkokohteita ei ole.
+
+Kulurajat OpenRouter-taustapäällä:
+
+- Enintään 10 tiivistyskutsua vuorokaudessa (Europe/Helsinki), kuten työkalutilassa. Kutsu varataan ennen lähetystä. Kun raja täyttyy, ajo lopettaa ja kirjaa rivin `lopetus: paivakatto 10/10 taynna`.
+- Kulut lasketaan samaan konttikohtaiseen 10 €/vrk päiväkattoon kuin chatin kutsut (A1005). Jos katto on täynnä, kutsua ei tehdä, ajo lopettaa (`lopetus: kulukatto taynna`) eikä yrityskertoja kulu.
+
+Keskustelun sisältö ei päädy lokiin (`indeksi/tiivista.log`), kulukirjanpitoon eikä virheviesteihin. Lokissa on vain keskustelun tunnus, viestien numerot ja virheen tyyppi.
+
+### Tiivistelmät yksityisen tilan kehotteeseen
+
+Chat liittää yksityisen alueen tiivistelmät yksityisen tilan kehotteeseen vain, kun palvelulla on asetus `AIVO_YKSITYISET_TIIVISTELMAT_KAYTOSSA=1` (tai valitsin `--yksityiset-tiivistelmat-kaytossa`). Oletuksena ominaisuus on pois päältä. Kansio on oletuksena `--yksityinen-data`-kansion viereinen `tiivistelmat` (eli `/var/lib/aivo-yksityinen/tiivistelmat`), ja sen voi vaihtaa asetuksella `AIVO_YKSITYISET_TIIVISTELMAT`.
+
+- Mekanismi ja yläraja ovat samat kuin työkalutilassa (`aivo/tiivistelmat_kehote.py`, enintään 60 kt). Kysymykseen osuvat ja uusimmat tiivistelmät tulevat ensin.
+- Erottelu: työkalutila lukee vain kansion `AIVO_TIIVISTELMAT` (oletus `/var/lib/aivo/tiivistelmat`), ja yksityinen tila lukee vain yksityisen alueen kansion. Palvelu ei käynnisty, jos molemmat asetukset osoittavat samaan kansioon.
+- Paikallisella mallilla 60 kt pidentää kehotteen käsittelyä selvästi (katso Keskusteluhistoria mallille). Kytkin on tarkoitettu ensisijaisesti OpenRouter-taustapäälle.
+
+Käyttöönotto: lisää `aivo-chat.service`-tiedostoon rivi `Environment=AIVO_YKSITYISET_TIIVISTELMAT_KAYTOSSA=1` ja käynnistä palvelu uudelleen (`systemctl daemon-reload && systemctl restart aivo-chat`).
 
 ### Tiivistyksen ajastin (ohje, ei asennettu)
 
-Repossa ei ole tälle valmista yksikköä, eikä tämä muutos asenna mitään. Tony luo tiedostot itse, jos haluaa ajastuksen. Malli on sama kuin työkalutilan `aivo-tiivista.timer` (`docs/aivo-chat.md`), mutta käyttäjä, kansio ja verkko ovat yksityisen tilan omat.
+Repossa ei ole tälle valmista yksikköä, eikä tämä muutos asenna mitään. Tony luo tiedostot itse, jos haluaa ajastuksen. Malli on sama kuin työkalutilan `aivo-tiivista.timer` (`docs/aivo-chat.md`). Alla on kaksi vaihtoehtoa: OpenRouter-taustapää (kontti, jossa chat käyttää OpenRouteria) ja paikallinen malli.
 
-Huomioi ennen asennusta:
-
-- Tiivistys käyttää aina paikallista mallia loopback-osoitteessa. Se ei käytä OpenRouteria, vaikka chat käyttäisi OpenRouter-taustapäätä. Jos `aivo-malli.service` ei ole käynnissä, ajo päättyy virheeseen eikä tiivistä mitään.
-- Chat ei vielä liitä yksityisen alueen tiivistelmiä kehotteeseen. Tiivistelmät tallentuvat kansioon `/var/lib/aivo-yksityinen/tiivistelmat`, mutta yksityisen tilan Aivo muistaa saman keskustelun asiat vain keskusteluhistorian kautta (katso Keskusteluhistoria mallille).
+Ajastimen käyttäjän pitää olla sama kuin `aivo-chat.service`-palvelun `User=` (kontissa `aivo`). Syy: yksityiset kansiot ja avaintiedosto tarkistetaan palvelun käyttäjän omiksi (0700 ja 0600). Tarkista käyttäjä: `systemctl show -p User aivo-chat`.
 
 1. **Kuiva-ajo** (ei mallikutsua):
 
    ```
-   runuser -u aivo-yksityinen -- env PYTHONPATH=/opt/agentti-pohja python3 -m aivo.tiivista --alue yksityinen --kuiva
+   runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja AIVO_YKSITYINEN_TAUSTAPAA=openrouter python3 -m aivo.tiivista --alue yksityinen --kuiva
    ```
 
    Odotettu tulos: rivit `tiivistettaisiin <keskustelun tunnus> viestit 0-N` tai ei mitään, jos tiivistettävää ei ole.
 
-2. **Yksikkö** `/etc/systemd/system/aivo-tiivista-yksityinen.service`:
+2. **Yksikkö** `/etc/systemd/system/aivo-tiivista-yksityinen.service` (OpenRouter-taustapää):
 
    ```
    [Unit]
-   Description=Aivon keskustelujen tiivistys (yksityinen tila, paikallinen malli)
-   After=aivo-malli.service
+   Description=Aivon keskustelujen tiivistys (yksityinen tila, OpenRouter ZDR)
 
    [Service]
    Type=oneshot
-   User=aivo-yksityinen
+   User=aivo
    WorkingDirectory=/opt/agentti-pohja
    Environment=PYTHONPATH=/opt/agentti-pohja
+   Environment=AIVO_YKSITYINEN_TAUSTAPAA=openrouter
+   Environment=AIVO_OPENROUTER_MALLI=qwen/qwen3-235b-a22b-2507
    ExecStart=/usr/bin/python3 -m aivo.tiivista --alue yksityinen
-   IPAddressDeny=any
-   IPAddressAllow=127.0.0.0/8
    NoNewPrivileges=true
    ProtectSystem=strict
    ProtectHome=yes
-   ReadWritePaths=/var/lib/aivo-yksityinen
+   ReadWritePaths=/var/lib/aivo-yksityinen /var/lib/claude-jono
    PrivateTmp=true
    ```
 
-   Rivit `IPAddressDeny=any` ja `IPAddressAllow=127.0.0.0/8` rajaavat ajon loopbackiin kuten mallipalvelimen. Kaksi ajoa yhtä aikaa on turvallista: toinen ajo huomaa lukon (`tiivista.lukko`) ja päättyy.
+   Käytä samaa mallia kuin `aivo-chat.service`-tiedostossa (`--openrouter-malli` tai `AIVO_OPENROUTER_MALLI`). `/var/lib/claude-jono` on mukana `ReadWritePaths`-rivillä, koska kulukirjanpito ja päiväkatto ovat siellä. Ilman sitä jokainen kutsu estyy (fail closed). Kaksi ajoa yhtä aikaa on turvallista: toinen ajo huomaa lukon (`tiivista.lukko`) ja päättyy.
+
+   **Paikallinen malli:** jätä pois rivit `AIVO_YKSITYINEN_TAUSTAPAA` ja `AIVO_OPENROUTER_MALLI` sekä `/var/lib/claude-jono`, lisää `[Unit]`-osioon `After=aivo-malli.service` ja `[Service]`-osioon rivit `IPAddressDeny=any` ja `IPAddressAllow=127.0.0.0/8`. Ne rajaavat ajon loopbackiin kuten mallipalvelimen. Käyttäjä on se, joka omistaa `/var/lib/aivo-yksityinen`-kansion.
 
 3. **Ajastin** `/etc/systemd/system/aivo-tiivista-yksityinen.timer` (15 minuutin välein):
 
@@ -176,7 +196,7 @@ Huomioi ennen asennusta:
    journalctl -u aivo-tiivista-yksityinen --since "20 min ago" --no-pager
    ```
 
-   Odotettu tulos: ajastin näkyy listassa, ja journaalissa on rivejä `tiivistetty: …` tai ei rivejä, jos tiivistettävää ei ollut. Rivi `virhe: …` kertoo yleensä, ettei paikallinen malli vastannut.
+   Odotettu tulos: ajastin näkyy listassa, ja journaalissa on rivejä `tiivistetty: …` tai ei rivejä, jos tiivistettävää ei ollut. Rivi `epaonnistui: … (TiivistaVirhe)` tai `virhe: …` kertoo yleensä, ettei malli vastannut tai avainta ei voitu lukea. Kulut näkyvät viikkoraportissa: `python3 -m aivo.openrouter_kulut viikko`.
 
 ## Keskusteluhistoria mallille
 

@@ -693,10 +693,11 @@ class Tila:
                  yks_data=None, yks_muisti=None, ydinohjeet=None, ehdotukset=None,
                  malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None,
                  taustapaa="loopback", or_malli=None, or_avain=yksityinen_or.OLETUS_AVAIN,
-                 or_kulutila=None, tiivistelmat=None, kalenteri_lahde=None):   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
+                 or_kulutila=None, tiivistelmat=None, kalenteri_lahde=None, yks_tiivistelmat=None):   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
         self.tiivistelmat = tiivistelmat          # tyokalualueen tiivistelmakansio (vain tyokalutila lukee sita)
+        self.yks_tiivistelmat = None              # yksityisen alueen tiivistelmakansio (vain yksityinen tila lukee sita)
         self.kalenteri = kalenteri_lahde          # kalenteri.Lahde tai None; vain tyokalutila lukee sita
         self.keskustelut = Keskustelut(data)
         self.istunnot = Istunnot()
@@ -720,6 +721,10 @@ class Tila:
             self.ehdotukset = str(yksityinen.tarkista_yksityinen_hakemisto(
                 ehdotukset or str(Path(yks_data).parent / "ehdotukset")))
             self.taustapaa = taustapaa
+            if yks_tiivistelmat:
+                if tiivistelmat and os.path.realpath(yks_tiivistelmat) == os.path.realpath(tiivistelmat):
+                    raise ChatVirhe("yksityisen ja tyokalutilan tiivistelmat eivat saa olla samassa kansiossa")
+                self.yks_tiivistelmat = str(yks_tiivistelmat)
             if kysy_yks:
                 self.kysy_yks = kysy_yks
             elif taustapaa == "openrouter":
@@ -890,6 +895,11 @@ def tee_kasittelija(tila):
                 oma_idx = len(historia) - 1          # palvelin kertoo Tonyn viestin paikan; selain ei arvaa
                 muisti, tiedostot = lue_muisti(tila.yks_muisti, yksityinen.MUISTI_YLARAJA,
                                                yksityinen.MUISTI_YLARAJA // 4, teksti)
+                if tila.yks_tiivistelmat:     # yksityisen alueen tiivistelmat, sama mekanismi ja 60 kt raja kuin tyokalutilassa
+                    tiiv, tiiv_tiedostot = tiivistelmat_kehote.muodosta(tila.yks_tiivistelmat, teksti)
+                    if tiiv:
+                        muisti += tiiv + RAJA + "\n"
+                        tiedostot = tiedostot + tiiv_tiedostot
                 try:
                     vastaus = tila.kysy_yks(muisti, historia, yksityinen.lue_ydinohjeet(tila.ydinohjeet))
                 except ChatVirhe as e:
@@ -1089,6 +1099,11 @@ def main(argv=None):
     ap.add_argument("--tiivistelmat", default=os.environ.get("AIVO_TIIVISTELMAT"),
                     help="tyokalutilan tiivistelmakansio (oletus: --datan viereinen 'tiivistelmat'); kaytossa vain, "
                          "kun --tiivistelmat-kaytossa on annettu")
+    ap.add_argument("--yksityiset-tiivistelmat-kaytossa", action="store_true",
+                    default=os.environ.get("AIVO_YKSITYISET_TIIVISTELMAT_KAYTOSSA") == "1",
+                    help="liittaa yksityisen alueen tiivistelmat yksityisen tilan kehotteeseen (oletus: pois paalta)")
+    ap.add_argument("--yksityiset-tiivistelmat", default=os.environ.get("AIVO_YKSITYISET_TIIVISTELMAT"),
+                    help="yksityisen alueen tiivistelmakansio (oletus: --yksityinen-datan viereinen 'tiivistelmat')")
     ap.add_argument("--kalenteri-kaytossa", action="store_true",
                     default=os.environ.get("AIVO_KALENTERI_KAYTOSSA") == "1",
                     help="liittaa seuraavan 14 paivan tapahtumat tyokalutilan kehotteeseen (oletus: pois paalta)")
@@ -1119,6 +1134,8 @@ def main(argv=None):
                     or_avain=a.openrouter_avain_tiedosto,
                     tiivistelmat=(a.tiivistelmat or str(Path(a.data).parent / "tiivistelmat"))
                     if a.tiivistelmat_kaytossa else None,
+                    yks_tiivistelmat=(a.yksityiset_tiivistelmat or str(Path(a.yksityinen_data).parent / "tiivistelmat"))
+                    if a.yksityiset_tiivistelmat_kaytossa and a.yksityinen_data else None,
                     kalenteri_lahde=kalenteri.IcalLahde(a.kalenteri_osoitetiedosto, a.kalenteri_data)
                     if a.kalenteri_kaytossa else None)
         palvelin = kaynnista(a.osoite, a.portti, tila)
