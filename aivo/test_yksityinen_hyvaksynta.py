@@ -51,7 +51,7 @@ class Pohja(unittest.TestCase):
         self.srv.server_close()
         self.tmp.cleanup()
 
-    def pyynto(self, metodi, polku, olio=None, ev=True, otsake=True, host=None):
+    def pyynto(self, metodi, polku, olio=None, ev=True, otsake=True, host=None, origin=None):
         c = http.client.HTTPConnection(LOOP, self.srv.server_address[1], timeout=10)
         h = {"Content-Type": "application/json"}
         if ev:
@@ -60,6 +60,8 @@ class Pohja(unittest.TestCase):
             h["X-Aivo"] = "1"
         if host:
             h["Host"] = host
+        if origin:
+            h["Origin"] = origin
         c.request(metodi, polku, body=None if olio is None else json.dumps(olio), headers=h)
         r = c.getresponse()
         return r.status, json.loads(r.read() or b"{}")
@@ -296,6 +298,117 @@ class PitkaEhdotusTesti(Pohja):
         self.assertIn("OpenRouterin", yksityinen_or.KEHOTE)
         self.assertIn("ZDR", yksityinen_or.KEHOTE)
         self.assertNotIn("ei l\u00e4hde millek\u00e4\u00e4n ulkoiselle", yksityinen_or.KEHOTE)
+
+
+class Jatkotesti(Pohja):
+    """#352:n tarkastuksen jatko: virheelliset syotteet, alkupera, polut ja lukko."""
+
+    def reitit(self, kid, eid, s8):
+        return (("GET", "/api/ehdotukset?keskustelu=" + kid, None),
+                ("GET", "/api/ehdotus?keskustelu=%s&tunnus=%s" % (kid, eid), None),
+                ("POST", "/api/ehdotus/hyvaksy", {"keskustelu": kid, "tunnus": eid, "vahvistus": "kyll\u00e4 " + s8}),
+                ("POST", "/api/ehdotus/hylkaa", {"keskustelu": kid, "tunnus": eid}))
+
+    def test_ei_merkkijonotunnus_on_400(self):
+        kid = self.uusi()
+        eid, s8 = self.ehdota()
+        for t in (["x"], {"a": 1}, 123, None, True):
+            s, d = self.pyynto("POST", "/api/ehdotus/hylkaa", {"keskustelu": kid, "tunnus": t})
+            self.assertEqual(s, 400, t)
+            self.assertIn("virhe", d)
+            s, _ = self.hyvaksy(kid, t, "kyll\u00e4 " + s8)
+            self.assertEqual(s, 400, t)
+        self.assertEqual(self.ohje(), "vanha saanto\n")
+        self.assertEqual(self.odottavat(kid), [eid])
+
+    def test_lue_ehdotus_ei_merkkijono_on_yksityinenvirhe(self):
+        for t in (["x"], 123, b"a" * 12, None):
+            with self.assertRaises(yksityinen.YksityinenVirhe):
+                yksityinen.lue_ehdotus(self.tila.ehdotukset, t)
+            with self.assertRaises(yksityinen.YksityinenVirhe):
+                yksityinen.hylkaa_ehdotus(self.tila.ehdotukset, t)
+
+    def test_vieras_origin_on_403_uusilla_reiteilla(self):
+        kid = self.uusi()
+        eid, s8 = self.ehdota()
+        for metodi, polku, olio in self.reitit(kid, eid, s8):
+            for o in ("http://pahis.example", "null", "http://%s:1" % LOOP):
+                self.assertEqual(self.pyynto(metodi, polku, olio, origin=o)[0], 403, (polku, o))
+        self.assertEqual(self.ohje(), "vanha saanto\n")
+        self.assertEqual(self.odottavat(kid), [eid])
+
+    def test_polun_ohitus_get_ja_hyvaksynta(self):
+        kid = self.uusi()
+        eid, s8 = self.ehdota()
+        (Path(self.tmp.name) / "yks" / "salainen.json").write_text(
+            json.dumps({"tiedosto": "saannot.md", "teksti": "x\n", "sha": yksityinen.sha("x\n")}))
+        for t in ("../salainen", "..%2Fsalainen", "%2e%2e/salainen", "/etc/passwd", eid + "/../" + eid, eid + "%00"):
+            s, d = self.nayta(kid, t)
+            self.assertEqual(s, 400, t)
+            self.assertNotIn("ero", d)
+        for t in ("../salainen", "../" + eid, eid + "/", "/" + eid):
+            self.assertEqual(self.hyvaksy(kid, t, "kyll\u00e4 " + yksityinen.sha("x\n")[:8])[0], 409, t)
+        self.assertEqual(self.ohje(), "vanha saanto\n")
+        self.assertEqual(self.odottavat(kid), [eid])
+
+    def test_lukko_kesken_on_429(self):
+        kid = self.uusi()
+        eid, s8 = self.ehdota()
+        self.assertTrue(self.tila.ehdotuslukko.acquire(blocking=False))
+        try:
+            s, d = self.hyvaksy(kid, eid, "kyll\u00e4 " + s8)
+            self.assertEqual(s, 429)
+            s, d = self.pyynto("POST", "/api/ehdotus/hylkaa", {"keskustelu": kid, "tunnus": eid})
+            self.assertEqual(s, 429)
+        finally:
+            self.tila.ehdotuslukko.release()
+        self.assertEqual(self.ohje(), "vanha saanto\n")
+        self.assertEqual(self.odottavat(kid), [eid])
+        self.assertEqual(self.hyvaksy(kid, eid, "kyll\u00e4 " + s8)[0], 200)    # lukko vapautui
+
+    def test_virheellinen_nimi_ja_sulkeva_tagi_sailyttaa_tekstin(self):
+        kid = self.uusi()
+        self.vastaus = "Alku.\n[[EHDOTUS ../pahis.md]]\nsisalto\n[[/EHDOTUS]]\nLoppuselitys t\u00e4ss\u00e4."
+        s, v = self.pyynto("POST", "/api/viesti", {"keskustelu": kid, "teksti": "p\u00e4ivit\u00e4"})
+        self.assertEqual(s, 200)
+        self.assertIn("[ehdotusta ei tallennettu: virheellinen tiedostonimi]", v["vastaus"])
+        self.assertNotIn("vastaus katkesi", v["vastaus"])
+        self.assertIn("Alku.", v["vastaus"])
+        self.assertIn("Loppuselitys t\u00e4ss\u00e4.", v["vastaus"])
+        self.assertNotIn("sisalto", v["vastaus"])
+        self.assertNotIn("ehdotukset", v)
+        self.assertEqual(self.odottavat(kid), [])
+
+
+class IrrotusTesti(unittest.TestCase):
+    def irrota(self, teksti):
+        tallennetut = []
+
+        def tallenna(n, t):
+            tallennetut.append(n)
+            return "a" * 12
+        return yksityinen.irrota_ehdotukset(teksti, tallenna), tallennetut
+
+    def test_virheellinen_nimi_sulkevalla_tagilla(self):
+        v, t = self.irrota("A [[EHDOTUS Iso.MD]]x[[/EHDOTUS]] B")
+        self.assertEqual(v, "A [ehdotusta ei tallennettu: virheellinen tiedostonimi] B")
+        self.assertEqual(t, [])
+
+    def test_katkennut_ilman_sulkevaa(self):
+        v, t = self.irrota("A [[EHDOTUS saannot.md]]x ja katke")
+        self.assertEqual(v, "A " + yksityinen.KATKENNUT_EHDOTUS)
+        self.assertEqual(t, [])
+
+    def test_virheellinen_ja_kelvollinen_samassa(self):
+        v, t = self.irrota("A [[EHDOTUS ../x]]y[[/EHDOTUS]] B [[EHDOTUS saannot.md]]z[[/EHDOTUS]] C")
+        self.assertEqual(t, ["saannot.md"])
+        self.assertTrue(v.startswith("A [ehdotusta ei tallennettu: virheellinen tiedostonimi] B [Ehdotus"), v)
+        self.assertTrue(v.endswith(" C"), v)
+
+    def test_virheellinen_suljettu_ja_katkennut_perassa(self):
+        v, t = self.irrota("A [[EHDOTUS ../x]]y[[/EHDOTUS]] B [[EHDOTUS saannot.md]]z")
+        self.assertEqual(v, "A [ehdotusta ei tallennettu: virheellinen tiedostonimi] B " + yksityinen.KATKENNUT_EHDOTUS)
+        self.assertEqual(t, [])
 
 
 class SivuTesti(unittest.TestCase):
