@@ -270,7 +270,8 @@ class TyokalutilaTesti(Pohja):
             self.assertNotIn(sana, kaares.lower())
 
     def test_vain_yksityinen_moduuli_ja_chat_tuovat_openrouter_koodia(self):
-        sallitut = {"yksityinen_or.py", "openrouter_kulut.py", "openrouter_zdr.py", "chat.py"}
+        # mallivertailu.py: erillinen ajotyokalu synteettiselle datalle (Tony 19.11.2026), ei kytketty palveluun.
+        sallitut = {"yksityinen_or.py", "openrouter_kulut.py", "openrouter_zdr.py", "chat.py", "mallivertailu.py"}
         # yksityisen alueen tiivistys saa tuoda vain yksityinen_or-moduulin (ZDR, avoin malli, katto), ei muuta
         vain_yksityinen_or = {"tiivista_yksityinen.py"}
         for p in sorted(AIVO.glob("*.py")):
