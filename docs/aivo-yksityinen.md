@@ -123,6 +123,8 @@ Kulurajat OpenRouter-taustapäällä:
 - Enintään 10 tiivistyskutsua vuorokaudessa (Europe/Helsinki), kuten työkalutilassa. Kutsu varataan ennen lähetystä. Kun raja täyttyy, ajo lopettaa ja kirjaa rivin `lopetus: paivakatto 10/10 taynna`.
 - Kulut lasketaan samaan konttikohtaiseen 10 €/vrk päiväkattoon kuin chatin kutsut (A1005). Jos katto on täynnä, kutsua ei tehdä, ajo lopettaa (`lopetus: kulukatto taynna`) eikä yrityskertoja kulu.
 
+Tiivistys tarkistaa vain kansiot, joita se käyttää: `chat` (luku) sekä `tiivistelmat` ja `indeksi` (kirjoitus). Niiden pitää olla palvelun käyttäjän omia, oikeuksiltaan 0700 eikä niissä saa olla linkkejä, alikansioita eikä toisen käyttäjän tiedostoja. Muuten ajo pysähtyy virheeseen `alueen tarkistus epaonnistui (AlueVirhe)`. Muita yksityisen alueen kansioita tiivistys ei avaa eikä tarkista. Siksi hylättyjen ehdotusten kansio `ehdotukset/hylatyt/` ja ydinohjeiden git-repo (`ydinohjeet/.git`) eivät estä tiivistystä.
+
 Keskustelun sisältö ei päädy lokiin (`indeksi/tiivista.log`), kulukirjanpitoon eikä virheviesteihin. Lokissa on vain keskustelun tunnus, viestien numerot ja virheen tyyppi.
 
 ### Tiivistelmät yksityisen tilan kehotteeseen
@@ -141,13 +143,14 @@ Repossa ei ole tälle valmista yksikköä, eikä tämä muutos asenna mitään. 
 
 Ajastimen käyttäjän pitää olla sama kuin `aivo-chat.service`-palvelun `User=` (kontissa `aivo`). Syy: yksityiset kansiot ja avaintiedosto tarkistetaan palvelun käyttäjän omiksi (0700 ja 0600). Tarkista käyttäjä: `systemctl show -p User aivo-chat`.
 
-1. **Kuiva-ajo** (ei mallikutsua):
+1. **Kuiva-ajo** (ei mallikutsua). Kuiva-ajo ei luo kansioita. Tuoreessa asennuksessa kansioita `tiivistelmat` ja `indeksi` ei vielä ole, joten luo ne ensin palvelun käyttäjälle (kontissa `aivo`, vaihda tarvittaessa):
 
    ```
+   install -d -m 700 -o aivo -g aivo /var/lib/aivo-yksityinen/tiivistelmat /var/lib/aivo-yksityinen/indeksi
    runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja AIVO_YKSITYINEN_TAUSTAPAA=openrouter python3 -m aivo.tiivista --alue yksityinen --kuiva
    ```
 
-   Odotettu tulos: rivit `tiivistettaisiin <keskustelun tunnus> viestit 0-N` tai ei mitään, jos tiivistettävää ei ole.
+   Odotettu tulos: rivit `tiivistettaisiin <keskustelun tunnus> viestit 0-N` tai ei mitään, jos tiivistettävää ei ole. Jos kansiot puuttuvat, ajo päättyy paluuarvoon 1 ja virheeseen `kuiva-ajo ei luo kansioita; puuttuu: tiivistelmat, indeksi`, eikä mitään luoda. Kansiota `siirrot` tiivistys ei tarvitse. Varsinainen ajo (ilman `--kuiva`) luo puuttuvat käyttämänsä kansiot itse (0700).
 
 2. **Yksikkö** `/etc/systemd/system/aivo-tiivista-yksityinen.service` (OpenRouter-taustapää):
 
