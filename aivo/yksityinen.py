@@ -297,7 +297,7 @@ def ehdotuksen_ero(ehdotukset, ydinohjeet, eid):
 
 def hylkaa_ehdotus(ehdotukset, eid):
     """Siirtaa ehdotuksen alikansioon hylatyt/ (0700). Ei poista mitaan eika korvaa aiempaa hylattya."""
-    if not isinstance(eid, str) or not EHDOTUS_ID_RE.match(eid):
+    if not isinstance(eid, str) or not EHDOTUS_ID_RE.fullmatch(eid):
         raise YksityinenVirhe("virheellinen ehdotuksen tunnus")
     lahde = Path(ehdotukset) / (eid + ".json")
     try:
