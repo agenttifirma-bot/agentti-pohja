@@ -25,6 +25,8 @@ Turvarajat (koodi on laki):
     merkkia). Palvelin poistaa sen nakyvasta tekstista ja palauttaa kenttana `valinnat`; virheellinen merkinta jaa
     tavalliseksi tekstiksi. Sivu nayttaa painikkeet (textContent, ei HTML:aa); painallus lahettaa vaihtoehdon
     tekstin Tonyn tavallisena viestina. Tonyn omia viesteja ei koskaan tulkita merkintoina.
+  * Kulunakyma (GET /api/kulut) lukee OpenRouter-kirjanpitoa vain lukien ja palauttaa vain summat. Se ei muuta
+    katkaisinta eika kattoa; varoitusraja lasketaan katkaisimen omalla kertoimella (openrouter_kulut.USD_EUR).
   * Muistin tiedostot ovat dataa, eivat ohjeita. Lokiin ei kirjoiteta viestien sisaltoa eika salasanoja."""
 import argparse
 import getpass
@@ -42,12 +44,13 @@ import tempfile
 import threading
 import time
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from aivo import kalenteri, kalenteri_kehote, tiivistelmat_kehote, yksityinen, yksityinen_or
+from aivo import kalenteri, kalenteri_kehote, openrouter_kulut, tiivistelmat_kehote, yksityinen, yksityinen_or
 from aivo.yksityinen import YksityinenVirhe as ChatVirhe, julkaise_kirjastoon   # sama poikkeus kaikkialla
 from aivo import yhdistelma        # usean mallin yhdistelmat (oma rivi: ei ristiriitaa rinnakkaisten tuontimuutosten kanssa)
 
@@ -69,6 +72,10 @@ LUKITUS_S = 300
 MIN_PITUUS = 12
 MUISTI_JARJESTYS = ("paatos", "kompassi", "haastattel", "fakta")   # ensin nama, sitten loput
 RAJA = "=====AIVO-MUISTI-RAJA====="
+KULUT_KERROIN_OLETUS = "0.92"     # nayton USD->EUR-kerroin (asetus); katkaisin kayttaa omaa vakiotaan
+KULUT_VAROITUS_OSUUS = Decimal("0.8")   # varoitusvari, kun paivan kulusta on kaytetty 80 % katosta
+KULUT_MALLEJA = 20                # erittelyssa enintaan nain monta mallia, loput riville "muut"
+KULUT_JAKSOT = (("tanaan", 1), ("paivat_7", 7), ("paivat_30", 30))
 LAHDE_RE = re.compile(r"\[l\u00e4hde: ([^\]\n]{1,200})\]")
 
 KEHOTE = """Olet Aivo, Tonyn oma teko\u00e4lyavustaja. Tony keskustelee kanssasi kahden kesken. Vastaa suomeksi, huolellisella
@@ -117,6 +124,9 @@ textarea{resize:none;height:3.2rem}button{font:inherit;padding:.5rem .9rem;borde
 .mallinimi{display:block;margin-top:.3rem;font-size:.75rem;opacity:.6}
 .luonnos{white-space:pre-wrap;word-wrap:break-word;max-height:40vh;overflow:auto;font-size:.8rem;margin:.4rem 0;opacity:.8}
 .ehdotus pre{white-space:pre-wrap;word-wrap:break-word;max-height:40vh;overflow:auto;font-size:.8rem;margin:.4rem 0}
+#kulut.varoitus{color:#b45309;font-weight:bold;opacity:1}
+@media(prefers-color-scheme:dark){#kulut.varoitus{color:#fbbf24}}
+.kulut table{border-collapse:collapse;font-size:.85rem;margin:.3rem 0}.kulut td,.kulut th{padding:.1rem .5rem;text-align:left}
 </style></head><body>
 <header><strong>Aivo</strong><span><select id="tila" aria-label="Tila">
 <option value="yksityinen" selected>{YKSITYINEN_TEKSTI}</option>
@@ -199,6 +209,39 @@ async function odottavat(){if(!kid)await aloita();if(!kid||nyt!=='yksityinen')re
  if(!x.j.ehdotukset.length){lisaa('aivo','Ei odottavia ehdotuksia.');return;}
  for(const e of x.j.ehdotukset){if(e&&typeof e.tunnus==='string')await ehdotus(e.tunnus);}}
 document.getElementById('odottavat').onclick=e=>{e.preventDefault();odottavat();};
+function luku(x,n){return (typeof x==='number'&&isFinite(x)?x:0).toFixed(n).replace('.',',');}
+function eur(o){return luku(o&&o.eur,2)+' \u20ac';}
+function usd(o){return luku(o&&o.usd,2)+' $';}
+let kulutiedot=null;
+(()=>{const a=document.createElement('a');a.href='#';a.id='kulut';a.className='pieni';a.title='OpenRouter-kulut';a.textContent='T\u00e4n\u00e4\u00e4n \u2026';
+ document.querySelector('header').append(' ',a);})();
+async function kulut(){const x=await haeJson('/api/kulut');if(!x)return;const a=document.getElementById('kulut');
+ if(!x.r.ok){a.textContent='Kulut: ei saatavilla';a.className='pieni varoitus';kulutiedot=null;return;}
+ const j=x.j;kulutiedot=j;
+ a.textContent=j.luettavissa?('T\u00e4n\u00e4\u00e4n '+eur(j.tanaan)+' / '+luku(j.paivakatto_eur,0)+' \u20ac'):'Kulut: kirjanpito ei luettavissa';
+ a.className='pieni'+(j.varoitus?' varoitus':'');}
+function kulutaulu(otsikko,ryhma,nimet){const t=document.createElement('table');const c=document.createElement('caption');c.textContent=otsikko;t.appendChild(c);
+ const avaimet=new Set();['tanaan','paivat_7','paivat_30'].forEach(k=>Object.keys((kulutiedot[k]||{})[ryhma]||{}).forEach(m=>avaimet.add(m)));
+ const ots=document.createElement('tr');['',...['T\u00e4n\u00e4\u00e4n','7 vrk','30 vrk']].forEach(s=>{const th=document.createElement('th');th.textContent=s;ots.appendChild(th);});t.appendChild(ots);
+ if(!avaimet.size){const tr=document.createElement('tr');const td=document.createElement('td');td.colSpan=4;td.textContent='ei kuluja';tr.appendChild(td);t.appendChild(tr);}
+ [...avaimet].sort().forEach(m=>{const tr=document.createElement('tr');const n=document.createElement('td');n.textContent=nimet[m]||m;tr.appendChild(n);
+  ['tanaan','paivat_7','paivat_30'].forEach(k=>{const o=((kulutiedot[k]||{})[ryhma]||{})[m];const td=document.createElement('td');td.textContent=o?(eur(o)+' ('+usd(o)+')'):'\u2013';tr.appendChild(td);});
+  t.appendChild(tr);});return t;}
+async function erittely(){await kulut();const d=document.createElement('div');d.className='kortti kulut';
+ if(!kulutiedot){d.textContent='Kuluja ei voi hakea.';V.appendChild(d);alas();return;}
+ const j=kulutiedot;const o=document.createElement('div');
+ o.textContent=j.luettavissa?'OpenRouter-kulut (p\u00e4iv\u00e4katto '+luku(j.paivakatto_eur,0)+' \u20ac/vrk, katosta k\u00e4ytetty '+luku(100*(j.katosta_kaytetty||0),0)+' %'+(j.katto_taynna?', katto t\u00e4ynn\u00e4':'')+')':
+  'Kirjanpitoa ei voi lukea. P\u00e4iv\u00e4katkaisin est\u00e4\u00e4 OpenRouter-kutsut, kunnes kirjanpito on kunnossa.';
+ d.appendChild(o);
+ const s=document.createElement('div');s.textContent='T\u00e4n\u00e4\u00e4n '+eur(j.tanaan)+' ('+usd(j.tanaan)+') \u00b7 7 vrk '+eur(j.paivat_7)+' ('+usd(j.paivat_7)+') \u00b7 30 vrk '+eur(j.paivat_30)+' ('+usd(j.paivat_30)+')';
+ d.appendChild(s);
+ d.appendChild(kulutaulu('K\u00e4ytt\u00f6tarkoitus','tarkoitukset',{chat:'chat',tiivistys:'tiivistys',muu:'muu'}));
+ d.appendChild(kulutaulu('Malli','mallit',{}));
+ const h=document.createElement('div');h.className='pieni';
+ h.textContent='Kirjanpito on dollareina. \u20ac-luvut ovat arvioita kertoimella '+luku(j.kerroin_usd_eur,2)+' (1 $ = '+luku(j.kerroin_usd_eur,2)+' \u20ac). P\u00e4iv\u00e4katon tila lasketaan katkaisimen omalla kertoimella. Vuorokausi vaihtuu Suomen aikaa.';
+ d.appendChild(h);V.appendChild(d);alas();}
+document.getElementById('kulut').onclick=e=>{e.preventDefault();erittely();};
+kulut().catch(()=>{});
 document.getElementById('uusi').onclick=aloita;
 document.getElementById('tila').onchange=e=>{if(e.target.value==='tyokalu'&&!confirm('Ty\u00f6kalutilassa viestit kulkevat Clauden pilvipalveluun. Jatketaanko?')){e.target.value='yksityinen';return;}aloita();};
 let lahetyksessa=false;
@@ -219,7 +262,7 @@ async function laheta(s){if(lahetyksessa)return;lahetyksessa=true;lukitse();
    if(Array.isArray(j.ehdotukset))j.ehdotukset.forEach(t=>{if(typeof t==='string')ehdotus(t);});
    if(Array.isArray(j.valinnat))valinnat(j.valinnat);alas();}
   catch(x){odota.textContent='Yhteysvirhe';alas();}}
- finally{lahetyksessa=false;}}
+ finally{lahetyksessa=false;kulut().catch(()=>{});}}
 document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();if(lahetyksessa)return;const t=document.getElementById('teksti');
  const s=t.value.trim();if(!s)return;t.value='';await laheta(s);};
 haeMallit().finally(aloita);alas();
@@ -743,9 +786,83 @@ def sallittu_host(host_otsake, sallitut):
     return any(nimi == s or (s.startswith(".") and nimi.endswith(s)) for s in sallitut)
 
 
+def lue_kulukerroin(arvo):
+    """Nayton USD->EUR-kerroin asetuksesta ("0.92" tai "0,92"). Sallittu 0 < k <= 10; muu -> ChatVirhe."""
+    try:
+        k = Decimal(str(arvo).strip().replace(",", "."))
+    except (InvalidOperation, ValueError):
+        raise ChatVirhe("kulujen kerroin ei ole luku") from None
+    if not k.is_finite() or k <= 0 or k > 10:
+        raise ChatVirhe("kulujen kerroin pitaa olla valilla 0-10")
+    return k
+
+
+def kayttotarkoitus(tehtava):
+    """Kirjanpidon tehtava-kentta kayttotarkoitukseksi: chat, tiivistys tai muu (tunnistetta ei palauteta)."""
+    t = str(tehtava or "")
+    if t == yksityinen_or.TEHTAVA:
+        return "chat"
+    if "tiivist" in t.lower():
+        return "tiivistys"
+    return "muu"
+
+
+def _pyorista(arvo, desimaalit):
+    return float(arvo.quantize(Decimal(1).scaleb(-desimaalit), rounding=ROUND_HALF_UP))
+
+
+def _summa_olio(usd, kerroin):
+    return {"usd": _pyorista(usd, 4), "eur": _pyorista(usd * kerroin, 2)}
+
+
+def kulut_yhteenveto(kulutila, nyt, kerroin):
+    """OpenRouter-kulujen summat (vain luku): tama paiva, 7 ja 30 viimeista vuorokautta (Europe/Helsinki, tama paiva
+    mukaan lukien) seka jakauma malleittain ja kayttotarkoituksittain. Puuttuva tai tyhja kirjanpito = nollat.
+    Rikkinainen tai lukukelvoton kirjanpito = nollat ja luettavissa=False (katkaisin estaa silloin kutsut).
+    Varoitusraja lasketaan katkaisimen kertoimella, jotta se kertoo katkaisimen oikean tilan."""
+    tz = openrouter_kulut.TZ
+    paiva = nyt.astimezone(tz).date()
+    jaksot = {nimi: (paiva - timedelta(days=n - 1), {"usd": Decimal(0), "mallit": {}, "tarkoitukset": {}})
+              for nimi, n in KULUT_JAKSOT}
+    luettavissa = True
+    try:
+        rivit = openrouter_kulut._voimassa(openrouter_kulut._lue_rivit(Path(kulutila or openrouter_kulut.OLETUS_TILA),
+                                                                        openrouter_kulut.KULUT))
+        for r in rivit:
+            usd = openrouter_kulut.rivin_usd(r)
+            malli = str(r.get("malli") or "?")[:60]
+            tarkoitus = kayttotarkoitus(r.get("tehtava"))
+            for alku, summa in jaksot.values():
+                if alku <= r["_paiva"] <= paiva:
+                    summa["usd"] += usd
+                    summa["mallit"][malli] = summa["mallit"].get(malli, Decimal(0)) + usd
+                    summa["tarkoitukset"][tarkoitus] = summa["tarkoitukset"].get(tarkoitus, Decimal(0)) + usd
+    except Exception:  # noqa: BLE001 - nakyma ei saa kaatua; virheen sisaltoa ei palauteta
+        luettavissa = False
+        jaksot = {nimi: (alku, {"usd": Decimal(0), "mallit": {}, "tarkoitukset": {}}) for nimi, (alku, _) in jaksot.items()}
+    ulos = {"luettavissa": luettavissa, "paivakatto_eur": float(openrouter_kulut.PAIVAKATTO_EUR),
+            "kerroin_usd_eur": float(kerroin), "eur_on_arvio": True}
+    for nimi, (_, summa) in jaksot.items():
+        mallit = sorted(summa["mallit"].items(), key=lambda x: (-x[1], x[0]))
+        if len(mallit) > KULUT_MALLEJA:
+            muut = sum((v for _, v in mallit[KULUT_MALLEJA:]), Decimal(0))
+            mallit = mallit[:KULUT_MALLEJA] + [("muut", muut)]
+        ulos[nimi] = dict(_summa_olio(summa["usd"], kerroin),
+                          mallit={m: _summa_olio(v, kerroin) for m, v in mallit},
+                          tarkoitukset={t: _summa_olio(v, kerroin) for t, v in sorted(summa["tarkoitukset"].items())})
+    katkaisimen_eur = jaksot["tanaan"][1]["usd"] * openrouter_kulut.USD_EUR
+    osuus = katkaisimen_eur / openrouter_kulut.PAIVAKATTO_EUR
+    ulos["katosta_kaytetty"] = _pyorista(osuus, 4)
+    ulos["varoitus"] = (not luettavissa) or osuus >= KULUT_VAROITUS_OSUUS
+    ulos["katto_taynna"] = luettavissa and katkaisimen_eur >= openrouter_kulut.PAIVAKATTO_EUR
+    return ulos
+
+
 class Tila:
     """Kaksi tilaa: "yksityinen" (oletus; paikallinen malli, oma muisti, ydinohjeet) ja "tyokalu" (Claude, kirjasto).
     Yksityinen tila on kaytossa vain, jos yks_data on annettu; sen kansioiden pitaa olla palvelun kayttajan 0700."""
+
+    kulut_kerroin = Decimal(KULUT_KERROIN_OLETUS)   # kulunakyman USD->EUR-kerroin; main asettaa --kulut-kerroin-arvon
 
     def __init__(self, tiiviste, kirjasto, data, sallitut_hostit, kysy=kysy_claudelta, julkaise=kirjaa_paatos, julkaise_yks=kirjaa_paatos_yksityinen,
                  yks_data=None, yks_muisti=None, ydinohjeet=None, ehdotukset=None,
@@ -755,6 +872,7 @@ class Tila:
                  yhdistelma_oletus=None, roolit=None, kysy_yhd=None):
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
+        self.kulutila = or_kulutila               # None = openrouter_kulut.OLETUS_TILA (yhteinen kirjanpito)
         self.tiivistelmat = tiivistelmat          # tyokalualueen tiivistelmakansio (vain tyokalutila lukee sita)
         self.yks_tiivistelmat = None              # yksityisen alueen tiivistelmakansio (vain yksityinen tila lukee sita)
         self.kalenteri = kalenteri_lahde          # kalenteri.Lahde tai None; vain tyokalutila lukee sita
@@ -920,6 +1038,9 @@ def tee_kasittelija(tila):
                     return self._json(403, {"virhe": "kielletty"})
                 kysely = {k: v[0] for k, v in urllib.parse.parse_qs(osat.query).items()}
                 try:
+                    if osat.path == "/api/kulut":
+                        return self._json(200, kulut_yhteenveto(tila.kulutila, datetime.now(openrouter_kulut.TZ),
+                                                                tila.kulut_kerroin))
                     if osat.path == "/api/ehdotukset":
                         return self._ehdotukset(kysely)
                     if osat.path == "/api/ehdotus":
@@ -1266,6 +1387,8 @@ def main(argv=None):
                     help="tiedosto (0600), jossa iCal-osoite on; osoitetta ei anneta komentorivilla eika ymparistomuuttujalla")
     ap.add_argument("--kalenteri-data", default=os.environ.get("AIVO_KALENTERI_DATA", kalenteri.OLETUS_DATAKANSIO),
                     help="kalenterin valimuistin kansio")
+    ap.add_argument("--kulut-kerroin", default=os.environ.get("AIVO_KULUT_USD_EUR", KULUT_KERROIN_OLETUS),
+                    help="USD->EUR-kerroin kulunakymaan (oletus 0.92); vain nayttoon, ei vaikuta paivakattoon")
     ap.add_argument("--malli-url", default=os.environ.get("AIVO_MALLI_URL", yksityinen.OLETUS_MALLI_URL))
     ap.add_argument("--yksityinen-taustapaa", choices=("loopback", "openrouter"),
                     default=os.environ.get("AIVO_YKSITYINEN_TAUSTAPAA", "loopback"),
@@ -1300,6 +1423,7 @@ def main(argv=None):
                     if a.yksityiset_tiivistelmat_kaytossa and a.yksityinen_data else None,
                     kalenteri_lahde=kalenteri.IcalLahde(a.kalenteri_osoitetiedosto, a.kalenteri_data)
                     if a.kalenteri_kaytossa else None)
+        tila.kulut_kerroin = lue_kulukerroin(a.kulut_kerroin)
         palvelin = kaynnista(a.osoite, a.portti, tila)
     except ChatVirhe as e:
         print("virhe: %s" % e, file=sys.stderr)
