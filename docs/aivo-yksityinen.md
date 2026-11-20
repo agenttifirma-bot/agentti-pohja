@@ -111,7 +111,85 @@ Yksityisen tilan päätös kirjataan vain yksityiseen muistiin (tiedosto 0600) e
 
 ## Keskustelujen tiivistys (komento)
 
-Komento `python3 -m aivo.tiivista --alue yksityinen` tiivistää yksityisen alueen keskustelut paikallisella mallilla. Se käyttää samaa loopback-osoitetta kuin chat (`--malli-url` tai `AIVO_MALLI_URL`, oletus `http://127.0.0.1:8081`) eikä hyväksy mitään muuta osoitetta. Keskustelu tiivistetään vasta, kun sen viimeisestä viestistä on 30 minuuttia. Pitkä keskustelu pilkotaan osiin, ja jokainen osa tallentuu omaksi tiivistelmäkseen kansioon `tiivistelmat`. Valinta `--kuiva` listaa tiivistettävät alueet ilman mallikutsua. Ajastusta tai systemd-yksikköä ei ole vielä; komentoa ajetaan käsin `aivo-yksityinen`-käyttäjänä.
+Komento `python3 -m aivo.tiivista --alue yksityinen` tiivistää yksityisen alueen keskustelut paikallisella mallilla. Se käyttää samaa loopback-osoitetta kuin chat (`--malli-url` tai `AIVO_MALLI_URL`, oletus `http://127.0.0.1:8081`) eikä hyväksy mitään muuta osoitetta. Keskustelu tiivistetään vasta, kun sen viimeisestä viestistä on 30 minuuttia. Pitkä keskustelu pilkotaan osiin, ja jokainen osa tallentuu omaksi tiivistelmäkseen kansioon `tiivistelmat`. Valinta `--kuiva` listaa tiivistettävät alueet ilman mallikutsua. Komentoa voi ajaa käsin `aivo-yksityinen`-käyttäjänä tai ajastimella (alla).
+
+### Tiivistyksen ajastin (ohje, ei asennettu)
+
+Repossa ei ole tälle valmista yksikköä, eikä tämä muutos asenna mitään. Tony luo tiedostot itse, jos haluaa ajastuksen. Malli on sama kuin työkalutilan `aivo-tiivista.timer` (`docs/aivo-chat.md`), mutta käyttäjä, kansio ja verkko ovat yksityisen tilan omat.
+
+Huomioi ennen asennusta:
+
+- Tiivistys käyttää aina paikallista mallia loopback-osoitteessa. Se ei käytä OpenRouteria, vaikka chat käyttäisi OpenRouter-taustapäätä. Jos `aivo-malli.service` ei ole käynnissä, ajo päättyy virheeseen eikä tiivistä mitään.
+- Chat ei vielä liitä yksityisen alueen tiivistelmiä kehotteeseen. Tiivistelmät tallentuvat kansioon `/var/lib/aivo-yksityinen/tiivistelmat`, mutta yksityisen tilan Aivo muistaa saman keskustelun asiat vain keskusteluhistorian kautta (katso Keskusteluhistoria mallille).
+
+1. **Kuiva-ajo** (ei mallikutsua):
+
+   ```
+   runuser -u aivo-yksityinen -- env PYTHONPATH=/opt/agentti-pohja python3 -m aivo.tiivista --alue yksityinen --kuiva
+   ```
+
+   Odotettu tulos: rivit `tiivistettaisiin <keskustelun tunnus> viestit 0-N` tai ei mitään, jos tiivistettävää ei ole.
+
+2. **Yksikkö** `/etc/systemd/system/aivo-tiivista-yksityinen.service`:
+
+   ```
+   [Unit]
+   Description=Aivon keskustelujen tiivistys (yksityinen tila, paikallinen malli)
+   After=aivo-malli.service
+
+   [Service]
+   Type=oneshot
+   User=aivo-yksityinen
+   WorkingDirectory=/opt/agentti-pohja
+   Environment=PYTHONPATH=/opt/agentti-pohja
+   ExecStart=/usr/bin/python3 -m aivo.tiivista --alue yksityinen
+   IPAddressDeny=any
+   IPAddressAllow=127.0.0.0/8
+   NoNewPrivileges=true
+   ProtectSystem=strict
+   ProtectHome=yes
+   ReadWritePaths=/var/lib/aivo-yksityinen
+   PrivateTmp=true
+   ```
+
+   Rivit `IPAddressDeny=any` ja `IPAddressAllow=127.0.0.0/8` rajaavat ajon loopbackiin kuten mallipalvelimen. Kaksi ajoa yhtä aikaa on turvallista: toinen ajo huomaa lukon (`tiivista.lukko`) ja päättyy.
+
+3. **Ajastin** `/etc/systemd/system/aivo-tiivista-yksityinen.timer` (15 minuutin välein):
+
+   ```
+   [Unit]
+   Description=Aivon yksityisen tilan tiivistys 15 minuutin valein
+
+   [Timer]
+   OnBootSec=10min
+   OnUnitActiveSec=15min
+
+   [Install]
+   WantedBy=timers.target
+   ```
+
+4. **Käyttöönotto ja tarkistus:**
+
+   ```
+   systemctl daemon-reload && systemctl enable --now aivo-tiivista-yksityinen.timer
+   systemctl list-timers aivo-tiivista-yksityinen.timer
+   journalctl -u aivo-tiivista-yksityinen --since "20 min ago" --no-pager
+   ```
+
+   Odotettu tulos: ajastin näkyy listassa, ja journaalissa on rivejä `tiivistetty: …` tai ei rivejä, jos tiivistettävää ei ollut. Rivi `virhe: …` kertoo yleensä, ettei paikallinen malli vastannut.
+
+## Keskusteluhistoria mallille
+
+Yksityisen tilan kutsuun liitetään keskustelun viimeiset viestit. Raja riippuu taustapäästä:
+
+| Taustapää | Viestejä enintään | Vakio | Peruste |
+|---|---|---|---|
+| Paikallinen malli (loopback) | 12 | `yksityinen.HISTORIA_YLARAJA` | i5-8400 käsittelee pitkän kehotteen hitaasti, ja vastauksen aikaraja on 900 s. Pidempi historia ylittäisi aikarajan. |
+| OpenRouter | 40 | `yksityinen_or.HISTORIA_YLARAJA` | Etämalli käsittelee pitkän kehotteen sekunneissa. Raja on sama kuin työkalutilassa (`chat.HISTORIA_YLARAJA`). |
+
+OpenRouter-taustapään pahin tapaus: 20 Tonyn viestiä (enintään 4 000 merkkiä kukin), 20 vastausta (enintään 700 tokenia kukin), muisti 16 000 merkkiä, ydinohjeet 20 000 merkkiä ja kehote noin 3 000 merkkiä. Yhteensä noin 160 000 merkkiä eli alle 80 000 tokenia, vaikka arvioitaisiin varovasti 2 merkkiä tokenia kohti. Suositusmallin `qwen/qwen3-235b-a22b-2507` konteksti on 262 144 tokenia, joten kehote mahtuu. Jos vaihdat mallin, tarkista, että sen konteksti on vähintään 100 000 tokenia.
+
+Kehotteen sääntö 2 kertoo mallille, että keskustelun aiemmat viestit ovat käytettävissä, ja sääntö 6 kieltää lupaamasta taustatyötä tai arvioimasta kestoa: yksityisessä tilassa ei ole työkaluja, verkkoa eikä taustaprosesseja.
 
 ## Rajat ja avoimet asiat
 
