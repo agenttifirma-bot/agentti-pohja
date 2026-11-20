@@ -16,6 +16,9 @@ Saannot (koodi on laki):
     (toinen lukko ZDR:lle).
   * Malli on asetus eika oletusta ole. Vain avoimien mallien perheet (AVOIMET_MALLIT) kelpaavat; suljetut mallit,
     `:free`-versiot ja `:online`-tyyppiset liitteet hylataan jo asetuksessa.
+  * Malleja voi olla lista (AIVO_OPENROUTER_MALLIT, pilkuin erotettu; tarkista_mallit). Jokaisen pitaa lapaista
+    avoin_malli(), muuten palvelu ei kaynnisty. Ensimmainen on oletus. Kaikilla malleilla on sama kulukirjanpito ja
+    sama paivakatto.
   * Avain luetaan tiedostosta, jonka omistaa palvelun kayttaja ja jonka oikeudet ovat 0600 tai tiukemmat (ei linkki).
     Avainta ei lueta ymparistomuuttujasta, eika sita kirjoiteta lokiin, virheviesteihin eika muualle.
     Virheista nakyy vain tyyppi ja HTTP-tila.
@@ -73,6 +76,30 @@ def tarkista_malli(malli: Any) -> str:
     if not avoin_malli(malli):
         raise YksityinenVirhe("OpenRouter-malli puuttuu tai ei ole sallittu avoin malli (AVOIMET_MALLIT)")
     return malli
+
+
+MALLIT_YLARAJA = 10
+
+
+def tarkista_mallit(mallit: Any) -> tuple[str, ...]:
+    """Mallilista asetuksesta: pilkuin erotettu merkkijono tai lista. Jokaisen pitaa lapaista avoin_malli();
+    muuten YksityinenVirhe (palvelu ei kaynnisty). Ensimmainen on oletus. Tyhja kohta, kaksoiskappale ja
+    liian pitka lista hylataan. Yksi malli (vanha AIVO_OPENROUTER_MALLI) on yhden mallin lista."""
+    if isinstance(mallit, str):
+        osat = [m.strip() for m in mallit.split(",")]
+    elif isinstance(mallit, (list, tuple)):
+        osat = [m.strip() if isinstance(m, str) else m for m in mallit]
+    else:
+        osat = []
+    if not osat or osat == [""]:
+        raise YksityinenVirhe("OpenRouter-malli puuttuu tai ei ole sallittu avoin malli (AVOIMET_MALLIT)")
+    if len(osat) > MALLIT_YLARAJA:
+        raise YksityinenVirhe("OpenRouter-malleja on liikaa (enintaan 10, MALLIT_YLARAJA)")
+    for m in osat:
+        tarkista_malli(m)
+    if len(set(osat)) != len(osat):
+        raise YksityinenVirhe("OpenRouter-mallilistassa on sama malli kahdesti")
+    return tuple(osat)
 
 
 def lue_avain(polku: Any) -> str:
