@@ -50,7 +50,7 @@ KIELLETYT_LIITTEET = (":free", ":online", ":nitro", ":floor", ":exacto")
 
 def avoin_malli(malli: Any) -> bool:
     """Tosi vain, jos malli on avointen perheiden listalla eika siina ole kiellettya liitetta."""
-    if not isinstance(malli, str) or not _MALLI_RE.match(malli):
+    if not isinstance(malli, str) or not _MALLI_RE.fullmatch(malli):
         return False
     if any(malli.endswith(l) for l in KIELLETYT_LIITTEET):
         return False

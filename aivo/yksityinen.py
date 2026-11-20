@@ -245,7 +245,7 @@ def irrota_ehdotukset(vastaus, tallenna):
 
 
 def tallenna_ehdotus(hakemisto, nimi, teksti):
-    if not YDINOHJE_NIMI_RE.match(nimi) or len(teksti) > YDINOHJE_YLARAJA:
+    if not YDINOHJE_NIMI_RE.fullmatch(nimi) or len(teksti) > YDINOHJE_YLARAJA:
         raise YksityinenVirhe("virheellinen ehdotus")
     h = tarkista_yksityinen_hakemisto(hakemisto)
     eid = secrets.token_hex(6)
@@ -257,14 +257,14 @@ def tallenna_ehdotus(hakemisto, nimi, teksti):
 
 
 def lue_ehdotus(hakemisto, eid):
-    if not EHDOTUS_ID_RE.match(eid or ""):
+    if not EHDOTUS_ID_RE.fullmatch(eid or ""):
         raise YksityinenVirhe("virheellinen ehdotuksen tunnus")
     try:
         d = json.loads((Path(hakemisto) / (eid + ".json")).read_text(encoding="utf-8"))
         if not isinstance(d, dict) or not isinstance(d["tiedosto"], str) or not isinstance(d["teksti"], str) \
                 or not isinstance(d["sha"], str):
             raise ValueError
-        if not YDINOHJE_NIMI_RE.match(d["tiedosto"]) or sha(d["teksti"]) != d["sha"]:
+        if not YDINOHJE_NIMI_RE.fullmatch(d["tiedosto"]) or sha(d["teksti"]) != d["sha"]:
             raise ValueError
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         raise YksityinenVirhe("ehdotusta ei voi lukea")
@@ -273,7 +273,7 @@ def lue_ehdotus(hakemisto, eid):
 
 def listaa_ehdotukset(hakemisto):
     h = Path(hakemisto)
-    return sorted(p.stem for p in h.glob("*.json") if EHDOTUS_ID_RE.match(p.stem)) if h.is_dir() else []
+    return sorted(p.stem for p in h.glob("*.json") if EHDOTUS_ID_RE.fullmatch(p.stem)) if h.is_dir() else []
 
 
 def ehdotuksen_ero(ehdotukset, ydinohjeet, eid):
