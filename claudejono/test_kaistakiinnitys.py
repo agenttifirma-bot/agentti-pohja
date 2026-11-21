@@ -73,6 +73,24 @@ class Valinta(Pohja):
         self.assertIsNone(self.valitse(2))            # toisen kiinnittamaan ei koskaan koske
         self.assertEqual(self.valitse(1), toisen)
 
+    def teht_tav(self, n, tavoite):
+        nimi = f"2026-11-17-{n:02d}-t.md"
+        self.lisaa_tehtava(nimi, f"TEHTAVA-{nimi}\nTavoite: {tavoite}\n")
+        return nimi
+
+    def test_kaista4_varaa_vain_aivon_ja_tyhja_jono_odottaa(self):
+        self.teht_tav(1, "yllapito")
+        self.teht_tav(2, "portfolio")
+        self.assertIsNone(self.valitse(4, kaistoja=4))   # ei Aivo-tehtavaa: ei oteta muuta
+        aivo = self.teht_tav(3, "Aivo")
+        self.assertEqual(self.valitse(4, kaistoja=4), aivo)
+        self.assertIsNone(self.valitse(4, kaistoja=4))   # Aivo otettu; muut jaavat muille kaistoille
+        self.assertIsNotNone(self.valitse(1, kaistoja=4))
+
+    def test_kaistat_1_3_ottavat_edelleen_muita_nelja_kaistaa(self):
+        y = self.teht_tav(1, "yllapito")
+        self.assertEqual(self.valitse(3, kaistoja=4), y)
+
     def test_poissa_oleva_kaista_ei_jumita_tehtavaa(self):
         t = self.teht(1, kaista=3)
         self.assertEqual(self.valitse(1, kaistoja=2), t)

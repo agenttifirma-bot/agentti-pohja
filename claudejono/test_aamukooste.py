@@ -11,6 +11,7 @@ from claudejono import aamukooste, viikkoehdotus
 from yojono import ajuri as yojono_ajuri
 
 TZ = aamukooste.TZ
+PYSAHTYNEET = aamukooste.pysahtyneet_kaistat   # alkuperainen, ennen Pohjan patchia
 NYT = datetime(2026, 11, 3, 6, 30, tzinfo=TZ)
 
 
@@ -28,6 +29,9 @@ class Pohja(unittest.TestCase):
         (self.jono / "tehtavat").mkdir()
         self.yj = self.tmp / "yojono"
         self.yj.mkdir()
+        patcher = mock.patch.object(aamukooste, "pysahtyneet_kaistat", return_value=[])   # ei oikeaa systemd:ta muissa testeissa
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def kirjoita(self, polku, teksti):
         p = self.jono / polku
@@ -337,7 +341,14 @@ class TarkastajaVirheet(Pohja):
         (self.tmp / "tarkastukset.jsonl").write_text(json.dumps(
             {"repo": "agentti-pohja", "haara": "korjaus/x", "tulos": "virhe", "syy": "GitHub HTTP 403: /repos", "aika": "2026-11-03T05:00:00+02:00"}) + "\n")
         rivi = next(r for r in aamukooste.rivit(self.aineisto()) if r.startswith("H\u00e4lytykset:"))
-        self.assertIn("PR-tarkastaja/-avaaja: 1 virhett\u00e4, viimeisin korjaus/x: GitHub HTTP 403", rivi)
+        self.assertIn("PR-tarkastaja/-avaaja: 1 virhett\u00e4 1 kohteessa, viimeisin korjaus/x: GitHub HTTP 403", rivi)
+
+    def test_toistuvat_virheet_lasketaan_kohteittain(self):
+        rivit = [{"repo": "mcp-doctor", "haara": h, "tulos": "virhe", "syy": "GitHub HTTP 422: /pulls", "aika": "2026-11-03T0%d:00:00+02:00" % t}
+                 for t in (3, 4, 5) for h in ("korjaus/a", "korjaus/b")]
+        (self.tmp / "tarkastukset.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rivit))
+        rivi = next(r for r in aamukooste.rivit(self.aineisto()) if r.startswith("H\u00e4lytykset:"))
+        self.assertIn("PR-tarkastaja/-avaaja: 6 virhett\u00e4 2 kohteessa, viimeisin korjaus/b", rivi)
 
     def test_ohitettu_pr_ei_nouse_halytyksiin(self):
         (self.tmp / "tarkastukset.jsonl").write_text(json.dumps(
@@ -518,6 +529,76 @@ class ValmisPortti(Pohja):
         self.kirjoita("tulokset/2026-11-02-02-b.md", tulos_mallilla("b", "VALMIS", "2026-11-02T20:10+02:00"))
         self.kirjoita("tulokset/2026-11-02-02-b.tarkastus.md", tarkastus(toimii="ei"))
         self.assertEqual(set(self.tilat().values()), {"KESKEN"})
+
+
+class KaistaVahti(Pohja):
+    """Pysahtyneen kaistan varoitus: systemctl injektoidaan, vain luku."""
+
+    def tehtava(self, nimi, tavoite, ika_h=0, kaista=None):
+        teksti = f"# {nimi}\n\nTavoite: {tavoite}\n" + (f"Kaista: {kaista}\n" if kaista else "")
+        self.kirjoita(f"tehtavat/{nimi}.md", teksti)
+        p = self.jono / "tehtavat" / f"{nimi}.md"
+        t = NYT.timestamp() - ika_h * 3600
+        os.utime(p, (t, t))
+
+    def vahti(self, kaistoja, seis):
+        return PYSAHTYNEET(self.repo, NYT, kaistoja=kaistoja, aktiivinen=lambda n: n not in seis)
+
+    def test_kaikki_kaistat_kaynnissa_ei_riviae(self):
+        self.tehtava("2026-11-20-27-aivo-a", "aivo", 14)
+        self.assertEqual(self.vahti(4, set()), [])
+
+    def test_kaista_seis_ja_aivo_tehtava_odottaa_antaa_rivin(self):
+        self.tehtava("2026-11-20-27-aivo-a", "aivo", 14.2)
+        self.tehtava("2026-11-20-28-aivo-b", "aivo", 3)
+        self.assertEqual(self.vahti(3, {3}), ["Kaista 3 seis: 2 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 14 h)"])
+
+    def test_kaistat_3_ja_4_seis_molemmat_nakyvat(self):
+        for i in range(6):
+            self.tehtava(f"2026-11-20-{27 + i}-aivo", "aivo", 14 + i)
+        self.tehtava("2026-11-21-01-ylla", "yllapito", 1)   # kaista 1-2 ottaa tama, ei lasketa
+        self.assertEqual(self.vahti(4, {3, 4}), ["Kaista 3 seis: 6 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 19 h)",
+                                                 "Kaista 4 seis: 6 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 19 h)"])
+
+    def test_kaista_seis_mutta_toinen_kaista_ottaa_tehtavat_ei_riviae(self):
+        self.tehtava("2026-11-20-27-aivo-a", "aivo", 14)
+        self.assertEqual(self.vahti(4, {3}), [])   # kaista 4 ottaa Aivo-tehtavat
+
+    def test_kaista_seis_mutta_ei_tehtavia_ei_riviae(self):
+        self.assertEqual(self.vahti(4, {3, 4}), [])
+        self.tehtava("2026-11-20-30-ylla", "yllapito", 5)   # kaistat 1-2 ottavat
+        self.assertEqual(self.vahti(4, {3, 4}), [])
+
+    def test_tehtava_jolla_on_tulos_ei_odota(self):
+        self.tehtava("2026-11-20-27-aivo-a", "aivo", 14)
+        self.kirjoita("tulokset/2026-11-20-27-aivo-a.md", tulos("a", "VALMIS", "2026-11-21T01:00+02:00"))
+        self.assertEqual(self.vahti(3, {3}), [])
+
+    def test_tuntematon_systemd_tila_ei_halyta(self):
+        self.tehtava("2026-11-20-27-aivo-a", "aivo", 14)
+        self.assertEqual(PYSAHTYNEET(self.repo, NYT, kaistoja=3, aktiivinen=lambda n: None), [])
+
+    def test_kaista_aktiivinen_lukee_is_active_ja_virheet_none(self):
+        def ajo(tila, koodi=3):
+            return lambda *a, **k: mock.Mock(stdout=tila, returncode=koodi)
+        self.assertTrue(aamukooste.kaista_aktiivinen(3, ajo("active\n", 0)))
+        self.assertFalse(aamukooste.kaista_aktiivinen(3, ajo("inactive\n")))
+        self.assertIsNone(aamukooste.kaista_aktiivinen(3, ajo("")))
+        def puuttuu(*a, **k):
+            raise FileNotFoundError("systemctl")
+        self.assertIsNone(aamukooste.kaista_aktiivinen(3, puuttuu))
+        kutsut = []
+        aamukooste.kaista_aktiivinen(3, lambda cmd, **k: kutsut.append(cmd) or mock.Mock(stdout="active", returncode=0))
+        self.assertEqual(kutsut, [["systemctl", "is-active", "claude-jono@3.timer"]])   # vain luku
+
+    def test_varoitus_nakyy_halytykset_rivilla_ja_virhe_ei_kaada(self):
+        rivit_ = ["Kaista 3 seis: 6 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 14 h)"]
+        t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [], kaistavahti=lambda r, n: rivit_)
+        self.assertIn(rivit_[0], aamukooste.rivit(t)[5])
+        def rikki(r, n):
+            raise OSError("x")
+        t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [], kaistavahti=rikki)
+        self.assertEqual(aamukooste.rivit(t)[5], "H\u00e4lytykset: ei.")
 
 
 if __name__ == "__main__":

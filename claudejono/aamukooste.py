@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import aivo_arvio, ajuri, kaistamittaus, kulutus, vaiteportti, valmis, varaus
+from . import aivo_arvio, ajuri, kaistamittaus, kulutus, tavoite, vaiteportti, valmis, varaus
 
 TZ = ZoneInfo("Europe/Helsinki")
 OLETUS_REPO = "/var/lib/claude-jono/docs"
@@ -157,6 +157,48 @@ def rikkinaiset_yksikot(suorita=subprocess.run):
     return [rivi.split()[0] for rivi in r.stdout.splitlines() if rivi.strip()]
 
 
+def kaista_aktiivinen(kaista, suorita=subprocess.run):
+    """True/False: onko claude-jono@N.timer k\u00e4ynniss\u00e4 (`systemctl is-active`). None, jos kysely ei onnistu."""
+    try:
+        r = suorita(["systemctl", "is-active", f"claude-jono@{int(kaista)}.timer"], capture_output=True, text=True, timeout=20, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    tila = (r.stdout or "").strip()
+    return None if not tila else tila == "active"
+
+
+def _tiedoston_ika_h(polku, nyt):
+    """Tiedoston mtime (docs-kloonissa = hetki, jolloin teht\u00e4v\u00e4 tuli kloonaukseen) tunteina. None, jos ei saa luettua."""
+    try:
+        return max(0.0, (nyt.timestamp() - Path(polku).stat().st_mtime) / 3600)
+    except OSError:
+        return None
+
+
+def pysahtyneet_kaistat(repo, nyt, kaistoja=None, aktiivinen=kaista_aktiivinen, ika_h=_tiedoston_ika_h):
+    """Varoitusrivit kaistoista, jotka ovat seis ja joilla on teht\u00e4vi\u00e4, joita vain pys\u00e4htyneet kaistat ottaisivat
+    (muut kaistat eiv\u00e4t ota niit\u00e4 tavoiteosuuksien takia). Vain luku: ei k\u00e4ynnist\u00e4 mit\u00e4\u00e4n eik\u00e4 muuta kaistam\u00e4\u00e4r\u00e4\u00e4.
+    `aktiivinen(n)` = True/False/None (None = tila tuntematon, ei varoiteta) ja `ika_h(polku, nyt)` ovat injektoitavissa."""
+    kaistoja = ajuri.kaistojen_maara(os.environ) if kaistoja is None else kaistoja
+    tilat = {n: aktiivinen(n) for n in range(1, kaistoja + 1)}
+    seis = [n for n, a in tilat.items() if a is False]
+    if not seis:
+        return []
+    odottavat = [(p, ajuri.tehtavan_kaista(p, kaistoja)) for p in ajuri.odottavat_tehtavat(repo)]
+    # tavoite.valitse = sama valinta kuin ajurilla; tuntemattoman tilan kaista lasketaan k\u00e4ynniss\u00e4 olevaksi (ei vainoharhaisia h\u00e4lytyksi\u00e4)
+    ottaa = {n: set(tavoite.valitse(odottavat, n, kaistoja)) for n in range(1, kaistoja + 1)}
+    muiden = set().union(*(ottaa[n] for n in ottaa if n not in seis))
+    rivit_ = []
+    for n in seis:
+        jaa = sorted(ottaa[n] - muiden)
+        if not jaa:
+            continue
+        ikaa = [x for x in (ika_h(p, nyt) for p in jaa) if x is not None]
+        vanhin = f" (vanhin {round(max(ikaa))} h)" if ikaa else ""
+        rivit_.append(f"Kaista {n} seis: {len(jaa)} teht\u00e4v\u00e4\u00e4 odottaa{vanhin}")
+    return rivit_
+
+
 OLETUS_POHJA = "/opt/agentti-pohja"
 OLETUS_YOJONO_AJURI = "/opt/yojono-ajuri"
 
@@ -197,9 +239,10 @@ def kayttoonotto_ero_rivi(pohja=OLETUS_POHJA, yojono_ajuri=OLETUS_YOJONO_AJURI, 
         + "; p\u00e4ivit\u00e4 komennolla paivita-ajurit.sh"
 
 
-def keraa(repo, perus, nyt, hae=None, yksikot=None, ero=None):
+def keraa(repo, perus, nyt, hae=None, yksikot=None, ero=None, kaistavahti=None):
     """Kokoaa kooste-aineiston. `hae` = GitHub-haku (testeissa tekaistu), `yksikot` = failed-yksikoiden lahde,
-    `ero` = kayttoonoton eron lahde (kutsuttava, palauttaa tekstin tai None; oletuksena ei hae mitaan)."""
+    `ero` = kayttoonoton eron lahde (kutsuttava, palauttaa tekstin tai None; oletuksena ei hae mitaan),
+    `kaistavahti` = pysahtyneiden kaistojen lahde (kutsuttava (repo, nyt) -> rivilista; oletuksena pysahtyneet_kaistat)."""
     from agentti import aamupaketti
     alku = nyt - timedelta(hours=IKKUNA_H)
     tulokset = lue_tulokset(repo, alku, nyt)
@@ -252,7 +295,11 @@ def keraa(repo, perus, nyt, hae=None, yksikot=None, ero=None):
         ero_teksti = ero() if ero else None
     except Exception:
         ero_teksti = None
-    return {"nyt": nyt, "aivo_valmis": aivo_valmis, "tarkastaja_virheet": tarkastaja_virheet, "kaistat": kaistat, "kulutus": kulutus_teksti, "varaus": varaus_rivi, "varaus_kysymys": varaus_kysymys, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku), "paatokset": avoimet_paatokset(repo, nyt), "saannot": tonylle_uudet(repo, alku, SAANTOPAIVITYKSET),
+    try:   # pysahtyneet kaistat: vain luku, virhe ei kaada koostetta
+        kaistavaroitukset = (kaistavahti or pysahtyneet_kaistat)(repo, nyt)
+    except Exception:
+        kaistavaroitukset = []
+    return {"kaistavaroitukset": kaistavaroitukset, "nyt": nyt, "aivo_valmis": aivo_valmis, "tarkastaja_virheet": tarkastaja_virheet, "kaistat": kaistat, "kulutus": kulutus_teksti, "varaus": varaus_rivi, "varaus_kysymys": varaus_kysymys, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku), "paatokset": avoimet_paatokset(repo, nyt), "saannot": tonylle_uudet(repo, alku, SAANTOPAIVITYKSET),
             "pr": pr_ryhmat, "pr_virheita": virheet, "yojono": yojono_tila(perus, nyt),
             "yksikot": (yksikot or rikkinaiset_yksikot)(), "vaiteportti": vaiteportti.puutteet(repo), "ero": ero_teksti}
 
@@ -329,12 +376,14 @@ def rivit(t):
         halytykset.append("systemd-tilaa ei saatu")
     elif t["yksikot"]:
         halytykset.append("failed: " + ", ".join(t["yksikot"][:3]) + (f" (+{len(t['yksikot']) - 3})" if len(t["yksikot"]) > 3 else ""))
+    halytykset += t.get("kaistavaroitukset") or []
     if t.get("vaiteportti"):
         halytykset.append("v\u00e4iteportti: " + ", ".join(t["vaiteportti"][:3]) + " valmis ilman .tarkastus.md-tiedostoa")
     if t.get("tarkastaja_virheet"):
         tv = t["tarkastaja_virheet"]
         kohde = tv[-1].get("haara") or tv[-1].get("pr") or tv[-1].get("repo") or "?"
-        halytykset.append(f"PR-tarkastaja/-avaaja: {len(tv)} virhett\u00e4, viimeisin {kohde}: " + _lyhenna(str(tv[-1].get("syy", "")), 80))
+        kohteet = len({(v.get("repo"), v.get("haara") or v.get("pr")) for v in tv})   # rivimaara kasvaa kierroksista, kohteet eivat
+        halytykset.append(f"PR-tarkastaja/-avaaja: {len(tv)} virhett\u00e4 {kohteet} kohteessa, viimeisin {kohde}: " + _lyhenna(str(tv[-1].get("syy", "")), 80))
     if nimet["EPAONNISTUI"]:
         halytykset.append(f"{nimet['EPAONNISTUI']} jonoteht\u00e4v\u00e4\u00e4 ep\u00e4onnistui")
     if yj and yj["epaonnistui"]:
