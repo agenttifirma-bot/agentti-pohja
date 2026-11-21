@@ -416,6 +416,11 @@ class PaivitaAjuritTesti(unittest.TestCase):
 
     def test_oletuksena_ei_runuseria_kun_ei_roottina(self):
         self.commit({"claudejono/ajuri.py": "VERSIO = 2\n"}, "v2")
+        # Testi asettaa ehdon itse: `id -u` (ilman muita argumentteja) kertoo ei-root-uid:n, vaikka testi ajettaisiin rootina.
+        idpolku = self.sim / "bin" / "id"
+        oikea_id = shutil.which("id") or "/usr/bin/id"  # which palauttaa None, jos PATH on tyhja tai id puuttuu
+        idpolku.write_text('#!/usr/bin/env bash\n[ "$*" = "-u" ] && { echo 1000; exit 0; }\nexec @ID@ "$@"\n'.replace("@ID@", oikea_id))
+        idpolku.chmod(0o755)
         self.assertEqual(self.aja().returncode, 0)
         self.assertFalse((self.sim / "runuser.log").exists())
 
