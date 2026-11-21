@@ -290,9 +290,9 @@ class PaivitaAjuritTesti(unittest.TestCase):
 
     def test_keskeytys_odotuksessa_ei_muuta_mitaan(self):
         self.commit({"claudejono/ajuri.py": "VERSIO = 2\n"}, "v2")
-        env = dict(os.environ, SIM=str(self.sim), PAIVITA_LAHDE=str(self.src), PAIVITA_POHJA=str(self.pohja), PAIVITA_YOJONO=str(self.yojono),
+        env = dict(os.environ, SIM=str(self.sim), PATH=str(self.sim / "bin") + ":" + os.environ["PATH"], PAIVITA_LAHDE=str(self.src), PAIVITA_POHJA=str(self.pohja), PAIVITA_YOJONO=str(self.yojono),
                    PAIVITA_LOKI=str(self.tmp / "loki.log"), PAIVITA_LUKKO=str(self.tmp / "lukko"), PAIVITA_SYSTEMCTL=str(self.sim / "systemctl"),
-                   PAIVITA_SALLI_EI_ROOT="1", PAIVITA_VAPAA_MB="1", PAIVITA_SEURANTA_S="1", PAIVITA_ODOTA_S="60", SIM_BUSY_KERTAA="1000000",
+                   PAIVITA_SALLI_EI_ROOT="1", PAIVITA_TESTIKAYTTAJA=testikayttaja(), PAIVITA_VAPAA_MB="1", PAIVITA_SEURANTA_S="1", PAIVITA_ODOTA_S="60", SIM_BUSY_KERTAA="1000000",
                    PAIVITA_TESTI_POHJA="test.test_ok", PAIVITA_TESTI_YOJONO="test.test_ok",
                    PAIVITA_SAVU_POHJA="claudejono.ajuri", PAIVITA_SAVU_YOJONO="yojono.ajuri")
         p = subprocess.Popen(["bash", str(SKRIPTI)], cwd=self.tmp, env=env, stdout=subprocess.PIPE, text=True)
@@ -309,9 +309,9 @@ class PaivitaAjuritTesti(unittest.TestCase):
     def test_keskeytys_vaihdon_jalkeen_palauttaa_vanhan(self):
         # uuden yojono-ajurin tuonti kestaa 3 s: signaali tulee savutestin aikana, trap ajetaan heti sen jalkeen
         self.commit({"yojono/ajuri.py": "import time\ntime.sleep(3)\nVERSIO = 2\n"}, "hidas")
-        env = dict(os.environ, SIM=str(self.sim), PAIVITA_LAHDE=str(self.src), PAIVITA_POHJA=str(self.pohja), PAIVITA_YOJONO=str(self.yojono),
+        env = dict(os.environ, SIM=str(self.sim), PATH=str(self.sim / "bin") + ":" + os.environ["PATH"], PAIVITA_LAHDE=str(self.src), PAIVITA_POHJA=str(self.pohja), PAIVITA_YOJONO=str(self.yojono),
                    PAIVITA_LOKI=str(self.tmp / "loki.log"), PAIVITA_LUKKO=str(self.tmp / "lukko"), PAIVITA_SYSTEMCTL=str(self.sim / "systemctl"),
-                   PAIVITA_SALLI_EI_ROOT="1", PAIVITA_VAPAA_MB="1", PAIVITA_SEURANTA_S="0",
+                   PAIVITA_SALLI_EI_ROOT="1", PAIVITA_TESTIKAYTTAJA=testikayttaja(), PAIVITA_VAPAA_MB="1", PAIVITA_SEURANTA_S="0",
                    PAIVITA_TESTI_POHJA="test.test_ok", PAIVITA_TESTI_YOJONO="test.test_ok",
                    PAIVITA_SAVU_POHJA="claudejono.ajuri", PAIVITA_SAVU_YOJONO="yojono.ajuri")
         p = subprocess.Popen(["bash", str(SKRIPTI)], cwd=self.tmp, env=env, stdout=subprocess.PIPE, text=True)
