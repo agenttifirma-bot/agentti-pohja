@@ -803,6 +803,13 @@ def seuraava_numero(repo, pvm):
     return max(nrot, default=0) + 1
 
 
+def kirjaa_pudotus(nimi, syy):
+    """Lokirivi (stderr -> journal) suunnittelijan ehdotuksesta, joka ei paassyt jonoon. Ei muuta mitaan ehtoa.
+    Nimi on mallin tuottamaa dataa: vain ASCII-tulostettavat merkit, enintaan 80 merkkia."""
+    n = "".join(c if 32 <= ord(c) < 127 else "?" for c in str(nimi))[:80]
+    print(f"claude-jono: suunnittelu pudotti ehdotuksen '{n}': {syy}", file=sys.stderr, flush=True)
+
+
 def jasenna_suunnitelma(teksti):
     """Mallin loppuvastauksesta JSON-olio {"tehtavat": [{"nimi", "sisalto"}], "tonylle": "..."}. Virheellinen -> None."""
     try:
@@ -817,6 +824,12 @@ def jasenna_suunnitelma(teksti):
         if (isinstance(t, dict) and isinstance(t.get("nimi"), str) and AUTO_NIMI_RE.match(t["nimi"])
                 and isinstance(t.get("sisalto"), str) and 0 < len(t["sisalto"].encode("utf-8")) <= TEHTAVA_MAX_TAVUA):
             ok.append(t)
+        else:
+            nimi = t.get("nimi") if isinstance(t, dict) else None
+            if isinstance(nimi, str) and not AUTO_NIMI_RE.match(nimi):
+                kirjaa_pudotus(nimi, f"nimi ei kelpaa (pienet a-z, 0-9, -, enintaan 41 merkkia; nyt {len(nimi)})")
+            else:
+                kirjaa_pudotus(nimi if isinstance(nimi, str) else "?", "nimi tai sisalto puuttuu tai sisalto on liian pitka")
     tonylle = d.get("tonylle") if isinstance(d.get("tonylle"), str) else ""
     return {"tehtavat": ok, "tonylle": tonylle[:3000]}
 
@@ -1050,14 +1063,24 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None, kaista=1):
         nro = seuraava_numero(repo, pvm)
         # Porttitarkistin (Tonyn linjaus 2.11.): julkaisu, raha, oikeudet, katot, ajastukset ja uusi suunta Tonylle, ei jonoon.
         hyvaksytyt, sunnuntai, _hylatyt_portti = silmukka.suodata(suunn["tehtavat"])
+        for t, syy in _hylatyt_portti:
+            kirjaa_pudotus(t["nimi"], f"sisaltotarkistus: {syy}")
         if sunnuntai:
             suunn["tonylle"] = (suunn["tonylle"].strip() + "\n" + silmukka.sunnuntairivit(sunnuntai)).strip()
         # Tavoitesidonta (A840): itse keksitty tehtava ilman sallittua Tavoite-rivia ei paase jonoon.
+        for t in hyvaksytyt:
+            if not tavoite.tavoite_tekstista(t.get("sisalto", "")):
+                kirjaa_pudotus(t["nimi"], "Tavoite-rivi puuttuu tai ei kelpaa")
         hyvaksytyt = [t for t in hyvaksytyt if tavoite.tavoite_tekstista(t.get("sisalto", ""))]
         uudet, _hylatyt = suodata_uudet(repo, hyvaksytyt, PORTTI)
+        for nimi, syy in _hylatyt:
+            kirjaa_pudotus(nimi, syy)
+        for t in uudet[tilaa:]:
+            kirjaa_pudotus(t["nimi"], f"ajokohtainen raja ({tilaa}) taynna")
         for t in uudet[:tilaa]:
             p = Path(repo) / JONO / "tehtavat" / f"{pvm}-{nro:02d}-auto-{t['nimi']}.md"
             if not kelvollinen_nimi(p.name):
+                kirjaa_pudotus(t["nimi"], "tiedostonimi ei kelpaa")
                 continue
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text("<!-- CT115:n Claude kirjoitti itse (itsesuunnittelu) -->\n" + t["sisalto"].rstrip() + "\n", encoding="utf-8")
