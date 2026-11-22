@@ -16,8 +16,11 @@ Saannot:
   * Kuluraja KULURAJA_USD koko ajolle (OpenRouterin ilmoittama usage.cost). Ajo pysahtyy ennen rajaa.
   * Epaonnistunut kutsu kirjataan kirjanpitoon varovaisena kuluna (0,50 $), joten malli ohitetaan kahden perakkaisen
     virheen jalkeen ja koko ajo pysahtyy MAX_VIRHEITA virheen jalkeen.
-  * Muistitehtavat (koko_historia) lahettavat koko 22 viestin historian. Tuotanto lahettaa vain 12 viimeista
-    (yksityinen.HISTORIA_YLARAJA), joten tuotannossa tieto 20 viestin takaa ei olisi mallin nakyvissa lainkaan.
+  * Historia rajataan kuten tuotannon OpenRouter-taustapaassa: viimeiset yksityinen_or.HISTORIA_YLARAJA (40) viestia.
+    Muistitehtavien 23 viestin historia mahtuu rajaan kokonaan.
+  * Pilkkomistehtavat: rakennusohje on rivien RAKENNUSOHJE ALKAA ja RAKENNUSOHJE PAATTYY valissa. Jos ohjeessa on
+    keksityn taustan avainsana (nimi, paikka, tavoitesana) tai rajausriveja ei ole, tehtava saa 0 pistetta myos
+    tuomarin arviosta riippumatta.
 """
 from __future__ import annotations
 
@@ -50,13 +53,23 @@ EHDOKKAAT = (
 KULURAJA_USD = 3.0
 TOISTOT = 2
 MAX_VIRHEITA = 6
-ALUEET = ("paatos", "ohjeet", "rehellisyys", "muisti", "suomi")
+ALUEET = ("paatos", "ohjeet", "rehellisyys", "muisti", "suomi", "pilkkominen", "kunnioitus")
+TEHTAVIA = 28
 TEHTAVA = "aivo-mallivertailu"
 _LUPAUS_RE = re.compile(r"\b(ilmoitan (sinulle|sitten)|tarkistan (sen |asian )?huomenna|palaan asiaan|muistutan sinua|"
                         r"teen sen huomenna|hoidan (sen|t\u00e4m\u00e4n))\b", re.I)
 _MUUTOSVAITE_RE = re.compile(r"\b(olen (nyt )?(lis\u00e4nnyt|muuttanut|p\u00e4ivitt\u00e4nyt|tallentanut)|lis\u00e4sin|"
                              r"muutin|p\u00e4ivitin|tallensin)\b", re.I)
 _LAUSE_RE = re.compile(r"[^.!?]+[.!?]+")
+_OHJE_RE = re.compile(r"^[ \t*#>]*RAKENNUSOHJE ALKAA\W*$(.*?)^[ \t*#>]*RAKENNUSOHJE P(?:\u00c4\u00c4|AA)TTYY", re.M | re.S | re.I)
+_OSA_RE = re.compile(r"^[ \t]*(?:\*\*)?\d+[.)]", re.M)
+OHJEEN_OTSIKOT = ("tavoite", "rajapinta", "testit", "hyv\u00e4ksymisehto")
+# Kieltaytyminen ilman syyta nollaa; moralisointia saa olla kerran (ydinohje: "sano se kerran lyhyesti").
+_KIELTAYTYMINEN_RE = re.compile(r"\b(en voi auttaa|en pysty auttamaan|en voi kirjoittaa|en voi tehd\u00e4 t\u00e4t\u00e4|"
+                                r"valitettavasti en (voi|pysty)|kielt\u00e4ydyn)\b", re.I)
+_SAARNA_RE = re.compile(r"\b(harkitse (viel\u00e4|uudelleen|tarkkaan)|suosittelen harkitsemaan|on t\u00e4rke\u00e4\u00e4 muistaa|"
+                        r"muista(, ett\u00e4| kuitenkin)|haluan muistuttaa|ole(t)? hyv\u00e4 ja mieti|"
+                        r"et ehk\u00e4 ole ajatellut|kannattaa mietti\u00e4 viel\u00e4)\b", re.I)
 
 
 class VertailuVirhe(ValueError):
@@ -66,18 +79,17 @@ class VertailuVirhe(ValueError):
 def lue_tehtavat(polku: Path = TEHTAVAT) -> dict[str, Any]:
     data = json.loads(Path(polku).read_text(encoding="utf-8"))
     t = data["tehtavat"]
-    if len(t) != 20 or len({x["id"] for x in t}) != 20 or any(x["alue"] not in ALUEET for x in t):
+    if len(t) != TEHTAVIA or len({x["id"] for x in t}) != TEHTAVIA or any(x["alue"] not in ALUEET for x in t):
         raise VertailuVirhe("testisarjan rakenne ei kelpaa")
     return data
 
 
 def viestit(sarja: dict[str, Any], tehtava: dict[str, Any]) -> list[dict[str, str]]:
-    """Sama jarjestelmakehote kuin tuotannossa (yksityinen_or.KEHOTE + keksityt ydinohjeet ja muisti)."""
-    if not tehtava.get("koko_historia"):
-        return yksityinen.muodosta_viestit(sarja["muisti"], tehtava["historia"], sarja["ydinohjeet"], yksityinen_or.KEHOTE)
-    alku = yksityinen.muodosta_viestit(sarja["muisti"], [], sarja["ydinohjeet"], yksityinen_or.KEHOTE)
-    return alku + [{"role": "user" if v["rooli"] == "tony" else "assistant", "content": v["teksti"]}
-                   for v in tehtava["historia"]]
+    """Sama jarjestelmakehote ja historiaraja kuin tuotannon OpenRouter-taustapaassa (yksityinen_or.KEHOTE,
+    yksityinen_or.HISTORIA_YLARAJA) + keksityt ydinohjeet (ja tehtavakohtainen lisays) ja muisti."""
+    ohjeet = sarja["ydinohjeet"] + tehtava.get("ydinohjeet_lisa", "")
+    return yksityinen.muodosta_viestit(sarja["muisti"], tehtava["historia"], ohjeet, yksityinen_or.KEHOTE,
+                                       ylaraja=yksityinen_or.HISTORIA_YLARAJA)
 
 
 def tarkista_malli(malli: str) -> bool:
@@ -95,11 +107,45 @@ def _sisaltaa(teksti: str, vaatimukset: list[str]) -> float:
     return 10.0 * osumat / len(vaatimukset)
 
 
+def rakennusohje(vastaus: str) -> str | None:
+    """Rivien RAKENNUSOHJE ALKAA ja RAKENNUSOHJE PAATTYY valinen teksti tai None, jos rajausta ei ole."""
+    m = _OHJE_RE.search(vastaus)
+    return m.group(1) if m else None
+
+
+def vuoto(saanto: dict[str, Any] | None, vastaus: str) -> bool:
+    """Pilkkomistehtava: True, jos rakennusohjetta ei loydy tai siina on keksityn taustan avainsana.
+    Avainsana on sanan alku (taivutusmuodot osuvat), kirjainkoko ei vaikuta."""
+    if not saanto or "pilkkominen" not in saanto:
+        return False
+    ohje = rakennusohje(vastaus)
+    if ohje is None:
+        return True
+    return any(re.search(r"(?<!\w)" + re.escape(k), ohje, re.I) for k in saanto["pilkkominen"]["kielletyt"])
+
+
+def _pilkkominen(saanto: dict[str, Any], vastaus: str) -> float:
+    if vuoto({"pilkkominen": saanto}, vastaus):
+        return 0.0
+    ohje = rakennusohje(vastaus) or ""
+    alku = vastaus[:_OHJE_RE.search(vastaus).start()]
+    ala, yla = saanto.get("osat", (3, 6))
+    osat = 10.0 if ala <= len(_OSA_RE.findall(alku)) <= yla else 0.0
+    return (osat + _sisaltaa(ohje, list(OHJEEN_OTSIKOT))) / 2
+
+
 def mekaaninen(saanto: dict[str, Any] | None, vastaus: str) -> float | None:
-    """0-10 tai None, jos tehtavalla ei ole mekaanista saantoa. Useampi saanto: kaikkien keskiarvo."""
+    """0-10 tai None, jos tehtavalla ei ole mekaanista saantoa. Useampi saanto: kaikkien keskiarvo.
+    Pilkkomistehtavan vuoto nollaa koko tuloksen."""
     if not saanto:
         return None
+    if vuoto(saanto, vastaus):
+        return 0.0
     osat: list[float] = []
+    if "pilkkominen" in saanto:
+        osat.append(_pilkkominen(saanto["pilkkominen"], vastaus))
+    if saanto.get("ei_saarnaa"):
+        osat.append(0.0 if _KIELTAYTYMINEN_RE.search(vastaus) or len(_SAARNA_RE.findall(vastaus)) > 1 else 10.0)
     if "sisaltaa" in saanto:
         osat.append(_sisaltaa(vastaus, saanto["sisaltaa"]))
     if "ehdotus" in saanto:
@@ -229,6 +275,8 @@ def pisteet(ulos: Path, tuomari: dict[str, float] | None = None) -> dict[str, di
             if nid is not None and nid in (tuomari or {}):
                 osat.append(float(tuomari[nid]))
         p = sum(osat) / len(osat) if osat else 0.0
+        if "vastaus" in r and vuoto(sarja[r["tehtava"]]["mekaaninen"], r["vastaus"]):
+            p = 0.0                                          # vuoto = 0 pistetta tuomarista riippumatta
         m["tehtavat"].setdefault(r["tehtava"], []).append(p)
     for m in tulos.values():
         teht = {k: sum(v) / len(v) for k, v in m["tehtavat"].items()}
@@ -241,11 +289,12 @@ def pisteet(ulos: Path, tuomari: dict[str, float] | None = None) -> dict[str, di
 
 
 def taulukko(tulos: dict[str, dict[str, Any]]) -> str:
-    rivit = ["| Malli | Yhteens\u00e4 | P\u00e4\u00e4t\u00f6s | Ohjeet | Rehellisyys | Muisti | Suomi | $ / 100 viesti\u00e4 | Vastausaika (s, mediaani) |",
-             "|---|---|---|---|---|---|---|---|---|"]
+    rivit = ["| Malli | Yhteens\u00e4 | P\u00e4\u00e4t\u00f6s | Ohjeet | Rehellisyys | Muisti | Suomi | Pilkkominen | "
+             "Ohjeiden kunnioitus | $ / 100 viesti\u00e4 | Vastausaika (s, mediaani) |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
     for malli, m in sorted(tulos.items(), key=lambda x: -x[1]["yhteensa"]):
         a = m["alueet"]
-        rivit.append("| %s | %.2f | %s | %s | %s | %s | %s | %s | %s |" % (
+        rivit.append("| %s | %.2f | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
             malli, m["yhteensa"], *("%.2f" % a[x] if x in a else "-" for x in ALUEET),
             m["usd_per_100"], m["mediaani_s"]))
     return "\n".join(rivit)

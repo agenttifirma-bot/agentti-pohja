@@ -1,0 +1,1 @@
+- Aivo: mallivertailuun kaksi uutta osa-aluetta, Pilkkominen (4 tehtävää, mekaaninen vuototarkistus nollaa tuloksen) ja Ohjeiden kunnioitus (4 tehtävää). Testisarjassa on nyt 28 tehtävää. `viestit()` käyttää OpenRouter-taustapään historiarajaa `yksityinen_or.HISTORIA_YLARAJA` (40), ja dokumentin väite 12 viestistä on korjattu.
