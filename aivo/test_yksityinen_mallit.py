@@ -122,7 +122,7 @@ class Palvelin(unittest.TestCase):
 
     def test_valinta_tallentuu_ja_vaihtuu_kesken_keskustelun(self):
         self.kaynnista(or_mallit=[M1, M2])
-        self.assertEqual(self.api("/api/mallit", metodi="GET"), (200, {"mallit": [M1, M2], "yhdistelmat": ["yksi", "tarkastus", "rinnakkais", "reititys"], "yhdistelma": "yksi"}))
+        self.assertEqual(self.api("/api/mallit", metodi="GET"), (200, {"mallit": [M1, M2], "yhdistelmat": ["yksi", "tarkastus", "rinnakkais", "reititys", "tiimi"], "yhdistelma": "yksi"}))
         s, d = self.api("/api/uusi", {})
         self.assertEqual((s, d["malli"]), (200, M1))                        # oletus = ensimmainen
         kid = d["id"]
@@ -167,7 +167,7 @@ class Palvelin(unittest.TestCase):
 
     def test_vanha_yksi_malli_toimii(self):
         self.kaynnista(or_malli=M2)
-        self.assertEqual(self.api("/api/mallit", metodi="GET"), (200, {"mallit": [M2], "yhdistelmat": ["yksi", "tarkastus", "rinnakkais", "reititys"], "yhdistelma": "yksi"}))
+        self.assertEqual(self.api("/api/mallit", metodi="GET"), (200, {"mallit": [M2], "yhdistelmat": ["yksi", "tarkastus", "rinnakkais", "reititys", "tiimi"], "yhdistelma": "yksi"}))
         s, d = self.api("/api/uusi", {})
         self.assertEqual(d["malli"], M2)
         s, v = self.api("/api/viesti", {"keskustelu": d["id"], "teksti": "moi"})
