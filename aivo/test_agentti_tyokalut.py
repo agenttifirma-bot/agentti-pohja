@@ -224,12 +224,12 @@ class TyokaluTesti(unittest.TestCase):
         havainnot = []
 
         def tarkkaile(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
-            havainnot.append(polut._kesken(src, src_dir_fd))
+            havainnot.append(polut._lukitsematon(src, src_dir_fd))
             return alkuperainen(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
 
         with mock.patch.object(tyokalut.os, "replace", tarkkaile):
             self.assertTrue(self.aja("kirjoita", polku="a.md", sisalto="x").ok)
-        self.assertEqual(havainnot, [True])
+        self.assertEqual(havainnot, [False])   # lukittu = ei vapaa
 
     def test_hylatty_kirjoitus_ei_jata_valikansioita(self):
         for i in range(polut.RAJA_TIEDOSTOT):

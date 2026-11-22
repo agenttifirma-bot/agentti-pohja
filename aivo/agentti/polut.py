@@ -23,7 +23,7 @@ SALLITUT_PAATTEET = (".md", ".txt", ".csv", ".json")
 # Kirjoittaja pitaa tiedostossa flock-lukkoa, kunnes se on nimetty lopulliseksi.
 VALIAIKAINEN = re.compile(r"\.kirj-[0-9]+(?:-[0-9]+-[0-9a-f]{16})?\.tmp")
 VALIAIKAINEN_ARMO_S = 10             # lukitsematon tiedosto poistetaan vasta taman jalkeen (avaus -> lukitus)
-VALIAIKAINEN_IKA_S = 3600            # tata vanhempi poistetaan lukosta riippumatta
+VALIAIKAINEN_IKA_S = 3600            # jos lukkoa ei voi tarkistaa, tata vanhempi poistetaan
 
 class PolkuVirhe(Exception):
     """Polku tai tyokansion tila rikkoo saannon. Viesti on turvallinen nayttaa mallille."""
@@ -206,40 +206,46 @@ def valiaikainen_nimi():
 
 
 def lukitse_valiaikainen(fd):
-    """Kirjoittajan lukko valiaikaistiedostoon. Siivous ei poista lukittua tiedostoa."""
-    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    """Kirjoittajan lukko valiaikaistiedostoon (odottaa, jos siivous tarkistaa tiedostoa juuri nyt).
+    Siivous ei poista lukittua tiedostoa."""
+    fcntl.flock(fd, fcntl.LOCK_EX)
 
 
-def _kesken(nimi, fd):
-    """True, jos joku pitaa lukkoa tiedostossa `nimi` (kirjoitus kesken). Kadonnut tiedosto: None."""
+def _lukitsematon(nimi, fd):
+    """True vain, jos tiedosto on yha olemassa eika kukaan pida siina lukkoa. Lukko vapautuu, kun
+    tarkistuksen fd suljetaan. Muu virhe (oikeudet, linkki, lukko ei tuettu): None."""
     try:
         tfd = os.open(nimi, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
     except FileNotFoundError:
+        return False
+    except OSError:
         return None
     try:
-        if not stat.S_ISREG(os.fstat(tfd).st_mode):
-            return True                # ei tavallinen tiedosto: ei kosketa
-        try:
-            fcntl.flock(tfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return True
-        return False                   # lukko vapautuu, kun tfd suljetaan
+        fcntl.flock(tfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except BlockingIOError:
+        return False
+    except OSError:
+        return None
     finally:
         os.close(tfd)
 
 
-def _poistettava(nimi, tila, nyt, fd):
-    """Valiaikaistiedosto poistetaan, jos se on yli VALIAIKAINEN_IKA_S vanha tai jos kukaan ei pida
-    siina lukkoa ja se on yli VALIAIKAINEN_ARMO_S vanha (tai muokkausaika on tulevaisuudessa).
-    Lukittu tiedosto on rinnakkaisen ajon kesken oleva kirjoitus."""
+def _poistettava(nimi, tila, fd):
+    """Valiaikaistiedosto poistetaan, jos kukaan ei pida siina lukkoa ja se on yli VALIAIKAINEN_ARMO_S
+    vanha (armoaika kattaa avauksen ja lukituksen valin). Lukittu tiedosto on rinnakkaisen ajon kesken
+    oleva kirjoitus, eika sita poisteta. Jos lukkoa ei voi tarkistaa, poistetaan vasta yli
+    VALIAIKAINEN_IKA_S vanha. Ika lasketaan tiedostokohtaisesti, ja tulevaisuuden mtime tulkitaan
+    kellon siirroksi (kasitellaan kuin vanha)."""
     if VALIAIKAINEN.fullmatch(nimi) is None:
         return False
-    ika = nyt - tila.st_mtime
-    if ika > VALIAIKAINEN_IKA_S:
-        return True
+    ika = time.time() - tila.st_mtime
     if -VALIAIKAINEN_ARMO_S <= ika <= VALIAIKAINEN_ARMO_S:
         return False
-    return _kesken(nimi, fd) is False
+    vapaa = _lukitsematon(nimi, fd)
+    if vapaa is None:
+        return ika > VALIAIKAINEN_IKA_S or ika < 0
+    return vapaa
 
 
 def siivoa_valiaikaiset(juuri):
@@ -250,7 +256,6 @@ def siivoa_valiaikaiset(juuri):
     laske tiedostorajaa.
     """
     poistettu = 0
-    nyt = time.time()
     pino = [avaa_juuri(juuri)]
     try:
         while pino:
@@ -266,7 +271,7 @@ def siivoa_valiaikaiset(juuri):
                             uusi = _avaa_alikansio(e.name, fd)
                             if uusi is not None:
                                 pino.append(uusi)
-                        elif stat.S_ISREG(tila.st_mode) and _poistettava(e.name, tila, nyt, fd):
+                        elif stat.S_ISREG(tila.st_mode) and _poistettava(e.name, tila, fd):
                             poistettavat.append(e.name)
                 for nimi in poistettavat:
                     try:
