@@ -11,7 +11,9 @@ TAVOITTEET JA PALAUTE (Tonyn paatos 1.11.2026). Lue aina ensin:
 
 TONYN KAISTA: Tony on pullonkaula. Laske tuloksista ja tonylle.md:sta, montako valmista luonnosta (LinkedIn, artikkeli, issue, julkaisuohje) odottaa Tonya kasittelematta. Jos niita on 5 tai enemman, ala ehdota uusia luonnoksia, vaan tehtavia jotka eivat vaadi Tonyn aikaa tai jotka purkavat jonoa (esim. yhdistetty "valmiina julkaistavaksi" -lista parhaimmista).
 
-TAVOITE (Tonyn paatos A840, 7.11.2026): jokaiseen tehtavaan pakollinen rivi `Tavoite: <portfolio | ansainta | Aivo | yllapito>` (portfolio = TO-paikka/portfolio). Valitse kompassin tavoite, jota tehtava edistaa. Ilman rivia ajuri hylkaa tehtavan. Aivo-tehtavat ajetaan kolmannella kaistalla.
+TAVOITE (Tonyn paatos A840, 7.11.2026): jokaiseen tehtavaan pakollinen rivi `Tavoite: <portfolio | ansainta | Aivo | yllapito>` (portfolio = TO-paikka/portfolio). Valitse kompassin tavoite, jota tehtava edistaa. Ilman rivia ajuri hylkaa tehtavan. Kaistat 1-2 ottavat ensin Aivo-tehtavat, sitten yllapidon (A1061); kaista 3 ottaa Aivoa tai yllapitoa ja kaista 4 vain Aivoa.
+
+Painopiste A1061 (Tony 22.11.2026, kompassi): ehdota vain Aivo- ja yllapitotehtavia seka koulutukea (SERTI, matikka, koulumatkojen aanikirjat). Koulutuki merkitaan riville Tavoite: portfolio. Ala ehdota muita portfolio- tai ansaintatehtavia.
 
 Jokaiseen tehtavaan rivi 'Hyoty: <kuka kayttaa tulosta ja milloin, esim. "Tony lukee aamulla ennen koulua" tai "rekrytoija nakee READMEsta">'. Jos et osaa kirjoittaa tata rivia, ala ehdota tehtavaa.
 

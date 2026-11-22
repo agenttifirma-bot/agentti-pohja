@@ -646,6 +646,60 @@ class JulkaisuPushVirhe(Pohja):
         self.assertEqual(self.yritykset(), 3)
 
 
+class SuunnittelunPudotusloki(Pohja):
+    """Suunnittelijan ehdotus, joka ei paase jonoon, jattaa lokirivin (21.11.2026: 43 merkin nimi katosi hiljaa)."""
+    NYT = datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)
+    PITKA = "aamukooste-varoitus-pysahtyneesta-kaistasta"   # 43 merkkia, AUTO_NIMI_RE sallii 41
+
+    def aja_suunnittelu(self, tehtavat):
+        vastaus = json.dumps({"tehtavat": tehtavat, "tonylle": ""})
+
+        def f(kom, **kw):
+            return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": vastaus}), "")
+        virhe = io.StringIO()
+        with contextlib.redirect_stderr(virhe):
+            v = ajuri.suunnittele(self.repo, self.tmp, {}, f, nyt=self.NYT)
+        return v, virhe.getvalue()
+
+    def test_liian_pitka_nimi_kirjataan(self):
+        virhe = io.StringIO()
+        with contextlib.redirect_stderr(virhe):
+            s = ajuri.jasenna_suunnitelma(json.dumps({"tehtavat": [{"nimi": self.PITKA, "sisalto": "# A\nTavoite: yllapito"}]}))
+        self.assertEqual(s["tehtavat"], [])   # ehto ennallaan: nimi ei kelpaa
+        self.assertIn(self.PITKA, virhe.getvalue())
+        self.assertIn("nimi ei kelpaa", virhe.getvalue())
+        self.assertIn("nyt 43", virhe.getvalue())
+
+    def test_kelvollinen_ehdotus_ei_kirjaa_pudotusta(self):
+        v, virhe = self.aja_suunnittelu([{"nimi": "a", "sisalto": "# A\nTavoite: yllapito"}])
+        self.assertIn("auto-a.md", v)
+        self.assertNotIn("pudotti", virhe)
+
+    def test_suunnittelussa_pudotetut_kirjataan(self):
+        v, virhe = self.aja_suunnittelu([
+            {"nimi": self.PITKA, "sisalto": "# P\nTavoite: yllapito"},
+            {"nimi": "ilman-tavoitetta", "sisalto": "# T\nEi tavoiterivia"},
+            {"nimi": "liian-iso", "sisalto": "# I\nTavoite: yllapito\nPisteet: hyoty 3, varmuus 3, vaiva 5 h"},
+            {"nimi": "a", "sisalto": "# A\nTavoite: yllapito"},
+            {"nimi": "a", "sisalto": "# A2\nTavoite: yllapito"},
+        ])
+        self.assertIn("auto-a.md", v)
+        self.assertEqual(v.count("auto-"), 1)
+        self.assertIn(f"'{self.PITKA}': nimi ei kelpaa", virhe)
+        self.assertIn("'ilman-tavoitetta': Tavoite-rivi puuttuu", virhe)
+        self.assertIn("'liian-iso': sisaltotarkistus: vaiva yli", virhe)
+        self.assertIn("'a': nimi on jo jonossa tai tehty", virhe)
+
+    def test_nimen_ohjausmerkit_suodatetaan(self):
+        virhe = io.StringIO()
+        with contextlib.redirect_stderr(virhe):
+            ajuri.kirjaa_pudotus("x\nvaara\x1b[31m" + "y" * 200, "syy")
+        rivi = virhe.getvalue()
+        self.assertEqual(rivi.count("\n"), 1)
+        self.assertNotIn("\x1b", rivi)
+        self.assertLess(len(rivi), 200)
+
+
 class HylatytPrt(unittest.TestCase):
     """Tarkastajan hylkaamat PR:t suunnittelun kehotteeseen; lokin vapaa teksti ei saa paatya malille."""
     NYT = datetime(2026, 11, 4, 12, 0, tzinfo=timezone.utc)

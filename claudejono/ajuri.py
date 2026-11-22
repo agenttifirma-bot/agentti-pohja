@@ -16,6 +16,7 @@ import os
 import posixpath
 import re
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -792,6 +793,61 @@ def julkaise(repo, polut, viesti=None):
         return _tyonna(repo)
 
 
+ELONMERKKI = "elonmerkki.md"
+ELONMERKKI_VALI_S = 2 * 3600   # ulkoinen valvoja halyttaa 3 h hiljaisuudesta; 2 h jattaa tunnin varan
+
+
+def _julkaistu_ref(repo):
+    """Etahaaran ref (upstream tai origin/<haara>), jotta pushaamaton paikallinen commit ei todista elonmerkkia; muuten HEAD."""
+    haara = git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False).stdout.strip()
+    for ref in ("@{u}", f"origin/{haara}" if haara and haara != "HEAD" else ""):
+        if ref and git(repo, "rev-parse", "-q", "--verify", f"{ref}^{{commit}}", check=False).returncode == 0:
+            return ref
+    return "HEAD"
+
+
+def viimeisin_oma_commit(repo):
+    """Taman koneen viimeisimman julkaistun commitin aika (epoch) tai None. Tunnistus git-asetuksen user.emailin mukaan
+    tarkkana merkkijonona (<sposti>, ei regex); ilman sita kaytetaan elonmerkkitiedoston omaa historiaa."""
+    sposti = git(repo, "config", "user.email", check=False).stdout.strip()
+    ref = _julkaistu_ref(repo)
+    rajaus = ["--fixed-strings", f"--committer=<{sposti}>", ref] if sposti else [ref, "--", f"{JONO}/{ELONMERKKI}"]
+    arvo = git(repo, "log", "-1", "--format=%ct", *rajaus, check=False).stdout.strip()
+    return int(arvo) if arvo.isdigit() else None
+
+
+def _siisti(teksti, pituus=200):
+    return "".join(c if 32 <= ord(c) < 127 or c in "\u00e4\u00f6\u00c4\u00d6" else "?" for c in str(teksti))[:pituus]
+
+
+def elonmerkki(repo, tila_viesti, nyt=None, vali_s=ELONMERKKI_VALI_S):
+    """Hiljainen jono (ei tuloksia eika uusia tehtavia) pushaa claude-jono/elonmerkki.md:n enintaan kerran vali_s:ssa.
+    Ulkoinen valvoja (pilvi-istunto) erottaa nain hiljaisen jonon sammuneesta palvelimesta: 21.11.2026 kaistat 1-2
+    olivat 4 h hiljaa (jonossa vain Aivo-tehtavia, 'jono riittaa'), mika nayttaa ulospain samalta kuin sahkokatko.
+    Palauttaa True, jos elonmerkki pushattiin. Virhe ei kaada ajoa (elonmerkki on sivutoiminto)."""
+    nyt = nyt or datetime.now().astimezone()
+    try:
+        edellinen = viimeisin_oma_commit(repo)
+        if edellinen is not None and 0 <= nyt.timestamp() - edellinen < vali_s:
+            return False
+        tila_viesti = _siisti(tila_viesti)
+        kone = _siisti(socket.gethostname() or "tuntematon", 64)
+        p = Path(repo) / JONO / ELONMERKKI
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(f"# Elonmerkki ({kone}, claude-jono)\n\n"
+                     "Ajuri kirjoittaa taman, kun jono on ollut hiljaa (ei tuloksia eika tehtavia) vahintaan "
+                     f"{vali_s // 3600} h. Ulkoinen valvoja lukee commitin ajan.\n\n"
+                     f"- Aika: {nyt.isoformat(timespec='minutes')}\n- Kone: {kone}\n- Kaistan 1 tila: {tila_viesti}\n", encoding="utf-8")
+        return bool(julkaise(repo, [p], "claude-jono: elonmerkki"))
+    except (JonoVirhe, OSError, subprocess.SubprocessError) as virhe:
+        # likainen tyopuu estaisi seuraavan pull --rebasen: palautetaan tiedosto (tai poistetaan uusi)
+        git(repo, "reset", "-q", "--", f"{JONO}/{ELONMERKKI}", check=False)
+        if git(repo, "checkout", "-q", "--", f"{JONO}/{ELONMERKKI}", check=False).returncode != 0:
+            (Path(repo) / JONO / ELONMERKKI).unlink(missing_ok=True)
+        print(f"claude-jono: elonmerkki epaonnistui: {type(virhe).__name__}", file=sys.stderr, flush=True)
+        return False
+
+
 def auto_tanaan(repo, pvm):
     teht = Path(repo) / JONO / "tehtavat"
     return sum(1 for p in teht.glob(f"{pvm}-*-auto-*.md")) if teht.is_dir() else 0
@@ -801,6 +857,13 @@ def seuraava_numero(repo, pvm):
     teht = Path(repo) / JONO / "tehtavat"
     nrot = [int(p.name[11:13]) for p in teht.glob(f"{pvm}-[0-9][0-9]-*.md")] if teht.is_dir() else []
     return max(nrot, default=0) + 1
+
+
+def kirjaa_pudotus(nimi, syy):
+    """Lokirivi (stderr -> journal) suunnittelijan ehdotuksesta, joka ei paassyt jonoon. Ei muuta mitaan ehtoa.
+    Nimi on mallin tuottamaa dataa: vain ASCII-tulostettavat merkit, enintaan 80 merkkia."""
+    n = "".join(c if 32 <= ord(c) < 127 else "?" for c in str(nimi))[:80]
+    print(f"claude-jono: suunnittelu pudotti ehdotuksen '{n}': {syy}", file=sys.stderr, flush=True)
 
 
 def jasenna_suunnitelma(teksti):
@@ -817,6 +880,12 @@ def jasenna_suunnitelma(teksti):
         if (isinstance(t, dict) and isinstance(t.get("nimi"), str) and AUTO_NIMI_RE.match(t["nimi"])
                 and isinstance(t.get("sisalto"), str) and 0 < len(t["sisalto"].encode("utf-8")) <= TEHTAVA_MAX_TAVUA):
             ok.append(t)
+        else:
+            nimi = t.get("nimi") if isinstance(t, dict) else None
+            if isinstance(nimi, str) and not AUTO_NIMI_RE.match(nimi):
+                kirjaa_pudotus(nimi, f"nimi ei kelpaa (pienet a-z, 0-9, -, enintaan 41 merkkia; nyt {len(nimi)})")
+            else:
+                kirjaa_pudotus(nimi if isinstance(nimi, str) else "?", "nimi tai sisalto puuttuu tai sisalto on liian pitka")
     tonylle = d.get("tonylle") if isinstance(d.get("tonylle"), str) else ""
     return {"tehtavat": ok, "tonylle": tonylle[:3000]}
 
@@ -1050,14 +1119,24 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None, kaista=1):
         nro = seuraava_numero(repo, pvm)
         # Porttitarkistin (Tonyn linjaus 2.11.): julkaisu, raha, oikeudet, katot, ajastukset ja uusi suunta Tonylle, ei jonoon.
         hyvaksytyt, sunnuntai, _hylatyt_portti = silmukka.suodata(suunn["tehtavat"])
+        for t, syy in _hylatyt_portti:
+            kirjaa_pudotus(t["nimi"], f"sisaltotarkistus: {syy}")
         if sunnuntai:
             suunn["tonylle"] = (suunn["tonylle"].strip() + "\n" + silmukka.sunnuntairivit(sunnuntai)).strip()
         # Tavoitesidonta (A840): itse keksitty tehtava ilman sallittua Tavoite-rivia ei paase jonoon.
+        for t in hyvaksytyt:
+            if not tavoite.tavoite_tekstista(t.get("sisalto", "")):
+                kirjaa_pudotus(t["nimi"], "Tavoite-rivi puuttuu tai ei kelpaa")
         hyvaksytyt = [t for t in hyvaksytyt if tavoite.tavoite_tekstista(t.get("sisalto", ""))]
         uudet, _hylatyt = suodata_uudet(repo, hyvaksytyt, PORTTI)
+        for nimi, syy in _hylatyt:
+            kirjaa_pudotus(nimi, syy)
+        for t in uudet[tilaa:]:
+            kirjaa_pudotus(t["nimi"], f"ajokohtainen raja ({tilaa}) taynna")
         for t in uudet[:tilaa]:
             p = Path(repo) / JONO / "tehtavat" / f"{pvm}-{nro:02d}-auto-{t['nimi']}.md"
             if not kelvollinen_nimi(p.name):
+                kirjaa_pudotus(t["nimi"], "tiedostonimi ei kelpaa")
                 continue
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text("<!-- CT115:n Claude kirjoitti itse (itsesuunnittelu) -->\n" + t["sisalto"].rstrip() + "\n", encoding="utf-8")
@@ -1324,7 +1403,10 @@ def main(argv=None):
         except Exception:
             laheta_telegram = None
         try:
-            print(aja(repo, tyohak, laheta=laheta_telegram, kaista=a.kaista, aivo_arvioija=aivo_arvioija()))
+            viesti = aja(repo, tyohak, laheta=laheta_telegram, kaista=a.kaista, aivo_arvioija=aivo_arvioija())
+            print(viesti)
+            if a.kaista == 1 and isinstance(viesti, str) and viesti.startswith("jono"):
+                elonmerkki(repo, viesti)   # hiljainen jono: ulkoinen valvoja nakee, etta palvelin on paalla
         except Exception as virhe:  # kaikki kaatumiset halytetaan (vika 30.10.: FileNotFoundError jai hiljaiseksi 20 h)
             kuvaus = f"{type(virhe).__name__}: {str(virhe)[:200]}"
             print(f"claude-jono virhe: {kuvaus}", file=sys.stderr)
