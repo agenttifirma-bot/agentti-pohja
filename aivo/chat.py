@@ -1310,18 +1310,21 @@ def tee_kasittelija(tila):
                 return self._json(400, {"virhe": "vahvistuksen pit\u00e4\u00e4 olla t\u00e4sm\u00e4lleen 'kyll\u00e4 <sha8>'"})
             if not tila.ehdotuslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
+            vastaus = None
             try:
                 e = yksityinen.lue_ehdotus(tila.ehdotukset, eid)          # merkintaa varten; ehdotus poistuu hyvaksyttaessa
                 tulos = yksityinen.hyvaksy_ehdotus(tila.ehdotukset, tila.ydinohjeet, eid, vahvistus)
                 merkinta = self._merkitse(d, yksityinen.hyvaksynta_merkinta(e["tiedosto"], e["sha"][:8]))
+                vastaus = (200, {"tulos": tulos,
+                                 "teksti": EHDOTUS_TULOKSET.get(tulos, "Hyv\u00e4ksytty (%s)." % tulos),
+                                 "merkinta": merkinta})
             except ChatVirhe as e:
-                return self._json(409, {"virhe": str(e)})
+                vastaus = (409, {"virhe": str(e)})
             except OSError as e:
-                return self._json(500, {"virhe": "tallennus ep\u00e4onnistui (%s)" % type(e).__name__})
+                vastaus = (500, {"virhe": "tallennus ep\u00e4onnistui (%s)" % type(e).__name__})
             finally:
                 tila.ehdotuslukko.release()
-            return self._json(200, {"tulos": tulos, "teksti": EHDOTUS_TULOKSET.get(tulos, "Hyv\u00e4ksytty (%s)." % tulos),
-                                    "merkinta": merkinta})
+            return self._json(*vastaus)             # vastaus lahtee vasta lukon vapautuksen jalkeen (ei satunnaista 429:aa)
 
         def _ehdotus_hylkaa(self, d):
             if not self._yks_keskustelu(d):
@@ -1331,6 +1334,7 @@ def tee_kasittelija(tila):
             if not tila.ehdotuslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
             eid = d.get("tunnus")
+            vastaus = None
             try:
                 try:
                     tiedosto = yksityinen.lue_ehdotus(tila.ehdotukset, eid)["tiedosto"]
@@ -1338,12 +1342,13 @@ def tee_kasittelija(tila):
                     tiedosto = "(tuntematon)"                     # viallisenkin ehdotuksen voi hylata
                 yksityinen.hylkaa_ehdotus(tila.ehdotukset, eid)
                 merkinta = self._merkitse(d, yksityinen.hylkays_merkinta(tiedosto, eid))
+                vastaus = (200, {"tulos": "hylatty", "teksti": "Ehdotus hyl\u00e4tty ja siirretty kansioon hylatyt/.",
+                                 "merkinta": merkinta})
             except ChatVirhe as e:
-                return self._json(409, {"virhe": str(e)})
+                vastaus = (409, {"virhe": str(e)})
             finally:
                 tila.ehdotuslukko.release()
-            return self._json(200, {"tulos": "hylatty", "teksti": "Ehdotus hyl\u00e4tty ja siirretty kansioon hylatyt/.",
-                                    "merkinta": merkinta})
+            return self._json(*vastaus)             # vastaus lahtee vasta lukon vapautuksen jalkeen
 
     return K
 
