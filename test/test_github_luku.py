@@ -114,8 +114,8 @@ class KommentitTesti(unittest.TestCase):
                      "X-RateLimit-Reset": "1", "ETag": '"abc"'}
         return v
 
-    def aja(self):
-        return github_luku.kommentit("omistaja/repo", "7", hak=self.hak.name, avaa=self.avaa, polku=self.polku)
+    def aja(self, **kw):
+        return github_luku.kommentit("omistaja/repo", "7", hak=self.hak.name, avaa=self.avaa, polku=self.polku, **kw)
 
     def test_vain_get_ja_vain_githubin_apille(self):
         self.aja()
@@ -134,6 +134,29 @@ class KommentitTesti(unittest.TestCase):
         self.assertIn("...", teksti)
         self.assertTrue(all(len(r) < 400 for r in rivit))
         self.assertEqual(len(rivit), len(teksti.split("\n")))
+
+    def test_koko_palauttaa_pitkan_rungon_kokonaan_ja_siivoaa_ohjausmerkit(self):
+        rivit, _ = self.aja(koko=True)
+        teksti = "\n".join(rivit)
+        self.assertNotIn("\x1b", teksti)
+        self.assertNotIn(TESTITUNNUS, teksti)
+        self.assertIn("x" * 300, teksti)
+        self.assertNotIn("...", teksti)
+        self.assertIn("\n  rivi2 ", teksti)  # rivinvaihto sailyy sisennettyna
+        self.assertEqual(len(rivit), len(teksti.split("\n")) - teksti.count("\n  "))
+
+    def test_koko_ylaraja_toimii(self):
+        self.assertEqual(github_luku.KOKO_YLARAJA, 20000)
+        ulos = github_luku._siisti_koko("a" * 25000 + "\x1b[0m")
+        self.assertIn("[lyhennetty: runko yli 20000 merkkia]", ulos)
+        self.assertEqual(ulos.split("\n")[0].count("a"), 20000)
+        self.assertNotIn("lyhennetty", github_luku._siisti_koko("a" * 20000))
+        self.assertEqual(github_luku._siisti_koko("a\r\nb\x07\tc"), "a\n  b c")
+
+    def test_cli_koko_valitin_hyvaksytaan_ja_muu_hylataan(self):
+        self.assertEqual(github_luku.main(["kommentit", "a/b"]), 2)
+        self.assertEqual(github_luku.main(["kommentit", "a/b", "1", "--muu"]), 2)
+        self.assertEqual(github_luku.main(["pr", "a/b", "1", "--koko"]), 2)
 
     def test_valimuisti_ei_sisalla_tunnusta(self):
         self.aja()
