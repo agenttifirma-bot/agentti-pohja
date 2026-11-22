@@ -1,6 +1,7 @@
 """Tavoitesidonta, kaistaosuudet, jalkimittari ja Aivon varjoarvio (A839-A841)."""
 import json
 import random
+import re
 import tempfile
 import unittest
 from collections import Counter
@@ -39,6 +40,33 @@ class Jasennys(unittest.TestCase):
         self.assertIsNone(tav)
         self.assertIn("puuttuu", syy)
         self.assertEqual(tavoite.luokittele(kirj(h, "2026-11-01-01-c.md", "ei rivi\u00e4")), ("yllapito", ""))
+
+
+class SuunnitteluKehote(unittest.TestCase):
+    """suunnittelu.md ei saa ohjata luomaan tehtavia, joiden Tavoite-arvon ajuri hylkaa (PR #376)."""
+    POHJA = "<portfolio | ansainta | Aivo | yllapito>"
+
+    def setUp(self):
+        self.teksti = ajuri.SUUNNITTELU.read_text(encoding="utf-8")
+
+    def test_ascii(self):
+        self.assertTrue(self.teksti.isascii())
+
+    def test_tavoite_arvot_sallittuja(self):
+        arvot = re.findall(r"Tavoite: *(<[^>]*>|[^\s`.,)]+)", self.teksti)
+        self.assertTrue(arvot)
+        for arvo in arvot:
+            if arvo.startswith("<"):
+                self.assertEqual(arvo, self.POHJA)
+            else:
+                self.assertIn(tavoite.normalisoi(arvo), tavoite.TAVOITTEET, arvo)
+
+    def test_ehdota_vain_luokat_sallittuja(self):
+        kohdat = re.findall(r"ehdota vain ([^.(]*?)tehtavia", self.teksti)
+        self.assertTrue(kohdat)
+        for kohta in kohdat:
+            for sana in re.findall(r"(\w+)-(?=[\s,]|$)", kohta) + re.findall(r"(\w+)$", kohta):
+                self.assertIsNotNone(tavoite.normalisoi(sana), sana)
 
 
 class Kaistat(unittest.TestCase):
