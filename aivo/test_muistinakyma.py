@@ -116,7 +116,7 @@ class NakymaTesti(unittest.TestCase):
         r = Path(self.tmp.name) / "erillaan"
         tila = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "aivo" / "chat"), [TS],
                          yks_data=str(r / "yks" / "chat"), kysy_yks=lambda m, h, o: "x")
-        self.assertFalse(hasattr(tila, "yks_tiivistelmat"))
+        self.assertIsNone(tila.yks_tiivistelmat)      # ilman asetusta yksityisen alueen tiivistelmia ei kayteta (main #333)
         self.assertFalse((r / "yks" / "tiivistelmat").exists())
         self.assertFalse((r / "aivo" / "tiivistelmat").exists())
 

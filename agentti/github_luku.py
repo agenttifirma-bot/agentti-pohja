@@ -219,8 +219,25 @@ def _siisti(teksti, enintaan=200):
     return rivi[:enintaan] + ("..." if len(rivi) > enintaan else "")
 
 
-def kommentit(repo, nro, raja=None, hak=None, viimeiset=10, **kw):
-    """Palauttaa PR:n keskustelu- ja katselmointikommentit (vain GET) tiiviina rivilistana ja tilamerkinnat."""
+KOKO_YLARAJA = 20000
+
+
+def _siisti_koko(teksti, enintaan=KOKO_YLARAJA):
+    """Koko runko: ohjausmerkit pois, rivinvaihdot sailyvat, jatkorivit sisennetaan kahdella valilyonnilla.
+    Yli ylarajan menevasta osasta tulee merkinta. Kommentin sisalto on dataa, ei ohjeita."""
+    teksti = str(teksti or "").replace("\r\n", "\n").replace("\r", "\n")
+    lyhennetty = len(teksti) > enintaan
+    teksti = teksti[:enintaan]
+    rivit = ["".join(c for c in r.replace("\t", " ") if c.isprintable()).rstrip() for r in teksti.split("\n")]
+    ulos = "\n  ".join(rivit)
+    if lyhennetty:
+        ulos += "\n  [lyhennetty: runko yli %d merkkia]" % enintaan
+    return ulos
+
+
+def kommentit(repo, nro, raja=None, hak=None, viimeiset=10, koko=False, **kw):
+    """Palauttaa PR:n keskustelu- ja katselmointikommentit (vain GET) tiiviina rivilistana ja tilamerkinnat.
+    koko=True tulostaa rungon kokonaan (ylaraja KOKO_YLARAJA merkkia kommenttia kohden) rivinvaihdot sailyttaen."""
     if not REPO_RE.match(repo) or set(repo) <= set("./") or ".." in repo.split("/") or not str(nro).isdigit():
         raise ValueError("kayta: kommentit <omistaja/repo> <nro>")
     hak = hak or os.path.expanduser(VALIMUISTI_OLETUS)
@@ -236,7 +253,8 @@ def kommentit(repo, nro, raja=None, hak=None, viimeiset=10, **kw):
         rivit.append("%s: %d kpl" % (otsikko, len(data)))
         for k in data[-viimeiset:]:
             kirjoittaja = (k.get("user") or {}).get("login", "?")
-            rivit.append("- %s %s: %s" % (_siisti(k.get("created_at"), 20), _siisti(kirjoittaja, 40), _siisti(k.get("body"))))
+            runko = _siisti_koko(k.get("body")) if koko else _siisti(k.get("body"))
+            rivit.append("- %s %s: %s" % (_siisti(k.get("created_at"), 20), _siisti(kirjoittaja, 40), runko))
     if "VANHA" in tilat:
         rivit.insert(1, "VANHA: raja lahes taynna, tiedot valimuistista")
     rivit.append(raja.rivi())
@@ -247,11 +265,16 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] in ("pr", "kommentit"):
         komento = argv[0]
-        if len(argv) != 3:
-            print("kayta: python3 -m agentti.github_luku %s <omistaja/repo> <nro>" % komento)
+        koko = komento == "kommentit" and len(argv) == 4 and argv[3] == "--koko"
+        if len(argv) != 3 and not koko:
+            print("kayta: python3 -m agentti.github_luku %s <omistaja/repo> <nro>%s"
+                  % (komento, " [--koko]" if komento == "kommentit" else ""))
             return 2
         try:
-            rivit, _ = (pr_tila if komento == "pr" else kommentit)(argv[1], argv[2])
+            if komento == "pr":
+                rivit, _ = pr_tila(argv[1], argv[2])
+            else:
+                rivit, _ = kommentit(argv[1], argv[2], koko=koko)
         except ValueError as e:
             print(str(e))
             return 2
