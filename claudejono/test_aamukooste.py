@@ -19,7 +19,6 @@ def tulos(nimi, tila, aika, runko=""):
     return f"# Tulos: {nimi}\n\n- Tila: {tila}\n- Aika: {aika}\n\n{runko}\n"
 
 
-
 class Pohja(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())

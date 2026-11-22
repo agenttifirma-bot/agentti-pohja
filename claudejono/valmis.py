@@ -49,13 +49,16 @@ def _todiste_ok(todiste):
 
 
 def malliperhe(nimi):
-    """Normalisoi mallin tai istunnon nimen perheeseen: 'opus', 'claude-opus-5-5', 'anthropic/claude-opus-5-5' ja
-    'opus-istunto-7' -> 'opus'. Tyhj\u00e4 tai tunnistamaton nimi -> '' (ep\u00e4varma)."""
-    n = (nimi or "").strip().lower().split("/")[-1].strip(" `*_\"'")
-    if n.startswith("claude-"):
-        n = n[len("claude-"):]
-    m = re.match(r"[a-z]+", n)
-    return m.group(0) if m else ""
+    """Normalisoi mallin tai istunnon nimen perheeseen: 'opus', 'claude-opus-5-5', 'Claude Opus 5.5', 'anthropic/claude-opus-5-5' ja
+    'opus-istunto-7' -> 'opus'. Nimi jaetaan v\u00e4lilyonneilla, v\u00e4liviivoilla, alaviivoilla ja pisteill\u00e4; valmistajan ja tuoteperheen
+    nimet ('anthropic', 'claude') ohitetaan, ja perhe on ensimm\u00e4inen kirjaintoken. Tyhj\u00e4 tai tunnistamaton nimi -> '' (ep\u00e4varma)."""
+    n = (nimi or "").strip().lower().split("/")[-1]
+    for token in re.split(r"[^a-z0-9]+", n):
+        if token in ("anthropic", "claude"):
+            continue
+        if re.fullmatch(r"[a-z]+", token):
+            return token
+    return ""
 
 
 def _riippumaton(tulosteksti, tarkastaja):

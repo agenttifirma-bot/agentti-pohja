@@ -43,6 +43,24 @@ class Valmis(unittest.TestCase):
         self.assertFalse(valmis.kelvollinen(tulos, OK))   # tarkastaja 'opus'
         self.assertTrue(valmis.kelvollinen(tulos, OK.replace("opus", "claude-sonnet-5-5")))
 
+    def test_malliperhe_valilyonnilliset_ja_muut_erottimet(self):
+        # Tarkastajan katselmointi 21.11.2026: 'Claude Opus 5.5' normalisoitui aiemmin muotoon 'claude'.
+        for nimi in ("Claude Opus 5.5", "claude opus", "Claude  Opus 5.5", "claude_opus_5_5", "Anthropic/Claude Opus 5.5",
+                     "claude-3-opus", "CLAUDE-OPUS-5-5"):
+            self.assertEqual(valmis.malliperhe(nimi), "opus", nimi)
+        self.assertEqual(valmis.malliperhe("Claude Sonnet 5.5"), "sonnet")
+        self.assertEqual(valmis.malliperhe("claude-3-5-sonnet"), "sonnet")
+        for nimi in ("claude", "Claude 5.5", "anthropic/claude"):   # pelkk\u00e4 valmistaja tai versio ei kerro mallia
+            self.assertEqual(valmis.malliperhe(nimi), "", nimi)
+
+    def test_sama_malli_valilyonnillisena_ei_ole_riippumaton(self):
+        tulos = TULOS.replace("sonnet", "claude-opus-5-5")
+        self.assertFalse(valmis.kelvollinen(tulos, OK.replace("opus", "Claude Opus 5.5")))
+
+    def test_eri_malli_valilyonnillisena_on_riippumaton(self):
+        tulos = TULOS.replace("sonnet", "Claude Sonnet")
+        self.assertTrue(valmis.kelvollinen(tulos, OK.replace("opus", "Claude Opus")))
+
     def test_tulostiedostot_ohittaa_tarkastukset(self):
         import tempfile
         from pathlib import Path
