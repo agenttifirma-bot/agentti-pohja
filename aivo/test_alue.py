@@ -31,7 +31,7 @@ class AlikansionNimiTesti(unittest.TestCase):
             Alue("t", "/tmp/x", (nimi,))
 
     def test_kelvottomat_nimet(self):
-        for nimi in ("", "A", "1a", "-a", "a_b", "a/b", "..", ".", "a.b", "a b", "x" + "y" * 31, "ä"):
+        for nimi in ("", "A", "1a", "-a", "a_b", "a/b", "..", ".", "a.b", "a b", "x" + "y" * 31, "\u00e4"):
             with self.assertRaises(AlueVirhe, msg=repr(nimi)):
                 Alue("t", "/tmp/x", (nimi,))
 
