@@ -1,0 +1,1 @@
+- yojono/kehitys.sh: PR-kuvaukseen lisätään rivi "Todennettu kaytossa: ..." skriptin oman testiajon tuloksella. Skripti kirjoittaa kuvauksen itse, ja ilman riviä pr_kutsun koodiportti hylkäsi jokaisen kehitystehtävän PR:n (tarkkailu 21.11., 19 raporttia). Uusi testi tarkistaa kuvauksen oikealla tarkista_todennus-funktiolla.

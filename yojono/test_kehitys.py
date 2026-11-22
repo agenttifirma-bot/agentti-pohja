@@ -249,6 +249,25 @@ class Ajo(Pohja):
         self.assertIn("vihrea", self.raportti("testit"))
         self.assertIn(REPO, self.kutsut())
 
+    def test_pr_kuvaus_lapaisee_pr_kutsun_todennusportin(self):
+        # Havainto 21.11.: kehitys.sh kirjoittaa kuvauksen itse, ja siita puuttui rivi "Todennettu kaytossa: miten",
+        # joten oikea pr_kutsu hylkasi jokaisen kehitys-PR:n. Tarkistetaan kuvaus oikealla portilla (agentti/pr_kutsu.py).
+        sys.path.insert(0, str(SKRIPTI.parent.parent))
+        self.addCleanup(sys.path.remove, str(SKRIPTI.parent.parent))
+        from agentti import pr_kutsu as oikea
+        talte = Path(self.tmp.name) / "kuvaus-talte.txt"
+        kirjoita(self.ajuri / "agentti" / "__init__.py", "")
+        kirjoita(self.ajuri / "agentti" / "pr_kutsu.py",
+                 f"import sys, shutil\nshutil.copy(sys.argv[-1], {str(talte)!r})\nprint('{self.pr_kutsu_tulos}')\n")
+        for aihe, muutos in (("testit", self.TESTI), ("readme", 'echo "uusi rivi" >> README.md')):
+            with self.subTest(aihe=aihe):
+                self.agentti_skripti(muutos)
+                r = self.aja(REPO, "1.00", aihe)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                kuvaus = talte.read_text()
+                oikea.tarkista_todennus(kuvaus)  # nostaa PrVirhe, jos rivi puuttuu tai arvo on tyhja
+                self.assertRegex(kuvaus, r"(?m)^Todennettu kaytossa: .*testit.*vihrea")
+
     TESTI = 'printf "import unittest\\nclass B(unittest.TestCase):\\n    def test_b(self):\\n        self.assertEqual(1, 1)\\n" > test/test_b.py'
 
     def test_ominaisuus_vaatii_teeman(self):

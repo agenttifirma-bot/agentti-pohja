@@ -224,6 +224,11 @@ if [ -z "$SYY" ]; then
     echo "Yojonon automaattinen kehitystehtava: $AIHE ($PVM)."
     echo "Testit: vihrea. Automerge yhdistaa itse, kun CI on vihrea ja muutos on sallituilla poluilla; muuten se jaa ihmisen katselmoitavaksi."
     git diff --stat HEAD~1 | tail -n 15
+    # pr_kutsun koodiportti vaatii rivin "Todennettu kaytossa: miten". Kuvauksen kirjoittaa tama skripti (ei agentti), joten
+    # rivi tulee taalta: se kertoo vain sen, minka skripti itse todensi (testiajo kloonissa agentin muutosten jalkeen).
+    # Tahan haaraan tullaan vain, kun SYY on tyhja, eli testit olivat vihreat. Havainto 21.11.: ilman rivia jokainen PR hylattiin.
+    echo
+    echo "Todennettu kaytossa: kehitys.sh ajoi repon testit kertakayttokloonissa agentin muutosten jalkeen: $TESTIT"
   } > "$TMP/kuvaus.txt"
   if [ -n "$KUIVA" ]; then
     if ( cd "$AJURI" && python3 -B -m agentti.pr_kutsu tarkista "$REPO" "$TMP/klooni" "$HAARA" ) > "$TMP/tarkista.log" 2>&1; then
