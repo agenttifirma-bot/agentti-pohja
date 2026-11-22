@@ -869,7 +869,7 @@ class Tila:
                  malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None,
                  taustapaa="loopback", or_malli=None, or_avain=yksityinen_or.OLETUS_AVAIN, or_mallit=None,
                  or_kulutila=None, tiivistelmat=None, kalenteri_lahde=None, yks_tiivistelmat=None,   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
-                 yhdistelma_oletus=None, roolit=None, kysy_yhd=None):
+                 yhdistelma_oletus=None, roolit=None, kysy_yhd=None, ajattelija_aika=None):
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
         self.kulutila = or_kulutila               # None = openrouter_kulut.OLETUS_TILA (yhteinen kirjanpito)
@@ -888,6 +888,7 @@ class Tila:
         self.yhdistelmat = (yhdistelma.OLETUS,)   # usean mallin yhdistelmat ovat kaytossa vain OpenRouter-taustapaalla
         self.yhdistelma_oletus = yhdistelma.tarkista_yhdistelma(yhdistelma_oletus)
         self.roolit = {}
+        self.ajattelija_aika = yhdistelma.tarkista_ajattelijan_aika(ajattelija_aika)   # tiimi; vain lyhentaa
         self.taustapaa = taustapaa if taustapaa in YKSITYINEN_TEKSTIT else "loopback"
         if yks_data:
             if taustapaa not in ("loopback", "openrouter"):
@@ -926,7 +927,7 @@ class Tila:
         if kysy_yhd is None and self.taustapaa == "openrouter" and yks_data:
             self.kysy_yhd = lambda muisti, historia, ohjeet, malli, yhdistelma_nimi: yksityinen_or.kysy_yhdistelmalla(
                 muisti, historia, ohjeet, malli=malli, yhdistelma_nimi=yhdistelma_nimi, roolit=self.roolit,
-                avain_tiedosto=or_avain, kulutila=or_kulutila)
+                ajattelija_aika_s=self.ajattelija_aika, avain_tiedosto=or_avain, kulutila=or_kulutila)
         self.yks_vastauslukko = threading.Lock()
         self.ehdotuslukko = threading.Lock()      # yksi hyvaksynta tai hylkays kerrallaan
 
@@ -1400,9 +1401,11 @@ def main(argv=None):
     ap.add_argument("--openrouter-avain-tiedosto", default=os.environ.get("AIVO_OPENROUTER_AVAIN", yksityinen_or.OLETUS_AVAIN),
                     help="tiedosto (0600, palvelun kayttajan), jossa avain on; avainta ei anneta ymparistomuuttujalla")
     ap.add_argument("--yksityinen-yhdistelma", default=os.environ.get("AIVO_YKSITYINEN_YHDISTELMA"),
-                    help="oletusyhdistelma: yksi, tarkastus, rinnakkais tai reititys (vain OpenRouter-taustapaa)")
+                    help="oletusyhdistelma: yksi, tarkastus, rinnakkais, reititys tai tiimi (vain OpenRouter-taustapaa)")
     ap.add_argument("--yksityinen-roolit", default=os.environ.get("AIVO_YKSITYINEN_ROOLIT"),
                     help="roolit muodossa vastaaja:malli,tarkastaja:malli; mallit --openrouter-mallit-listalta")
+    ap.add_argument("--yksityinen-ajattelija-aika", default=os.environ.get("AIVO_YKSITYINEN_AJATTELIJA_AIKA"),
+                    help="tiimi: ajattelijan aikaraja sekunteina (10-3600, oletus 300); kokonaisaikaraja on aina voimassa")
     a = ap.parse_args(argv)
     try:
         if a.komento == "aseta-salasana":
@@ -1417,6 +1420,7 @@ def main(argv=None):
                     taustapaa=a.yksityinen_taustapaa, or_malli=a.openrouter_malli, or_mallit=a.openrouter_mallit,
                     or_avain=a.openrouter_avain_tiedosto,
                     yhdistelma_oletus=a.yksityinen_yhdistelma, roolit=a.yksityinen_roolit,
+                    ajattelija_aika=a.yksityinen_ajattelija_aika,
                     tiivistelmat=(a.tiivistelmat or str(Path(a.data).parent / "tiivistelmat"))
                     if a.tiivistelmat_kaytossa else None,
                     yks_tiivistelmat=(a.yksityiset_tiivistelmat or str(Path(a.yksityinen_data).parent / "tiivistelmat"))
