@@ -6,6 +6,8 @@ raja pois -mutaatio ei jaa ikuiseen silmukkaan vaan kaataa testin.
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
 
 from aivo.agentti import polut, silmukka
@@ -162,8 +164,11 @@ class SilmukkaTesti(unittest.TestCase):
         os.mkdir(os.path.join(self.juuri, "ala"))
         for i in range(polut.RAJA_TIEDOSTOT + 5):
             nimi = ".kirj-%d.tmp" % (1000 + i)
-            with open(os.path.join(self.juuri, nimi if i % 2 else "ala/" + nimi), "w") as f:
+            polku = os.path.join(self.juuri, nimi if i % 2 else "ala/" + nimi)
+            with open(polku, "w") as f:
                 f.write("x")
+            vanha = time.time() - polut.VALIAIKAINEN_IKA_S - 60     # kaatuneen ajon jaannos
+            os.utime(polku, (vanha, vanha))
         # ilman siivousta kansio on "taynna"
         self.assertGreater(polut.mittaa_kansio(self.juuri)[0], polut.RAJA_TIEDOSTOT)
         t, _ = self.aja([lohko("kirjoita", polku="uusi.md", sisalto="a"), lohko("valmis", raportti="ok")])
@@ -187,6 +192,45 @@ class SilmukkaTesti(unittest.TestCase):
             os.symlink(muu, os.path.join(self.juuri, "linkki"))
             self.assertEqual(polut.siivoa_valiaikaiset(self.juuri), 0)
             self.assertTrue(os.path.exists(kohde))
+
+    def _valiaik(self, nimi, ika_s=0):
+        polku = os.path.join(self.juuri, nimi)
+        with open(polku, "w") as f:
+            f.write("x")
+        if ika_s:
+            t = time.time() - ika_s
+            os.utime(polku, (t, t))
+        return polku
+
+    def test_siivous_jattaa_rinnakkaisen_ajon_tuoreen_tiedoston(self):
+        vieras_pid = os.getpid() + 1
+        tuore = self._valiaik(".kirj-%d-123-%s.tmp" % (vieras_pid, "ab" * 8))
+        tuore_vanha_muoto = self._valiaik(".kirj-%d.tmp" % vieras_pid)
+        elava = self._valiaik(".kirj-%d-%d-%s.tmp" % (os.getpid(), threading.get_ident(), "cd" * 8))
+        self.assertEqual(polut.siivoa_valiaikaiset(self.juuri), 0)
+        for polku in (tuore, tuore_vanha_muoto, elava):
+            self.assertTrue(os.path.exists(polku), polku)
+
+    def test_siivous_poistaa_vanhat_ja_paattyneen_saikeen_omat(self):
+        yli = polut.VALIAIKAINEN_IKA_S + 60
+        vanha = self._valiaik(".kirj-%d-123-%s.tmp" % (os.getpid() + 1, "ab" * 8), ika_s=yli)
+        vanha_muoto = self._valiaik(".kirj-%d.tmp" % (os.getpid() + 1), ika_s=yli)
+        saie = threading.Thread(target=lambda: None)
+        saie.start()
+        tunnus = saie.ident
+        saie.join()
+        elavat = {s.ident for s in threading.enumerate()}
+        oma = None
+        if tunnus not in elavat:
+            oma = self._valiaik(".kirj-%d-%d-%s.tmp" % (os.getpid(), tunnus, "ef" * 8))
+        alle = self._valiaik(".kirj-%d-1-%s.tmp" % (os.getpid() + 1, "12" * 8), ika_s=polut.VALIAIKAINEN_IKA_S - 60)
+        odotus = 3 if oma else 2
+        self.assertEqual(polut.siivoa_valiaikaiset(self.juuri), odotus)
+        self.assertFalse(os.path.exists(vanha))
+        self.assertFalse(os.path.exists(vanha_muoto))
+        if oma:
+            self.assertFalse(os.path.exists(oma))
+        self.assertTrue(os.path.exists(alle))
 
 
 if __name__ == "__main__":

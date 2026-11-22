@@ -3,6 +3,7 @@ import ast
 import os
 import pathlib
 import tempfile
+import threading
 import unittest
 
 from aivo.agentti import polut, tyokalut
@@ -189,6 +190,61 @@ class TyokaluTesti(unittest.TestCase):
     def test_valiaikaistiedosto_ei_jaa(self):
         self.aja("kirjoita", polku="a.md", sisalto="x")
         self.assertEqual(os.listdir(self.juuri), ["a.md"])
+
+    def test_valiaikaistiedoston_nimessa_satunnainen_osa(self):
+        a, b = polut.valiaikainen_nimi(), polut.valiaikainen_nimi()
+        self.assertNotEqual(a, b)
+        for nimi in (a, b):
+            osuma = polut.VALIAIKAINEN.fullmatch(nimi)
+            self.assertIsNotNone(osuma, nimi)
+            self.assertEqual(int(osuma.group(1)), os.getpid())
+            self.assertEqual(int(osuma.group(2)), threading.get_ident())
+
+    def test_vanhan_ajon_jaannos_samalla_pidilla_ei_esta_kirjoitusta(self):
+        with open(os.path.join(self.juuri, ".kirj-%d.tmp" % os.getpid()), "w") as f:
+            f.write("jaannos")
+        self.assertTrue(self.aja("kirjoita", polku="a.md", sisalto="x").ok)
+
+    def test_rinnakkaiset_saikeet_samaan_kansioon(self):
+        tulokset = {}
+
+        def kirjoita(i):
+            tulokset[i] = self.aja("kirjoita", polku="k/t%02d.md" % i, sisalto="x" * 1000)
+
+        saikeet = [threading.Thread(target=kirjoita, args=(i,)) for i in range(16)]
+        for s in saikeet:
+            s.start()
+        for s in saikeet:
+            s.join()
+        self.assertTrue(all(t.ok for t in tulokset.values()), [t.teksti for t in tulokset.values() if not t.ok])
+        self.assertEqual(len(tulokset), 16)
+        self.assertEqual(sorted(os.listdir(os.path.join(self.juuri, "k"))), ["t%02d.md" % i for i in range(16)])
+
+    def test_hylatty_kirjoitus_ei_jata_valikansioita(self):
+        for i in range(polut.RAJA_TIEDOSTOT):
+            with open(os.path.join(self.juuri, "f%03d.txt" % i), "w") as f:
+                f.write("x")
+        t = self.aja("kirjoita", polku="a/b/c/uusi.md", sisalto="x")
+        self.assertFalse(t.ok)
+        self.assertIn("taynna", t.teksti)
+        self.assertFalse(os.path.exists(os.path.join(self.juuri, "a")))
+
+    def test_hylatty_kirjoitus_olemassa_olevan_kansion_alle(self):
+        os.mkdir(os.path.join(self.juuri, "a"))
+        for i in range(polut.RAJA_TIEDOSTOT):
+            with open(os.path.join(self.juuri, "f%03d.txt" % i), "w") as f:
+                f.write("x")
+        self.assertFalse(self.aja("kirjoita", polku="a/b/uusi.md", sisalto="x").ok)
+        self.assertEqual(os.listdir(os.path.join(self.juuri, "a")), [])
+
+    def test_ylisuuri_kirjoitus_ei_jata_valikansioita(self):
+        t = self.aja("kirjoita", polku="a/b/iso.md", sisalto="a" * (polut.RAJA_TIEDOSTO + 1))
+        self.assertFalse(t.ok)
+        self.assertFalse(os.path.exists(os.path.join(self.juuri, "a")))
+
+    def test_kirjoitus_uuteen_kansioon_toimii(self):
+        self.assertTrue(self.aja("kirjoita", polku="a/b/uusi.md", sisalto="x").ok)
+        self.assertEqual(os.listdir(os.path.join(self.juuri, "a", "b")), ["uusi.md"])
 
 
 if __name__ == "__main__":

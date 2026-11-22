@@ -8,6 +8,8 @@ ei jaa kilpailuikkunaa, jossa osa vaihdettaisiin linkiksi.
 import os
 import re
 import stat
+import threading
+import time
 
 RAJA_TIEDOSTO = 200 * 1024           # tavua per tiedosto
 RAJA_KANSIO_TAVUT = 20 * 1024 * 1024  # tyokansio yhteensa
@@ -16,11 +18,17 @@ RAJA_SYVYYS = 8                      # kansiotasoja polussa
 RAJA_NIMI = 100                      # merkkia per polun osa
 RAJA_POLKU = 200                     # merkkia koko polussa
 SALLITUT_PAATTEET = (".md", ".txt", ".csv", ".json")
-VALIAIKAINEN = re.compile(r"\.kirj-[0-9]+\.tmp")   # kirjoita-tyokalun valiaikaistiedosto
+# kirjoita-tyokalun valiaikaistiedosto: .kirj-<pid>-<saie>-<satunnainen>.tmp (vanha muoto .kirj-<pid>.tmp)
+VALIAIKAINEN = re.compile(r"\.kirj-([0-9]+)(?:-([0-9]+)-[0-9a-f]{16})?\.tmp")
+VALIAIKAINEN_IKA_S = 3600            # vieraan ajon valiaikaistiedosto poistetaan vasta taman jalkeen
 
 
 class PolkuVirhe(Exception):
     """Polku tai tyokansion tila rikkoo saannon. Viesti on turvallinen nayttaa mallille."""
+
+
+class KansioPuuttuu(PolkuVirhe):
+    """Polun valikansiota ei ole (avaa_kansio, luo=False)."""
 
 
 def jasenna_polku(polku, salli_tyhja=False):
@@ -90,8 +98,11 @@ def avaa_kansio(juuri, osat, luo=False):
                 tila = os.stat(osa, dir_fd=fd, follow_symlinks=False)
             except FileNotFoundError:
                 if not luo:
-                    raise PolkuVirhe("kansiota ei ole") from None
-                os.mkdir(osa, 0o700, dir_fd=fd)
+                    raise KansioPuuttuu("kansiota ei ole") from None
+                try:
+                    os.mkdir(osa, 0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass               # rinnakkainen kirjoitus loi kansion; tarkistetaan alla
                 tila = os.stat(osa, dir_fd=fd, follow_symlinks=False)
             if stat.S_ISLNK(tila.st_mode):
                 raise PolkuVirhe("symbolinen linkki ei kelpaa")
@@ -125,6 +136,22 @@ def tarkista_tiedosto(fd, nimi):
     return tila
 
 
+def _tila_tai_none(e):
+    """lstat-tila scandir-kohteelle tai None, jos kohde katosi listauksen jalkeen."""
+    try:
+        return e.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+
+
+def _avaa_alikansio(nimi, fd):
+    """Avaa alikansion (O_NOFOLLOW) tai palauttaa None, jos se katosi listauksen jalkeen."""
+    try:
+        return os.open(nimi, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+    except FileNotFoundError:
+        return None
+
+
 def mittaa_kansio(juuri):
     """Palauttaa (tiedostoja, tavuja) tyokansiossa. Linkkeja ei seurata; ne lasketaan tiedostoiksi."""
     tiedostoja = 0
@@ -136,9 +163,13 @@ def mittaa_kansio(juuri):
             try:
                 with os.scandir(fd) as it:
                     for e in it:
-                        tila = e.stat(follow_symlinks=False)
+                        tila = _tila_tai_none(e)
+                        if tila is None:
+                            continue           # rinnakkainen kirjoitus nimesi tai poisti kohteen
                         if stat.S_ISDIR(tila.st_mode):
-                            pino.append(os.open(e.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd))
+                            uusi = _avaa_alikansio(e.name, fd)
+                            if uusi is not None:
+                                pino.append(uusi)
                         else:
                             tiedostoja += 1
                             tavuja += tila.st_size
@@ -167,13 +198,35 @@ def tarkista_tila(juuri, uusi_koko, vanha_koko):
         raise PolkuVirhe("tyokansio on taynna (enintaan %d Mt)" % (RAJA_KANSIO_TAVUT // (1024 * 1024)))
 
 
-def siivoa_valiaikaiset(juuri):
-    """Poistaa keskeytyneiden kirjoitusten `.kirj-<pid>.tmp`-jaannokset tyokansiosta. Palauttaa lukumaaran.
+def _poistettava(nimi, tila, nyt, pid, elavat):
+    """Valiaikaistiedosto poistetaan, jos se on taman prosessin paattyneen saikeen jaannos tai
+    sen muokkausajasta on yli VALIAIKAINEN_IKA_S sekuntia. Muuten se voi olla rinnakkaisen
+    ajon kesken oleva kirjoitus."""
+    osuma = VALIAIKAINEN.fullmatch(nimi)
+    if osuma is None:
+        return False
+    if nyt - tila.st_mtime > VALIAIKAINEN_IKA_S:
+        return True
+    saie = osuma.group(2)
+    return saie is not None and int(osuma.group(1)) == pid and int(saie) not in elavat
 
-    Vain tavalliset tiedostot, joiden nimi tasmaa tarkasti; linkkeja ei seurata. Kutsutaan silmukan
-    alussa (yksi ajo kerrallaan tyokansiota kohden), jotta jaannokset eivat laske tiedostorajaa.
+
+def valiaikainen_nimi():
+    """Kirjoituksen valiaikaistiedoston nimi: pid, saie ja satunnainen osa (avataan O_EXCL)."""
+    return ".kirj-%d-%d-%s.tmp" % (os.getpid(), threading.get_ident(), os.urandom(8).hex())
+
+
+def siivoa_valiaikaiset(juuri):
+    """Poistaa keskeytyneiden kirjoitusten valiaikaistiedostot tyokansiosta. Palauttaa lukumaaran.
+
+    Vain tavalliset tiedostot, joiden nimi tasmaa tarkasti; linkkeja ei seurata. Rinnakkaisen ajon
+    tuore tiedosto jatetaan (ks. _poistettava). Kutsutaan silmukan alussa, jotta jaannokset eivat
+    laske tiedostorajaa.
     """
     poistettu = 0
+    nyt = time.time()
+    pid = os.getpid()
+    elavat = {s.ident for s in threading.enumerate()}
     pino = [avaa_juuri(juuri)]
     try:
         while pino:
@@ -182,10 +235,14 @@ def siivoa_valiaikaiset(juuri):
                 poistettavat = []
                 with os.scandir(fd) as it:
                     for e in it:
-                        tila = e.stat(follow_symlinks=False)
+                        tila = _tila_tai_none(e)
+                        if tila is None:
+                            continue
                         if stat.S_ISDIR(tila.st_mode):
-                            pino.append(os.open(e.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd))
-                        elif stat.S_ISREG(tila.st_mode) and VALIAIKAINEN.fullmatch(e.name):
+                            uusi = _avaa_alikansio(e.name, fd)
+                            if uusi is not None:
+                                pino.append(uusi)
+                        elif stat.S_ISREG(tila.st_mode) and _poistettava(e.name, tila, nyt, pid, elavat):
                             poistettavat.append(e.name)
                 for nimi in poistettavat:
                     try:
