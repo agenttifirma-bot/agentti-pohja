@@ -1,0 +1,1 @@
+- claudejono/malli: Tavoite: Aivo -tehtävä ajetaan aina Opuksella (lähde "aivo-opus"), myös jos Malli-rivi puuttuu tai on sonnet/openrouter (A1064).
