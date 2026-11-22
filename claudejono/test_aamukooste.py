@@ -544,5 +544,35 @@ class KaistaVahti(Pohja):
         self.assertEqual(aamukooste.rivit(t)[5], "H\u00e4lytykset: ei.")
 
 
+class TavoiteOhitetut(Pohja):
+    """Ajuri ohittaa tehtavan, jonka Tavoite-rivi ei kelpaa: aamukoosteen ensimmainen rivi kertoo sen."""
+
+    def test_ohitettu_nakyy_ensimmaisella_rivilla_ensimmaisena(self):
+        self.kirjoita("tehtavat/2026-11-22-01-hyva.md", "# a\nTavoite: yllapito\n")
+        self.kirjoita("tehtavat/2026-11-22-02-kuvaus.md", "# b\nTavoite: tehda tarkistin\nTavoite: yllapito\n")
+        self.kirjoita("tehtavat/2026-11-22-03-kaksi.md", "# c\nTavoite: portfolio ja TO-paikka\n")
+        self.kirjoita("tehtavat/2026-11-22-04-puuttuu.md", "# d\n")
+        self.kirjoita("tehtavat/2026-11-07-01-vanha.md", "# vanha ilman rivia\n")   # ennen pakollisuutta: ajuri ajaa
+        self.kirjoita("tehtavat/2026-11-22-05-tehty.md", "# e\n")
+        self.kirjoita("tulokset/2026-11-22-05-tehty.md", tulos("e", "VALMIS", "2026-11-22T01:00+02:00"))
+        self.assertEqual(aamukooste.tavoitehylatyt(self.repo), ["2026-11-22-02-kuvaus", "2026-11-22-03-kaksi", "2026-11-22-04-puuttuu"])
+        t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [])
+        eka = aamukooste.rivit(t)[0]
+        self.assertTrue(eka.startswith("P\u00e4\u00e4t\u00f6kset sinulle: 3 teht\u00e4v\u00e4\u00e4 ohitetaan, koska Tavoite-rivi ei kelpaa"), eka)
+        self.assertIn("2026-11-22-02-kuvaus, 2026-11-22-03-kaksi (+1)", eka)
+
+    def test_yllapito_a_kirjaimella_kelpaa_kuten_ajurilla(self):
+        self.kirjoita("tehtavat/2026-11-22-01-a.md", "# a\nTavoite: yll\u00e4pito\n")
+        self.assertEqual(aamukooste.tavoitehylatyt(self.repo), [])
+
+    def test_ei_ohitettuja_ei_mainintaa_ja_virhe_ei_kaada(self):
+        self.kirjoita("tehtavat/2026-11-22-01-a.md", "# a\nTavoite: Aivo\n")
+        t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [])
+        self.assertNotIn("Tavoite-rivi", aamukooste.rivit(t)[0])
+        with mock.patch.object(aamukooste, "tavoitehylatyt", side_effect=OSError("x")):
+            t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [])
+        self.assertEqual(t["tavoite_ohitetut"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
