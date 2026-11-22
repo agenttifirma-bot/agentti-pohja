@@ -128,8 +128,10 @@ def kirjoita(juuri, arg):
             raise PolkuVirhe("kirjoitus ei onnistu") from None
         try:
             with os.fdopen(fd, "wb") as f:
+                polut.lukitse_valiaikainen(f.fileno())   # lukko pysyy, kunnes tiedosto on nimetty
                 f.write(data)
-            os.replace(valiaikainen, nimi, src_dir_fd=kansio, dst_dir_fd=kansio)
+                f.flush()
+                os.replace(valiaikainen, nimi, src_dir_fd=kansio, dst_dir_fd=kansio)
         except BaseException:
             try:
                 os.unlink(valiaikainen, dir_fd=kansio)

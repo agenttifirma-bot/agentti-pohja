@@ -5,6 +5,7 @@ import pathlib
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 from aivo.agentti import polut, tyokalut
 
@@ -195,10 +196,8 @@ class TyokaluTesti(unittest.TestCase):
         a, b = polut.valiaikainen_nimi(), polut.valiaikainen_nimi()
         self.assertNotEqual(a, b)
         for nimi in (a, b):
-            osuma = polut.VALIAIKAINEN.fullmatch(nimi)
-            self.assertIsNotNone(osuma, nimi)
-            self.assertEqual(int(osuma.group(1)), os.getpid())
-            self.assertEqual(int(osuma.group(2)), threading.get_ident())
+            self.assertIsNotNone(polut.VALIAIKAINEN.fullmatch(nimi), nimi)
+            self.assertTrue(nimi.startswith(".kirj-%d-%d-" % (os.getpid(), threading.get_ident())), nimi)
 
     def test_vanhan_ajon_jaannos_samalla_pidilla_ei_esta_kirjoitusta(self):
         with open(os.path.join(self.juuri, ".kirj-%d.tmp" % os.getpid()), "w") as f:
@@ -219,6 +218,18 @@ class TyokaluTesti(unittest.TestCase):
         self.assertTrue(all(t.ok for t in tulokset.values()), [t.teksti for t in tulokset.values() if not t.ok])
         self.assertEqual(len(tulokset), 16)
         self.assertEqual(sorted(os.listdir(os.path.join(self.juuri, "k"))), ["t%02d.md" % i for i in range(16)])
+
+    def test_valiaikaistiedosto_on_lukittu_kirjoituksen_ajan(self):
+        alkuperainen = os.replace
+        havainnot = []
+
+        def tarkkaile(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
+            havainnot.append(polut._kesken(src, src_dir_fd))
+            return alkuperainen(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+
+        with mock.patch.object(tyokalut.os, "replace", tarkkaile):
+            self.assertTrue(self.aja("kirjoita", polku="a.md", sisalto="x").ok)
+        self.assertEqual(havainnot, [True])
 
     def test_hylatty_kirjoitus_ei_jata_valikansioita(self):
         for i in range(polut.RAJA_TIEDOSTOT):
