@@ -1,0 +1,1 @@
+- aivo: luovutuspaketti (monta palaa, yksi sha-sidottu hyväksyntä), palan poisto, vuotovartijan koukku, paluu yksityisestä tulosreposta (AIVO_TULOS_REPO) ja lisäpalat (AIVO_LISAPALAT=kysy oletuksena). Rakentuu kokooman osan 2 päälle.

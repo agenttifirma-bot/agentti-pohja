@@ -415,6 +415,60 @@ Hyväksyntälaatikko näyttää merkinnät korostettuina (`textContent` ja `<mar
 
 `GET /api/luovutus` palauttaa kentän `vartija`: `mekaaniset` (lista), `malli` (`tila`: `tarkistettu`, `kesken` tai `ei-tarkistanut`, `syy`, `merkinnat`), `nimilista` ja `avainsanoja` (listojen pituudet). `POST /api/luovutus/muokkaa` palauttaa saman kentän muokatusta tekstistä.
 
+## Luovutuspaketti: monta palaa, yksi hyväksyntä
+
+Iso työ voidaan luovuttaa pilkottuna pakettina (`aivo/luovutuspaketti.py`). Yksittäisen luovutuksen sha-sidonta ja `hyvaksy_ehdotus` pysyvät ennallaan.
+
+**Merkintä.** Aivon yksityisen tilan vastauksessa:
+
+```
+[[LUOVUTUSPAKETTI nimi]]
+[[PALA 1]] teksti [[/PALA]]
+[[PALA 2]] teksti [[/PALA]]
+[[/LUOVUTUSPAKETTI]]
+```
+
+Paketissa on 1–20 palaa (numerot 1–99, ei toistoja), yhteensä enintään 40 000 merkkiä. Nimi on 1–80 merkkiä kirjaimia, numeroita, välilyöntejä ja merkkejä `.,:()-`. Palvelin tallentaa paketin yksityiseen kansioon `<luovutukset>/paketit/` (0700, tiedostot 0600) ja palauttaa tunnuksen kentässä `paketit`. Katkennut tai tyhjä paketti ei tallennu. Paketti käsitellään ennen `[[LUOVUTUS]]`-lohkoja, joten paketin sisällä oleva teksti ei synny yksittäiseksi luovutukseksi.
+
+**Sha.** Paketin sha256 lasketaan koko paketista: nimi, jatkettava paketti sekä jokaisen palan numero ja teksti. Lähetys vaatii vahvistuksen `kyllä <sha8>` tästä tiivisteestä.
+
+**Vuotovartija.** Jokainen pala kulkee koukun `vartija_koukku` kautta. Kun moduuli `aivo/vuotovartija.py` on olemassa (tehtävä 20-31) ja tarjoaa funktion `tarkista(teksti) -> {"sallittu": bool, "merkinnat": [...]}`, sitä käytetään. Ilman vartijaa palan merkintä kertoo, ettei vartija ole vielä käytössä, ja Tony tarkistaa palan itse. Vartijan estämä pala estää koko paketin lähetyksen, kunnes Tony poistaa palan. Vartija tarkistaa palat uudelleen lähetyshetkellä.
+
+Huomio: yksittäisen luovutuksen vuotovartija (`aivo/vartija.py`, yllä) ei vielä kytkeydy pakettien koukkuun, koska koukku etsii moduulia `aivo.vuotovartija`. Siksi paketin palat näyttävät toistaiseksi merkinnän "Vuotovartija ei ole vielä käytössä", eikä mikään lisäpala lähde automaattisesti. Kytkentä on oma, erikseen päätettävä muutoksensa.
+
+**Laatikko.** Kaikki palat näkyvät allekkain vartijan merkintöineen. Painikkeet:
+
+- "Poista pala n" poistaa yksittäisen palan. Paketti saa uuden sha:n, joten vanha vahvistus ei enää kelpaa (409). Pyynnössä on mukana Tonyn näkemä sha8, joten vanhentunut näkymä ei voi poistaa väärää palaa. Viimeistä palaa ei voi poistaa; silloin paketti hylätään.
+- "Lähetä paketti" kysyy vahvistuksen ja lähettää `kyllä <sha8>` koko paketista.
+- "Hylkää paketti" siirtää paketin kansioon `paketit/hylatyt/`. Mitään ei poisteta.
+
+**Hyväksytty paketti.** Jokainen pala menee kirjaston kansioon `saapuneet/` omana tiedostonaan. Palan tunnus johdetaan paketin tunnuksesta ja palan numerosta, joten sama pala ei voi lähteä kahdesti. Tekstin ensimmäisellä rivillä ovat paketin tunnus ja palan numero:
+
+```
+<!-- luovutuspaketti tunnus=<paketti> pala=<n> nimi=<nimi> -->
+```
+
+Järjestys on sama kuin yksittäisessä luovutuksessa: lokirivit yksityiseen lokiin, tiedostot kirjastoon ja yksi julkaisu. Jos julkaisu epäonnistuu, kaikki paketin tiedostot poistetaan ja paketti jää odottamaan. Onnistuneen julkaisun jälkeen paketti siirtyy kansioon `paketit/hyvaksytyt/`.
+
+**Paluu.** Asetus `AIVO_TULOS_REPO` (tai `--tulos-repo`) kertoo Aivon yksityisen tulosrepon polun tai kloonin. Palan n tulos on tiedosto `<tulosrepo>/<pakettitunnus>/pala-<n>.md`. Kun tulos ilmestyy, yksityisen tilan keskusteluun tulee merkintä `[Paketin X pala n valmis]` ja painike "Näytä tulos". Kukin tulos ilmoitetaan kerran (kirjanpito `paketit/paluut.json`). Symlinkkejä ei seurata, ja tulos saa olla enintään 50 000 tavua. Vain yksityinen tila lukee tulosrepoa. Palvelu ei käynnisty, jos tulosrepo on kirjaston, työkalutilan datan tai tiivistelmien sisällä tai niiden yläpuolella. Mallin vastauksessa oleva matkittu paluumerkintä neutraloidaan.
+
+**Lisäpalat.** Hyväksyttyä pakettia voi jatkaa lohkolla `[[LISAPALA <pakettitunnus>]] teksti [[/LISAPALA]]`. Numerot jatkuvat paketin suurimmasta numerosta.
+
+- `AIVO_LISAPALAT=kysy` (oletus): lisäpalat tallentuvat uudeksi paketiksi, joka vaatii oman hyväksynnän.
+- `AIVO_LISAPALAT=automaattinen`: lisäpalat lähtevät ilman painallusta vain, jos vuotovartija on hyväksynyt jokaisen palan. Muuten ne jäävät odottamaan hyväksyntää. Automaattisesta lähetyksestä kirjataan yhteenveto Tonylle (`paketit/automaattiset.jsonl` ja keskustelu). Ilman vartijaa mikään ei lähde automaattisesti. Arvon vaihto on Tonyn päätös.
+
+Reitit (kaikki vain yksityinen tila; työkalutilan keskustelulle 404):
+
+| Reitti | Kuvaus |
+|---|---|
+| `GET /api/paketit?keskustelu=ID` | odottavat paketit: tunnus, nimi, sha8, palojen määrä |
+| `GET /api/paketti?keskustelu=ID&tunnus=T` | paketin palat, vartijan merkinnät ja sha8 |
+| `POST /api/paketti/poista-pala` `{keskustelu, tunnus, pala, sha8}` | palan poisto, uusi sha8 |
+| `POST /api/paketti/hyvaksy` `{keskustelu, tunnus, vahvistus}` | vahvistus täsmälleen `kyllä <sha8>` |
+| `POST /api/paketti/hylkaa` `{keskustelu, tunnus}` | siirto kansioon `paketit/hylatyt/` |
+| `GET /api/paluut?keskustelu=ID` | uudet tulokset ja merkinnät |
+| `GET /api/paketti/tulos?keskustelu=ID&tunnus=T&pala=N` | hyväksytyn palan tulos tulosreposta |
+
 ## Asennuksen tilatarkistus (vain luku)
 
 Päivityksen jälkeen kontissa 122 yksi komento kertoo, onko asennus kunnossa. Anna argumenttina odotettu commit (`git rev-parse HEAD` agentti-pohjan kloonista, jonka PR on mergattu):
