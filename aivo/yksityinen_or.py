@@ -152,6 +152,7 @@ def tee_kuljetin(avain: str, avaa: Callable[..., Any] | None = None,
             with avaa(pyynto, timeout=aikaraja) as r:
                 data = json.loads(r.read(MAX_VASTAUS_TAVUA))
         except urllib.error.HTTPError as e:
+            e.close()                               # vapauttaa virhevastauksen socketin
             raise YksityinenVirhe("mallipalvelu hylkasi pyynnon (HTTP %s)" % e.code) from None
         except (OSError, ValueError) as e:
             raise YksityinenVirhe("mallipalvelu ei vastannut (%s)" % type(e).__name__) from None
