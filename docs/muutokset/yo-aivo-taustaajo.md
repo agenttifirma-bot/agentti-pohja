@@ -1,0 +1,1 @@
+aivo: taustaajo (`aivo/taustaajo.py`) tuo ajattelijan vastauksen yksityisen tilan keskusteluun myöhemmin: jono 0700, päiväraja ja aikaraja, ZDR-kutsut `yksityinen_or.kysy_taustatyo`n kautta, chatin reitti `/api/tausta` ja ohje `docs/aivo-taustaajo.md` (ei asennettu).

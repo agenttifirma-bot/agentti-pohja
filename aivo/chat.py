@@ -265,6 +265,12 @@ async function laheta(s){if(lahetyksessa)return;lahetyksessa=true;lukitse();
  finally{lahetyksessa=false;kulut().catch(()=>{});}}
 document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();if(lahetyksessa)return;const t=document.getElementById('teksti');
  const s=t.value.trim();if(!s)return;t.value='';await laheta(s);};
+let taustaAlkaen=0;let taustaKid=null;
+async function tausta(){if(!kid||nyt!=='yksityinen'||document.hidden)return;if(taustaKid!==kid){taustaKid=kid;taustaAlkaen=0;}
+ const k=kid;const x=await haeJson('/api/tausta?keskustelu='+q(k)+'&alkaen='+taustaAlkaen);
+ if(!x||!x.r.ok||k!==kid||!Array.isArray(x.j.viestit))return;
+ x.j.viestit.forEach(v=>{if(v&&Number.isInteger(v.indeksi)&&v.indeksi>=taustaAlkaen&&typeof v.teksti==='string'){lisaa('aivo',v.teksti);taustaAlkaen=v.indeksi+1;}});}
+setInterval(()=>{tausta().catch(()=>{});},30000);
 haeMallit().finally(aloita);alas();
 </script></body></html>
 """
@@ -1045,6 +1051,8 @@ def tee_kasittelija(tila):
                         return self._ehdotukset(kysely)
                     if osat.path == "/api/ehdotus":
                         return self._ehdotus(kysely)
+                    if osat.path == "/api/tausta":
+                        return self._tausta(kysely)
                     if osat.path == "/api/mallit":
                         vastaus = {"mallit": list(tila.or_mallit)}
                         if tila.or_mallit:            # yhdistelmat vain OpenRouter-taustapaalla
@@ -1272,6 +1280,20 @@ def tee_kasittelija(tila):
             kid = d.get("keskustelu")
             valittu, _ = tila.tila_ja_kasittelija(kid)
             return valittu == "yksityinen"
+
+        def _tausta(self, d):
+            """Taustaajon (aivo/taustaajo.py) keskusteluun lisaamat viestit indeksista `alkaen` lahtien. Vain yksityinen
+            keskustelu; tyokalutilassa reitti on 404."""
+            if not self._yks_keskustelu(d):
+                return self._json(404, {"virhe": "ei loydy"})
+            alkaen = d.get("alkaen", "0")
+            if not isinstance(alkaen, str) or not alkaen.isdigit() or len(alkaen) > 6:
+                return self._json(400, {"virhe": "virheellinen alkaen"})
+            historia = tila.yks.lue(d.get("keskustelu"))
+            viestit = [{"indeksi": i, "teksti": v.get("teksti", "")} for i, v in enumerate(historia)
+                       if i >= int(alkaen) and v.get("rooli") == "aivo" and isinstance(v.get("tausta"), str)
+                       and isinstance(v.get("teksti"), str)]
+            return self._json(200, {"viestit": viestit, "pituus": len(historia)})
 
         def _ehdotukset(self, d):
             if not self._yks_keskustelu(d):
