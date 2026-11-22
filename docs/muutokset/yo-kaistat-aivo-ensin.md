@@ -1,0 +1,1 @@
+- claudejono: kaistat 1–2 ottavat kolmen tai neljän kaistan tilassa ensin Aivo-tehtävät, sitten ylläpidon, portfolion ja ansainnan (Tonyn päätös A1061). Kaistat 3–4 ja alle kolmen kaistan tila ennallaan; `Kaista: N` ohittaa järjestyksen kuten ennen.
