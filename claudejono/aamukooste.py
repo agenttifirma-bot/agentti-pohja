@@ -197,6 +197,12 @@ def pysahtyneet_kaistat(repo, nyt, kaistoja=None, aktiivinen=kaista_aktiivinen, 
     return rivit_
 
 
+def tavoitehylatyt(repo):
+    """Odottavat teht\u00e4v\u00e4t (nimi ilman .md), jotka ajuri ohittaa Tavoite-rivin takia: sama tavoite.luokittele kuin
+    ajurin valinnassa, joten korjattu teht\u00e4v\u00e4 katoaa listalta heti (hylk\u00e4ysloki j\u00e4isi n\u00e4ytt\u00e4m\u00e4\u00e4n vanhaa). Vain luku."""
+    return [p.name.removesuffix(".md") for p in ajuri.odottavat_tehtavat(repo) if tavoite.luokittele(p)[0] is None]
+
+
 OLETUS_POHJA = "/opt/agentti-pohja"
 OLETUS_YOJONO_AJURI = "/opt/yojono-ajuri"
 
@@ -297,7 +303,11 @@ def keraa(repo, perus, nyt, hae=None, yksikot=None, ero=None, kaistavahti=None):
         kaistavaroitukset = (kaistavahti or pysahtyneet_kaistat)(repo, nyt)
     except Exception:
         kaistavaroitukset = []
-    return {"kaistavaroitukset": kaistavaroitukset, "nyt": nyt, "aivo_valmis": aivo_valmis, "tarkastaja_virheet": tarkastaja_virheet, "kaistat": kaistat, "kulutus": kulutus_teksti, "varaus": varaus_rivi, "varaus_kysymys": varaus_kysymys, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku), "paatokset": avoimet_paatokset(repo, nyt), "saannot": tonylle_uudet(repo, alku, SAANTOPAIVITYKSET),
+    try:   # Tavoite-rivin takia ohitetut odottavat tehtavat: vain luku, virhe ei kaada koostetta
+        tavoite_ohitetut = tavoitehylatyt(repo)
+    except Exception:
+        tavoite_ohitetut = []
+    return {"tavoite_ohitetut": tavoite_ohitetut, "kaistavaroitukset": kaistavaroitukset, "nyt": nyt, "aivo_valmis": aivo_valmis, "tarkastaja_virheet": tarkastaja_virheet, "kaistat": kaistat, "kulutus": kulutus_teksti, "varaus": varaus_rivi, "varaus_kysymys": varaus_kysymys, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku), "paatokset": avoimet_paatokset(repo, nyt), "saannot": tonylle_uudet(repo, alku, SAANTOPAIVITYKSET),
             "pr": pr_ryhmat, "pr_virheita": virheet, "yojono": yojono_tila(perus, nyt),
             "yksikot": (yksikot or rikkinaiset_yksikot)(), "vaiteportti": vaiteportti.puutteet(repo), "ero": ero_teksti}
 
@@ -333,6 +343,10 @@ def rivit(t):
             paatos_osat.append(f"{len(t['pr']['automerge'])} hoituu automergell\u00e4")
     if t.get("aivo_valmis"):   # Tony 7.11.2026: kerro HETI, kun kaikki aivo-valmius.md:n kohdat t\u00e4yttyv\u00e4t
         paatos_osat.insert(0, "Aivo on valmis OpenRouteriin ja itsekehitykseen: kaikki aivo-valmius.md:n kohdat t\u00e4yttyv\u00e4t")
+    ohitetut = t.get("tavoite_ohitetut") or []
+    if ohitetut:   # ensimmaiseksi: muuten teht\u00e4v\u00e4 seisoo jonossa huomaamatta (virheluokka 2, 22.11.2026)
+        paatos_osat.insert(0, f"{len(ohitetut)} teht\u00e4v\u00e4\u00e4 ohitetaan, koska Tavoite-rivi ei kelpaa (korjaa rivi): "
+                           + ", ".join(ohitetut[:2]) + (f" (+{len(ohitetut) - 2})" if len(ohitetut) > 2 else ""))
     avoimet = t.get("paatokset") or []
     muut = [k for k in (t.get("tonylle") or []) if k not in avoimet]   # ei hiljaa katoavia kohtia: avainsanaan osumattomat vain laskurina
     if muut:
