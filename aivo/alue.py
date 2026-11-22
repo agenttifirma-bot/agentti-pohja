@@ -46,9 +46,19 @@ def tarkista_hakemisto(polku, luo=True, korjaa=True):
     return p
 
 
-def tarkista_tiedostot(kansio):
+GIT_KANSIO = ".git"
+
+
+def _git_kansio_ok(st):
+    """Sallittu git-metakansio: oikea kansio (ei linkki) ja prosessin kayttajan oma."""
+    return stat.S_ISDIR(st.st_mode) and not stat.S_ISLNK(st.st_mode) and st.st_uid == os.geteuid()
+
+
+def tarkista_tiedostot(kansio, salli_git=False):
     """Kansion suorat tiedostot: ei linkkeja, ei muita kuin tavallisia tiedostoja ja ei toisen omistajan tiedostoja.
-    Liian laajat oikeudet korjataan 0600:ksi; jos korjaus ei onnistu, kieltaydytaan."""
+    Liian laajat oikeudet korjataan 0600:ksi; jos korjaus ei onnistu, kieltaydytaan.
+    salli_git=True (vain git-kirjastokansio): suora `.git`-alikansio sallitaan, jos se on oikea kansio ja oma. Sen
+    sisaltoa ei tarkisteta eika sen oikeuksia muuteta; muut alikansiot hylataan edelleen."""
     try:
         nimet = sorted(os.listdir(kansio))
     except OSError as e:
@@ -59,6 +69,8 @@ def tarkista_tiedostot(kansio):
             st = os.lstat(p)
         except OSError as e:
             raise AlueVirhe("tiedostoa ei voi tarkistaa (%s)" % type(e).__name__)
+        if salli_git and nimi == GIT_KANSIO and _git_kansio_ok(st):
+            continue
         if not stat.S_ISREG(st.st_mode):
             raise AlueVirhe("alueen kansiossa on muu kuin tavallinen tiedosto (linkki tai kansio)")
         if st.st_uid != os.geteuid():
@@ -76,8 +88,12 @@ class Alue:
     nimi: str
     juuri: Path
     alikansiot: tuple
+    git_alikansiot: tuple = ()      # alikansiot, jotka saavat olla git-klooneja (sallittu `.git`-kansio)
 
     def __post_init__(self):
+        object.__setattr__(self, "git_alikansiot", tuple(self.git_alikansiot))
+        if not set(self.git_alikansiot) <= set(self.alikansiot):
+            raise AlueVirhe("git-alikansion pitaa kuulua alueen alikansioihin")
         object.__setattr__(self, "juuri", Path(self.juuri))
         object.__setattr__(self, "alikansiot", tuple(self.alikansiot))
         if not self.juuri.is_absolute():
@@ -102,14 +118,22 @@ class Alue:
             return False
         return True
 
-    def valmista(self, luo=True):
-        """Luo ja tarkistaa juuren seka kaikki alikansiot (omistaja, 0700, ei linkkeja) ja niiden tiedostot (0600).
+    def valmista(self, luo=True, alikansiot=None):
+        """Luo ja tarkistaa juuren seka alikansiot (omistaja, 0700, ei linkkeja) ja niiden tiedostot (0600).
+        alikansiot=None: kaikki alueen alikansiot. Muuten vain annetut (osajoukko; vieras nimi => AlueVirhe), jotta
+        kayttaja voi rajata tarkistuksen kansioihin, joita se oikeasti lukee tai kirjoittaa.
         Palauttaa {alikansio: Path}."""
+        if alikansiot is None:
+            valitut = self.alikansiot
+        else:
+            valitut = tuple(alikansiot)
+            if not valitut or any(a not in self.alikansiot for a in valitut):
+                raise AlueVirhe("alikansio ei kuulu alueeseen %s" % self.nimi)
         tarkista_hakemisto(self.juuri, luo=luo)
         tulos = {}
-        for a in self.alikansiot:
+        for a in valitut:
             p = tarkista_hakemisto(self.polku(a), luo=luo)
-            tarkista_tiedostot(p)
+            tarkista_tiedostot(p, salli_git=a in self.git_alikansiot)
             tulos[a] = p
         return tulos
 

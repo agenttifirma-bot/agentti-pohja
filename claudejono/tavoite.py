@@ -7,8 +7,9 @@ Rivi on dataa: vain tama suljettu lista kelpaa.
 Kaistaosuudet (koodissa):
 - kaista 4 (kun kaistoja on 4; A991): vain Aivo-tehtavat. Jos Aivo-tehtavia ei ole, kaista odottaa eika ota mitaan muuta.
 - kaista 3 (kun kaistoja on vahintaan 3): vain Aivo-tehtavat; jos Aivo-tehtavia ei ole, vain yllapito.
-- kaista 1: portfolio, sitten yllapito, sitten (ellei kumpaakaan ole) ansainta.  kaista 2: ansainta, sitten yllapito, sitten portfolio.
-  Kaistat 1-2 eivat ota Aivo-tehtavia, kun kolmas kaista on kaytossa. Jos kaistoja on alle 3, Aivo-rajaus ei koske ketaan.
+- kaistat 1-2 (kun kaistoja on vahintaan 3; Tonyn paatos A1061, 22.11.2026): Aivo, sitten yllapito, sitten portfolio,
+  sitten ansainta. Aivo-tehtavat eivat siis jonota yhden kaistan takana.
+- alle 3 kaistaa: kaista 1 portfolio, yllapito, ansainta, Aivo; kaista 2 ansainta, yllapito, portfolio, Aivo.
 Tama ei muuta kulukattoja, oikeuksia eika polkurajoja.
 """
 import json
@@ -82,9 +83,9 @@ def kaistan_jarjestys(kaista, kaistoja, aivo_odottaa):
             return (AIVO,)   # Aivo-kaista: ei koskaan muuta, vaikka Aivo-jono olisi tyhja
         if kaista == 3:
             return (AIVO,) if aivo_odottaa else (YLLAPITO,)
-        if kaista == 2:
-            return (ANSAINTA, YLLAPITO, PORTFOLIO)
-        return (PORTFOLIO, YLLAPITO, ANSAINTA)
+        if kaista in (1, 2):
+            return (AIVO, YLLAPITO, PORTFOLIO, ANSAINTA)   # A1061: Aivo ensin, sitten yllapito
+        return (PORTFOLIO, YLLAPITO, ANSAINTA)   # kaista 4 ilman nelikaistatilaa (tarkista_kaista hylkaa sen); ennallaan
     # Alle 3 kaistaa: ei Aivo-rajausta. Kaista 2 suosii ansaintaa, muut portfoliota.
     muut = (ANSAINTA, YLLAPITO, PORTFOLIO, AIVO) if kaista == 2 else (PORTFOLIO, YLLAPITO, ANSAINTA, AIVO)
     return muut

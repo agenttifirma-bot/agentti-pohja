@@ -156,5 +156,81 @@ class Kuma(unittest.TestCase):
         self.assertIsNone(korjaaja.tarkista_yksikko(vahti.KORJAAJA_YKSIKKO.split("@", 1)[1].rsplit(".service", 1)[0]))
 
 
+class AjastinIlmanSeuraavaa(Pohja):
+    """22.11.2026: kaista 3-4 oli paalla, mutta NEXT puuttui kuusi tuntia."""
+    JUMISSA = {"ActiveState": "active", "NextElapseUSecMonotonic": "infinity", "NextElapseUSecRealtime": ""}
+
+    def test_tunnistus(self):
+        self.assertTrue(vahti.ilman_seuraavaa_ajoa(self.JUMISSA, "inactive"))
+        self.assertTrue(vahti.ilman_seuraavaa_ajoa(self.JUMISSA, "failed"))
+        # Ajo kaynnissa: NEXT puuttuu luonnostaan
+        self.assertFalse(vahti.ilman_seuraavaa_ajoa(self.JUMISSA, "activating"))
+        self.assertFalse(vahti.ilman_seuraavaa_ajoa(self.JUMISSA, "active"))
+        # Ajastin pois paalta: tarkoituksellinen
+        self.assertFalse(vahti.ilman_seuraavaa_ajoa(dict(self.JUMISSA, ActiveState="inactive"), "inactive"))
+        self.assertFalse(vahti.ilman_seuraavaa_ajoa(dict(self.JUMISSA, NextElapseUSecMonotonic="1month 1w 19h 56min"), "inactive"))
+        self.assertFalse(vahti.ilman_seuraavaa_ajoa(dict(self.JUMISSA, NextElapseUSecRealtime="Sun 2026-11-22 14:20:19 EET"), "inactive"))
+
+    def test_systemctl_luku(self):
+        class R:
+            def __init__(self, out, rc=0):
+                self.stdout, self.returncode = out, rc
+        vastaukset = {
+            "claude-jono@1.timer": "ActiveState=active\nNextElapseUSecMonotonic=infinity\nNextElapseUSecRealtime=\n",
+            "claude-jono@1.service": "ActiveState=activating\n",
+            "claude-jono@2.timer": "ActiveState=active\nNextElapseUSecMonotonic=2d 3h\nNextElapseUSecRealtime=\n",
+            "claude-jono@2.service": "ActiveState=inactive\n",
+            "claude-jono@3.timer": "ActiveState=active\nNextElapseUSecMonotonic=infinity\nNextElapseUSecRealtime=\n",
+            "claude-jono@3.service": "ActiveState=inactive\n",
+        }
+        kutsut = []
+
+        def suorita(cmd, **kw):
+            kutsut.append(cmd)
+            self.assertEqual(cmd[:2], ["systemctl", "show"])
+            return R(vastaukset.get(cmd[2], "ActiveState=inactive\n"))
+        self.assertEqual(vahti.ajastimet_ilman_seuraavaa(suorita), ["claude-jono@3.timer"])
+        self.assertIn(["systemctl", "show", "claude-jono@4.timer", "-p",
+                       "ActiveState,NextElapseUSecMonotonic,NextElapseUSecRealtime"], kutsut)
+
+    def test_systemctl_virhe_ei_kaada(self):
+        def suorita(cmd, **kw):
+            raise OSError("ei systemctl")
+        self.assertEqual(vahti.ajastimet_ilman_seuraavaa(suorita), [])
+
+    def test_varoitus_kerran_ja_halytystila_sailyy(self):
+        self.loki((600, "tehtava", True))
+        t, rivi = self.aja(ilman_seuraavaa=lambda: ["claude-jono@3.timer"])
+        self.assertEqual(t["tila"], "terve")
+        self.assertEqual(len(self.viestit), 1)
+        self.assertIn("claude-jono@3.timer", self.viestit[0])
+        self.assertIn("systemctl restart claude-jono@3.timer", self.viestit[0])
+        self.assertIn("ilman seuraavaa ajoa", rivi)
+        self.aja(nyt=NYT + 900, ilman_seuraavaa=lambda: ["claude-jono@3.timer"])
+        self.assertEqual(len(self.viestit), 1)
+        self.aja(nyt=NYT + vahti.TOISTOESTE_S + 1, ilman_seuraavaa=lambda: ["claude-jono@3.timer"])
+        self.assertEqual(sum("kaista-ajastimella" in v for v in self.viestit), 2)
+
+    def test_varoitus_ei_kumoa_pysahdyksen_toistoestetta(self):
+        self.avoin_tehtava()
+        self.loki((3 * 3600, "tehtava", True))
+        self.aja()
+        self.assertEqual((len(self.viestit), len(self.korjaukset)), (1, 1))
+        self.aja(nyt=NYT + 60, ilman_seuraavaa=lambda: ["claude-jono@4.timer"])
+        self.assertEqual(len(self.korjaukset), 1)   # halytyksen toistoeste sailyi
+        self.assertEqual(len(self.viestit), 2)      # vain ajastinvaroitus lisaksi
+
+    def test_kuiva_ajo_ei_laheta(self):
+        self.loki((600, "tehtava", True))
+        _, rivi = self.aja(kuiva=True, ilman_seuraavaa=lambda: ["claude-jono@3.timer"])
+        self.assertEqual(self.viestit, [])
+        self.assertIn("claude-jono@3.timer", rivi)
+
+    def test_ei_jumissa_ei_viestia(self):
+        self.loki((600, "tehtava", True))
+        self.aja(ilman_seuraavaa=lambda: [])
+        self.assertEqual(self.viestit, [])
+
+
 if __name__ == "__main__":
     unittest.main()
