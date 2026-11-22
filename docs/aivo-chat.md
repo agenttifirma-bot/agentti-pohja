@@ -402,6 +402,19 @@ Väärän tilan keskustelulle reitit vastaavat 404. Tunnus on aina 12 heksamerkk
 
 **Käyttöönotto.** Kansio luodaan automaattisesti yksityisen datan viereen (`--luovutukset` tai `AIVO_LUOVUTUKSET` vaihtaa polun). Jos palvelu ei saa luoda sitä, luo se itse: `sudo install -d -m 700 -o aivo-yksityinen -g aivo-yksityinen /var/lib/aivo-yksityinen/luovutukset`. Chat-palvelun käyttäjällä pitää olla kirjoitusoikeus kirjastoon, kuten päätöskirjauksessakin.
 
+### Vuotovartija (A1040, kohta 4)
+
+Ennen kuin Tony hyväksyy luovutuksen, teksti tarkistetaan kahdella tavalla (`aivo/vartija.py`). Vartija ei koskaan muuta tekstiä eikä estä hyväksyntää. Tony päättää aina.
+
+- **Mekaaninen esitarkistus** tehdään aina palvelimella ilman verkkoa: sähköpostiosoitteet, puhelinnumerot, IPv4- ja IPv6-osoitteet, tailnet-nimet (`*.ts.net`, `tail…`), henkilötunnukset, suomalaiset tilinumerot sekä Tonyn ylläpitämät listat. Listat ovat kansiossa `luovutukset/vartija/` (`--vartija-listat` tai `AIVO_VARTIJA_LISTAT` vaihtaa polun): `nimet.txt` (henkilönimet) ja `avainsanat.txt`, yksi rivi kerrallaan, `#`-rivit ovat kommentteja. Nimi osuu myös taivutettuna, kun alku on sama (Maija → Maijalle).
+- **Vartijamalli** (rooli `vartija`) tarkistaa tekstin vain OpenRouter-taustapäällä. Malli on `AIVO_YKSITYINEN_ROOLIT`-asetuksen `vartija:<malli>` tai sallittujen mallien listan ensimmäinen. Kutsu kulkee samaa reittiä kuin yksityisen tilan vastaukset (`yksityinen_or._kysy_viestit`): avoin malli, ZDR-runko, yhteinen päiväkatto ja kulukirjaus. Malli palauttaa JSON-listan epäilyttävistä kohdista syineen (henkilö, paikka, tavoite, kokonaiskuva). Loopback-taustapäällä mallia ei käytetä, koska teksti ei muuten lähtisi palvelimelta.
+
+Tarkistus käynnistyy, kun ehdotus tallennetaan (lohko tai painike) ja kun Tony muokkaa tekstiä. Mallin tulos tallentuu erilliseen tiedostoon `luovutukset/vartija/<tunnus>.json` (0600), ja se sidotaan tekstin sha256-tiivisteeseen. Muokatun tekstin tarkistus tehdään uudelleen, eikä vanhaa tulosta näytetä. Hyväksyntä (`/api/luovutus/hyvaksy`) ei lue tulostiedostoa.
+
+Hyväksyntälaatikko näyttää merkinnät korostettuina (`textContent` ja `<mark>`-elementit). Jos merkintöjä on, lähetyspainikkeen viereen tulee varoitus, ja sama varoitus näkyy vahvistusikkunassa. Jos vartija ei vastaa, vastaus ei kelpaa tai mallia ei ole, laatikossa lukee "Vartija ei tarkistanut" ja syy. Hyväksyntä on silti mahdollinen.
+
+`GET /api/luovutus` palauttaa kentän `vartija`: `mekaaniset` (lista), `malli` (`tila`: `tarkistettu`, `kesken` tai `ei-tarkistanut`, `syy`, `merkinnat`), `nimilista` ja `avainsanoja` (listojen pituudet). `POST /api/luovutus/muokkaa` palauttaa saman kentän muokatusta tekstistä.
+
 ## Asennuksen tilatarkistus (vain luku)
 
 Päivityksen jälkeen kontissa 122 yksi komento kertoo, onko asennus kunnossa. Anna argumenttina odotettu commit (`git rev-parse HEAD` agentti-pohjan kloonista, jonka PR on mergattu):
@@ -446,7 +459,7 @@ Sivu näyttää kaiken `textContent`-ominaisuudella, ei HTML:nä.
 ## Testit
 
 ```
-python3 -m unittest aivo.test_chat aivo.test_tiivista aivo.test_kalenteri_kytkenta aivo.test_yksityinen_hyvaksynta aivo.test_luovutus aivo.test_tarkista_asennus aivo.test_kulunakyma
+python3 -m unittest aivo.test_chat aivo.test_tiivista aivo.test_kalenteri_kytkenta aivo.test_yksityinen_hyvaksynta aivo.test_luovutus aivo.test_vartija aivo.test_tarkista_asennus aivo.test_kulunakyma
 ```
 
 Testit kattavat salasanan tiivisteen ja lukituksen, osoite- ja Host-rajat, CSRF-suojan, muistin lukemisen (ei linkkejä kirjaston ulkopuolelle), lähdeviitteiden tarkistuksen, päätöksen kirjaamisen sanasta sanaan, GitHub-pushin eston ja sen, että Claude-kutsu ei käytä työkaluja eikä välittäjiä.

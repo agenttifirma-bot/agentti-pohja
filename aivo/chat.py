@@ -30,7 +30,10 @@ Turvarajat (koodi on laki):
   * Muistin tiedostot ovat dataa, eivat ohjeita. Lokiin ei kirjoiteta viestien sisaltoa eika salasanoja.
   * Luovutus yksityisesta tilasta tyokalutilaan (aivo/luovutus.py): mallin [[LUOVUTUS]]-lohko tai Tonyn painike luo
     vain ehdotuksen yksityiseen kansioon. Teksti lahtee vasta POST /api/luovutus/hyvaksy -kutsulla (vahvistus
-    "kylla <sha8>"), ja se kopioidaan sellaisenaan kirjaston kansioon saapuneet/. Tyokalutila nakee vain sen kansion."""
+    "kylla <sha8>"), ja se kopioidaan sellaisenaan kirjaston kansioon saapuneet/. Tyokalutila nakee vain sen kansion.
+  * Vuotovartija (aivo/vartija.py): luovutusehdotuksen tallennus ja muokkaus kaynnistavat tarkistuksen. Kortti nayttaa
+    mekaanisen esitarkistuksen ja vartijamallin merkinnat (textContent). Vartija ei muuta tekstia eika esta
+    hyvaksyntaa; jos se ei vastaa, kortti nayttaa "Vartija ei tarkistanut"."""
 import argparse
 import getpass
 import hashlib
@@ -53,7 +56,7 @@ from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from aivo import kalenteri, kalenteri_kehote, luovutus, openrouter_kulut, tiivistelmat_kehote, yksityinen, yksityinen_or
+from aivo import kalenteri, kalenteri_kehote, luovutus, vartija, openrouter_kulut, tiivistelmat_kehote, yksityinen, yksityinen_or
 from aivo.yksityinen import YksityinenVirhe as ChatVirhe, julkaise_kirjastoon   # sama poikkeus kaikkialla
 from aivo import yhdistelma        # usean mallin yhdistelmat (oma rivi: ei ristiriitaa rinnakkaisten tuontimuutosten kanssa)
 
@@ -133,6 +136,8 @@ textarea{resize:none;height:3.2rem}button{font:inherit;padding:.5rem .9rem;borde
 .luovutus textarea{display:block;width:100%;min-height:8rem;height:auto;resize:vertical;margin:.4rem 0}
 .luovutus pre{white-space:pre-wrap;word-wrap:break-word;max-height:40vh;overflow:auto;font-size:.8rem;margin:.4rem 0}
 .varoitus{font-weight:bold}
+.vartija ul{margin:.3rem 0;padding-left:1.2rem}
+.vartija pre{white-space:pre-wrap;word-wrap:break-word;max-height:30vh;overflow:auto;font-size:.8rem;margin:.4rem 0}
 </style></head><body>
 <header><strong>Aivo</strong><span><select id="tila" aria-label="Tila">
 <option value="yksityinen" selected>{YKSITYINEN_TEKSTI}</option>
@@ -262,13 +267,33 @@ async function luovutusKortti(t){const d=document.createElement('div');d.classNa
  const tunn=()=>{o.textContent='Luovutus ty\u00f6kalutilaan (tunnus '+e.tunnus+', sha '+e.sha8+'). Voit muokata teksti\u00e4 ennen l\u00e4hetyst\u00e4.';};tunn();
  const l=document.createElement('button');l.textContent='L\u00e4het\u00e4 ty\u00f6kalutilaan';const h=document.createElement('button');h.textContent='Hylk\u00e4\u00e4';
  const ti=document.createElement('div');ti.className='pieni';
+ const vk=document.createElement('div');vk.className='vartija';const vv=document.createElement('span');vv.className='varoitus';
+ const naytaVartija=v=>{vk.textContent='';vv.textContent='';if(!v||typeof v!=='object')v={};
+  const mek=Array.isArray(v.mekaaniset)?v.mekaaniset:[];const m=(v.malli&&typeof v.malli==='object')?v.malli:{};
+  const mm=Array.isArray(m.merkinnat)?m.merkinnat:[];const kaikki=mek.concat(mm).filter(x=>x&&typeof x.kohta==='string');
+  const ot=document.createElement('div');ot.className='pieni';
+  ot.textContent=m.tila==='tarkistettu'?('Vartija tarkisti tekstin: '+mm.length+' merkint\u00e4\u00e4.'):(m.tila==='kesken'?'Vartija tarkistaa teksti\u00e4\u2026':('Vartija ei tarkistanut'+(m.syy?' ('+m.syy+')':'')+'.'));
+  const om=document.createElement('div');om.className='pieni';om.textContent='Mekaaninen esitarkistus: '+mek.length+' osumaa.';vk.append(ot,om);
+  if(kaikki.length){const ul=document.createElement('ul');kaikki.forEach(x=>{const li=document.createElement('li');const mk=document.createElement('mark');mk.textContent=x.kohta;
+    li.append(mk,document.createTextNode(' \u2013 '+String(x.syy||'')+(x.lahde==='malli'?' (vartija)':' (esitarkistus)')));ul.appendChild(li);});vk.appendChild(ul);
+   const pre=document.createElement('pre');const tx=e.teksti;let i=0;
+   kaikki.filter(x=>Number.isInteger(x.alku)&&Number.isInteger(x.loppu)&&x.alku>=0&&x.alku<x.loppu&&x.loppu<=tx.length).sort((a,b)=>a.alku-b.alku).forEach(x=>{
+    if(x.alku<i)return;pre.appendChild(document.createTextNode(tx.slice(i,x.alku)));const mk=document.createElement('mark');mk.textContent=tx.slice(x.alku,x.loppu);mk.title=String(x.syy||'');pre.appendChild(mk);i=x.loppu;});
+   pre.appendChild(document.createTextNode(tx.slice(i)));vk.appendChild(pre);
+   vv.textContent=' Huom: '+kaikki.length+' merkitty\u00e4 kohtaa. Tarkista ennen l\u00e4hetyst\u00e4.';}
+  else if(m.tila!=='tarkistettu')vv.textContent=m.tila==='kesken'?' Vartija tarkistaa viel\u00e4.':' Vartija ei tarkistanut t\u00e4t\u00e4 teksti\u00e4.';
+  return m.tila;};
+ let kierros=0;const seuraa=async()=>{if(!d.isConnected||ta.readOnly||kierros++>40)return;const y=await haeJson('/api/luovutus?keskustelu='+q(kid)+'&tunnus='+q(e.tunnus));
+  if(!y||!y.r.ok||y.j.sha8!==e.sha8)return;if(naytaVartija(y.j.vartija)==='kesken')setTimeout(seuraa,3000);};
+ if(naytaVartija(e.vartija)==='kesken')setTimeout(seuraa,3000);
  const post=async(polku,lisa)=>{const r=await fetch(polku,{method:'POST',headers:H,body:JSON.stringify(Object.assign({keskustelu:kid,tunnus:e.tunnus},lisa))});
   if(r.status===401){location.href='/kirjaudu';return null;}let j={};try{j=await r.json();}catch(z){}return {r:r,j:j};};
  l.onclick=async()=>{l.disabled=h.disabled=true;
   try{if(ta.value!==e.teksti){const m=await post('/api/luovutus/muokkaa',{teksti:ta.value});if(!m)return;
     if(!m.r.ok){ti.textContent='Muokkausta ei tallennettu: '+(m.j.virhe||m.r.status);return;}
-    e.teksti=ta.value;e.sha8=m.j.sha8;tunn();ti.textContent='Muokattu teksti sai uuden sha:n '+e.sha8+'.';}
-   if(!confirm('L\u00e4hetet\u00e4\u00e4nk\u00f6 laatikon teksti (sha '+e.sha8+') ty\u00f6kalutilaan? Se l\u00e4htee Clauden pilveen.'))return;
+    e.teksti=ta.value;e.sha8=m.j.sha8;tunn();ti.textContent='Muokattu teksti sai uuden sha:n '+e.sha8+'.';
+    kierros=0;if(naytaVartija(m.j.vartija)==='kesken')setTimeout(seuraa,3000);}
+   if(!confirm('L\u00e4hetet\u00e4\u00e4nk\u00f6 laatikon teksti (sha '+e.sha8+') ty\u00f6kalutilaan? Se l\u00e4htee Clauden pilveen.'+(vv.textContent?' '+vv.textContent.trim():'')))return;
    const a=await post('/api/luovutus/hyvaksy',{vahvistus:'kyll\u00e4 '+e.sha8});if(!a)return;
    ti.textContent=a.j.teksti||('Ei l\u00e4hetetty: '+(a.j.virhe||a.r.status));
    if(a.r.ok){ta.readOnly=true;l.remove();h.remove();}}
@@ -276,7 +301,7 @@ async function luovutusKortti(t){const d=document.createElement('div');d.classNa
  h.onclick=async()=>{if(!confirm('Hyl\u00e4t\u00e4\u00e4nk\u00f6 luovutus? Se siirret\u00e4\u00e4n kansioon hylatyt/ eik\u00e4 sit\u00e4 poisteta.'))return;
   l.disabled=h.disabled=true;const a=await post('/api/luovutus/hylkaa',{});if(!a)return;
   ti.textContent=a.j.teksti||('Ei hyl\u00e4tty: '+(a.j.virhe||a.r.status));if(a.r.ok){ta.readOnly=true;l.remove();h.remove();}else{l.disabled=h.disabled=false;}};
- d.append(va,ta,l,h,ti);alas();}
+ d.append(va,vk,ta,l,h,vv,ti);alas();}
 function luovuta(d,idx){const b=document.createElement('button');b.textContent='Luovuta ty\u00f6kalutilaan';
  b.onclick=async()=>{b.disabled=true;const r=await fetch('/api/luovutus/uusi',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,indeksi:idx})});
   if(r.status===401){location.href='/kirjaudu';return;}let j={};try{j=await r.json();}catch(z){}
@@ -936,6 +961,15 @@ def kulut_yhteenveto(kulutila, nyt, kerroin):
     return ulos
 
 
+def vartijan_kysy(malli, **kw):
+    """Vartijamallin kysy-funktio (aivo/vartija.py): yksityinen_or._kysy_viestit eli avoimen mallin tarkistus, ZDR-runko,
+    yhteinen paivakatto ja kulukirjaus. vartija.py ei tuo OpenRouter-koodia itse."""
+    def kysy(viestit):
+        return yksityinen_or._kysy_viestit(malli, viestit, aikaraja_s=vartija.AIKARAJA_S,
+                                           max_tokens=vartija.VASTAUS_MAX_TOKENIA, **kw)
+    return kysy
+
+
 class Tila:
     """Kaksi tilaa: "yksityinen" (oletus; paikallinen malli, oma muisti, ydinohjeet) ja "tyokalu" (Claude, kirjasto).
     Yksityinen tila on kaytossa vain, jos yks_data on annettu; sen kansioiden pitaa olla palvelun kayttajan 0700."""
@@ -947,7 +981,8 @@ class Tila:
                  malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None,
                  taustapaa="loopback", or_malli=None, or_avain=yksityinen_or.OLETUS_AVAIN, or_mallit=None,
                  or_kulutila=None, tiivistelmat=None, kalenteri_lahde=None, yks_tiivistelmat=None,   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
-                 yhdistelma_oletus=None, roolit=None, kysy_yhd=None, ajattelija_aika=None):
+                 yhdistelma_oletus=None, roolit=None, kysy_yhd=None, ajattelija_aika=None,
+                 vartija_kysy=None, vartija_listat=None):
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
         self.kulutila = or_kulutila               # None = openrouter_kulut.OLETUS_TILA (yhteinen kirjanpito)
@@ -968,6 +1003,12 @@ class Tila:
         self.roolit = {}
         self.ajattelija_aika = yhdistelma.tarkista_ajattelijan_aika(ajattelija_aika)   # tiimi; vain lyhentaa
         self.taustapaa = taustapaa if taustapaa in YKSITYINEN_TEKSTIT else "loopback"
+        # Vuotovartija (aivo/vartija.py): mallikutsu vain OpenRouter-taustapaalla, tulos erilliseen tiedostoon.
+        self.vartija_kysy = None
+        self.vartija_listat = None
+        self.vartija_kesken = set()              # (tunnus, sha), joiden mallitarkistus on kaynnissa
+        self.vartija_lukko = threading.Lock()
+        self.vartija_ajo = lambda f: threading.Thread(target=f, daemon=True).start()   # testit: lambda f: f()
         if yks_data:
             if taustapaa not in ("loopback", "openrouter"):
                 raise ChatVirhe("tuntematon yksityisen tilan taustapaa")
@@ -987,6 +1028,12 @@ class Tila:
                 ehdotukset or str(Path(yks_data).parent / "ehdotukset")))
             self.luovutukset = str(yksityinen.tarkista_yksityinen_hakemisto(
                 luovutukset or str(Path(yks_data).parent / "luovutukset")))
+            self.vartija_listat = vartija_listat or str(Path(self.luovutukset) / vartija.KANSIO)
+            if vartija_kysy is not None:
+                self.vartija_kysy = vartija_kysy
+            elif taustapaa == "openrouter":       # loopback: teksti ei lahde palvelimelta vartijankaan takia
+                self.vartija_kysy = vartijan_kysy(
+                    self.roolit.get(vartija.ROOLI) or self.or_mallit[0], avain_tiedosto=or_avain, kulutila=or_kulutila)
             self.taustapaa = taustapaa
             if yks_tiivistelmat:
                 if tiivistelmat and os.path.realpath(yks_tiivistelmat) == os.path.realpath(tiivistelmat):
@@ -1011,6 +1058,57 @@ class Tila:
         self.yks_vastauslukko = threading.Lock()
         self.ehdotuslukko = threading.Lock()      # yksi hyvaksynta tai hylkays kerrallaan
         self.luovutuslukko = threading.Lock()     # yksi luovutuksen kasittely kerrallaan (molemmat tilat)
+
+    def kaynnista_vartija(self, tunnus):
+        """Kaynnistaa vartijamallin tarkistuksen ehdotuksen nykyisesta tekstista (taustalla). Ei muuta ehdotusta.
+        Jos vartijamallia ei ole, tulos on jo tallessa tai tarkistus kaynnissa taman sha:n tekstille, ei tee mitaan."""
+        if self.vartija_kysy is None:
+            return
+        try:
+            e = luovutus.lue_ehdotus(self.luovutukset, tunnus)
+        except ChatVirhe:
+            return
+        teksti, sha = e["teksti"], e["sha"]
+        if vartija.lue_tulos(self.luovutukset, tunnus, sha) is not None:
+            return
+        avain = (tunnus, sha)
+        with self.vartija_lukko:
+            if avain in self.vartija_kesken:
+                return
+            self.vartija_kesken.add(avain)
+
+        def aja():
+            try:
+                tulos = vartija.tarkista_mallilla(teksti, self.vartija_kysy)
+                try:
+                    vartija.tallenna_tulos(self.luovutukset, tunnus, tulos)
+                except (OSError, ChatVirhe):
+                    pass            # tulos puuttuu => kortti nayttaa "vartija ei tarkistanut"
+            finally:
+                with self.vartija_lukko:
+                    self.vartija_kesken.discard(avain)
+        try:
+            self.vartija_ajo(aja)
+        except RuntimeError:
+            with self.vartija_lukko:
+                self.vartija_kesken.discard(avain)
+
+    def vartijan_tila(self, tunnus, ehdotus):
+        """Kortin vartijaosio: mekaaninen esitarkistus nykyisesta tekstista ja mallin tulos, jos se on tehty tasta sha:sta."""
+        nimet, sanat = vartija.lue_listat(self.vartija_listat)
+        mek = vartija.mekaaninen(ehdotus["teksti"], nimet, sanat)
+        t = vartija.lue_tulos(self.luovutukset, tunnus, ehdotus["sha"])
+        if t is None:
+            with self.vartija_lukko:
+                kesken = (tunnus, ehdotus["sha"]) in self.vartija_kesken
+            if self.vartija_kysy is None:
+                syy = "vartijamalli ei ole k\u00e4yt\u00f6ss\u00e4 (ei OpenRouter-taustap\u00e4\u00e4t\u00e4)"
+            else:
+                syy = "" if kesken else "tarkistusta ei tehty t\u00e4lle tekstille"
+            malli = {"tila": vartija.TILA_KESKEN if kesken else vartija.TILA_EI_TARKISTANUT, "syy": syy, "merkinnat": []}
+        else:
+            malli = {"tila": t["tila"], "syy": str(t.get("syy") or ""), "merkinnat": t["merkinnat"]}
+        return {"mekaaniset": mek, "malli": malli, "nimilista": len(nimet), "avainsanoja": len(sanat)}
 
     def valitse_malli(self, pyydetty):
         """Selaimen lahettama malli kelpaa vain, jos se on asetuksen listalla (muuten ChatVirhe -> 400)."""
@@ -1278,6 +1376,7 @@ def tee_kasittelija(tila):
                 def tallenna_luovutus(t):
                     tunnus = luovutus.tallenna_ehdotus(tila.luovutukset, t, "lohko")
                     luovutukset.append(tunnus)
+                    tila.kaynnista_vartija(tunnus)
                     return tunnus
                 vastaus = luovutus.irrota_luovutukset(vastaus, tallenna_luovutus)   # vain mallin vastaus, ei Tonyn viesti
                 vastaus, valinnat = erota_valinnat(vastaus)
@@ -1478,7 +1577,7 @@ def tee_kasittelija(tila):
                 return self._json(404, {"virhe": "ei loydy"})
             e = luovutus.lue_ehdotus(tila.luovutukset, d.get("tunnus"))
             return self._json(200, {"tunnus": d.get("tunnus"), "sha8": e["sha"][:8], "teksti": e["teksti"],
-                                    "lahde": e.get("lahde")})
+                                    "lahde": e.get("lahde"), "vartija": tila.vartijan_tila(d.get("tunnus"), e)})
 
         def _luovutetut(self, d):
             if not self._yks_keskustelu(d):
@@ -1494,6 +1593,7 @@ def tee_kasittelija(tila):
             if not isinstance(i, int) or isinstance(i, bool) or not 0 <= i < len(historia):
                 return self._json(400, {"virhe": "viesti\u00e4 ei ole"})
             t = luovutus.tallenna_ehdotus(tila.luovutukset, historia[i]["teksti"], "viesti")
+            tila.kaynnista_vartija(t)
             return self._json(200, {"tunnus": t})
 
         def _luovutus_muokkaa(self, d):
@@ -1505,7 +1605,9 @@ def tee_kasittelija(tila):
                 uusi = luovutus.muokkaa_ehdotus(tila.luovutukset, d.get("tunnus"), d.get("teksti"))
             finally:
                 tila.luovutuslukko.release()
-            return self._json(200, {"tunnus": d.get("tunnus"), "sha8": uusi[:8]})
+            tila.kaynnista_vartija(d.get("tunnus"))              # muokattu teksti tarkistetaan uudelleen (uusi sha)
+            e = luovutus.lue_ehdotus(tila.luovutukset, d.get("tunnus"))
+            return self._json(200, {"tunnus": d.get("tunnus"), "sha8": uusi[:8], "vartija": tila.vartijan_tila(d.get("tunnus"), e)})
 
         def _luovutus_hyvaksy(self, d):
             if not self._yks_keskustelu(d):
@@ -1592,6 +1694,8 @@ def main(argv=None):
     ap.add_argument("--ehdotukset", default=os.environ.get("AIVO_EHDOTUKSET"))
     ap.add_argument("--luovutukset", default=os.environ.get("AIVO_LUOVUTUKSET"),
                     help="yksityinen luovutusehdotusten ja -lokin kansio (oletus: yksityisen datan viereinen 'luovutukset')")
+    ap.add_argument("--vartija-listat", default=os.environ.get("AIVO_VARTIJA_LISTAT"),
+                    help="vuotovartijan nimet.txt- ja avainsanat.txt-kansio (oletus: luovutukset/vartija)")
     ap.add_argument("--tiivistelmat-kaytossa", action="store_true",
                     default=os.environ.get("AIVO_TIIVISTELMAT_KAYTOSSA") == "1",
                     help="liittaa tiivistelmat tyokalutilan kehotteeseen (oletus: pois paalta; kansion olemassaolo ei kytke)")
@@ -1638,7 +1742,7 @@ def main(argv=None):
             raise ChatVirhe("--host vaatii taydellisen nimen (ei .paate-jokerimerkintaa)")
         # ilman --host sallitaan vain localhost
         tila = Tila(lue_tiiviste(a.salasana_tiedosto), a.kirjasto, a.data, hostit, yks_data=a.yksityinen_data,
-                    yks_muisti=a.yksityinen_muisti, ydinohjeet=a.ydinohjeet, ehdotukset=a.ehdotukset, luovutukset=a.luovutukset, malli_url=a.malli_url,
+                    yks_muisti=a.yksityinen_muisti, ydinohjeet=a.ydinohjeet, ehdotukset=a.ehdotukset, luovutukset=a.luovutukset, vartija_listat=a.vartija_listat, malli_url=a.malli_url,
                     taustapaa=a.yksityinen_taustapaa, or_malli=a.openrouter_malli, or_mallit=a.openrouter_mallit,
                     or_avain=a.openrouter_avain_tiedosto,
                     yhdistelma_oletus=a.yksityinen_yhdistelma, roolit=a.yksityinen_roolit,

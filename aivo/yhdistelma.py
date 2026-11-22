@@ -44,7 +44,10 @@ ROOLIT = {
     "reititys": ("reititin", "kevyt", "vaativa"),
     "tiimi": ("keskustelija", "ajattelija", "kevyt"),
 }
-KAIKKI_ROOLIT = frozenset(r for rr in ROOLIT.values() for r in rr)
+# Yhdistelmien ulkopuoliset roolit: "vartija" tarkistaa luovutusehdotukset (aivo/vartija.py). Se ei kuulu
+# yhdistelmaan eika laske MAX_KUTSUT_VIESTI- tai MAX_MALLEJA-rajoihin; malli tulee samalta sallittujen listalta.
+ERILLISROOLIT = ("vartija",)
+KAIKKI_ROOLIT = frozenset([r for rr in ROOLIT.values() for r in rr] + list(ERILLISROOLIT))
 MAX_KUTSUT_VIESTI = 4
 MAX_MALLEJA = 3
 AIKARAJA_S = 240
