@@ -1,0 +1,2 @@
+- llm: _http_post sulkee HTTPError-vastauksen (302/4xx/5xx), jotta socket ei vuoda ja test_ilmoita ei kaadu satunnaisesti ResourceWarningiin
+- llm: regressiotesti HTTPErrorin vastauksen sulkemiselle (test_http)

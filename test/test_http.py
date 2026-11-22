@@ -1,8 +1,11 @@
 """Oikea HTTP-kierros paikallista palvelinta vasten (ei ulkoverkkoa)."""
 import http.server
+import io
 import json
 import threading
 import unittest
+import urllib.error
+from unittest import mock
 
 from agentti import llm
 from test.apu import OK_JSON, llm_vastaus
@@ -73,6 +76,28 @@ class HttpTesti(unittest.TestCase):
         with self.assertRaises(llm.LLMVirhe) as e:
             llm._http_post(self.osoite + "/rikki/chat/completions", "k", {})
         self.assertEqual(e.exception.koodi, "llm_vastaus_rakenne")
+
+    def test_httperrorin_vastaus_suljetaan(self):
+        """Regressio: HTTPError pitaa vastauksen socketin auki, ellei sita suljeta."""
+        fp = io.BytesIO(b"virhe")
+        virhe = urllib.error.HTTPError("http://x/", 500, "virhe", {}, fp)
+        avaaja = mock.Mock()
+        avaaja.open.side_effect = virhe
+        with mock.patch.object(llm.urllib.request, "build_opener", return_value=avaaja):
+            with self.assertRaises(llm.LLMVirhe) as e:
+                llm._http_post("http://x/chat/completions", "k", {})
+        self.assertEqual(e.exception.koodi, "llm_http_500")
+        self.assertTrue(fp.closed)
+
+    def test_http_500_ei_jata_resourcewarningia(self):
+        import gc
+        import warnings
+        with warnings.catch_warnings(record=True) as varoitukset:
+            warnings.simplefilter("always", ResourceWarning)
+            with self.assertRaises(llm.LLMVirhe):
+                llm._http_post(self.osoite + "/virhe/chat/completions", "k", {})
+            gc.collect()
+        self.assertEqual([str(v.message) for v in varoitukset if v.category is ResourceWarning], [])
 
     def test_yhteys_kiinni(self):
         with self.assertRaises(llm.LLMVirhe) as e:
