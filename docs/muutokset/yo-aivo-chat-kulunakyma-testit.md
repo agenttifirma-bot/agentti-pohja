@@ -1,0 +1,1 @@
+- aivo: chat.py:n kulunakyman lisatestit (aivo/test_chat_kulut.py): pyoristys, jarjestys, nimen leikkaus, 30 vrk:n raja ja virheelliset rivit; ei tuotantokoodin muutoksia

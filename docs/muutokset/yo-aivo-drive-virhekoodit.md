@@ -1,0 +1,1 @@
+- aivo: drive.py:n HTTP-virhekoodien testit (200, 401, 403, 404, 500, tyhjä vastaus; main-komentojen paluukoodit) tiedostoon aivo/test_drive_virheet.py ja tools/mutantit.py:n LISATESTIT-riville. Mutanttien kaatoprosentti 57 % -> 81 %.
