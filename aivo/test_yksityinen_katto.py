@@ -205,7 +205,7 @@ class FakeGitJalki:
         return [a for a in self.kutsut if a and a[0] == "push"]
 
 
-KOHDE = ("main", ["https://gitea.lan/aivo/ydinohjeet.git"])
+KOHDE = ("main", ["https://git.example.invalid/aivo/ydinohjeet.git"])  # osoite on pelkkaa dataa: julkaisu kayttaa vain haaraa
 
 
 def julkaise(git, kohde=KOHDE, jalkijulkaise=True):
