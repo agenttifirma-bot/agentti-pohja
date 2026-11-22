@@ -329,5 +329,14 @@ class PaaTesti(unittest.TestCase):
         self.assertEqual(self.kutsu("agentti/mod.py"), 2)
 
 
+class LisatestitTiedostotTesti(unittest.TestCase):
+    """Kaksoisavaimet tarkistaa LisatestitLiteraaliTesti; tama varmistaa, etta jokainen listattu testitiedosto on olemassa."""
+
+    def test_testitiedostot_ovat_olemassa(self):
+        puuttuvat = [p for lista in mu.LISATESTIT.values() for p in lista
+                     if not os.path.exists(os.path.join(mu.JUURI, p))]
+        self.assertEqual(puuttuvat, [])
+
+
 if __name__ == "__main__":
     unittest.main()

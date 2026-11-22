@@ -1,0 +1,1 @@
+- testit: test_snapshot_ct118 jäädyttää kellon (kiinteä PAIVA), joten keskiyön ylitys importin ja tarkistuksen välillä ei enää kaada testejä; test_julkaisen ja test_snapshotin riskit eivät toistuneet, eikä niitä muutettu

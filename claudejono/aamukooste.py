@@ -18,6 +18,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from yojono import ajuri as ajuri_yojono
+
 from . import aivo_arvio, ajuri, kaistamittaus, kulutus, tavoite, vaiteportti, varaus
 
 TZ = ZoneInfo("Europe/Helsinki")
@@ -243,6 +245,50 @@ def kayttoonotto_ero_rivi(pohja=OLETUS_POHJA, yojono_ajuri=OLETUS_YOJONO_AJURI, 
         + "; p\u00e4ivit\u00e4 komennolla paivita-ajurit.sh"
 
 
+def skriptikopio_ero_rivi(pohja=OLETUS_POHJA, skriptit=None):
+    """Teksti, jos y\u00f6jonon oletuspolun skriptikopio eroaa k\u00e4ytt\u00f6\u00f6n otetun pohjan versiosta tai puuttuu; None, jos kaikki ovat samat.
+
+    Vertaa tavuja: jokaisen `yojono.ajuri.SKRIPTIT`-taulun oletuspolun tiedosto vs. `<pohja>/yojono/<nimi>`. Vain luku.
+    Rajoitus: palvelun ymp\u00e4rist\u00f6muuttujia (YOJONO_KEHITYS ym.) ei n\u00e4e t\u00e4st\u00e4 prosessista, joten vertailu koskee vain
+    oletuspolkuja; jos palvelu k\u00e4ytt\u00e4\u00e4 muuttujalla toista polkua, se j\u00e4\u00e4 vertaamatta. Lukuvirhe ei kaada koostetta:
+    vain virheen tyyppi n\u00e4kyy."""
+    try:
+        taulu = skriptit if skriptit is not None else [v[1] for v in ajuri_yojono.SKRIPTIT.values()]
+        eroavat, puuttuvat, virheet = [], [], []
+        for kopio in taulu:
+            nimi = Path(kopio).name
+            try:
+                if not Path(kopio).exists():
+                    puuttuvat.append(nimi)
+                elif Path(kopio).read_bytes() != (Path(pohja) / "yojono" / nimi).read_bytes():
+                    eroavat.append(nimi)
+            except Exception as virhe:   # esim. repon tiedosto puuttuu tai ei ole luettavissa: vain tyyppi
+                virheet.append(f"{nimi}: {type(virhe).__name__}")
+    except Exception as virhe:
+        return "y\u00f6jonon skriptikopioiden vertailu ei selvinnyt (" + type(virhe).__name__ + ")"
+    osat = []
+    if eroavat:
+        osat.append("y\u00f6jonon skriptikopio eroaa repon versiosta: " + ", ".join(eroavat) + " (kopioi /opt/yojono/:aan rootina)")
+    if puuttuvat:
+        osat.append("y\u00f6jonon skriptikopio puuttuu: " + ", ".join(puuttuvat))
+    if virheet:
+        osat.append("y\u00f6jonon skriptikopion vertailu ei selvinnyt (" + ", ".join(virheet) + ")")
+    return "; ".join(osat) or None
+
+
+def yhdista_erot(*lahteet):
+    """Ero-lahteiden tekstit yhdeksi riviksi; yksittainen virhe ei kaada muita."""
+    tekstit = []
+    for lahde in lahteet:
+        try:
+            t = lahde()
+        except Exception:
+            t = None
+        if t:
+            tekstit.append(t)
+    return "; ".join(tekstit) or None
+
+
 def keraa(repo, perus, nyt, hae=None, yksikot=None, ero=None, kaistavahti=None):
     """Kokoaa kooste-aineiston. `hae` = GitHub-haku (testeissa tekaistu), `yksikot` = failed-yksikoiden lahde,
     `ero` = kayttoonoton eron lahde (kutsuttava, palauttaa tekstin tai None; oletuksena ei hae mitaan),
@@ -440,7 +486,7 @@ def main(argv=None):
     nyt = datetime.fromisoformat(a.nyt) if a.nyt else datetime.now(TZ)
     if nyt.tzinfo is None:
         nyt = nyt.replace(tzinfo=TZ)
-    teksti = muotoile(keraa(a.repo, a.yojono, nyt, ero=kayttoonotto_ero_rivi))
+    teksti = muotoile(keraa(a.repo, a.yojono, nyt, ero=lambda: yhdista_erot(kayttoonotto_ero_rivi, skriptikopio_ero_rivi)))
     print(teksti)
     if a.laheta:
         from yojono.ajuri import laheta_telegram
