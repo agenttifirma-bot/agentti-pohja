@@ -112,6 +112,15 @@ class HiljaisuusTesti(Pohja):
         self.assertEqual((d["malli"], d["alku"], d["loppu"]), (tiivista.MALLI, 0, 2))
         self.assertEqual(d["kohdat"][0]["tila"], "ehdotus")
 
+    def test_vieras_alikansio_kirjastossa_ei_kaada_tiivistysta(self):
+        """Tiivistys lukee vain chat-, tiivistelmat- ja indeksi-kansiot: kirjaston vieras alikansio ei estaa ajoa."""
+        self.tee(1)
+        kirjasto = self.a.polku("kirjasto")
+        (kirjasto / "hylatyt").mkdir(mode=0o700)
+        (kirjasto / "hylatyt" / "x.txt").write_text("x")
+        self.assertEqual(self.aja(Malli())["tiivistetty"], 1)
+        self.assertTrue((kirjasto / "hylatyt" / "x.txt").exists())      # kirjastoon ei kosketa
+
     def test_jo_tiivistettya_ei_tiivisteta_uudelleen(self):
         self.tee(1)
         m = Malli()

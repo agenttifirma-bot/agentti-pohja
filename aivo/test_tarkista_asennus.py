@@ -1,6 +1,9 @@
 """Testit aivo/tarkista_asennus.py:lle. Vaarennetty komentoajuri ja HTTP, ei verkkoa eika oikeaa systemd:ta."""
 import builtins
+import http.client
+import io
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -189,6 +192,132 @@ class TestModuulit(unittest.TestCase):
         ennen = list(sys.path)
         t.tarkista_moduulit(self.koodi)
         self.assertEqual(sys.path, ennen)
+
+
+class TestAja(unittest.TestCase):
+    """Oletusajuri: subprocess.run korvataan, ei oikeaa aliprosessia."""
+
+    def test_palauttaa_koodin_ja_siistityn_tulosteen(self):
+        vastaus = mock.Mock(returncode=3, stdout="  inactive\n")
+        with mock.patch.object(t.subprocess, "run", return_value=vastaus) as run:
+            self.assertEqual(t.aja(["systemctl", "is-active", "x"]), (3, "inactive"))
+        args, kw = run.call_args
+        self.assertEqual(args[0], ["systemctl", "is-active", "x"])
+        self.assertIs(kw["capture_output"], True)
+        self.assertIs(kw["text"], True)
+        self.assertEqual(kw["timeout"], t.AIKARAJA)
+
+    def test_oskerror_antaa_127_ja_tyypin(self):
+        with mock.patch.object(t.subprocess, "run", side_effect=FileNotFoundError("salaisuus")):
+            self.assertEqual(t.aja(["x"]), (127, "FileNotFoundError"))
+
+    def test_aikakatkaisu_antaa_127_ja_tyypin(self):
+        with mock.patch.object(t.subprocess, "run",
+                               side_effect=subprocess.TimeoutExpired("x", 1)):
+            self.assertEqual(t.aja(["x"]), (127, "TimeoutExpired"))
+
+
+class TestHttpGet(unittest.TestCase):
+    """Oletus-HTTP: HTTPConnection korvataan, ei verkkoa."""
+
+    def yhteys(self, tila=200, runko=b"{}"):
+        vastaus = mock.Mock(status=tila)
+        vastaus.read.return_value = runko
+        yhteys = mock.Mock()
+        yhteys.getresponse.return_value = vastaus
+        return yhteys, vastaus
+
+    def test_palauttaa_tilan_ja_rungon_200_tavuun_asti(self):
+        yhteys, vastaus = self.yhteys(204, b"ok \xff")
+        with mock.patch.object(t.http.client, "HTTPConnection", return_value=yhteys) as luo:
+            tulos = t.http_get(8780, "/terve")
+        self.assertEqual(tulos, (204, "ok \ufffd"))
+        luo.assert_called_once_with("127.0.0.1", 8780, timeout=t.AIKARAJA)
+        yhteys.request.assert_called_once_with("GET", "/terve")
+        vastaus.read.assert_called_once_with(200)
+        yhteys.close.assert_called_once_with()
+
+    def test_yhteys_suljetaan_virheessakin(self):
+        yhteys, _ = self.yhteys()
+        yhteys.request.side_effect = ConnectionRefusedError("x")
+        with mock.patch.object(t.http.client, "HTTPConnection", return_value=yhteys):
+            with self.assertRaises(ConnectionRefusedError):
+                t.http_get(1, "/")
+        yhteys.close.assert_called_once_with()
+
+
+class TestCommit(unittest.TestCase):
+    def test_ajurin_virhe_antaa_vian_ja_polun(self):
+        self.assertEqual(t.tarkista_commit(SHA, "/koodi", lambda k: (128, "")),
+                         (False, "commitia ei saatu (/koodi)"))
+
+    def test_ajurille_annetaan_git_rev_parse(self):
+        kutsut = []
+
+        def ajuri(komento):
+            kutsut.append(komento)
+            return 0, SHA
+        t.tarkista_commit(SHA, "/koodi", ajuri)
+        self.assertEqual(kutsut, [["git", "-C", "/koodi", "rev-parse", "HEAD"]])
+
+    def test_tasan_seitseman_merkin_etuliite_kelpaa(self):
+        self.assertEqual(t.tarkista_commit(SHA[:7], "k", lambda k: (0, SHA)), (True, SHA[:12]))
+
+    def test_kuuden_merkin_etuliite_ei_kelpaa(self):
+        self.assertFalse(t.tarkista_commit(SHA[:6], "k", lambda k: (0, SHA))[0])
+
+    def test_onnistuessa_nayttaa_12_merkkia(self):
+        ok, syy = t.tarkista_commit("abcdef1", "k", lambda k: (0, "abcdef1" + "2" * 33))
+        self.assertTrue(ok)
+        self.assertEqual(syy, "abcdef1" + "2" * 5)
+
+    def test_vaara_commit_nayttaa_molemmat_12_merkkia(self):
+        asennettu = "1" * 40
+        odotettu = "2" * 40
+        self.assertEqual(t.tarkista_commit(odotettu, "k", lambda k: (0, asennettu)),
+                         (False, "asennettu %s, odotettu %s" % ("1" * 12, "2" * 12)))
+
+
+class TestPalvelu(unittest.TestCase):
+    def test_active_ja_koodi_nolla_on_ok(self):
+        self.assertEqual(t.tarkista_palvelu("x", lambda k: (0, "active")), (True, "active"))
+
+    def test_koodi_nolla_mutta_tila_ei_active_on_vika(self):
+        self.assertEqual(t.tarkista_palvelu("x", lambda k: (0, "activating")),
+                         (False, "activating"))
+
+    def test_nollasta_poikkeava_koodi_vaikka_tila_active_on_vika(self):
+        self.assertEqual(t.tarkista_palvelu("x", lambda k: (3, "active")), (False, "active"))
+
+    def test_tyhja_tuloste_on_tuntematon(self):
+        self.assertEqual(t.tarkista_palvelu("x", lambda k: (0, "")), (False, "tuntematon"))
+
+    def test_kysyy_systemctl_is_active(self):
+        kutsut = []
+        t.tarkista_palvelu("aivo-chat", lambda k: kutsut.append(k) or (0, "active"))
+        self.assertEqual(kutsut, [["systemctl", "is-active", "aivo-chat"]])
+
+
+class TestAvainPolut(AvainFixture):
+    def test_hakemisto_ei_ole_tavallinen_tiedosto(self):
+        self.assertEqual(t.tarkista_avain(self.tmp.name), (False, "ei tavallinen tiedosto"))
+
+    def test_muu_oserror_antaa_vain_tyypin(self):
+        with mock.patch.object(t.os, "stat", side_effect=NotADirectoryError("salaisuus")):
+            self.assertEqual(t.tarkista_avain(self.avain), (False, "NotADirectoryError"))
+
+    def test_ok_nayttaa_oikeudet(self):
+        self.assertEqual(t.tarkista_avain(self.avain), (True, "oikeudet 600"))
+
+
+class TestOhje(unittest.TestCase):
+    def test_help_nayttaa_docstringin_ensimmainen_rivi(self):
+        ulos = io.StringIO()
+        with mock.patch.object(sys, "stdout", ulos), self.assertRaises(SystemExit) as e:
+            t.main(["--help"])
+        self.assertEqual(e.exception.code, 0)
+        self.assertIn("Aivon asennuksen tilatarkistus (vain luku). Stdlib.", ulos.getvalue())
+        self.assertNotIn("Kaytto:", ulos.getvalue())
 
 
 if __name__ == "__main__":
