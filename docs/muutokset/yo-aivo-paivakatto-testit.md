@@ -1,1 +1,2 @@
 - aivo: uudet testit (aivo/test_yksityinen_katto.py) yksityisen tilan päiväkatolle ja jälkijulkaisulle; mutanttiajossa kohderivien eloonjääneet 26 -> 1 (jäljelle jäänyt on vastaava mutantti). tools/mutantit.py ottaa uuden testitiedoston mukaan kahden moduulin ajoihin. Tuotantokoodia ja PAIVAKATTO-arvoa ei muutettu.
+- tools: test_mutantit tarkistaa, ettei LISATESTIT-literaalissa ole kaksoisavaimia, koska rinnakkaisten PR:ien yhdistämisessä myöhempi sama avain korvaisi aiemman ja testitiedosto putoaisi mutanttiajosta hiljaa.

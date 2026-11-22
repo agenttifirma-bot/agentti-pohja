@@ -200,6 +200,7 @@ LISATESTIT = {
     "agentti/skeema.py": ["test/test_skeema_tulos.py"],
     "agentti/tulos.py": ["test/test_skeema_tulos.py"],
     "agentti/snapshot_kutsu.py": ["test/test_snapshot.py"],
+    "aivo/drive.py": ["aivo/test_drive_virheet.py"],
     "aivo/tiivista_yksityinen.py": ["aivo/test_yksityinen_katto.py"],
     "aivo/yksityinen.py": ["aivo/test_yksityinen_katto.py"],
 }

@@ -107,6 +107,15 @@ class MutanttiLuontiTesti(unittest.TestCase):
         self.assertEqual(mu.sallittu_avain("m.py", a), mu.sallittu_avain("m.py", b))
 
 
+class LisatestitLiteraaliTesti(unittest.TestCase):
+    def test_ei_kaksoisavaimia(self):
+        # Dict-literaalissa myohempi sama avain korvaa aiemman hiljaa (rinnakkaisten PR:ien yhdistamisriski).
+        puu = ast.parse(open(mu.__file__, encoding="utf-8").read())
+        sanakirja = next(s.value for s in puu.body if isinstance(s, ast.Assign) and getattr(s.targets[0], "id", "") == "LISATESTIT")
+        avaimet = [k.value for k in sanakirja.keys]
+        self.assertEqual(sorted({a for a in avaimet if avaimet.count(a) > 1}), [])
+
+
 class SallitutTesti(unittest.TestCase):
     def test_kommentit_ja_tyhjat_rivit_ohitetaan(self):
         with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as f:

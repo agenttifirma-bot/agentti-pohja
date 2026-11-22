@@ -1,0 +1,1 @@
+- aivo: testit tiivistyksen komentorivin alueen valinnalle (aivo/test_tiivista_ohjaus.py): alue ohjautuu oikeaan moduuliin, tuntematon tai puuttuva alue antaa virheen ja nollasta poikkeavan paluukoodin; mutanteista kaatuu 9/10 (aiemmin 0/10)
