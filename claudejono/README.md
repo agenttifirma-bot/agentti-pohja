@@ -72,6 +72,7 @@ systemctl disable --now claude-jono.timer
 systemctl enable --now claude-jono@1.timer claude-jono@2.timer claude-kaistamittaus.timer
 systemctl list-timers 'claude-*'
 ```
+Ajastimessa on `OnActiveSec=1min`: kaista ajaa minuutin kuluttua jokaisesta ajastimen käynnistyksestä (`enable --now`, `start`, `restart`). Pelkkä `OnUnitInactiveSec` ei riitä, koska se tarvitsee palvelun edellisen ajon tämän käynnistyksen ajalta (22.11.2026 kaistat 3–4 jäivät ilman NEXT-aikaa). `daemon-reload` ei käynnistä jo päällä olevaa ajastinta uudelleen, joten mallin päivityksen jälkeen aja `systemctl restart claude-jono@N.timer` jokaiselle kaistalle.
 Mallissa on `Environment=CLAUDEJONO_KAISTOJA=4`. Neljännen kaistan käyttöönotto: vaihda isännän tiedostossa `/etc/systemd/system/claude-jono@.service` arvo 3 arvoon 4, `systemctl daemon-reload` ja `systemctl enable --now claude-jono@4.timer`. Kaista 4 vaatii muistimittauksen: neljä rinnakkaista ajoa mahtuu CT115:n 6 Gt:aan, kun huippuja ei osu päällekkäin (ks. PR-kuvaus).
 Peruutus: `systemctl disable --now claude-jono@2.timer claude-jono@3.timer`; kaista 1 jatkaa yksin. Täysi paluu vanhaan: `systemctl disable --now claude-jono@1.timer` ja `systemctl enable --now claude-jono.timer`.
 
@@ -147,6 +148,7 @@ Sallittu lista turvallisia toimia, esim. `systemctl reset-failed <yksikkö>` + *
 2. Muuten tarkistetaan tarkoituksellinen tauko: pysäytystiedosto `/var/lib/claude-jono/pysayta` (Tony luo komennolla `touch`), kaikki `claude-jono@N.timer` pois päältä, käyttörajan tauko, kulutusjarru (varauksen `kaistoja` = 0) tai tyhjä jono (ei avoimia tehtäviä, ja itsesuunnittelu on pois tai sen tauko on käynnissä). Silloin tila on `tauolla`, eikä hälytetä.
 3. Muuten `pysahtynyt`: Telegram-viesti (alkaa sanalla `HALYTYS`, joten `CLAUDEJONO_ILMOITUKSET=kooste` ei pidätä sitä) ja `systemctl start --no-block korjaaja@claude-jono.service.service`. Toistoeste 2 h (`vahti-tila.json`, kirjataan ennen toimia). Korjaajan omat rajat (1 diagnoosi / 6 h / yksikkö, 8 / vrk) pysyvät ennallaan.
 4. Jos kaistalokia ei ole tai siinä ei ole yhtään onnistunutta ajoa, tila on `ei_dataa`: ei hälytystä eikä pingiä.
+5. Tilasta riippumatta vahti lukee jokaisen kaista-ajastimen (`claude-jono@1..4.timer`) komennolla `systemctl show -p ActiveState,NextElapseUSecMonotonic,NextElapseUSecRealtime`. Jos ajastin on päällä mutta sillä ei ole seuraavaa ajoa (NEXT puuttuu) eikä palvelu ole käynnissä, lähtee Telegram-viesti `HALYTYS: kaista-ajastimella ei ole seuraavaa ajoa ...` korjauskomennon kanssa (`systemctl restart claude-jono@N.timer`). Toistoeste 2 h omalla avaimella `ajastinvaroitus`. Vahti ei käynnistä ajastinta itse. Tausta: 22.11.2026 kaistat 3–4 olivat päällä noin kuusi tuntia ilman yhtään ajoa.
 
 **Uptime Kuma:** vahti pingaa push-osoitetta vain, kun tila on `terve` tai `tauolla`. Pysähtyneenä pingiä ei lähde, ja Kuma hälyttää, kun heartbeat-aika ylittyy. Sama koskee tilannetta, jossa koko CT115 tai vahdin ajastin on alhaalla. Osoite luetaan muuttujasta `CLAUDEJONO_KUMA_PUSH_URL`; sitä ei tulosteta, ei kirjata eikä viedä repoon. Ping-virheestä näytetään vain poikkeuksen tyyppi.
 
