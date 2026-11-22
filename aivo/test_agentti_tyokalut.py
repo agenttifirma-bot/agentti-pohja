@@ -80,8 +80,8 @@ class TyokaluTesti(unittest.TestCase):
         return tyokalut.suorita(self.juuri, nimi, arg)
 
     def test_kirjoita_lue_listaa(self):
-        self.assertTrue(self.aja("kirjoita", polku="a.md", sisalto="ä\nö\n").ok)
-        self.assertEqual(self.aja("lue", polku="a.md").teksti, "ä\nö")
+        self.assertTrue(self.aja("kirjoita", polku="a.md", sisalto="\u00e4\n\u00f6\n").ok)
+        self.assertEqual(self.aja("lue", polku="a.md").teksti, "\u00e4\n\u00f6")
         self.assertIn("f a.md", self.aja("listaa").teksti)
 
     def test_kirjoita_korvaa(self):
