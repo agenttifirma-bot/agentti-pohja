@@ -1,0 +1,1 @@
+- aivo: HTTPError-vastaukset suljetaan viidessä verkkokutsupaikassa (drive, kalenteri, yksityinen_or, yksityinen ja tiivista_yksityinen), jotta virhetilanteet eivät jätä socketeja auki. Virheilmoitukset ja paluuarvot ennallaan; uusi testi aivo/test_httperror_sulku.py.

@@ -31,6 +31,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -417,6 +418,8 @@ def kysy_paikalliselta(url, ohje, data, avaa=None, aikaraja=VASTAUS_AIKARAJA_S):
             d = json.loads(r.read(VASTAUS_YLARAJA))
         teksti = d["choices"][0]["message"]["content"]
     except (OSError, ValueError, KeyError, IndexError, TypeError) as e:
+        if isinstance(e, urllib.error.HTTPError):
+            e.close()                               # vapauttaa virhevastauksen socketin
         raise TiivistaVirhe("paikallinen malli ei vastannut (%s)" % type(e).__name__)
     if not isinstance(teksti, str) or not teksti.strip():
         raise TiivistaVirhe("paikallinen malli antoi tyhjan vastauksen")
