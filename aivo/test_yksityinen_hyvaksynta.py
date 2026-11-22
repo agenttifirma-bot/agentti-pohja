@@ -380,6 +380,42 @@ class Jatkotesti(Pohja):
         self.assertEqual(self.odottavat(kid), [])
 
 
+class HidasVapautusLukko:
+    """Lukko, jonka vapautus viivastyy: venyttaa ikkunan, jossa vastaus on jo lahtenyt mutta lukko on viela varattu."""
+    def __init__(self, viive=0.3):
+        self._l = threading.Lock()
+        self.viive = viive
+
+    def acquire(self, *a, **k):
+        return self._l.acquire(*a, **k)
+
+    def release(self):
+        import time
+        time.sleep(self.viive)
+        self._l.release()
+
+
+class LukkoKilpaTesti(Pohja):
+    """Vastaus saa lahtea vasta lukon vapautuksen jalkeen: perakkaiset pyynnot eivat saa 429:aa (epavakaa A22-48)."""
+
+    def setUp(self):
+        super().setUp()
+        self.tila.ehdotuslukko = HidasVapautusLukko()
+
+    def test_virhevastauksen_jalkeen_seuraava_pyynto_ei_saa_429(self):
+        kid = self.uusi()
+        eid, s8 = self.ehdota()
+        for t in ("../salainen", "../" + eid, eid + "/"):
+            self.assertEqual(self.hyvaksy(kid, t, "kyll\u00e4 " + s8)[0], 409, t)
+
+    def test_hylkays_ja_hyvaksynta_perakkain(self):
+        kid = self.uusi()
+        eid, s8 = self.ehdota()
+        s, _ = self.pyynto("POST", "/api/ehdotus/hylkaa", {"keskustelu": kid, "tunnus": "../x"})
+        self.assertNotEqual(s, 429)
+        self.assertEqual(self.hyvaksy(kid, eid, "kyll\u00e4 " + s8)[0], 200)
+
+
 class IrrotusTesti(unittest.TestCase):
     def irrota(self, teksti):
         tallennetut = []

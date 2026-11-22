@@ -1,0 +1,1 @@
+- aivo/chat: ehdotuksen hyväksyntä ja hylkäys lähettävät vastauksen vasta lukon vapautuksen jälkeen, joten peräkkäinen pyyntö ei enää saa satunnaista 429:ää (epävakaa test_polun_ohitus_get_ja_hyvaksynta)
