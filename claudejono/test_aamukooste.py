@@ -482,17 +482,26 @@ class KaistaVahti(Pohja):
         self.tehtava("2026-11-20-27-aivo-a", "aivo", 14)
         self.assertEqual(self.vahti(4, set()), [])
 
-    def test_kaista_seis_ja_aivo_tehtava_odottaa_antaa_rivin(self):
-        self.tehtava("2026-11-20-27-aivo-a", "aivo", 14.2)
-        self.tehtava("2026-11-20-28-aivo-b", "aivo", 3)
-        self.assertEqual(self.vahti(3, {3}), ["Kaista 3 seis: 2 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 14 h)"])
+    def test_kaistat_1_2_seis_ja_portfolio_odottaa_antaa_rivit(self):
+        # A1061: kaista 3 ottaa vain Aivoa tai yllapitoa, joten portfolio jaa kaistojen 1-2 varaan
+        self.tehtava("2026-11-20-27-portfolio-a", "portfolio", 14.2)
+        self.tehtava("2026-11-20-28-portfolio-b", "portfolio", 3)
+        self.tehtava("2026-11-20-29-aivo-a", "aivo", 2)   # kaista 3 ottaa, ei lasketa
+        self.assertEqual(self.vahti(3, {1, 2}), ["Kaista 1 seis: 2 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 14 h)",
+                                                 "Kaista 2 seis: 2 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 14 h)"])
 
-    def test_kaistat_3_ja_4_seis_molemmat_nakyvat(self):
+    def test_kaistat_3_ja_4_seis_aivo_menee_kaistoille_1_2_ei_riviae(self):
+        # A1061: kaistat 1-2 ottavat Aivo-tehtavat ensin, joten kaistojen 3-4 pysahdys ei jata niita ilman ottajaa
         for i in range(6):
             self.tehtava(f"2026-11-20-{27 + i}-aivo", "aivo", 14 + i)
-        self.tehtava("2026-11-21-01-ylla", "yllapito", 1)   # kaista 1-2 ottaa tama, ei lasketa
-        self.assertEqual(self.vahti(4, {3, 4}), ["Kaista 3 seis: 6 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 19 h)",
-                                                 "Kaista 4 seis: 6 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 19 h)"])
+        self.tehtava("2026-11-21-01-ylla", "yllapito", 1)
+        self.assertEqual(self.vahti(4, {3, 4}), [])
+        self.assertEqual(self.vahti(3, {3}), [])
+
+    def test_kaikki_kaistat_seis_aivo_nakyy_jokaisella(self):
+        self.tehtava("2026-11-20-27-aivo-a", "aivo", 14.2)
+        self.assertEqual(self.vahti(4, {1, 2, 3, 4}),
+                         [f"Kaista {n} seis: 1 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 14 h)" for n in (1, 2, 3, 4)])
 
     def test_kaista_seis_mutta_toinen_kaista_ottaa_tehtavat_ei_riviae(self):
         self.tehtava("2026-11-20-27-aivo-a", "aivo", 14)
