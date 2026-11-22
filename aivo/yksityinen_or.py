@@ -226,6 +226,7 @@ def kysy_yhdistelmalla(
     yhdistelma_nimi: str = yhdistelma.OLETUS,
     roolit: Mapping[str, str] | None = None,
     kello: Callable[[], float] | None = None,
+    ajattelija_aika_s: float = yhdistelma.AJATTELIJA_AIKA_OLETUS_S,
     **kw: Any,
 ) -> "yhdistelma.Tulos":
     """Usean mallin yhdistelma (yhdistelma.aja). Jokainen osakutsu kulkee _kysy_viestit-funktion kautta."""
@@ -236,7 +237,7 @@ def kysy_yhdistelmalla(
 
     def kysy(m: str, v: list[dict[str, Any]], aikaraja_s: float | None = None, max_tokens: int | None = None) -> str:
         return _kysy_viestit(m, v, aikaraja_s=aikaraja_s, max_tokens=max_tokens, **kw)
-    return yhdistelma.aja(yhdistelma_nimi, roolit or {}, malli, viestit, kysy,
+    return yhdistelma.aja(yhdistelma_nimi, roolit or {}, malli, viestit, kysy, ajattelija_aika_s=ajattelija_aika_s,
                           **({"kello": kello} if kello is not None else {}))
 
 
