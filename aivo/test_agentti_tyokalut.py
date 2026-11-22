@@ -28,7 +28,7 @@ def _tuodut(puu):
 class RakenneTesti(unittest.TestCase):
     def moduulit(self):
         tiedostot = sorted(HAKEMISTO.glob("*.py"))
-        self.assertTrue({"polut.py", "tyokalut.py", "protokolla.py"} <= {t.name for t in tiedostot})
+        self.assertTrue({"polut.py", "tyokalut.py", "protokolla.py", "silmukka.py"} <= {t.name for t in tiedostot})
         return tiedostot
 
     def test_ei_verkko_eika_aliprosessituontia(self):
@@ -39,7 +39,7 @@ class RakenneTesti(unittest.TestCase):
                 self.assertNotIn(paa, KIELLETYT_MODUULIT, "%s tuo %s" % (t.name, nimi))
 
     def test_tuonnit_vain_vakiokirjastosta_ja_omasta_paketista(self):
-        sallitut_oma = {"", "polut", "tyokalut", "protokolla"}
+        sallitut_oma = {"", "polut", "tyokalut", "protokolla", "silmukka"}
         for t in self.moduulit():
             puu = ast.parse(t.read_text(encoding="utf-8"))
             for n in ast.walk(puu):

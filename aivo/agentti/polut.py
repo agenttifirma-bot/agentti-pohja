@@ -6,6 +6,7 @@ Kansiot avataan osa kerrallaan lipulla O_NOFOLLOW (dir_fd), joten tarkistuksen j
 ei jaa kilpailuikkunaa, jossa osa vaihdettaisiin linkiksi.
 """
 import os
+import re
 import stat
 
 RAJA_TIEDOSTO = 200 * 1024           # tavua per tiedosto
@@ -15,6 +16,7 @@ RAJA_SYVYYS = 8                      # kansiotasoja polussa
 RAJA_NIMI = 100                      # merkkia per polun osa
 RAJA_POLKU = 200                     # merkkia koko polussa
 SALLITUT_PAATTEET = (".md", ".txt", ".csv", ".json")
+VALIAIKAINEN = re.compile(r"\.kirj-[0-9]+\.tmp")   # kirjoita-tyokalun valiaikaistiedosto
 
 
 class PolkuVirhe(Exception):
@@ -163,3 +165,37 @@ def tarkista_tila(juuri, uusi_koko, vanha_koko):
         raise PolkuVirhe("tyokansio on taynna (enintaan %d tiedostoa)" % RAJA_TIEDOSTOT)
     if tavuja - vanha_koko + uusi_koko > RAJA_KANSIO_TAVUT:
         raise PolkuVirhe("tyokansio on taynna (enintaan %d Mt)" % (RAJA_KANSIO_TAVUT // (1024 * 1024)))
+
+
+def siivoa_valiaikaiset(juuri):
+    """Poistaa keskeytyneiden kirjoitusten `.kirj-<pid>.tmp`-jaannokset tyokansiosta. Palauttaa lukumaaran.
+
+    Vain tavalliset tiedostot, joiden nimi tasmaa tarkasti; linkkeja ei seurata. Kutsutaan silmukan
+    alussa (yksi ajo kerrallaan tyokansiota kohden), jotta jaannokset eivat laske tiedostorajaa.
+    """
+    poistettu = 0
+    pino = [avaa_juuri(juuri)]
+    try:
+        while pino:
+            fd = pino.pop()
+            try:
+                poistettavat = []
+                with os.scandir(fd) as it:
+                    for e in it:
+                        tila = e.stat(follow_symlinks=False)
+                        if stat.S_ISDIR(tila.st_mode):
+                            pino.append(os.open(e.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd))
+                        elif stat.S_ISREG(tila.st_mode) and VALIAIKAINEN.fullmatch(e.name):
+                            poistettavat.append(e.name)
+                for nimi in poistettavat:
+                    try:
+                        os.unlink(nimi, dir_fd=fd)
+                        poistettu += 1
+                    except OSError:
+                        pass
+            finally:
+                os.close(fd)
+    finally:
+        for fd in pino:
+            os.close(fd)
+    return poistettu
