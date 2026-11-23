@@ -12,12 +12,28 @@ from unittest import mock
 
 from isanta import snapshot_isanta as si
 
-PAIVA = time.strftime("%Y-%m-%d")
+PAIVA = "2026-11-22"          # kiintea paiva: testin kello jaadytetaan tahan (ks. jaadyta_kello), joten keskiyon ylitys ei riko odotuksia
+_KIINTEA_AIKA = time.struct_time((2026, 11, 22, 12, 0, 0, 6, 326, 0))
+_OIKEA_STRFTIME = time.strftime
+_OIKEA_LOCALTIME = time.localtime
 LISTAUS = (
     "`-> perus-toimii                2026-10-14 10:20:59     no-description\n"
     " `-> ennen-haiku-malli        2026-10-18 10:46:21     no-description\n"
     "  `-> current                                      You are here!\n"
 )
+
+
+def _kiintea_strftime(muoto, t=None):
+    return _OIKEA_STRFTIME(muoto, _KIINTEA_AIKA if t is None else t)
+
+
+def jaadyta_kello(testi):
+    """Jaadyttaa time.localtime()- ja argumentittoman time.strftime()-kutsun PAIVA-paivaan (koodin ja odotusten paiva ei voi erota)."""
+    for kohde, arvo in (("time.localtime", lambda t=None: _KIINTEA_AIKA if t is None else _OIKEA_LOCALTIME(t)),
+                        ("time.strftime", _kiintea_strftime)):
+        p = mock.patch(kohde, arvo)
+        p.start()
+        testi.addCleanup(p.stop)
 
 
 def lvs_ulos(data="8.82", meta="0.79", levyt=(("vm-118-disk-0", "konttilevy", "konttilevy"),), kontti="118"):
@@ -49,6 +65,7 @@ def otot(f):
 
 class Pohja(unittest.TestCase):
     def setUp(self):
+        jaadyta_kello(self)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.loki = os.path.join(self.tmp.name, "loki")

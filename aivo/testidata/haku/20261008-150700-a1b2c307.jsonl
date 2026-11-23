@@ -1,0 +1,2 @@
+{"aika": "2026-10-08T15:07:00", "rooli": "tony", "teksti": "Mikä ero on imagella ja containerilla?", "lahteet": []}
+{"aika": "2026-10-08T15:07:30", "rooli": "aivo", "teksti": "Image on muuttumaton pohja, josta kontti käynnistetään. Kontti on ajossa oleva instanssi, johon voi kertyä tilaa.", "lahteet": []}

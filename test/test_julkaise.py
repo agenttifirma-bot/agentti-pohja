@@ -107,6 +107,14 @@ def loppurivi(ulos):
     return rivit[-1] if rivit else ""
 
 
+# Testiymparisto sleep-korvike: ohittaa vain julkaise.sh:n lopputoimien 0,2 s odotuksen ("tee ehtii kirjoittaa loppurivin").
+# Testissa ulostulo luetaan putkesta EOF:iin asti, ja tee pitaa putken auki, joten odotus on turha. Muut sleep-kutsut ajetaan oikeasti.
+SLEEP = r'''#!/usr/bin/env bash
+[ "$*" = "0.2" ] && exit 0
+exec /bin/sleep "$@"
+'''
+
+
 class Laatikko:
     """Yksi hiekkalaatikko: isanta (JH), kontti (sim/), git-repo ja pakettikansio."""
 
@@ -123,7 +131,7 @@ class Laatikko:
         self.koodi, self.tila, self.konfig, self.yksikot = self.sim / "opt" / "app", self.sim / "var" / "lib" / "app", self.sim / "etc" / "app", self.sim / "etc" / "systemd" / "system"
         for d in (self.koodi, self.tila / "alihak", self.konfig, self.yksikot):
             d.mkdir(parents=True)
-        for nimi, sisalto in (("PCT", PCT), ("pct", PCT), ("systemctl", SYSTEMCTL), ("runuser", RUNUSER), ("kauppa-asenna", KAUPPA_ASENNA), ("kauppa-palauta", KAUPPA_PALAUTA)):
+        for nimi, sisalto in (("PCT", PCT), ("pct", PCT), ("systemctl", SYSTEMCTL), ("runuser", RUNUSER), ("kauppa-asenna", KAUPPA_ASENNA), ("kauppa-palauta", KAUPPA_PALAUTA), ("sleep", SLEEP)):
             if nimi == "PCT":
                 continue
             (self.bin / nimi).write_text(sisalto)

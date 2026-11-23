@@ -202,6 +202,67 @@ class AjoTesti(unittest.TestCase):
             mu.aja_moduuli("agentti/yksin.py", args(), juuri=self.repo.juuri)
 
 
+AIVO_MODUULI = "def raja(x):\n    if x > 5:\n        return 5\n    return x\n"
+AIVO_TESTI = textwrap.dedent('''\
+    import unittest
+    from aivo import aivomod
+
+    class T(unittest.TestCase):
+        def test_raja(self):
+            self.assertEqual(aivomod.raja(9), 5)
+            self.assertEqual(aivomod.raja(3), 3)
+            self.assertEqual(aivomod.raja(5), 5)
+            self.assertEqual(aivomod.raja(6), 5)
+''')
+
+
+class AivoKohdeTesti(unittest.TestCase):
+    """aivo/-moduulit: testit aivo/test_<nimi>.py, mukaan vain nimetysti (--hakemistot), rajattavissa (--rajaa)."""
+
+    def setUp(self):
+        self.repo = MiniRepo()
+        self.addCleanup(self.repo.sulje)
+        os.makedirs(os.path.join(self.repo.juuri, "aivo"))
+        self.repo.kirjoita("aivo/__init__.py", "")
+        self.repo.kirjoita("aivo/aivomod.py", AIVO_MODUULI)
+        self.repo.kirjoita("aivo/test_aivomod.py", AIVO_TESTI)
+        self.repo.kirjoita("aivo/toinen.py", "x = 1\n")
+        self.repo.kirjoita("aivo/test_toinen.py", "")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_aivo_testit_tunnistetaan(self):
+        self.assertEqual(mu.testimoduulit("aivo/aivomod.py", self.repo.juuri), ["aivo.test_aivomod"])
+
+    def test_oletus_ei_sisalla_aivoa(self):
+        self.assertEqual(mu.kaikki_moduulit(self.repo.juuri), ["agentti/mod.py"])
+
+    def test_hakemistot_ja_rajaus(self):
+        self.assertEqual(mu.kaikki_moduulit(self.repo.juuri, ("aivo",)), ["aivo/aivomod.py", "aivo/toinen.py"])
+        self.assertEqual(mu.kaikki_moduulit(self.repo.juuri, mu.HAKEMISTOT_KAIKKI, "aivo/aivom"), ["aivo/aivomod.py"])
+
+    def test_listaa_ja_virheellinen_hakemisto(self):
+        import contextlib
+        import io
+        tyhja = os.path.join(self.tmp.name, "s.txt")
+        ulos = io.StringIO()
+        with contextlib.redirect_stdout(ulos):
+            self.assertEqual(mu.paa(["--sallitut", tyhja, "--kaikki", "--listaa", "--hakemistot", "aivo",
+                                     "--rajaa", "aivo/aivom"], juuri=self.repo.juuri), 0)
+        self.assertEqual(json.loads(ulos.getvalue()), ["aivo/aivomod.py"])
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(mu.paa(["--kaikki", "--hakemistot", "../x"], juuri=self.repo.juuri), 2)
+
+    def test_aivo_moduulin_nimi_hyvaksytaan_ja_rajan_poisto_kaatuu(self):
+        tyhja = os.path.join(self.tmp.name, "s.txt")
+        self.assertEqual(mu.paa(["--sallitut", tyhja, "aivo/aivomod.py"], juuri=self.repo.juuri), 0)
+        t = mu.aja_moduuli("aivo/aivomod.py", args(), juuri=self.repo.juuri)
+        self.assertEqual(t["selvisi"], [])
+        self.assertGreater(t["kaatui"], 0)
+        # tunnettu mutantti: `x > 5` -> `x <= 5` (rajan kaanto) on mukana ja kaatuu
+        self.assertIn(("vertailu", "x > 5"), {(m["laji"], m["vanha"]) for m in mu.luo_mutantit(AIVO_MODUULI)})
+
+
 class PaaTesti(unittest.TestCase):
     def setUp(self):
         self.repo = MiniRepo()
@@ -257,6 +318,29 @@ class PaaTesti(unittest.TestCase):
     def test_punainen_alkutila_antaa_kaksi(self):
         self.repo.kirjoita("test/test_mod.py", "import unittest\n\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.fail()\n")
         self.assertEqual(self.kutsu("agentti/mod.py"), 2)
+
+
+class LisatestitTauluTesti(unittest.TestCase):
+    """Sanakirjaliteraalin toistuva avain ylikirjoittaa aiemman hiljaa, joten tarkistus tehdaan lahdekoodista."""
+
+    def _taulu(self):
+        polku = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mutantit.py")
+        with open(polku, encoding="utf-8") as f:
+            puu = ast.parse(f.read())
+        for solmu in ast.walk(puu):
+            if isinstance(solmu, ast.Assign) and any(getattr(t, "id", "") == "LISATESTIT" for t in solmu.targets):
+                return solmu.value
+        self.fail("LISATESTIT-taulua ei loytynyt")
+
+    def test_ei_paallekkaisia_avaimia(self):
+        avaimet = [ast.literal_eval(k) for k in self._taulu().keys]
+        toistot = sorted({a for a in avaimet if avaimet.count(a) > 1})
+        self.assertEqual(toistot, [], "yhdista testitiedostot saman avaimen listaan")
+
+    def test_testitiedostot_ovat_olemassa(self):
+        puuttuvat = [p for lista in mu.LISATESTIT.values() for p in lista
+                     if not os.path.exists(os.path.join(mu.JUURI, p))]
+        self.assertEqual(puuttuvat, [])
 
 
 if __name__ == "__main__":

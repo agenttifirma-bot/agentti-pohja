@@ -1,0 +1,1 @@
+- aivo: `CliTesti` kiinnittää ohjelman kellon (`tiivista_yksityinen._nyt`) testien kiinteään `NYT`-aikaan, joten komentorivipolun testit eivät riipu oikeasta kellosta.

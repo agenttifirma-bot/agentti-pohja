@@ -1,0 +1,1 @@
+- aivo/test_yksityinen_hyvaksynta: kilpatestit hitaasti vapautuvalla lukolla varmistavat, että ehdotuksen hyväksyntä ja hylkäys lähettävät vastauksen vasta lukon vapautuksen jälkeen eikä peräkkäinen pyyntö saa 429:ää (koodikorjaus tuli mainiin #397:ssä)
