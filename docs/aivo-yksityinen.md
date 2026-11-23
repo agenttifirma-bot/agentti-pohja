@@ -111,6 +111,10 @@ Gitea on jo suljettu (rekisteröinti pois, kirjautuminen vaaditaan, käyttäjät
 
 Yksityisen tilan päätös kirjataan vain yksityiseen muistiin (tiedosto 0600) eikä koskaan commitoida tai pushata, vaikka muisti olisi git-repossa. Työkalutilan päätös julkaistaan kirjaston `origin`iin vain, jos sen palvelin on `AIVO_SALLITUT_ETAISANNAT`-listalla; jos julkaisu heittää poikkeuksen, päätöstiedosto palautetaan ennalleen. Jos push epäonnistuu (tulos `push-epaonnistui`), commit jää kirjaston paikalliseen kloonaan eikä sitä peruta. Chat vastaa silloin virhekoodilla 502 eikä näytä "Kirjattu". Selain saa Tonyn viestin paikan palvelimelta, joten päätöspainike kirjaa aina juuri sen viestin.
 
+## Luovutus työkalutilaan
+
+Yksityisessä tilassa sovitun tekstin voi luovuttaa työkalutilaan vain Tonyn hyväksynnällä. Aivo voi ehdottaa luovutusta lohkolla `[[LUOVUTUS]] … [[/LUOVUTUS]]`, ja Tony voi luovuttaa minkä tahansa viestin painikkeella. Ehdotukset ja loki luovutetuista teksteistä ovat kansiossa `/var/lib/aivo-yksityinen/luovutukset` (0700). Hyväksytty teksti kopioidaan kirjaston kansioon `saapuneet/`. Kehote käskee noudattamaan ydinohjeiden luovutussääntöjä; jos niitä ei ole, Aivo ei ehdota luovutusta ennen kuin Tony pyytää. Tarkemmin: `docs/aivo-chat.md`, kohta Luovutus yksityisestä tilasta työkalutilaan.
+
 ## Keskustelujen tiivistys (komento)
 
 Komento `python3 -m aivo.tiivista --alue yksityinen` tiivistää yksityisen alueen keskustelut. Keskustelu tiivistetään vasta, kun sen viimeisestä viestistä on 30 minuuttia. Pitkä keskustelu pilkotaan osiin, ja jokainen osa tallentuu omaksi tiivistelmäkseen kansioon `tiivistelmat`. Valinta `--kuiva` listaa tiivistettävät alueet ilman mallikutsua.
@@ -183,25 +187,28 @@ Ajastimen käyttäjän pitää olla sama kuin `aivo-chat.service`-palvelun `User
 
    ```
    [Unit]
-   Description=Aivon yksityisen tilan tiivistys 15 minuutin valein
+   Description=Aivon yksityisen tilan tiivistys 15 minuutin valein (edellisen ajon paattymisesta)
 
    [Timer]
+   OnActiveSec=1min
    OnBootSec=10min
-   OnUnitActiveSec=15min
+   OnUnitInactiveSec=15min
 
    [Install]
    WantedBy=timers.target
    ```
 
+   Palvelu on `Type=oneshot`, joten toistoväli lasketaan edellisen ajon päättymisestä (`OnUnitInactiveSec`). `OnUnitActiveSec` ei sovi tähän: kontissa 122 ajastin ajoi kerran, mutta seuraavaa ajoa ei ajastettu (`NEXT` `-`). `OnActiveSec=1min` käynnistää ensimmäisen ajon minuutin kuluttua ajastimen käynnistyksestä (`enable --now`, `restart`), joten toistovälillä on aina lähtöpiste. Testi `test/test_ajastin_toisto.py` hylkää repon ajastinmallin, jossa toisto on vain `OnUnitActiveSec`.
+
 4. **Käyttöönotto ja tarkistus:**
 
    ```
    systemctl daemon-reload && systemctl enable --now aivo-tiivista-yksityinen.timer
-   systemctl list-timers aivo-tiivista-yksityinen.timer
+   systemctl list-timers aivo-tiivista-yksityinen.timer --no-pager
    journalctl -u aivo-tiivista-yksityinen --since "20 min ago" --no-pager
    ```
 
-   Odotettu tulos: ajastin näkyy listassa, ja journaalissa on rivejä `tiivistetty: …` tai ei rivejä, jos tiivistettävää ei ollut. Rivi `epaonnistui: … (TiivistaVirhe)` tai `virhe: …` kertoo yleensä, ettei malli vastannut tai avainta ei voitu lukea. Kulut näkyvät viikkoraportissa: `python3 -m aivo.openrouter_kulut viikko`.
+   Odotettu: `list-timers` näyttää ajastimen, ja `NEXT`-sarakkeessa on aika enintään 15 minuutin päässä myös ensimmäisen ajon jälkeen. `NEXT` `-` tarkoittaa, ettei seuraavaa ajoa ole ajastettu: tarkista, että `[Timer]`-osiossa on `OnUnitInactiveSec` eikä `OnUnitActiveSec`. Journaalissa on rivejä `tiivistetty: …` tai ei rivejä, jos tiivistettävää ei ollut. Rivi `epaonnistui: … (TiivistaVirhe)` tai `virhe: …` kertoo yleensä, ettei malli vastannut tai avainta ei voitu lukea. Kulut näkyvät viikkoraportissa: `python3 -m aivo.openrouter_kulut viikko`.
 
 ## Keskusteluhistoria mallille
 

@@ -1,0 +1,1 @@
+- testit: test/test_kaksoisavain.py hylkää sanakirjaliteraalin kaksoisavaimen kaikissa seuratuissa .py-tiedostoissa, koska Python hyväksyy sen hiljaa ja jälkimmäinen arvo voittaa.

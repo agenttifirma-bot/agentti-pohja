@@ -320,5 +320,28 @@ class PaaTesti(unittest.TestCase):
         self.assertEqual(self.kutsu("agentti/mod.py"), 2)
 
 
+class LisatestitTauluTesti(unittest.TestCase):
+    """Sanakirjaliteraalin toistuva avain ylikirjoittaa aiemman hiljaa, joten tarkistus tehdaan lahdekoodista."""
+
+    def _taulu(self):
+        polku = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mutantit.py")
+        with open(polku, encoding="utf-8") as f:
+            puu = ast.parse(f.read())
+        for solmu in ast.walk(puu):
+            if isinstance(solmu, ast.Assign) and any(getattr(t, "id", "") == "LISATESTIT" for t in solmu.targets):
+                return solmu.value
+        self.fail("LISATESTIT-taulua ei loytynyt")
+
+    def test_ei_paallekkaisia_avaimia(self):
+        avaimet = [ast.literal_eval(k) for k in self._taulu().keys]
+        toistot = sorted({a for a in avaimet if avaimet.count(a) > 1})
+        self.assertEqual(toistot, [], "yhdista testitiedostot saman avaimen listaan")
+
+    def test_testitiedostot_ovat_olemassa(self):
+        puuttuvat = [p for lista in mu.LISATESTIT.values() for p in lista
+                     if not os.path.exists(os.path.join(mu.JUURI, p))]
+        self.assertEqual(puuttuvat, [])
+
+
 if __name__ == "__main__":
     unittest.main()

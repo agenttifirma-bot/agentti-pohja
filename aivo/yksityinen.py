@@ -84,6 +84,10 @@ S\u00e4\u00e4nn\u00f6t:
    \u00c4l\u00e4 koskaan sano aloittavasi, suorittavasi tai jatkavasi teht\u00e4v\u00e4\u00e4 my\u00f6hemmin, \u00e4l\u00e4k\u00e4 arvioi kestoa.
    Jos Tony antaa teht\u00e4v\u00e4n, tee se heti t\u00e4ss\u00e4 vastauksessa, jos se onnistuu tekstin\u00e4 (suunnitelma, luonnos,
    analyysi). Muuten sano suoraan, ettei se onnistu t\u00e4ss\u00e4 tilassa, ja ehdota, mit\u00e4 Tony voi tehd\u00e4 itse.
+7. Voit ehdottaa tekstin luovuttamista ty\u00f6kalutilaan (Claude pilvess\u00e4) vain t\u00e4ss\u00e4 muodossa:
+   [[LUOVUTUS]] teksti [[/LUOVUTUS]]. Lohko on vain ehdotus: Tony n\u00e4kee tekstin, voi muokata sit\u00e4 ja hyv\u00e4ksyy
+   luovutuksen itse painikkeella. Sin\u00e4 et voi l\u00e4hett\u00e4\u00e4 mit\u00e4\u00e4n itse. Noudata ydinohjeiden luovutuss\u00e4\u00e4nt\u00f6j\u00e4.
+   Jos niit\u00e4 ei ole, \u00e4l\u00e4 ehdota luovutusta ennen kuin Tony pyyt\u00e4\u00e4.
 """
 
 
@@ -220,6 +224,8 @@ def kysy_paikalliselta(muisti, historia, ohjeet="", url=OLETUS_MALLI_URL, avaa=N
             data = json.loads(r.read(2_000_000))
         teksti = data["choices"][0]["message"]["content"]
     except (OSError, ValueError, KeyError, IndexError, TypeError) as e:
+        if isinstance(e, urllib.error.HTTPError):
+            e.close()                               # vapauttaa virhevastauksen socketin
         raise YksityinenVirhe("paikallinen malli ei vastannut (%s)" % type(e).__name__)
     if not isinstance(teksti, str) or not teksti.strip():
         raise YksityinenVirhe("paikallinen malli antoi tyhjan vastauksen")

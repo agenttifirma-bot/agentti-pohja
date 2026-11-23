@@ -574,5 +574,54 @@ class TavoiteOhitetut(Pohja):
         self.assertEqual(t["tavoite_ohitetut"], [])
 
 
+class SkriptikopioEro(unittest.TestCase):
+    """skriptikopio_ero_rivi tilapaishakemistoilla: ei verkkoa eika oikeita /opt-polkuja."""
+    NIMET = ("katselmoi.sh", "kehitys.sh")
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.pohja = self.tmp / "pohja"
+        (self.pohja / "yojono").mkdir(parents=True)
+        self.kopiot = self.tmp / "kopiot"
+        self.kopiot.mkdir()
+        for n in self.NIMET:
+            (self.pohja / "yojono" / n).write_text("#!/bin/sh\necho " + n + "\n")
+            (self.kopiot / n).write_text("#!/bin/sh\necho " + n + "\n")
+
+    def rivi(self):
+        return aamukooste.skriptikopio_ero_rivi(str(self.pohja), [str(self.kopiot / n) for n in self.NIMET])
+
+    def test_kaikki_samat_ei_rivia(self):
+        self.assertIsNone(self.rivi())
+
+    def test_yksi_eroaa(self):
+        (self.kopiot / "kehitys.sh").write_text("vanha\n")
+        teksti = self.rivi()
+        self.assertIn("eroaa repon versiosta: kehitys.sh", teksti)
+        self.assertNotIn("katselmoi.sh", teksti)
+
+    def test_yksi_puuttuu(self):
+        (self.kopiot / "kehitys.sh").unlink()
+        teksti = self.rivi()
+        self.assertIn("puuttuu: kehitys.sh", teksti)
+        self.assertNotIn("eroaa", teksti)
+
+    def test_lukuvirhe_ei_kaada_ja_nayttaa_vain_tyypin(self):
+        (self.pohja / "yojono" / "kehitys.sh").unlink()   # repon versio puuttuu -> FileNotFoundError
+        teksti = self.rivi()
+        self.assertIn("ei selvinnyt (kehitys.sh: FileNotFoundError)", teksti)
+        self.assertNotIn(str(self.tmp), teksti)
+
+    def test_oletustaulu_luetaan_ajurin_skripteista(self):
+        with mock.patch.object(aamukooste.ajuri_yojono, "SKRIPTIT", {"x": ("YOJONO_X", str(self.kopiot / "kehitys.sh"))}):
+            self.assertIsNone(aamukooste.skriptikopio_ero_rivi(str(self.pohja)))
+
+    def test_yhdista_erot_ohittaa_virheen_ja_tyhjan(self):
+        def rikki():
+            raise RuntimeError("x")
+        self.assertEqual(aamukooste.yhdista_erot(rikki, lambda: None, lambda: "a", lambda: "b"), "a; b")
+        self.assertIsNone(aamukooste.yhdista_erot(rikki, lambda: None))
+
+
 if __name__ == "__main__":
     unittest.main()

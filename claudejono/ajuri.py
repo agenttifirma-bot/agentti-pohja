@@ -1078,7 +1078,10 @@ def hylatyt_kehote(hylatyt):
     return "\n\nRIIPPUMATTOMAN TARKASTAJAN HYLKAAMAT PR:T (ajurin lokista, katso ohje edelta):\n" + rivit
 
 
-def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None, kaista=1):
+AVOIMET_PRT = silmukka.avoimet_prt   # PR-jarrun luku (A1068); testit korvaavat taman, jotta verkkoa ei kayteta
+
+
+def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None, kaista=1, hae_prt=None):
     """Jono tyhja: Claude ehdottaa jatkotehtavat. Ajuri nimeaa, rajaa (AUTO_MAX_PAIVA, AUTO_PER_AJO) ja committaa ne."""
     nyt = nyt or datetime.now().astimezone()
     pvm = nyt.date().isoformat()
@@ -1090,9 +1093,18 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None, kaista=1):
         return "jono tyhja (itsesuunnittelun paivaraja taynna)"
     if suunnittelu_tauolla(tyohak, repo, nyt, int(env.get("CLAUDEJONO_SUUNNITTELU_TAUKO_S", SUUNNITTELU_TAUKO_S))):
         return "jono tyhja (suunnittelu tauolla: edellinen kierros ei tuottanut tehtavia eika uusia tuloksia ole)"
+    # Laatu ennen maaraa (A1068): kierroksen raja tulee AUTO_PER_AJO- ja paivarajan paalle, ei niiden tilalle.
+    kierros = min(tilaa, silmukka.KIERROS_MAX_UUDET)
+    prt, virhe = (hae_prt or AVOIMET_PRT)()
+    if prt is None:
+        print(f"claude-jono: PR-jarru: avointen PR:ien maaraa ei saatu ({virhe}), suunnittelu ilman jarrua",
+              file=sys.stderr, flush=True)
+    elif prt > silmukka.PR_JARRU_RAJA:
+        print(f"claude-jono: PR-jarru paalla: {prt} avointa PR:aa (raja {silmukka.PR_JARRU_RAJA})", file=sys.stderr, flush=True)
     kehote = (KEHOTE.read_text(encoding="utf-8") + "\n\n" + SUUNNITTELU.read_text(encoding="utf-8")
               + hylatyt_kehote(ilman_kasiteltyja(hylatyt_prt(Path(repo).parent, nyt), repo))
-              + f"\n\nEhdota enintaan {tilaa} tehtavaa.\n")
+              + silmukka.pr_jarru_kehote(prt)
+              + f"\n\nEhdota enintaan {kierros} tehtavaa.\n")
     luo_kaistan_tyohak(tyohak, kaista, env)
     sm = mallit.suunnittelun_malli()   # suunnittelu = Opus (mallien tyonjako 3.11.2026)
     kom, alaenv, cwd = lapsen_ajo(kehote, env, tyohak, kaista, sm.nimi)
@@ -1131,9 +1143,12 @@ def suunnittele(repo, tyohak, env, suorita, laheta=None, nyt=None, kaista=1):
         uudet, _hylatyt = suodata_uudet(repo, hyvaksytyt, PORTTI)
         for nimi, syy in _hylatyt:
             kirjaa_pudotus(nimi, syy)
-        for t in uudet[tilaa:]:
-            kirjaa_pudotus(t["nimi"], f"ajokohtainen raja ({tilaa}) taynna")
-        for t in uudet[:tilaa]:
+        for t in uudet[kierros:]:
+            if kierros < tilaa:
+                kirjaa_pudotus(t["nimi"], f"laaturaja A1068: enintaan {kierros} uutta tehtavaa kierroksella")
+            else:
+                kirjaa_pudotus(t["nimi"], f"ajokohtainen raja ({tilaa}) taynna")
+        for t in uudet[:kierros]:
             p = Path(repo) / JONO / "tehtavat" / f"{pvm}-{nro:02d}-auto-{t['nimi']}.md"
             if not kelvollinen_nimi(p.name):
                 kirjaa_pudotus(t["nimi"], "tiedostonimi ei kelpaa")

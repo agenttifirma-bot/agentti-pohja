@@ -115,6 +115,7 @@ def hae_https(osoite, aikaraja=AIKARAJA_S, ylaraja=MAX_TAVUA):
     except KalenteriVirhe:
         raise
     except urllib.error.HTTPError as e:
+        e.close()                                   # vapauttaa virhevastauksen socketin
         raise KalenteriVirhe("haku epaonnistui (HTTP %d)" % e.code)
     except Exception as e:
         raise KalenteriVirhe("haku epaonnistui (%s)" % type(e).__name__)
