@@ -1023,7 +1023,8 @@ class Tila:
                 muisti, historia, ohjeet, malli=malli, yhdistelma_nimi=yhdistelma_nimi, roolit=self.roolit,
                 ajattelija_aika_s=self.ajattelija_aika, avain_tiedosto=or_avain, kulutila=or_kulutila)
         if self.agenttidata:
-            tarkista_agenttidata(self.agenttidata, [kirjasto, data, self.tiivistelmat, self.yks_tiivistelmat] + (
+            kal = os.path.dirname(getattr(kalenteri_lahde, "valimuisti", "") or "") or None
+            tarkista_agenttidata(self.agenttidata, [kirjasto, data, self.tiivistelmat, self.yks_tiivistelmat, kal] + (
                 [str(self.yks.data), self.yks_muisti, self.ehdotukset, self.luovutukset] if self.yks else []))
         self.yks_vastauslukko = threading.Lock()
         self.ehdotuslukko = threading.Lock()      # yksi hyvaksynta tai hylkays kerrallaan

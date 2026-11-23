@@ -46,13 +46,14 @@ def _turvallinen(juuri, nimi):
     return r
 
 
-def _lue(polku, loppu):
-    """Lukee enintaan LUKU_YLARAJA tavua: lopusta (loppu=True) tai alusta."""
+def _lue(polku, loppu, tavuja=LUKU_YLARAJA):
+    """Lukee enintaan `tavuja` (ja LUKU_YLARAJA) tavua: lopusta (loppu=True) tai alusta."""
+    tavuja = min(tavuja, LUKU_YLARAJA)
     with open(polku, "rb") as f:
         koko = os.fstat(f.fileno()).st_size
-        if loppu and koko > LUKU_YLARAJA:
-            f.seek(koko - LUKU_YLARAJA)
-        return f.read(LUKU_YLARAJA).decode("utf-8", "replace")
+        if loppu and koko > tavuja:
+            f.seek(koko - tavuja)
+        return f.read(tavuja).decode("utf-8", "replace")
 
 
 def viimeiset_merkinnat(teksti, merkintoja=MERKINTOJA, raja=None):
@@ -66,6 +67,52 @@ def viimeiset_merkinnat(teksti, merkintoja=MERKINTOJA, raja=None):
         seuraava = [a for a in (m.start() for m in MERKINTA_RE.finditer(teksti)) if a >= leikkaus]
         teksti = teksti[seuraava[0]:] if seuraava else teksti[leikkaus:]
     return teksti
+
+
+def _fetch_sha(juuri):
+    """FETCH_HEAD:n ensimmainen yhdistettava sha (40 heksaa) tai None."""
+    try:
+        with open(juuri / ".git" / "FETCH_HEAD", "rb") as f:
+            rivit = f.read(65536).decode("ascii", "replace").splitlines()
+    except OSError:
+        return None
+    for r in rivit:
+        osat = r.split("\t")
+        if len(osat) >= 2 and osat[1] != "not-for-merge" and re.fullmatch(r"[0-9a-f]{40}", osat[0]):
+            return osat[0]
+    return None
+
+
+def _head_sha(juuri):
+    """HEADin sha (suora tai ref: refs/heads/... -> irtotiedosto tai packed-refs) tai None. Vain luku."""
+    git = juuri / ".git"
+    try:
+        head = (git / "HEAD").read_text("ascii", "replace").strip()
+        if re.fullmatch(r"[0-9a-f]{40}", head):
+            return head
+        m = re.fullmatch(r"ref: (refs/heads/[A-Za-z0-9._/-]{1,200})", head)
+        if not m or ".." in m.group(1):
+            return None
+        ref = m.group(1)
+        try:
+            arvo = (git / ref).read_text("ascii", "replace").strip()
+            if re.fullmatch(r"[0-9a-f]{40}", arvo):
+                return arvo
+        except OSError:
+            pass
+        for r in (git / "packed-refs").read_text("ascii", "replace").splitlines():
+            osat = r.split(" ")
+            if len(osat) == 2 and osat[1] == ref and re.fullmatch(r"[0-9a-f]{40}", osat[0]):
+                return osat[0]
+    except OSError:
+        return None
+    return None
+
+
+def haku_jai_paivittamatta(juuri):
+    """True, jos viimeisin haku toi eri version kuin tyopuussa on (esim. pull --ff-only epaonnistui)."""
+    f, h = _fetch_sha(juuri), _head_sha(juuri)
+    return bool(f and h and f != h)
 
 
 def kopion_aika(juuri, polut):
@@ -117,15 +164,17 @@ def _muodosta(kansio, raja_merkki, ylaraja, tiedosto_raja, nyt=None):
         p = _turvallinen(juuri, nimi)
         if p is None:
             continue
+        raja = min(tiedosto_raja, max(0, budjetti))
+        if nimi == POHDINTA:
+            raja = min(raja, ylaraja // 2)      # kompassille ja faktoille jaa aina tilaa
+        if raja < PIENIN_OSA:
+            continue
         try:
-            data = _lue(p, loppu=(nimi == POHDINTA))
+            data = _lue(p, loppu=(nimi == POHDINTA), tavuja=4 * raja + 4096)   # utf-8: enintaan 4 tavua/merkki
         except OSError as e:
             loki.warning("agenttidata: %s ohitettu (%s)", nimi, type(e).__name__)
             continue
         data = data.replace(raja_merkki, "").replace("\x00", "")
-        raja = min(tiedosto_raja, max(0, budjetti))
-        if raja < PIENIN_OSA:
-            continue
         if nimi == POHDINTA:
             data = viimeiset_merkinnat(data, MERKINTOJA, raja)
         elif len(data) > raja:
@@ -146,13 +195,20 @@ def _muodosta(kansio, raja_merkki, ylaraja, tiedosto_raja, nyt=None):
         tunnit = int((nyt - aika).total_seconds() // 3600)
         osat.append("VAROITUS: kopio on yli 24 h vanha (%d h). Tuoreimmat p\u00e4\u00e4t\u00f6kset voivat puuttua; "
                     "kerro t\u00e4st\u00e4 Tonylle, jos vastaus nojaa niihin.\n" % tunnit)
-    if aika is None and not sisallot:
+    if haku_jai_paivittamatta(juuri):
+        osat.append("VAROITUS: viimeisin haku ei p\u00e4ivitt\u00e4nyt kopiota (FETCH_HEAD ja HEAD eroavat). "
+                    "Tuoreimmat p\u00e4\u00e4t\u00f6kset voivat puuttua; kerro t\u00e4st\u00e4 Tonylle.\n")
+    if not sisallot:
         osat.append("Kopiossa ei ole luettavia tiedostoja (kompassi.md, faktat.md, pohdinta-vastaukset.md).\n")
     mukana = []
     for nimi in TIEDOSTOT:
         if nimi not in sisallot:
             continue
-        kuvaus = " (viimeiset %d A-merkint\u00e4\u00e4)" % MERKINTOJA if nimi == POHDINTA else ""
-        osat.append("%s\n### TIEDOSTO: %s%s%s\n%s\n" % (raja_merkki, ETULIITE, nimi, kuvaus, sisallot[nimi]))
+        kuvaus = ""
+        if nimi == POHDINTA:
+            n = len(MERKINTA_RE.findall(sisallot[nimi]))
+            kuvaus = ("(vain tiedoston loppu: %d viimeist\u00e4 A-merkint\u00e4\u00e4; vanhemmat eiv\u00e4t ole t\u00e4ss\u00e4 "
+                      "kehotteessa, joten niiden puuttumisesta ei voi p\u00e4\u00e4tell\u00e4 mit\u00e4\u00e4n)\n" % n)
+        osat.append("%s\n### TIEDOSTO: %s%s\n%s%s\n" % (raja_merkki, ETULIITE, nimi, kuvaus, sisallot[nimi]))
         mukana.append(ETULIITE + nimi)
     return "".join(osat), mukana

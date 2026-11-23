@@ -134,16 +134,55 @@ class MuodostaTesti(Pohja):
         self.assertIn("katkaistu kokorajan vuoksi", t)
         self.assertLess(len(t), 4_000)
 
-    def test_kokonaisraja_suosii_tuoreimpia_paatoksia(self):
-        (self.ad / "kompassi.md").write_text("k" * 5_000)
-        t, nimet = ak.muodosta(str(self.ad), RAJA, 2_000, 2_000, nyt=self.tuore())
-        self.assertIn("**A100 ", t)
-        self.assertNotIn("agenttidata/kompassi.md", nimet)
-        self.assertLess(len(t), 2_000 + 600)          # otsikot ja rajat budjetin paalle
+    def test_kokonaisraja_jakaa_tilan_paatoksille_ja_kompassille(self):
+        (self.ad / "kompassi.md").write_text("KOMPASSI-ALKU " + "k" * 5_000)
+        (self.ad / "pohdinta-vastaukset.md").write_text(pohdinta(60) * 3)
+        t, nimet = ak.muodosta(str(self.ad), RAJA, 3_000, 3_000, nyt=self.tuore())
+        self.assertIn("**A60 ", t)                         # tuorein mukana
+        self.assertIn("agenttidata/kompassi.md", nimet)     # paatokset eivat vie koko budjettia
+        self.assertIn("KOMPASSI-ALKU", t)
+        osa = t.split("agenttidata/pohdinta-vastaukset.md", 1)[1]
+        self.assertLess(len(osa), 1_500 + 300)
+        self.assertLess(len(t), 3_000 + 900)                # otsikot ja rajat budjetin paalle
+
+    def test_otsikko_kertoo_todellisen_merkintamaaran(self):
+        t, _ = ak.muodosta(str(self.ad), RAJA, 2_000, 2_000, nyt=self.tuore())
+        n = int(t.split("vain tiedoston loppu: ", 1)[1].split(" ", 1)[0])
+        self.assertLess(n, 60)
+        self.assertEqual(n, len(ak.MERKINTA_RE.findall(t)))
+
+    def test_paivittymaton_haku_varoittaa(self):
+        g = self.ad / ".git"
+        (g / "HEAD").write_text("ref: refs/heads/main\n")
+        (g / "refs" / "heads").mkdir(parents=True)
+        (g / "refs" / "heads" / "main").write_text("a" * 40 + "\n")
+        (g / "FETCH_HEAD").write_text("b" * 40 + "\t\tbranch 'main' of ssh://x/tony/agenttidata\n")
+        t, _ = ak.muodosta(str(self.ad), RAJA, 300_000, 120_000)
+        self.assertIn("viimeisin haku ei p\u00e4ivitt\u00e4nyt kopiota", t)
+        (g / "FETCH_HEAD").write_text("a" * 40 + "\t\tbranch 'main' of ssh://x/tony/agenttidata\n")
+        t, _ = ak.muodosta(str(self.ad), RAJA, 300_000, 120_000)
+        self.assertNotIn("VAROITUS", t)
+
+    def test_packed_refs_kelpaa(self):
+        g = self.ad / ".git"
+        (g / "HEAD").write_text("ref: refs/heads/main\n")
+        (g / "packed-refs").write_text("# pack-refs\n" + "c" * 40 + " refs/heads/main\n")
+        (g / "FETCH_HEAD").write_text("c" * 40 + "\t\tbranch 'main' of x\n")
+        self.assertFalse(ak.haku_jai_paivittamatta(self.ad))
+        (g / "FETCH_HEAD").write_text("d" * 40 + "\t\tbranch 'main' of x\n")
+        self.assertTrue(ak.haku_jai_paivittamatta(self.ad))
+
+    def test_tyhja_kopio_huomautetaan_vaikka_haku_on_tuore(self):
+        for n in ak.TIEDOSTOT:
+            (self.ad / n).unlink()
+        (self.ad / ".git" / "FETCH_HEAD").write_text("x\n")
+        t, nimet = ak.muodosta(str(self.ad), RAJA, 300_000, 120_000)
+        self.assertIn("Kopiossa ei ole luettavia tiedostoja", t)
+        self.assertEqual(nimet, [])
 
     def test_odottamaton_virhe_ei_kaada(self):
         alkup = ak._lue
-        ak._lue = lambda p, loppu: (_ for _ in ()).throw(RuntimeError("salainen sisalto"))
+        ak._lue = lambda p, loppu, **k: (_ for _ in ()).throw(RuntimeError("salainen sisalto"))
         self.addCleanup(setattr, ak, "_lue", alkup)
         with self.assertLogs("aivo.agenttidata_kehote", level="WARNING") as loki:
             self.assertEqual(ak.muodosta(str(self.ad), RAJA, 300_000, 120_000), ("", []))
@@ -228,6 +267,13 @@ class ChatTesti(Pohja):
         s, v = self.viesti("tyokalu")
         self.assertEqual(s, 200)
         self.assertEqual(v["tuntemattomia_lahteita"], 0)
+
+    def test_kalenterin_valimuisti_ei_saa_olla_kopiossa(self):
+        class Kal:
+            valimuisti = str(self.ad / "kalenteri" / "kalenteri.ics")
+        with self.assertRaises(chat.ChatVirhe):
+            chat.Tila(salasana_apu.tiiviste(SAL), str(self.r / "kirjasto"), str(self.r / "chatdata"), [TS],
+                      kalenteri_lahde=Kal(), agenttidata=str(self.ad))
 
     def test_paallekkainen_kirjoitettavan_kansion_kanssa_hylataan(self):
         for huono in (self.r / "kirjasto", self.r / "kirjasto" / "ad", self.r):

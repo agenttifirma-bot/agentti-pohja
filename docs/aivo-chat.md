@@ -335,10 +335,10 @@ Ota ensin snapshot kontista 122.
 Aivo voi lukea agenttidata-kloonista (`/var/lib/aivo/agenttidata`, ohje `docs/agenttidata.md` askel 8) kolme tiedostoa: `kompassi.md`, `faktat.md` ja `pohdinta-vastaukset.md`. Ne tulevat kehotteeseen omana osionaan `AGENTTIDATA`, jonka otsikossa näkyvät lähde ja kopion aika. Asetus on oletuksena pois päältä.
 
 - Mukana ovat molemmat tilat: työkalutila ja yksityinen tila (A1015).
-- Pohdinta-vastauksista tulee vain loppu: enintään 60 viimeistä A-merkintää. Yksityisessä tilassa osuus on pienempi (kehotteen raja on 16 000 merkkiä), joten mukana on vain noin kymmenen tuoreinta merkintää.
+- Pohdinta-vastauksista tulee vain loppu: enintään 60 viimeistä A-merkintää. Yksityisessä tilassa osuus on pienempi (kehotteen raja on 16 000 merkkiä), joten mukana on vain muutama tuorein merkintä (23.11.2026 datalla kuusi). Osion otsikko kertoo todellisen määrän.
 - `tulokset/` ja `tehtavat/` eivät tule kehotteeseen.
 - Osio mahtuu samaan muistirajaan kuin kirjasto. Kirjastolle jää loput, joten kehotteen kokonaiskoko ei kasva.
-- Kopion aika on viimeisimmän haun aika (`.git/FETCH_HEAD`). Jos hakua ei ole tehty, aika on tiedostojen muutosaika. Jos kopio on yli 24 tuntia vanha, osioon tulee varoitus.
+- Kopion aika on viimeisimmän haun aika (`.git/FETCH_HEAD`). Jos hakua ei ole tehty, aika on tiedostojen muutosaika. Jos kopio on yli 24 tuntia vanha, osioon tulee varoitus. Varoitus tulee myös, jos haku onnistui mutta työpuu ei päivittynyt (`FETCH_HEAD` ja `HEAD` eroavat, esim. `pull --ff-only` epäonnistui).
 - Aivo lukee kopiota vain palvelun omana käyttäjänä. Mikään reitti ei kirjoita kopioon. Palvelu ei käynnisty, jos kopion kansio on kirjaston, keskustelujen, tiivistelmien tai yksityisten kansioiden kanssa päällekkäin.
 - Vain tavalliset tiedostot kloonin sisällä luetaan: ei `.git`-kansiota eikä linkkejä kloonin ulkopuolelle.
 
