@@ -379,6 +379,17 @@ class Itsesuunnittelu(Pohja):
         self.assertIn("claude-jono/tonylle.md", tied)
         self.assertEqual(ajuri.seuraava_tehtava(self.repo).name, "2026-10-30-02-auto-korjaa-x.md")
 
+    def test_per_ajo_raja_rajaa_yha_kun_kierrosraja_on_suurempi(self):
+        # AUTO_PER_AJO (A961) toimii edelleen: kierrosraja nostetaan vain tassa testissa, jotta per-ajo-raja tulee vastaan.
+        vanha = ajuri.silmukka.KIERROS_MAX_UUDET
+        ajuri.silmukka.KIERROS_MAX_UUDET = ajuri.AUTO_PER_AJO + 5
+        self.addCleanup(setattr, ajuri.silmukka, "KIERROS_MAX_UUDET", vanha)
+        vastaus = json.dumps({"tehtavat": [{"nimi": f"t{i}", "sisalto": f"# T{i}\nTavoite: yllapito"}
+                                            for i in range(ajuri.AUTO_PER_AJO + 2)], "tonylle": ""})
+        ajuri.suunnittele(self.repo, self.tmp, {}, self.malli(vastaus), nyt=self.nyt())
+        teht = [t for t in self.origin_tiedostot() if "/tehtavat/" in t]
+        self.assertEqual(len(teht), ajuri.AUTO_PER_AJO)
+
     def test_paivaraja_estaa_mallikutsun(self):
         teht = self.repo / ajuri.JONO / "tehtavat"
         teht.mkdir(parents=True)
