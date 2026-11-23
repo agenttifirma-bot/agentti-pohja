@@ -25,7 +25,7 @@ Vientiajoja on kaksi, ja kumpikin muuttaa vain omia tiedostojaan:
 
 Molemmat käyttävät samaa työkloonia, samaa avainta, samaa siivousta ja samaa osoitetarkistusta. Lukko (`/var/lib/docs-vienti/agenttidata.lukko`) estää kahta ajoa toimimasta samaan aikaan. Jos lukko on varattu yli minuutin, ajo päättyy virheeseen ja seuraava ajo yrittää uudelleen.
 
-Aivon kirjasto: Aivo lukee kompassin ja faktat kloonistaan `/var/lib/aivo/agenttidata` (askel 8), joten käsin viety kopio ei enää ole tarpeen. Vanhan tiedoston `aivo-kompassi-2026-11-05.md` poistamisesta Aivon kirjastosta päätät sinä. Vienti ei koske Aivon kirjastoon.
+Aivon kirjasto: Aivo lukee kompassin, faktat ja pohdinta-vastausten lopun kloonistaan `/var/lib/aivo/agenttidata`, kun asetus `AIVO_AGENTTIDATA` on päällä (askel 8). Silloin käsin viety kopio ei enää ole tarpeen. Vanhan tiedoston `aivo-kompassi-2026-11-05.md` poistamisesta Aivon kirjastosta päätät sinä. Vienti ei koske Aivon kirjastoon.
 
 Osumaprosentti luokittain ei ole vielä mukana. Se tulee PR #341:stä, joka ei ole vielä mainissa. Osumat lisätään vientiin erillisellä PR:llä sen jälkeen.
 
@@ -40,7 +40,7 @@ Push tehdään vain osoitteeseen `ssh://git@<GITEA-IP>[:portti]/tony/agenttidata
 
 Palvelu ajetaan omana käyttäjänään `docs-vienti`, ei rootina. Push kohdistetaan suoraan tähän osoitteeseen, joten työkloonin `origin`-asetus ei voi ohjata dataa muualle. Jos mikään ei muuttunut, committia ei tehdä. Vienti ei koskaan kirjoita Aivon kirjastoon (`aivo/aivo`).
 
-Aivon yksityisessä tilassa lähdettä ei saa käyttää ennen kuin PR #322 on yhdistetty (suunnitelman riski 7).
+PR #322 on yhdistetty, joten myös Aivon yksityinen tila saa käyttää lähdettä (A1015, suunnitelman riski 7).
 
 ## Tonyn askeleet
 
@@ -318,6 +318,26 @@ Odotettu:
 ```
 palvelu päättyy ilman virhettä (Already up to date tai päivitetyt tiedostot)
 ```
+
+Kytke kopio Aivon kehotteeseen (kompassi, faktat ja pohdinta-vastausten loppu; tarkemmin `docs/aivo-chat.md`, osio "Agenttidata-kopio kehotteeseen"):
+
+```
+systemctl edit aivo-chat
+```
+
+Lisää palveluosion alle rivi `Environment=AIVO_AGENTTIDATA=/var/lib/aivo/agenttidata`. Sitten:
+
+```
+systemctl restart aivo-chat
+systemctl show aivo-chat -p Environment --no-pager | tr ' ' '\n' | grep AIVO_AGENTTIDATA
+```
+
+Odotettu:
+```
+AIVO_AGENTTIDATA=/var/lib/aivo/agenttidata
+```
+
+Kysy sen jälkeen Aivolta: "Mikä on tuorein A-päätös?" Vastauksen pitää olla sama kuin komennon `grep -oE '\*\*A[0-9]+' /var/lib/aivo/agenttidata/pohdinta-vastaukset.md | tail -1` tulos.
 
 ### Askel 9. Tarkistus lähteestä
 
