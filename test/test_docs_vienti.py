@@ -513,6 +513,57 @@ class Yksikkomallit(unittest.TestCase):
             self.assertIn(pala, ohje)
 
 
+class Toistuvuus(Pohja):
+    """Toistot (#383-katselmointi): epaonnistunut ensimmainen push ja kuiva-ajon jaanteet."""
+
+    def test_epaonnistunut_eka_push_pushataan_seuraavalla_ajolla(self):
+        self.kirjoita("tulokset/a.md", "a")
+        alkup = dv._git
+
+        def ei_pushia(tyo, *a, **k):
+            return (1, "") if a and a[0] == "push" else alkup(tyo, *a, **k)
+        with mock.patch.object(dv, "_git", ei_pushia), self.assertRaises(dv.ViennitVirhe):
+            self.vie()
+        self.assertEqual(self.etelkm(), 0)
+        self.assertIn("pushattu", self.vie())              # ennen korjausta: "ei muutoksia", etarepo jai tyhjaksi
+        self.assertEqual(self.etepolut(), ["tulokset/a.md"])
+        self.assertIn("ei committia", self.vie())
+
+    def test_aiempaa_committia_ei_pushata_jos_polku_kielletty(self):
+        self.kirjoita("tulokset/a.md", "a")
+        self.tyo.mkdir(parents=True)
+        git("init", "-q", "-b", "main", cwd=self.tyo)
+        (self.tyo / "salaisuus.txt").write_text("x")
+        git("add", "-A", cwd=self.tyo)
+        git("-c", "user.name=t", "-c", "user.email=t@localhost", "commit", "-q", "-m", "x", cwd=self.tyo)
+        (self.tyo / "tulokset").mkdir()
+        (self.tyo / "tulokset" / "a.md").write_text("a")
+        git("add", "-A", cwd=self.tyo)
+        git("-c", "user.name=t", "-c", "user.email=t@localhost", "commit", "-q", "-m", "y", cwd=self.tyo)
+        with self.assertRaises(dv.ViennitVirhe):
+            self.vie()
+        self.assertEqual(self.etelkm(), 0)
+
+    def test_kuiva_perusajo_ei_pysayta_aivo_ajoa(self):
+        self.kirjoita("kompassi.md", "k")
+        self.vie(aivo=True)
+        self.kirjoita("tulokset/a.md", "a")
+        self.assertIn("kuiva-ajo", self.vie(kuiva=True))
+        self.assertIn("ei committia", self.vie(aivo=True))   # ennen korjausta: allowlistin ulkopuolisia polkuja
+        self.assertIn("pushattu", self.vie())
+        self.assertEqual(sorted(self.etepolut()), ["kompassi.md", "tulokset/a.md"])
+
+    def test_kuiva_aivo_ajo_ei_pysayta_perusajoa(self):
+        self.kirjoita("tulokset/a.md", "a")
+        self.vie()
+        self.kirjoita("kompassi.md", "k")
+        self.assertIn("kuiva-ajo", self.vie(aivo=True, kuiva=True))
+        self.assertFalse((self.tyo / "kompassi.md").exists())
+        self.kirjoita("tulokset/b.md", "b")
+        self.assertIn("pushattu", self.vie())
+        self.assertEqual(sorted(self.etepolut()), ["tulokset/a.md", "tulokset/b.md"])
+
+
 _ALKUP = dv.osoite_sallittu
 _ALKUP_ISANTA = dv.isanta_kelvollinen
 
