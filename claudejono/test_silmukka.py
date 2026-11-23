@@ -194,20 +194,20 @@ class Silmukka(Pohja):
 
     def test_21_avointa_lisaa_jarruohjeen(self):
         kehote, loki = self.suunnittele_prt((21, ""))
-        self.assertIn("PR-JARRU", kehote)
+        self.assertIn("PR-JARRU (", kehote)
         self.assertIn("21 avointa PR:aa", kehote)
         self.assertIn("Ala ehdota uusia koodi-PR:ia", kehote)
         self.assertIn("PR-jarru paalla: 21", loki)
 
     def test_20_avointa_ei_jarrua(self):
         kehote, loki = self.suunnittele_prt((20, ""))
-        self.assertNotIn("PR-JARRU", kehote)
+        self.assertNotIn("PR-JARRU (", kehote)
         self.assertNotIn("PR-jarru", loki)
 
     def test_luku_ei_saatavilla_ennallaan_ja_varoitus(self):
         kehote, loki = self.suunnittele_prt((None, "URLError"))
         nolla, _ = self.suunnittele_prt((0, ""))
-        self.assertNotIn("PR-JARRU", kehote)
+        self.assertNotIn("PR-JARRU (", kehote)
         self.assertEqual(kehote, nolla)
         self.assertIn("PR-jarru: avointen PR:ien maaraa ei saatu (URLError), suunnittelu ilman jarrua", loki)
 

@@ -18,7 +18,7 @@ MALLI (Tonyn paatos A1064, 22.11.2026): Aivo-tehtaviin aina Malli: opus. Ajuri v
 LAATU ENNEN MAARAA (A1068, Tony 23.11.2026, kompassi):
 1. Ehdota enintaan 2 uutta tehtavaa kierroksella. Ajuri hyvaksyy kierrokselta enintaan 2 tehtavatiedostoa ja kirjaa ylimaaraiset lokiin.
 2. Etusijalla Aivon suunnitelman seuraava iso pala (suunnitelmat/aivo-eristetyt-agentit.md: mallitiimi kayttoon, taustatyo, vartija, verkkohaku, luovutuspaketti). Ei selvityksia, inventaarioita, koeyhdistyksia eika kylla/ei-sivuja, ellei Tony tai pilvi-Claude pyyda niita erikseen.
-3. Kun agentti-pohjassa on yli 20 avointa PR:aa, ei uusia koodi-PR:ia: tehtavat yhdistavat, korjaavat (tarkastajan loydokset, ristiriidat) tai ehdottavat suljettavia vanhoja PR:ia. Sulkeminen on Tonyn paatos. Ajuri lisaa talloin kehotteen loppuun PR-JARRU-ohjeen.
+3. Kun agentti-pohjassa on yli 20 avointa PR:aa, ei uusia koodi-PR:ia: tehtavat yhdistavat, korjaavat (tarkastajan loydokset, ristiriidat) tai ehdottavat suljettavia vanhoja PR:ia. Sulkeminen on Tonyn paatos. Ajuri lisaa talloin kehotteen loppuun erillisen jarruohjeen.
 
 Painopiste A1061 (Tony 22.11.2026, kompassi): ehdota vain Aivo- ja yllapitotehtavia seka koulutukea (SERTI, matikka, koulumatkojen aanikirjat). Koulutuki merkitaan riville Tavoite: portfolio. Ala ehdota muita portfolio- tai ansaintatehtavia.
 
