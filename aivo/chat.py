@@ -947,7 +947,7 @@ class Tila:
                  malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None,
                  taustapaa="loopback", or_malli=None, or_avain=yksityinen_or.OLETUS_AVAIN, or_mallit=None,
                  or_kulutila=None, tiivistelmat=None, kalenteri_lahde=None, yks_tiivistelmat=None,   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
-                 yhdistelma_oletus=None, roolit=None, kysy_yhd=None):
+                 yhdistelma_oletus=None, roolit=None, kysy_yhd=None, ajattelija_aika=None):
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
         self.kulutila = or_kulutila               # None = openrouter_kulut.OLETUS_TILA (yhteinen kirjanpito)
@@ -966,6 +966,7 @@ class Tila:
         self.yhdistelmat = (yhdistelma.OLETUS,)   # usean mallin yhdistelmat ovat kaytossa vain OpenRouter-taustapaalla
         self.yhdistelma_oletus = yhdistelma.tarkista_yhdistelma(yhdistelma_oletus)
         self.roolit = {}
+        self.ajattelija_aika = yhdistelma.tarkista_ajattelijan_aika(ajattelija_aika)   # tiimi; vain lyhentaa
         self.taustapaa = taustapaa if taustapaa in YKSITYINEN_TEKSTIT else "loopback"
         if yks_data:
             if taustapaa not in ("loopback", "openrouter"):
@@ -1006,7 +1007,7 @@ class Tila:
         if kysy_yhd is None and self.taustapaa == "openrouter" and yks_data:
             self.kysy_yhd = lambda muisti, historia, ohjeet, malli, yhdistelma_nimi: yksityinen_or.kysy_yhdistelmalla(
                 muisti, historia, ohjeet, malli=malli, yhdistelma_nimi=yhdistelma_nimi, roolit=self.roolit,
-                avain_tiedosto=or_avain, kulutila=or_kulutila)
+                ajattelija_aika_s=self.ajattelija_aika, avain_tiedosto=or_avain, kulutila=or_kulutila)
         self.yks_vastauslukko = threading.Lock()
         self.ehdotuslukko = threading.Lock()      # yksi hyvaksynta tai hylkays kerrallaan
         self.luovutuslukko = threading.Lock()     # yksi luovutuksen kasittely kerrallaan (molemmat tilat)
@@ -1421,18 +1422,21 @@ def tee_kasittelija(tila):
                 return self._json(400, {"virhe": "vahvistuksen pit\u00e4\u00e4 olla t\u00e4sm\u00e4lleen 'kyll\u00e4 <sha8>'"})
             if not tila.ehdotuslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
+            vastaus = None
             try:
                 e = yksityinen.lue_ehdotus(tila.ehdotukset, eid)          # merkintaa varten; ehdotus poistuu hyvaksyttaessa
                 tulos = yksityinen.hyvaksy_ehdotus(tila.ehdotukset, tila.ydinohjeet, eid, vahvistus)
                 merkinta = self._merkitse(d, yksityinen.hyvaksynta_merkinta(e["tiedosto"], e["sha"][:8]))
+                vastaus = (200, {"tulos": tulos,
+                                 "teksti": EHDOTUS_TULOKSET.get(tulos, "Hyv\u00e4ksytty (%s)." % tulos),
+                                 "merkinta": merkinta})
             except ChatVirhe as e:
-                return self._json(409, {"virhe": str(e)})
+                vastaus = (409, {"virhe": str(e)})
             except OSError as e:
-                return self._json(500, {"virhe": "tallennus ep\u00e4onnistui (%s)" % type(e).__name__})
+                vastaus = (500, {"virhe": "tallennus ep\u00e4onnistui (%s)" % type(e).__name__})
             finally:
                 tila.ehdotuslukko.release()
-            return self._json(200, {"tulos": tulos, "teksti": EHDOTUS_TULOKSET.get(tulos, "Hyv\u00e4ksytty (%s)." % tulos),
-                                    "merkinta": merkinta})
+            return self._json(*vastaus)             # vastaus lahtee vasta lukon vapautuksen jalkeen (ei satunnaista 429:aa)
 
         def _ehdotus_hylkaa(self, d):
             if not self._yks_keskustelu(d):
@@ -1442,6 +1446,7 @@ def tee_kasittelija(tila):
             if not tila.ehdotuslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
             eid = d.get("tunnus")
+            vastaus = None
             try:
                 try:
                     tiedosto = yksityinen.lue_ehdotus(tila.ehdotukset, eid)["tiedosto"]
@@ -1449,12 +1454,13 @@ def tee_kasittelija(tila):
                     tiedosto = "(tuntematon)"                     # viallisenkin ehdotuksen voi hylata
                 yksityinen.hylkaa_ehdotus(tila.ehdotukset, eid)
                 merkinta = self._merkitse(d, yksityinen.hylkays_merkinta(tiedosto, eid))
+                vastaus = (200, {"tulos": "hylatty", "teksti": "Ehdotus hyl\u00e4tty ja siirretty kansioon hylatyt/.",
+                                 "merkinta": merkinta})
             except ChatVirhe as e:
-                return self._json(409, {"virhe": str(e)})
+                vastaus = (409, {"virhe": str(e)})
             finally:
                 tila.ehdotuslukko.release()
-            return self._json(200, {"tulos": "hylatty", "teksti": "Ehdotus hyl\u00e4tty ja siirretty kansioon hylatyt/.",
-                                    "merkinta": merkinta})
+            return self._json(*vastaus)             # vastaus lahtee vasta lukon vapautuksen jalkeen
 
         # --- Luovutukset yksityisesta tilasta tyokalutilaan. Ehdotus syntyy mallin [[LUOVUTUS]]-lohkosta tai Tonyn
         # painikkeesta, mutta mitaan ei lahde ennen /api/luovutus/hyvaksy-kutsua (sha-sidottu). Reitit ovat 404
@@ -1625,9 +1631,11 @@ def main(argv=None):
     ap.add_argument("--openrouter-avain-tiedosto", default=os.environ.get("AIVO_OPENROUTER_AVAIN", yksityinen_or.OLETUS_AVAIN),
                     help="tiedosto (0600, palvelun kayttajan), jossa avain on; avainta ei anneta ymparistomuuttujalla")
     ap.add_argument("--yksityinen-yhdistelma", default=os.environ.get("AIVO_YKSITYINEN_YHDISTELMA"),
-                    help="oletusyhdistelma: yksi, tarkastus, rinnakkais tai reititys (vain OpenRouter-taustapaa)")
+                    help="oletusyhdistelma: yksi, tarkastus, rinnakkais, reititys tai tiimi (vain OpenRouter-taustapaa)")
     ap.add_argument("--yksityinen-roolit", default=os.environ.get("AIVO_YKSITYINEN_ROOLIT"),
                     help="roolit muodossa vastaaja:malli,tarkastaja:malli; mallit --openrouter-mallit-listalta")
+    ap.add_argument("--yksityinen-ajattelija-aika", default=os.environ.get("AIVO_YKSITYINEN_AJATTELIJA_AIKA"),
+                    help="tiimi: ajattelijan aikaraja sekunteina (10-3600, oletus 300); kokonaisaikaraja on aina voimassa")
     a = ap.parse_args(argv)
     try:
         if a.komento == "aseta-salasana":
@@ -1642,6 +1650,7 @@ def main(argv=None):
                     taustapaa=a.yksityinen_taustapaa, or_malli=a.openrouter_malli, or_mallit=a.openrouter_mallit,
                     or_avain=a.openrouter_avain_tiedosto,
                     yhdistelma_oletus=a.yksityinen_yhdistelma, roolit=a.yksityinen_roolit,
+                    ajattelija_aika=a.yksityinen_ajattelija_aika,
                     tiivistelmat=(a.tiivistelmat or str(Path(a.data).parent / "tiivistelmat"))
                     if a.tiivistelmat_kaytossa else None,
                     yks_tiivistelmat=(a.yksityiset_tiivistelmat or str(Path(a.yksityinen_data).parent / "tiivistelmat"))

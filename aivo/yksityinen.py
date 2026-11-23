@@ -224,6 +224,8 @@ def kysy_paikalliselta(muisti, historia, ohjeet="", url=OLETUS_MALLI_URL, avaa=N
             data = json.loads(r.read(2_000_000))
         teksti = data["choices"][0]["message"]["content"]
     except (OSError, ValueError, KeyError, IndexError, TypeError) as e:
+        if isinstance(e, urllib.error.HTTPError):
+            e.close()                               # vapauttaa virhevastauksen socketin
         raise YksityinenVirhe("paikallinen malli ei vastannut (%s)" % type(e).__name__)
     if not isinstance(teksti, str) or not teksti.strip():
         raise YksityinenVirhe("paikallinen malli antoi tyhjan vastauksen")

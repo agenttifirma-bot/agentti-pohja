@@ -129,6 +129,8 @@ Kulurajat OpenRouter-taustapäällä:
 - Enintään 10 tiivistyskutsua vuorokaudessa (Europe/Helsinki), kuten työkalutilassa. Kutsu varataan ennen lähetystä. Kun raja täyttyy, ajo lopettaa ja kirjaa rivin `lopetus: paivakatto 10/10 taynna`.
 - Kulut lasketaan samaan konttikohtaiseen 10 €/vrk päiväkattoon kuin chatin kutsut (A1005). Jos katto on täynnä, kutsua ei tehdä, ajo lopettaa (`lopetus: kulukatto taynna`) eikä yrityskertoja kulu.
 
+Tiivistys tarkistaa vain kansiot, joita se käyttää: `chat` (luku) sekä `tiivistelmat` ja `indeksi` (kirjoitus). Niiden pitää olla palvelun käyttäjän omia, oikeuksiltaan 0700 eikä niissä saa olla linkkejä, alikansioita eikä toisen käyttäjän tiedostoja. Muuten ajo pysähtyy virheeseen `alueen tarkistus epaonnistui (AlueVirhe)`. Muita yksityisen alueen kansioita tiivistys ei avaa eikä tarkista. Siksi hylättyjen ehdotusten kansio `ehdotukset/hylatyt/` ja ydinohjeiden git-repo (`ydinohjeet/.git`) eivät estä tiivistystä.
+
 Keskustelun sisältö ei päädy lokiin (`indeksi/tiivista.log`), kulukirjanpitoon eikä virheviesteihin. Lokissa on vain keskustelun tunnus, viestien numerot ja virheen tyyppi.
 
 ### Tiivistelmät yksityisen tilan kehotteeseen
@@ -147,13 +149,14 @@ Repossa ei ole tälle valmista yksikköä, eikä tämä muutos asenna mitään. 
 
 Ajastimen käyttäjän pitää olla sama kuin `aivo-chat.service`-palvelun `User=` (kontissa `aivo`). Syy: yksityiset kansiot ja avaintiedosto tarkistetaan palvelun käyttäjän omiksi (0700 ja 0600). Tarkista käyttäjä: `systemctl show -p User aivo-chat`.
 
-1. **Kuiva-ajo** (ei mallikutsua):
+1. **Kuiva-ajo** (ei mallikutsua). Kuiva-ajo ei luo kansioita. Tuoreessa asennuksessa kansioita `tiivistelmat` ja `indeksi` ei vielä ole, joten luo ne ensin palvelun käyttäjälle (kontissa `aivo`, vaihda tarvittaessa):
 
    ```
+   install -d -m 700 -o aivo -g aivo /var/lib/aivo-yksityinen/tiivistelmat /var/lib/aivo-yksityinen/indeksi
    runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja AIVO_YKSITYINEN_TAUSTAPAA=openrouter python3 -m aivo.tiivista --alue yksityinen --kuiva
    ```
 
-   Odotettu tulos: rivit `tiivistettaisiin <keskustelun tunnus> viestit 0-N` tai ei mitään, jos tiivistettävää ei ole.
+   Odotettu tulos: rivit `tiivistettaisiin <keskustelun tunnus> viestit 0-N` tai ei mitään, jos tiivistettävää ei ole. Jos kansiot puuttuvat, ajo päättyy paluuarvoon 1 ja virheeseen `kuiva-ajo ei luo kansioita; puuttuu: tiivistelmat, indeksi`, eikä mitään luoda. Kansiota `siirrot` tiivistys ei tarvitse. Varsinainen ajo (ilman `--kuiva`) luo puuttuvat käyttämänsä kansiot itse (0700).
 
 2. **Yksikkö** `/etc/systemd/system/aivo-tiivista-yksityinen.service` (OpenRouter-taustapää):
 
@@ -248,11 +251,29 @@ Mallivertailu (19-50) ja yhdistelmävertailu (19-54) ovat vielä ajamatta, joten
 | `tarkastus` | vastaaja kirjoittaa luonnoksen, tarkastaja kirjoittaa lopullisen vastauksen | `vastaaja`, `tarkastaja` |
 | `rinnakkais` | kaksi vastaajaa samanaikaisesti, kokoaja yhdistää | `vastaaja`, `vastaaja2`, `kokoaja` |
 | `reititys` | reititin luokittelee viestin (kevyt tai vaativa), valittu malli vastaa | `reititin`, `kevyt`, `vaativa` |
+| `tiimi` | kevyt luokittelee viestin (arkinen tai vaativa); arkiseen vastaa keskustelija, vaativassa keskustelija antaa tehtävän ajattelijalle ja muotoilee vastauksen | `keskustelija`, `ajattelija`, `kevyt` |
 
 Asetukset:
 
 - `AIVO_YKSITYINEN_YHDISTELMA` (tai `--yksityinen-yhdistelma`): oletusyhdistelmä uusille keskusteluille. Tuntematon arvo estää käynnistyksen. Paikallisella taustapäällä vain `yksi` kelpaa.
 - `AIVO_YKSITYINEN_ROOLIT` (tai `--yksityinen-roolit`): esimerkiksi `vastaaja:qwen/qwen3-235b-a22b-2507,tarkastaja:meta-llama/llama-3.3-70b-instruct`. Jokaisen roolin mallin pitää olla `AIVO_OPENROUTER_MALLIT`-listalla, joten se on jo läpäissyt `avoin_malli()`-tarkistuksen. Tuntematon rooli, sama rooli kahdesti tai listalta puuttuva malli estää käynnistyksen. Puuttuva rooli käyttää keskustelun mallia.
+
+- `AIVO_YKSITYINEN_AJATTELIJA_AIKA` (tai `--yksityinen-ajattelija-aika`): tiimin ajattelijan aikaraja sekunteina, kokonaisluku 10–3600, oletus 300. Muu arvo estää käynnistyksen. Asetus voi vain lyhentää ajattelijan kutsua (katso tiimin kuvaus alla).
+
+### Tiimi (A1040, A1041)
+
+Tiimissä on kolme roolia, eikä Tonyn tarvitse vaihtaa malleja itse.
+
+1. Kevyt malli luokittelee Tonyn viestin sanalla `arkinen` tai `vaativa`. Vaativia ovat esimerkiksi tehtävän pilkkominen, rakennusohje, suunnitelma ja iso päätös. Epäselvä luokka tai virhe tarkoittaa arkista viestiä, ja vastauksen alla näkyy merkintä.
+2. Arkiseen viestiin vastaa keskustelija yksin samalla kehotteella kuin yhden mallin tilassa (2 kutsua).
+3. Vaativassa viestissä (4 kutsua):
+   - Keskustelija kirjoittaa ajattelijalle tiiviin englanninkielisen tehtävän ja ottaa siihen mukaan tarvittavan kontekstin.
+   - Ajattelija näkee vain oman ohjeensa ja tehtävän. Muisti, ydinohjeet ja keskusteluhistoria eivät mene sille sellaisenaan.
+   - Keskustelija muotoilee ajattelijan vastauksen suomeksi Tonylle.
+
+Ajattelijan aikaraja on pienin seuraavista: asetus (oletus 300 s), jäljellä oleva kokonaisaika miinus keskustelijan varaus (`AJATTELIJA_VARAUS_S`, 60 s) ja osakutsun yläraja (`yksityinen_or.VASTAUS_AIKARAJA_S`, 120 s). Kokonaisaikaraja 240 s on siis aina voimassa. Jos ajattelija ei ehdi tai sen kutsu epäonnistuu, keskustelija vastaa itse. Vastauksen loppuun lisätään silloin lause "Syvempi analyysi ei ehtinyt aikarajassa, joten vastasin itse." (tai "ei onnistunut"), ja sama teksti näkyy merkintänä. Taustalla jatkuva ajo on erillinen tehtävä.
+
+Merkinnät tiimissä tulevat vain keskustelijan lopullisesta vastauksesta. Tehtävänannosta ja ajattelijan vastauksesta poistetaan merkinnät, ja jäljelle jääneet `[[`- ja `]]`-merkit rikotaan, ennen kuin teksti menee seuraavalle mallille. Ajattelija ei siis voi lisätä ehdotuksia, valintoja, luovutuksia eikä päätöksiä. Jos muotoilukutsu epäonnistuu, näytetään ajattelijan vastaus ilman merkintöjä. "Näytä luonnos" näyttää tehtävänannon ja ajattelijan vastauksen.
 
 Rajat (koodin vakioita, `aivo/yhdistelma.py`):
 
@@ -272,7 +293,7 @@ Käyttöliittymä:
 
 Rajapinta: `GET /api/mallit` palauttaa OpenRouter-taustapäällä myös kentät `yhdistelmat` ja `yhdistelma` (oletus). `POST /api/uusi` ja `POST /api/viesti` hyväksyvät kentän `yhdistelma`. Muu arvo saa vastauksen 400, eikä viestiä silloin tallenneta. Työkalutila ei hyväksy kenttää (400). Yhdistelmän vastaus sisältää kentät `yhdistelma`, `mallit`, `kutsuja` sekä tarvittaessa `luonnos` ja `merkinta`. Keskustelutiedoston Aivon rivillä ovat `yhdistelma`, `mallit`, `kutsuja` ja `merkinta`.
 
-Kulut: tarkastus ja reititys tekevät 2 kutsua ja rinnakkais 3 kutsua viestiä kohden. Tarkastajan ja kokoajan syöte sisältää luonnoksen, joten se on yhden mallin kutsua pidempi.
+Kulut: tarkastus ja reititys tekevät 2 kutsua ja rinnakkais 3 kutsua viestiä kohden. Tiimi tekee arkisessa viestissä 2 ja vaativassa 4 kutsua. Tarkastajan ja kokoajan syöte sisältää luonnoksen, joten se on yhden mallin kutsua pidempi.
 
 ## Rajat ja avoimet asiat
 

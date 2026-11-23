@@ -1,0 +1,1 @@
+- aivo: tarkista_asennus.py:n testit kattavat aja-, http_get-, commit-, palvelu- ja avainpolut ja ohjetekstin; mutaatioajossa elossa 21 -> 1 (jaljella vastaava dont_inherit-mutantti)

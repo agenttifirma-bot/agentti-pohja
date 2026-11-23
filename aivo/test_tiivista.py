@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from aivo import alue, chat, tiivista_tyokalu as tiivista, tiivistelma, tiivistelmat_kehote, tyokalualue
+from aivo import salasana_apu, alue, chat, tiivista_tyokalu as tiivista, tiivistelma, tiivistelmat_kehote, tyokalualue
 
 NYT = datetime(2026, 11, 17, 12, 0, 0, tzinfo=timezone.utc)
 CANARY = "YKSITYINEN-KANARIA-7f3a9c"
@@ -111,6 +111,15 @@ class HiljaisuusTesti(Pohja):
         d = tiivistelma.lue(self.tiiv(), n)
         self.assertEqual((d["malli"], d["alku"], d["loppu"]), (tiivista.MALLI, 0, 2))
         self.assertEqual(d["kohdat"][0]["tila"], "ehdotus")
+
+    def test_vieras_alikansio_kirjastossa_ei_kaada_tiivistysta(self):
+        """Tiivistys lukee vain chat-, tiivistelmat- ja indeksi-kansiot: kirjaston vieras alikansio ei estaa ajoa."""
+        self.tee(1)
+        kirjasto = self.a.polku("kirjasto")
+        (kirjasto / "hylatyt").mkdir(mode=0o700)
+        (kirjasto / "hylatyt" / "x.txt").write_text("x")
+        self.assertEqual(self.aja(Malli())["tiivistetty"], 1)
+        self.assertTrue((kirjasto / "hylatyt" / "x.txt").exists())      # kirjastoon ei kosketa
 
     def test_jo_tiivistettya_ei_tiivisteta_uudelleen(self):
         self.tee(1)
@@ -682,7 +691,7 @@ class ChatKytkentaTesti(unittest.TestCase):
         def kysy_yks(muisti, historia, ohjeet):
             cls.yks.append(muisti + ohjeet)
             return "yksityinen vastaus"
-        cls.tila = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "data"), [".ts" + ".net"],
+        cls.tila = chat.Tila(salasana_apu.tiiviste(SAL), str(r / "kirjasto"), str(r / "data"), [".ts" + ".net"],
                              kysy=kysy, yks_data=str(r / "yks" / "chat"), yks_muisti=str(r / "yks" / "muisti"),
                              ydinohjeet=str(r / "yks" / "ydin"), ehdotukset=str(r / "yks" / "ehd"), kysy_yks=kysy_yks,
                              tiivistelmat=str(a.polku("tiivistelmat")))
@@ -728,7 +737,7 @@ class ChatKytkentaTesti(unittest.TestCase):
         self.assertNotIn("TIIVISTELMAN-TULKINTA", self.yks[-1])
 
     def test_ilman_tiivistelmakansiota_kaikki_toimii_kuten_ennen(self):
-        tila = chat.Tila(chat.tiivista_salasana(SAL), self.tila.kirjasto, self.tila.keskustelut.data.as_posix(), [".ts" + ".net"],
+        tila = chat.Tila(salasana_apu.tiiviste(SAL), self.tila.kirjasto, self.tila.keskustelut.data.as_posix(), [".ts" + ".net"],
                          kysy=lambda m, h: "ok")
         self.assertIsNone(tila.tiivistelmat)
 
