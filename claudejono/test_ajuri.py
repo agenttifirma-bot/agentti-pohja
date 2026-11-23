@@ -391,6 +391,11 @@ class Itsesuunnittelu(Pohja):
         self.assertEqual(len(teht), ajuri.AUTO_PER_AJO)
 
     def test_paivaraja_estaa_mallikutsun(self):
+        # Paivaraja (60) on suurempi kuin jonon enimmaiskoko (50): ilman tata jono olisi taynna jo ennen paivarajaa.
+        # Raja lasketaan vain tassa testissa alle JONO_MAX_AVOIMIA:n, jotta paivarajan polku tulee vastaan.
+        vanha = ajuri.AUTO_MAX_PAIVA
+        ajuri.AUTO_MAX_PAIVA = ajuri.JONO_MAX_AVOIMIA - 20
+        self.addCleanup(setattr, ajuri, "AUTO_MAX_PAIVA", vanha)
         teht = self.repo / ajuri.JONO / "tehtavat"
         teht.mkdir(parents=True)
         for i in range(ajuri.AUTO_MAX_PAIVA):
