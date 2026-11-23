@@ -10,6 +10,9 @@ from aivo.agentti import polut, tyokalut
 HAKEMISTO = pathlib.Path(__file__).resolve().parent / "agentti"
 KIELLETYT_MODUULIT = {"urllib", "socket", "http", "subprocess", "ssl", "ftplib", "smtplib", "telnetlib",
                       "xmlrpc", "asyncio", "multiprocessing", "ctypes", "importlib", "requests", "pty"}
+# Ainoa agenttimoduuli, joka saa tuoda aivo-paketin moduuleja (mallikytkenta, A1072). Muut agenttimoduulit
+# (tyokalut, polut, protokolla, silmukka) eivat tuo mitaan aivo-paketista.
+YLATASON_TUONNIT = {"malli.py": {"openrouter_kulut", "yksityinen_or"}}
 KIELLETYT_OS = {"system", "popen", "fork", "forkpty", "execv", "execve", "execvp", "execl", "execle",
                 "execlp", "spawnl", "spawnv", "spawnlp", "spawnvp", "posix_spawn", "remove", "rmdir",
                 "removedirs"}
@@ -43,7 +46,11 @@ class RakenneTesti(unittest.TestCase):
         for t in self.moduulit():
             puu = ast.parse(t.read_text(encoding="utf-8"))
             for n in ast.walk(puu):
-                if isinstance(n, ast.ImportFrom) and n.level:
+                if isinstance(n, ast.ImportFrom) and n.level == 2 and t.name in YLATASON_TUONNIT:
+                    # mallikytkenta (A1072): vain nimetyt aivo-moduulit, muoto "from .. import x"
+                    self.assertIsNone(n.module, t.name)
+                    self.assertLessEqual({a.name for a in n.names}, YLATASON_TUONNIT[t.name], t.name)
+                elif isinstance(n, ast.ImportFrom) and n.level:
                     self.assertEqual(n.level, 1, t.name)
                     self.assertIn((n.module or ""), sallitut_oma, t.name)
                 elif isinstance(n, (ast.Import, ast.ImportFrom)):
