@@ -1713,28 +1713,32 @@ def tee_kasittelija(tila):
                 return self._json(400, {"virhe": "vahvistuksen pit\u00e4\u00e4 olla t\u00e4sm\u00e4lleen 'kyll\u00e4 <sha8>'"})
             if not tila.luovutuslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
+            vastaus = None
             try:
                 tulos = luovutus.hyvaksy(tila.luovutukset, t, vahvistus, tila.kirjasto)
+                vastaus = (200, {"tulos": tulos, "teksti": LUOVUTUS_TULOKSET.get(tulos, "L\u00e4hetetty (%s)." % tulos)})
             except ChatVirhe as e:
-                return self._json(409, {"virhe": str(e)})
+                vastaus = (409, {"virhe": str(e)})
             except OSError as e:
-                return self._json(500, {"virhe": "tallennus ep\u00e4onnistui (%s)" % type(e).__name__})
+                vastaus = (500, {"virhe": "tallennus ep\u00e4onnistui (%s)" % type(e).__name__})
             finally:
                 tila.luovutuslukko.release()
-            return self._json(200, {"tulos": tulos, "teksti": LUOVUTUS_TULOKSET.get(tulos, "L\u00e4hetetty (%s)." % tulos)})
+            return self._json(*vastaus)             # vastaus lahtee vasta lukon vapautuksen jalkeen (ei satunnaista 429:aa)
 
         def _luovutus_hylkaa(self, d):
             if not self._yks_keskustelu(d):
                 return self._json(404, {"virhe": "ei loydy"})
             if not tila.luovutuslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
+            vastaus = None
             try:
                 luovutus.hylkaa_ehdotus(tila.luovutukset, d.get("tunnus"))
+                vastaus = (200, {"tulos": "hylatty", "teksti": "Luovutus hyl\u00e4tty ja siirretty kansioon hylatyt/."})
             except ChatVirhe as e:
-                return self._json(409, {"virhe": str(e)})
+                vastaus = (409, {"virhe": str(e)})
             finally:
                 tila.luovutuslukko.release()
-            return self._json(200, {"tulos": "hylatty", "teksti": "Luovutus hyl\u00e4tty ja siirretty kansioon hylatyt/."})
+            return self._json(*vastaus)             # vastaus lahtee vasta lukon vapautuksen jalkeen
 
         # --- Luovutuspaketit (aivo/luovutuspaketti.py). Kaikki reitit ovat 404 tyokalutilan keskustelulle: tyokalutila ei
         # nae pakettia ennen hyvaksyntaa eika yksityista tulosrepoa koskaan. Lahetys vaatii "kylla <sha8>" koko paketista.
@@ -1844,13 +1848,15 @@ def tee_kasittelija(tila):
                 return self._json(404, {"virhe": "ei loydy"})
             if not tila.luovutuslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
+            vastaus = None
             try:
                 tulos = luovutus.merkitse_kasitellyksi(tila.kirjasto, d.get("tunnus"))
+                vastaus = (200, {"tulos": tulos, "teksti": "Merkitty k\u00e4sitellyksi (%s)." % tulos})
             except ChatVirhe as e:
-                return self._json(409, {"virhe": str(e)})
+                vastaus = (409, {"virhe": str(e)})
             finally:
                 tila.luovutuslukko.release()
-            return self._json(200, {"tulos": tulos, "teksti": "Merkitty k\u00e4sitellyksi (%s)." % tulos})
+            return self._json(*vastaus)             # vastaus lahtee vasta lukon vapautuksen jalkeen
 
     return K
 

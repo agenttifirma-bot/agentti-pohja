@@ -1,0 +1,1 @@
+- aivo/chat: luovutuksen hyväksyntä, hylkäys ja saapuneen käsitellyksi merkintä lähettävät virhevastauksen vasta luovutuslukon vapautuksen jälkeen (sama korjaus kuin ehdotuslukolle #397:ssä), joten peräkkäinen pyyntö ei saa aiheetonta 429-vastausta; uusi kilpatesti aivo/test_luovutus_lukko.py.
