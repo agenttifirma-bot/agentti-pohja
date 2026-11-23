@@ -18,6 +18,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from yojono import ajuri as ajuri_yojono
+
 from . import aivo_arvio, ajuri, kaistamittaus, kulutus, tavoite, vaiteportti, varaus
 
 TZ = ZoneInfo("Europe/Helsinki")
@@ -197,6 +199,12 @@ def pysahtyneet_kaistat(repo, nyt, kaistoja=None, aktiivinen=kaista_aktiivinen, 
     return rivit_
 
 
+def tavoitehylatyt(repo):
+    """Odottavat teht\u00e4v\u00e4t (nimi ilman .md), jotka ajuri ohittaa Tavoite-rivin takia: sama tavoite.luokittele kuin
+    ajurin valinnassa, joten korjattu teht\u00e4v\u00e4 katoaa listalta heti (hylk\u00e4ysloki j\u00e4isi n\u00e4ytt\u00e4m\u00e4\u00e4n vanhaa). Vain luku."""
+    return [p.name.removesuffix(".md") for p in ajuri.odottavat_tehtavat(repo) if tavoite.luokittele(p)[0] is None]
+
+
 OLETUS_POHJA = "/opt/agentti-pohja"
 OLETUS_YOJONO_AJURI = "/opt/yojono-ajuri"
 
@@ -235,6 +243,50 @@ def kayttoonotto_ero_rivi(pohja=OLETUS_POHJA, yojono_ajuri=OLETUS_YOJONO_AJURI, 
     osat = ", ".join(f"{k[0]} {k[1]} committia" for k in jaljessa)
     return f"ajurit j\u00e4ljess\u00e4 mainista: {osat}" + (" (PR " + ", ".join(f"#{n}" for n in pr[:5]) + (" ..." if len(pr) > 5 else "") + ")" if pr else "") \
         + "; p\u00e4ivit\u00e4 komennolla paivita-ajurit.sh"
+
+
+def skriptikopio_ero_rivi(pohja=OLETUS_POHJA, skriptit=None):
+    """Teksti, jos y\u00f6jonon oletuspolun skriptikopio eroaa k\u00e4ytt\u00f6\u00f6n otetun pohjan versiosta tai puuttuu; None, jos kaikki ovat samat.
+
+    Vertaa tavuja: jokaisen `yojono.ajuri.SKRIPTIT`-taulun oletuspolun tiedosto vs. `<pohja>/yojono/<nimi>`. Vain luku.
+    Rajoitus: palvelun ymp\u00e4rist\u00f6muuttujia (YOJONO_KEHITYS ym.) ei n\u00e4e t\u00e4st\u00e4 prosessista, joten vertailu koskee vain
+    oletuspolkuja; jos palvelu k\u00e4ytt\u00e4\u00e4 muuttujalla toista polkua, se j\u00e4\u00e4 vertaamatta. Lukuvirhe ei kaada koostetta:
+    vain virheen tyyppi n\u00e4kyy."""
+    try:
+        taulu = skriptit if skriptit is not None else [v[1] for v in ajuri_yojono.SKRIPTIT.values()]
+        eroavat, puuttuvat, virheet = [], [], []
+        for kopio in taulu:
+            nimi = Path(kopio).name
+            try:
+                if not Path(kopio).exists():
+                    puuttuvat.append(nimi)
+                elif Path(kopio).read_bytes() != (Path(pohja) / "yojono" / nimi).read_bytes():
+                    eroavat.append(nimi)
+            except Exception as virhe:   # esim. repon tiedosto puuttuu tai ei ole luettavissa: vain tyyppi
+                virheet.append(f"{nimi}: {type(virhe).__name__}")
+    except Exception as virhe:
+        return "y\u00f6jonon skriptikopioiden vertailu ei selvinnyt (" + type(virhe).__name__ + ")"
+    osat = []
+    if eroavat:
+        osat.append("y\u00f6jonon skriptikopio eroaa repon versiosta: " + ", ".join(eroavat) + " (kopioi /opt/yojono/:aan rootina)")
+    if puuttuvat:
+        osat.append("y\u00f6jonon skriptikopio puuttuu: " + ", ".join(puuttuvat))
+    if virheet:
+        osat.append("y\u00f6jonon skriptikopion vertailu ei selvinnyt (" + ", ".join(virheet) + ")")
+    return "; ".join(osat) or None
+
+
+def yhdista_erot(*lahteet):
+    """Ero-lahteiden tekstit yhdeksi riviksi; yksittainen virhe ei kaada muita."""
+    tekstit = []
+    for lahde in lahteet:
+        try:
+            t = lahde()
+        except Exception:
+            t = None
+        if t:
+            tekstit.append(t)
+    return "; ".join(tekstit) or None
 
 
 def keraa(repo, perus, nyt, hae=None, yksikot=None, ero=None, kaistavahti=None):
@@ -297,7 +349,11 @@ def keraa(repo, perus, nyt, hae=None, yksikot=None, ero=None, kaistavahti=None):
         kaistavaroitukset = (kaistavahti or pysahtyneet_kaistat)(repo, nyt)
     except Exception:
         kaistavaroitukset = []
-    return {"kaistavaroitukset": kaistavaroitukset, "nyt": nyt, "aivo_valmis": aivo_valmis, "tarkastaja_virheet": tarkastaja_virheet, "kaistat": kaistat, "kulutus": kulutus_teksti, "varaus": varaus_rivi, "varaus_kysymys": varaus_kysymys, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku), "paatokset": avoimet_paatokset(repo, nyt), "saannot": tonylle_uudet(repo, alku, SAANTOPAIVITYKSET),
+    try:   # Tavoite-rivin takia ohitetut odottavat tehtavat: vain luku, virhe ei kaada koostetta
+        tavoite_ohitetut = tavoitehylatyt(repo)
+    except Exception:
+        tavoite_ohitetut = []
+    return {"tavoite_ohitetut": tavoite_ohitetut, "kaistavaroitukset": kaistavaroitukset, "nyt": nyt, "aivo_valmis": aivo_valmis, "tarkastaja_virheet": tarkastaja_virheet, "kaistat": kaistat, "kulutus": kulutus_teksti, "varaus": varaus_rivi, "varaus_kysymys": varaus_kysymys, "tulokset": tulokset, "uudet_prt": prt, "opit": opit, "tonylle": tonylle_uudet(repo, alku), "paatokset": avoimet_paatokset(repo, nyt), "saannot": tonylle_uudet(repo, alku, SAANTOPAIVITYKSET),
             "pr": pr_ryhmat, "pr_virheita": virheet, "yojono": yojono_tila(perus, nyt),
             "yksikot": (yksikot or rikkinaiset_yksikot)(), "vaiteportti": vaiteportti.puutteet(repo), "ero": ero_teksti}
 
@@ -333,6 +389,10 @@ def rivit(t):
             paatos_osat.append(f"{len(t['pr']['automerge'])} hoituu automergell\u00e4")
     if t.get("aivo_valmis"):   # Tony 7.11.2026: kerro HETI, kun kaikki aivo-valmius.md:n kohdat t\u00e4yttyv\u00e4t
         paatos_osat.insert(0, "Aivo on valmis OpenRouteriin ja itsekehitykseen: kaikki aivo-valmius.md:n kohdat t\u00e4yttyv\u00e4t")
+    ohitetut = t.get("tavoite_ohitetut") or []
+    if ohitetut:   # ensimmaiseksi: muuten teht\u00e4v\u00e4 seisoo jonossa huomaamatta (virheluokka 2, 22.11.2026)
+        paatos_osat.insert(0, f"{len(ohitetut)} teht\u00e4v\u00e4\u00e4 ohitetaan, koska Tavoite-rivi ei kelpaa (korjaa rivi): "
+                           + ", ".join(ohitetut[:2]) + (f" (+{len(ohitetut) - 2})" if len(ohitetut) > 2 else ""))
     avoimet = t.get("paatokset") or []
     muut = [k for k in (t.get("tonylle") or []) if k not in avoimet]   # ei hiljaa katoavia kohtia: avainsanaan osumattomat vain laskurina
     if muut:
@@ -426,7 +486,7 @@ def main(argv=None):
     nyt = datetime.fromisoformat(a.nyt) if a.nyt else datetime.now(TZ)
     if nyt.tzinfo is None:
         nyt = nyt.replace(tzinfo=TZ)
-    teksti = muotoile(keraa(a.repo, a.yojono, nyt, ero=kayttoonotto_ero_rivi))
+    teksti = muotoile(keraa(a.repo, a.yojono, nyt, ero=lambda: yhdista_erot(kayttoonotto_ero_rivi, skriptikopio_ero_rivi)))
     print(teksti)
     if a.laheta:
         from yojono.ajuri import laheta_telegram

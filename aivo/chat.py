@@ -27,7 +27,10 @@ Turvarajat (koodi on laki):
     tekstin Tonyn tavallisena viestina. Tonyn omia viesteja ei koskaan tulkita merkintoina.
   * Kulunakyma (GET /api/kulut) lukee OpenRouter-kirjanpitoa vain lukien ja palauttaa vain summat. Se ei muuta
     katkaisinta eika kattoa; varoitusraja lasketaan katkaisimen omalla kertoimella (openrouter_kulut.USD_EUR).
-  * Muistin tiedostot ovat dataa, eivat ohjeita. Lokiin ei kirjoiteta viestien sisaltoa eika salasanoja."""
+  * Muistin tiedostot ovat dataa, eivat ohjeita. Lokiin ei kirjoiteta viestien sisaltoa eika salasanoja.
+  * Luovutus yksityisesta tilasta tyokalutilaan (aivo/luovutus.py): mallin [[LUOVUTUS]]-lohko tai Tonyn painike luo
+    vain ehdotuksen yksityiseen kansioon. Teksti lahtee vasta POST /api/luovutus/hyvaksy -kutsulla (vahvistus
+    "kylla <sha8>"), ja se kopioidaan sellaisenaan kirjaston kansioon saapuneet/. Tyokalutila nakee vain sen kansion."""
 import argparse
 import getpass
 import hashlib
@@ -50,7 +53,7 @@ from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from aivo import kalenteri, kalenteri_kehote, openrouter_kulut, tiivistelmat_kehote, yksityinen, yksityinen_or
+from aivo import kalenteri, kalenteri_kehote, luovutus, openrouter_kulut, tiivistelmat_kehote, yksityinen, yksityinen_or
 from aivo.yksityinen import YksityinenVirhe as ChatVirhe, julkaise_kirjastoon   # sama poikkeus kaikkialla
 from aivo import yhdistelma        # usean mallin yhdistelmat (oma rivi: ei ristiriitaa rinnakkaisten tuontimuutosten kanssa)
 
@@ -127,12 +130,18 @@ textarea{resize:none;height:3.2rem}button{font:inherit;padding:.5rem .9rem;borde
 #kulut.varoitus{color:#b45309;font-weight:bold;opacity:1}
 @media(prefers-color-scheme:dark){#kulut.varoitus{color:#fbbf24}}
 .kulut table{border-collapse:collapse;font-size:.85rem;margin:.3rem 0}.kulut td,.kulut th{padding:.1rem .5rem;text-align:left}
+.luovutus textarea{display:block;width:100%;min-height:8rem;height:auto;resize:vertical;margin:.4rem 0}
+.luovutus pre{white-space:pre-wrap;word-wrap:break-word;max-height:40vh;overflow:auto;font-size:.8rem;margin:.4rem 0}
+.varoitus{font-weight:bold}
 </style></head><body>
 <header><strong>Aivo</strong><span><select id="tila" aria-label="Tila">
 <option value="yksityinen" selected>{YKSITYINEN_TEKSTI}</option>
 <option value="tyokalu">Ty\u00f6kalu (Claude pilvess\u00e4)</option></select>
 <select id="malli" aria-label="Malli" hidden></select> <button id="uusi">Uusi keskustelu</button>
-<a href="#" id="odottavat" class="pieni" hidden>Odottavat ehdotukset</a></span></header>
+<a href="#" id="odottavat" class="pieni" hidden>Odottavat ehdotukset</a>
+<a href="#" id="luovutukset" class="pieni" hidden>Odottavat luovutukset</a>
+<a href="#" id="luovutetut" class="pieni" hidden>Luovutetut</a>
+<a href="#" id="saapuneet" class="pieni" hidden>Saapuneet</a></span></header>
 <div id="viestit" aria-live="polite"></div>
 <form id="lomake"><textarea id="teksti" maxlength="4000" placeholder="Kirjoita Aivolle\u2026 (Enter l\u00e4hett\u00e4\u00e4, Shift+Enter rivinvaihto)" required></textarea><button>L\u00e4het\u00e4</button></form>
 <script>
@@ -173,7 +182,9 @@ function kortti(idx){const s=tonyn[idx];if(typeof s!=='string')return;const d=do
 async function aloita(){const r=await fetch('/api/uusi',{method:'POST',headers:H,body:JSON.stringify(mallikentta({tila:document.getElementById('tila').value}))});
  if(r.status===401){location.href='/kirjaudu';return;}
  if(!r.ok){lisaa('aivo','Tilaa ei voi k\u00e4ytt\u00e4\u00e4 ('+r.status+')');return;}
- const j=await r.json();kid=j.id;nyt=j.tila;V.textContent='';document.getElementById('odottavat').hidden=(nyt!=='yksityinen');
+ const j=await r.json();kid=j.id;nyt=j.tila;V.textContent='';
+ ['odottavat','luovutukset','luovutetut'].forEach(x=>{document.getElementById(x).hidden=(nyt!=='yksityinen');});
+ document.getElementById('saapuneet').hidden=(nyt!=='tyokalu');
  if(typeof j.malli==='string'&&mallit.includes(j.malli))M.value=j.malli;
  if(typeof j.yhdistelma==='string'&&mallit.includes('yhdistelma:'+j.yhdistelma)&&j.yhdistelma!=='yksi')M.value='yhdistelma:'+j.yhdistelma;nayta();}
 async function haeMallit(){const x=await haeJson('/api/mallit');if(!x||!x.r.ok||!Array.isArray(x.j.mallit))return;
@@ -242,6 +253,61 @@ async function erittely(){await kulut();const d=document.createElement('div');d.
  d.appendChild(h);V.appendChild(d);alas();}
 document.getElementById('kulut').onclick=e=>{e.preventDefault();erittely();};
 kulut().catch(()=>{});
+async function luovutusKortti(t){const d=document.createElement('div');d.className='kortti luovutus';const o=document.createElement('div');
+ o.textContent='Haetaan luovutusta\u2026';d.appendChild(o);V.appendChild(d);
+ const x=await haeJson('/api/luovutus?keskustelu='+q(kid)+'&tunnus='+q(t));if(!x)return;
+ if(!x.r.ok){o.textContent='Luovutusta ei voi n\u00e4ytt\u00e4\u00e4: '+(x.j.virhe||x.r.status);return;}
+ const e=x.j;const va=document.createElement('div');va.className='varoitus';va.textContent='T\u00e4m\u00e4 teksti l\u00e4htee Clauden pilveen';
+ const ta=document.createElement('textarea');ta.maxLength=8000;ta.value=e.teksti;ta.setAttribute('aria-label','L\u00e4htev\u00e4 teksti');
+ const tunn=()=>{o.textContent='Luovutus ty\u00f6kalutilaan (tunnus '+e.tunnus+', sha '+e.sha8+'). Voit muokata teksti\u00e4 ennen l\u00e4hetyst\u00e4.';};tunn();
+ const l=document.createElement('button');l.textContent='L\u00e4het\u00e4 ty\u00f6kalutilaan';const h=document.createElement('button');h.textContent='Hylk\u00e4\u00e4';
+ const ti=document.createElement('div');ti.className='pieni';
+ const post=async(polku,lisa)=>{const r=await fetch(polku,{method:'POST',headers:H,body:JSON.stringify(Object.assign({keskustelu:kid,tunnus:e.tunnus},lisa))});
+  if(r.status===401){location.href='/kirjaudu';return null;}let j={};try{j=await r.json();}catch(z){}return {r:r,j:j};};
+ l.onclick=async()=>{l.disabled=h.disabled=true;
+  try{if(ta.value!==e.teksti){const m=await post('/api/luovutus/muokkaa',{teksti:ta.value});if(!m)return;
+    if(!m.r.ok){ti.textContent='Muokkausta ei tallennettu: '+(m.j.virhe||m.r.status);return;}
+    e.teksti=ta.value;e.sha8=m.j.sha8;tunn();ti.textContent='Muokattu teksti sai uuden sha:n '+e.sha8+'.';}
+   if(!confirm('L\u00e4hetet\u00e4\u00e4nk\u00f6 laatikon teksti (sha '+e.sha8+') ty\u00f6kalutilaan? Se l\u00e4htee Clauden pilveen.'))return;
+   const a=await post('/api/luovutus/hyvaksy',{vahvistus:'kyll\u00e4 '+e.sha8});if(!a)return;
+   ti.textContent=a.j.teksti||('Ei l\u00e4hetetty: '+(a.j.virhe||a.r.status));
+   if(a.r.ok){ta.readOnly=true;l.remove();h.remove();}}
+  finally{if(l.isConnected){l.disabled=h.disabled=false;}alas();}};
+ h.onclick=async()=>{if(!confirm('Hyl\u00e4t\u00e4\u00e4nk\u00f6 luovutus? Se siirret\u00e4\u00e4n kansioon hylatyt/ eik\u00e4 sit\u00e4 poisteta.'))return;
+  l.disabled=h.disabled=true;const a=await post('/api/luovutus/hylkaa',{});if(!a)return;
+  ti.textContent=a.j.teksti||('Ei hyl\u00e4tty: '+(a.j.virhe||a.r.status));if(a.r.ok){ta.readOnly=true;l.remove();h.remove();}else{l.disabled=h.disabled=false;}};
+ d.append(va,ta,l,h,ti);alas();}
+function luovuta(d,idx){const b=document.createElement('button');b.textContent='Luovuta ty\u00f6kalutilaan';
+ b.onclick=async()=>{b.disabled=true;const r=await fetch('/api/luovutus/uusi',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,indeksi:idx})});
+  if(r.status===401){location.href='/kirjaudu';return;}let j={};try{j=await r.json();}catch(z){}
+  if(!r.ok||typeof j.tunnus!=='string'){b.disabled=false;b.textContent='Luovutus ep\u00e4onnistui ('+(j.virhe||r.status)+')';return;}
+  await luovutusKortti(j.tunnus);};d.appendChild(b);}
+async function odottavatLuovutukset(){if(!kid)await aloita();if(!kid||nyt!=='yksityinen')return;
+ const x=await haeJson('/api/luovutukset?keskustelu='+q(kid));if(!x)return;
+ if(!x.r.ok||!Array.isArray(x.j.luovutukset)){lisaa('aivo','Luovutuksia ei voi hakea ('+x.r.status+')');return;}
+ if(!x.j.luovutukset.length){lisaa('aivo','Ei odottavia luovutuksia.');return;}
+ for(const e of x.j.luovutukset){if(e&&typeof e.tunnus==='string')await luovutusKortti(e.tunnus);}}
+async function luovutetut(){if(!kid)await aloita();if(!kid||nyt!=='yksityinen')return;
+ const x=await haeJson('/api/luovutetut?keskustelu='+q(kid));if(!x)return;
+ if(!x.r.ok||!Array.isArray(x.j.luovutetut)){lisaa('aivo','Lokia ei voi hakea ('+x.r.status+')');return;}
+ if(!x.j.luovutetut.length){lisaa('aivo','Mit\u00e4\u00e4n ei ole luovutettu.');return;}
+ x.j.luovutetut.forEach(e=>{const d=document.createElement('div');d.className='kortti luovutus';const o=document.createElement('div');
+  o.textContent='Luovutettu '+e.aika+' (tunnus '+e.tunnus+', sha '+String(e.sha||'').slice(0,8)+', tulos '+e.tulos+')';
+  const p=document.createElement('pre');p.textContent=e.teksti;d.append(o,p);V.appendChild(d);});alas();}
+async function saapuneet(){if(!kid)await aloita();if(!kid||nyt!=='tyokalu')return;
+ const x=await haeJson('/api/saapuneet?keskustelu='+q(kid));if(!x)return;
+ if(!x.r.ok||!Array.isArray(x.j.saapuneet)){lisaa('aivo','Saapuneita ei voi hakea ('+x.r.status+')');return;}
+ if(!x.j.saapuneet.length){lisaa('aivo','Ei k\u00e4sittelem\u00e4tt\u00f6mi\u00e4 luovutuksia.');return;}
+ x.j.saapuneet.forEach(e=>{const d=document.createElement('div');d.className='kortti luovutus';const o=document.createElement('div');
+  o.textContent='Saapunut '+e.aika+' (tunnus '+e.tunnus+')';const p=document.createElement('pre');p.textContent=e.teksti;
+  const b=document.createElement('button');b.textContent='Merkitse k\u00e4sitellyksi';const ti=document.createElement('div');ti.className='pieni';
+  b.onclick=async()=>{if(!confirm('Merkit\u00e4\u00e4nk\u00f6 luovutus k\u00e4sitellyksi?'))return;b.disabled=true;
+   const r=await fetch('/api/saapuneet/kasitelty',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,tunnus:e.tunnus})});
+   let j={};try{j=await r.json();}catch(z){}ti.textContent=j.teksti||('Ei merkitty: '+(j.virhe||r.status));if(r.ok)b.remove();else b.disabled=false;};
+  d.append(o,p,b,ti);V.appendChild(d);});alas();}
+document.getElementById('luovutukset').onclick=e=>{e.preventDefault();odottavatLuovutukset();};
+document.getElementById('luovutetut').onclick=e=>{e.preventDefault();luovutetut();};
+document.getElementById('saapuneet').onclick=e=>{e.preventDefault();saapuneet();};
 document.getElementById('uusi').onclick=aloita;
 document.getElementById('tila').onchange=e=>{if(e.target.value==='tyokalu'&&!confirm('Ty\u00f6kalutilassa viestit kulkevat Clauden pilvipalveluun. Jatketaanko?')){e.target.value='yksityinen';return;}aloita();};
 let lahetyksessa=false;
@@ -257,7 +323,9 @@ async function laheta(s){if(lahetyksessa)return;lahetyksessa=true;lukitse();
    else if(Array.isArray(j.valinnat)||Array.isArray(j.ehdotukset)||Number.isInteger(j.paatosehdotus))odota.hidden=true;
    else odota.textContent='(Aivo ei antanut vastausta. Kokeile uudelleen.)';
    if(r.ok&&typeof j.malli==='string'){const mn=document.createElement('span');mn.className='mallinimi';mn.textContent='Malli: '+j.malli;odota.appendChild(mn);yhdistelmatieto(odota,mn,j);}
-   if(Number.isInteger(j.indeksi)){tonyn[j.indeksi]=s;painike(oma,j.indeksi);}
+   if(Number.isInteger(j.indeksi)){tonyn[j.indeksi]=s;painike(oma,j.indeksi);if(nyt==='yksityinen')luovuta(oma,j.indeksi);}
+   if(r.ok&&nyt==='yksityinen'&&Number.isInteger(j.vastaus_indeksi))luovuta(odota,j.vastaus_indeksi);
+   if(Array.isArray(j.luovutukset))j.luovutukset.forEach(t=>{if(typeof t==='string')luovutusKortti(t);});
    if(Number.isInteger(j.paatosehdotus))kortti(j.paatosehdotus);
    if(Array.isArray(j.ehdotukset))j.ehdotukset.forEach(t=>{if(typeof t==='string')ehdotus(t);});
    if(Array.isArray(j.valinnat))valinnat(j.valinnat);alas();}
@@ -432,8 +500,9 @@ def lue_muisti(kirjasto, ylaraja=None, tiedosto_raja=None, kysymys=None):
     tiedostot = []
     if juuri.is_dir():
         for p in juuri.rglob("*"):
-            if ".git" in p.relative_to(juuri).parts or p.suffix.lower() not in SALLITUT_PAATELIITTEET:
-                continue
+            osat_ = p.relative_to(juuri).parts
+            if ".git" in osat_ or osat_[0] == luovutus.SAAPUNEET or p.suffix.lower() not in SALLITUT_PAATELIITTEET:
+                continue      # saapuneet/ (luovutukset) tulee kehotteeseen omana osionaan (luovutus.saapuneet_kehote)
             try:
                 r = p.resolve()
                 if not r.is_file() or juuri not in r.parents:
@@ -704,6 +773,15 @@ EHDOTUS_TULOKSET = {
 }
 
 
+LUOVUTUS_TULOKSET = {
+    "pushattu": "L\u00e4hetetty ty\u00f6kalutilaan: kirjattu saapuneisiin, commitoitu ja pushattu.",
+    "push-epaonnistui": "L\u00e4hetetty ty\u00f6kalutilaan ja commitoitu, mutta push Giteaan ep\u00e4onnistui.",
+    "ei-etaa": "L\u00e4hetetty ty\u00f6kalutilaan ja commitoitu (ei et\u00e4repoa).",
+    "ei-gitissa": "L\u00e4hetetty ty\u00f6kalutilaan (kirjasto ei ole git-repo).",
+    "ei-muutosta": "L\u00e4hetetty ty\u00f6kalutilaan.",
+}
+
+
 # Paatoksen kirjauksen tulos -> (HTTP-tila, naytettava teksti). "Kirjattu" nakyy vain, kun paatos on oikeasti perilla:
 # pushattu Giteaan (tyokalutila) tai kirjattu yksityiseen muistiin (yksityinen tila). Tuntematon tulos on virhe.
 PAATOS_TULOKSET = {
@@ -865,11 +943,11 @@ class Tila:
     kulut_kerroin = Decimal(KULUT_KERROIN_OLETUS)   # kulunakyman USD->EUR-kerroin; main asettaa --kulut-kerroin-arvon
 
     def __init__(self, tiiviste, kirjasto, data, sallitut_hostit, kysy=kysy_claudelta, julkaise=kirjaa_paatos, julkaise_yks=kirjaa_paatos_yksityinen,
-                 yks_data=None, yks_muisti=None, ydinohjeet=None, ehdotukset=None,
+                 yks_data=None, yks_muisti=None, ydinohjeet=None, ehdotukset=None, luovutukset=None,
                  malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None,
                  taustapaa="loopback", or_malli=None, or_avain=yksityinen_or.OLETUS_AVAIN, or_mallit=None,
                  or_kulutila=None, tiivistelmat=None, kalenteri_lahde=None, yks_tiivistelmat=None,   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
-                 yhdistelma_oletus=None, roolit=None, kysy_yhd=None):
+                 yhdistelma_oletus=None, roolit=None, kysy_yhd=None, ajattelija_aika=None):
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
         self.kulutila = or_kulutila               # None = openrouter_kulut.OLETUS_TILA (yhteinen kirjanpito)
@@ -888,6 +966,7 @@ class Tila:
         self.yhdistelmat = (yhdistelma.OLETUS,)   # usean mallin yhdistelmat ovat kaytossa vain OpenRouter-taustapaalla
         self.yhdistelma_oletus = yhdistelma.tarkista_yhdistelma(yhdistelma_oletus)
         self.roolit = {}
+        self.ajattelija_aika = yhdistelma.tarkista_ajattelijan_aika(ajattelija_aika)   # tiimi; vain lyhentaa
         self.taustapaa = taustapaa if taustapaa in YKSITYINEN_TEKSTIT else "loopback"
         if yks_data:
             if taustapaa not in ("loopback", "openrouter"):
@@ -906,6 +985,8 @@ class Tila:
             self.ydinohjeet = ydinohjeet or yksityinen.OLETUS_YDINOHJEET
             self.ehdotukset = str(yksityinen.tarkista_yksityinen_hakemisto(
                 ehdotukset or str(Path(yks_data).parent / "ehdotukset")))
+            self.luovutukset = str(yksityinen.tarkista_yksityinen_hakemisto(
+                luovutukset or str(Path(yks_data).parent / "luovutukset")))
             self.taustapaa = taustapaa
             if yks_tiivistelmat:
                 if tiivistelmat and os.path.realpath(yks_tiivistelmat) == os.path.realpath(tiivistelmat):
@@ -926,9 +1007,10 @@ class Tila:
         if kysy_yhd is None and self.taustapaa == "openrouter" and yks_data:
             self.kysy_yhd = lambda muisti, historia, ohjeet, malli, yhdistelma_nimi: yksityinen_or.kysy_yhdistelmalla(
                 muisti, historia, ohjeet, malli=malli, yhdistelma_nimi=yhdistelma_nimi, roolit=self.roolit,
-                avain_tiedosto=or_avain, kulutila=or_kulutila)
+                ajattelija_aika_s=self.ajattelija_aika, avain_tiedosto=or_avain, kulutila=or_kulutila)
         self.yks_vastauslukko = threading.Lock()
         self.ehdotuslukko = threading.Lock()      # yksi hyvaksynta tai hylkays kerrallaan
+        self.luovutuslukko = threading.Lock()     # yksi luovutuksen kasittely kerrallaan (molemmat tilat)
 
     def valitse_malli(self, pyydetty):
         """Selaimen lahettama malli kelpaa vain, jos se on asetuksen listalla (muuten ChatVirhe -> 400)."""
@@ -1050,6 +1132,14 @@ def tee_kasittelija(tila):
                         if tila.or_mallit:            # yhdistelmat vain OpenRouter-taustapaalla
                             vastaus.update(yhdistelmat=list(tila.yhdistelmat), yhdistelma=tila.yhdistelma_oletus)
                         return self._json(200, vastaus)
+                    if osat.path == "/api/luovutukset":
+                        return self._luovutukset(kysely)
+                    if osat.path == "/api/luovutus":
+                        return self._luovutus(kysely)
+                    if osat.path == "/api/luovutetut":
+                        return self._luovutetut(kysely)
+                    if osat.path == "/api/saapuneet":
+                        return self._saapuneet(kysely)
                 except ChatVirhe as e:
                     return self._json(400, {"virhe": str(e)})
             self._json(404, {"virhe": "ei loydy"})
@@ -1084,6 +1174,16 @@ def tee_kasittelija(tila):
                     return self._ehdotus_hyvaksy(d)
                 if self.path == "/api/ehdotus/hylkaa":
                     return self._ehdotus_hylkaa(d)
+                if self.path == "/api/luovutus/uusi":
+                    return self._luovutus_uusi(d)
+                if self.path == "/api/luovutus/muokkaa":
+                    return self._luovutus_muokkaa(d)
+                if self.path == "/api/luovutus/hyvaksy":
+                    return self._luovutus_hyvaksy(d)
+                if self.path == "/api/luovutus/hylkaa":
+                    return self._luovutus_hylkaa(d)
+                if self.path == "/api/saapuneet/kasitelty":
+                    return self._saapunut_kasitelty(d)
             except ChatVirhe as e:
                 return self._json(400, {"virhe": str(e)})
             self._json(404, {"virhe": "ei loydy"})
@@ -1173,10 +1273,18 @@ def tee_kasittelija(tila):
                     return eid
                 vastaus = yksityinen.irrota_ehdotukset(vastaus, tallenna)
                 vastaus = yksityinen.neutraloi_merkinnat(vastaus)     # vain palvelin kirjoittaa jarjestelmamerkinnat
+                luovutukset = []
+
+                def tallenna_luovutus(t):
+                    tunnus = luovutus.tallenna_ehdotus(tila.luovutukset, t, "lohko")
+                    luovutukset.append(tunnus)
+                    return tunnus
+                vastaus = luovutus.irrota_luovutukset(vastaus, tallenna_luovutus)   # vain mallin vastaus, ei Tonyn viesti
                 vastaus, valinnat = erota_valinnat(vastaus)
                 vastaus, ehdotus = erota_paatosehdotus(vastaus, historia)
                 vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
-                vastaus = tyhjan_paikka(vastaus, bool(valinnat) or ehdotus is not None or bool(tallennetut))
+                vastaus = tyhjan_paikka(vastaus, bool(valinnat) or ehdotus is not None or bool(tallennetut)
+                                        or bool(luovutukset))
                 lisatiedot = None
                 if yhd is not None:
                     lisatiedot = {"yhdistelma": yhd.yhdistelma, "mallit": yhd.mallit, "kutsuja": yhd.kutsuja}
@@ -1185,13 +1293,15 @@ def tee_kasittelija(tila):
                 tila.yks.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus], malli=malli,
                                lisatiedot=lisatiedot)
                 tulos = (200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "tila": "yksityinen",
-                               "indeksi": oma_idx})
+                               "indeksi": oma_idx, "vastaus_indeksi": oma_idx + 1})
                 if malli:
                     tulos[1]["malli"] = malli
                 if yhd is not None:
                     tulos[1].update(lisatiedot)
                     if yhd.luonnos:
                         tulos[1]["luonnos"] = yhd.luonnos
+                if luovutukset:                # vain palvelimen tallentamat tunnukset; mitaan ei ole lahtenyt
+                    tulos[1]["luovutukset"] = luovutukset
                 if tallennetut:                # vain palvelimen itse tallentamat tunnukset; selain hakee ne erikseen
                     tulos[1]["ehdotukset"] = tallennetut
                 if ehdotus is not None:
@@ -1226,6 +1336,9 @@ def tee_kasittelija(tila):
                     if tiiv:
                         muisti += tiiv + RAJA + "\n"
                         tiedostot = tiedostot + tiiv_tiedostot
+                saap = luovutus.saapuneet_kehote(tila.kirjasto)   # vain kirjaston saapuneet/, ei yksityisia kansioita
+                if saap:
+                    muisti += saap + RAJA + "\n"
                 if tila.kalenteri is not None:    # seuraavat 14 paivaa; virhe => osio puuttuu, chat jatkaa (A988/A992)
                     kal = kalenteri_kehote.muodosta(tila.kalenteri)
                     if kal:
@@ -1309,18 +1422,21 @@ def tee_kasittelija(tila):
                 return self._json(400, {"virhe": "vahvistuksen pit\u00e4\u00e4 olla t\u00e4sm\u00e4lleen 'kyll\u00e4 <sha8>'"})
             if not tila.ehdotuslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
+            vastaus = None
             try:
                 e = yksityinen.lue_ehdotus(tila.ehdotukset, eid)          # merkintaa varten; ehdotus poistuu hyvaksyttaessa
                 tulos = yksityinen.hyvaksy_ehdotus(tila.ehdotukset, tila.ydinohjeet, eid, vahvistus)
                 merkinta = self._merkitse(d, yksityinen.hyvaksynta_merkinta(e["tiedosto"], e["sha"][:8]))
+                vastaus = (200, {"tulos": tulos,
+                                 "teksti": EHDOTUS_TULOKSET.get(tulos, "Hyv\u00e4ksytty (%s)." % tulos),
+                                 "merkinta": merkinta})
             except ChatVirhe as e:
-                return self._json(409, {"virhe": str(e)})
+                vastaus = (409, {"virhe": str(e)})
             except OSError as e:
-                return self._json(500, {"virhe": "tallennus ep\u00e4onnistui (%s)" % type(e).__name__})
+                vastaus = (500, {"virhe": "tallennus ep\u00e4onnistui (%s)" % type(e).__name__})
             finally:
                 tila.ehdotuslukko.release()
-            return self._json(200, {"tulos": tulos, "teksti": EHDOTUS_TULOKSET.get(tulos, "Hyv\u00e4ksytty (%s)." % tulos),
-                                    "merkinta": merkinta})
+            return self._json(*vastaus)             # vastaus lahtee vasta lukon vapautuksen jalkeen (ei satunnaista 429:aa)
 
         def _ehdotus_hylkaa(self, d):
             if not self._yks_keskustelu(d):
@@ -1330,6 +1446,7 @@ def tee_kasittelija(tila):
             if not tila.ehdotuslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
             eid = d.get("tunnus")
+            vastaus = None
             try:
                 try:
                     tiedosto = yksityinen.lue_ehdotus(tila.ehdotukset, eid)["tiedosto"]
@@ -1337,12 +1454,124 @@ def tee_kasittelija(tila):
                     tiedosto = "(tuntematon)"                     # viallisenkin ehdotuksen voi hylata
                 yksityinen.hylkaa_ehdotus(tila.ehdotukset, eid)
                 merkinta = self._merkitse(d, yksityinen.hylkays_merkinta(tiedosto, eid))
+                vastaus = (200, {"tulos": "hylatty", "teksti": "Ehdotus hyl\u00e4tty ja siirretty kansioon hylatyt/.",
+                                 "merkinta": merkinta})
             except ChatVirhe as e:
-                return self._json(409, {"virhe": str(e)})
+                vastaus = (409, {"virhe": str(e)})
             finally:
                 tila.ehdotuslukko.release()
-            return self._json(200, {"tulos": "hylatty", "teksti": "Ehdotus hyl\u00e4tty ja siirretty kansioon hylatyt/.",
-                                    "merkinta": merkinta})
+            return self._json(*vastaus)             # vastaus lahtee vasta lukon vapautuksen jalkeen
+
+        # --- Luovutukset yksityisesta tilasta tyokalutilaan. Ehdotus syntyy mallin [[LUOVUTUS]]-lohkosta tai Tonyn
+        # painikkeesta, mutta mitaan ei lahde ennen /api/luovutus/hyvaksy-kutsua (sha-sidottu). Reitit ovat 404
+        # tyokalutilan keskustelulle; tyokalutila nakee vain kirjaston saapuneet/-kansion (/api/saapuneet).
+
+        def _luovutukset(self, d):
+            if not self._yks_keskustelu(d):
+                return self._json(404, {"virhe": "ei loydy"})
+            lista = []
+            for t in luovutus.listaa_ehdotukset(tila.luovutukset):
+                try:
+                    e = luovutus.lue_ehdotus(tila.luovutukset, t)
+                except ChatVirhe:
+                    continue
+                lista.append({"tunnus": t, "sha8": e["sha"][:8], "lahde": e.get("lahde")})
+            return self._json(200, {"luovutukset": lista})
+
+        def _luovutus(self, d):
+            if not self._yks_keskustelu(d):
+                return self._json(404, {"virhe": "ei loydy"})
+            e = luovutus.lue_ehdotus(tila.luovutukset, d.get("tunnus"))
+            return self._json(200, {"tunnus": d.get("tunnus"), "sha8": e["sha"][:8], "teksti": e["teksti"],
+                                    "lahde": e.get("lahde")})
+
+        def _luovutetut(self, d):
+            if not self._yks_keskustelu(d):
+                return self._json(404, {"virhe": "ei loydy"})
+            return self._json(200, {"luovutetut": luovutus.lue_loki(tila.luovutukset)})
+
+        def _luovutus_uusi(self, d):
+            """Tonyn painike: teksti otetaan palvelimen tallentamasta historiasta, ei selaimen lahettamana."""
+            if not self._yks_keskustelu(d):
+                return self._json(404, {"virhe": "ei loydy"})
+            historia = tila.yks.lue(d.get("keskustelu"))
+            i = d.get("indeksi")
+            if not isinstance(i, int) or isinstance(i, bool) or not 0 <= i < len(historia):
+                return self._json(400, {"virhe": "viesti\u00e4 ei ole"})
+            t = luovutus.tallenna_ehdotus(tila.luovutukset, historia[i]["teksti"], "viesti")
+            return self._json(200, {"tunnus": t})
+
+        def _luovutus_muokkaa(self, d):
+            if not self._yks_keskustelu(d):
+                return self._json(404, {"virhe": "ei loydy"})
+            if not tila.luovutuslukko.acquire(blocking=False):
+                return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
+            try:
+                uusi = luovutus.muokkaa_ehdotus(tila.luovutukset, d.get("tunnus"), d.get("teksti"))
+            finally:
+                tila.luovutuslukko.release()
+            return self._json(200, {"tunnus": d.get("tunnus"), "sha8": uusi[:8]})
+
+        def _luovutus_hyvaksy(self, d):
+            if not self._yks_keskustelu(d):
+                return self._json(404, {"virhe": "ei loydy"})
+            t, vahvistus = d.get("tunnus"), d.get("vahvistus")
+            if not isinstance(t, str) or not isinstance(vahvistus, str) or not luovutus.VAHVISTUS_RE.match(vahvistus):
+                return self._json(400, {"virhe": "vahvistuksen pit\u00e4\u00e4 olla t\u00e4sm\u00e4lleen 'kyll\u00e4 <sha8>'"})
+            if not tila.luovutuslukko.acquire(blocking=False):
+                return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
+            try:      # vastaus vasta lukon vapautuksen jalkeen: muuten heti seuraava pyynto saisi 429
+                tulos = luovutus.hyvaksy(tila.luovutukset, t, vahvistus, tila.kirjasto)
+                vastaus = (200, {"tulos": tulos, "teksti": LUOVUTUS_TULOKSET.get(tulos, "L\u00e4hetetty (%s)." % tulos)})
+            except ChatVirhe as e:
+                vastaus = (409, {"virhe": str(e)})
+            except OSError as e:
+                vastaus = (500, {"virhe": "tallennus ep\u00e4onnistui (%s)" % type(e).__name__})
+            finally:
+                tila.luovutuslukko.release()
+            return self._json(*vastaus)
+
+        def _luovutus_hylkaa(self, d):
+            if not self._yks_keskustelu(d):
+                return self._json(404, {"virhe": "ei loydy"})
+            if not tila.luovutuslukko.acquire(blocking=False):
+                return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
+            try:      # vastaus vasta lukon vapautuksen jalkeen
+                luovutus.hylkaa_ehdotus(tila.luovutukset, d.get("tunnus"))
+                vastaus = (200, {"tulos": "hylatty", "teksti": "Luovutus hyl\u00e4tty ja siirretty kansioon hylatyt/."})
+            except ChatVirhe as e:
+                vastaus = (409, {"virhe": str(e)})
+            finally:
+                tila.luovutuslukko.release()
+            return self._json(*vastaus)
+
+        def _tyokalu_keskustelu(self, d):
+            kid = d.get("keskustelu")
+            valittu, ks = tila.tila_ja_kasittelija(kid)
+            if valittu != "tyokalu":
+                return False
+            ks.lue(kid)              # tarkistaa tunnisteen
+            return True
+
+        def _saapuneet(self, d):
+            if not self._tyokalu_keskustelu(d):
+                return self._json(404, {"virhe": "ei loydy"})
+            return self._json(200, {"saapuneet": [x for x in luovutus.listaa_saapuneet(tila.kirjasto) if not x.get("virhe")]})
+
+        def _saapunut_kasitelty(self, d):
+            """Tonyn kirjaus: saapunut luovutus siirretaan kansioon saapuneet/kasitellyt/. Malli ei voi kutsua tata."""
+            if not self._tyokalu_keskustelu(d):
+                return self._json(404, {"virhe": "ei loydy"})
+            if not tila.luovutuslukko.acquire(blocking=False):
+                return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
+            try:      # vastaus vasta lukon vapautuksen jalkeen
+                tulos = luovutus.merkitse_kasitellyksi(tila.kirjasto, d.get("tunnus"))
+                vastaus = (200, {"tulos": tulos, "teksti": "Merkitty k\u00e4sitellyksi (%s)." % tulos})
+            except ChatVirhe as e:
+                vastaus = (409, {"virhe": str(e)})
+            finally:
+                tila.luovutuslukko.release()
+            return self._json(*vastaus)
 
     return K
 
@@ -1369,6 +1598,8 @@ def main(argv=None):
     ap.add_argument("--yksityinen-muisti", default=os.environ.get("AIVO_YKSITYINEN_MUISTI"))
     ap.add_argument("--ydinohjeet", default=os.environ.get("AIVO_YDINOHJEET", yksityinen.OLETUS_YDINOHJEET))
     ap.add_argument("--ehdotukset", default=os.environ.get("AIVO_EHDOTUKSET"))
+    ap.add_argument("--luovutukset", default=os.environ.get("AIVO_LUOVUTUKSET"),
+                    help="yksityinen luovutusehdotusten ja -lokin kansio (oletus: yksityisen datan viereinen 'luovutukset')")
     ap.add_argument("--tiivistelmat-kaytossa", action="store_true",
                     default=os.environ.get("AIVO_TIIVISTELMAT_KAYTOSSA") == "1",
                     help="liittaa tiivistelmat tyokalutilan kehotteeseen (oletus: pois paalta; kansion olemassaolo ei kytke)")
@@ -1400,9 +1631,11 @@ def main(argv=None):
     ap.add_argument("--openrouter-avain-tiedosto", default=os.environ.get("AIVO_OPENROUTER_AVAIN", yksityinen_or.OLETUS_AVAIN),
                     help="tiedosto (0600, palvelun kayttajan), jossa avain on; avainta ei anneta ymparistomuuttujalla")
     ap.add_argument("--yksityinen-yhdistelma", default=os.environ.get("AIVO_YKSITYINEN_YHDISTELMA"),
-                    help="oletusyhdistelma: yksi, tarkastus, rinnakkais tai reititys (vain OpenRouter-taustapaa)")
+                    help="oletusyhdistelma: yksi, tarkastus, rinnakkais, reititys tai tiimi (vain OpenRouter-taustapaa)")
     ap.add_argument("--yksityinen-roolit", default=os.environ.get("AIVO_YKSITYINEN_ROOLIT"),
                     help="roolit muodossa vastaaja:malli,tarkastaja:malli; mallit --openrouter-mallit-listalta")
+    ap.add_argument("--yksityinen-ajattelija-aika", default=os.environ.get("AIVO_YKSITYINEN_AJATTELIJA_AIKA"),
+                    help="tiimi: ajattelijan aikaraja sekunteina (10-3600, oletus 300); kokonaisaikaraja on aina voimassa")
     a = ap.parse_args(argv)
     try:
         if a.komento == "aseta-salasana":
@@ -1413,10 +1646,11 @@ def main(argv=None):
             raise ChatVirhe("--host vaatii taydellisen nimen (ei .paate-jokerimerkintaa)")
         # ilman --host sallitaan vain localhost
         tila = Tila(lue_tiiviste(a.salasana_tiedosto), a.kirjasto, a.data, hostit, yks_data=a.yksityinen_data,
-                    yks_muisti=a.yksityinen_muisti, ydinohjeet=a.ydinohjeet, ehdotukset=a.ehdotukset, malli_url=a.malli_url,
+                    yks_muisti=a.yksityinen_muisti, ydinohjeet=a.ydinohjeet, ehdotukset=a.ehdotukset, luovutukset=a.luovutukset, malli_url=a.malli_url,
                     taustapaa=a.yksityinen_taustapaa, or_malli=a.openrouter_malli, or_mallit=a.openrouter_mallit,
                     or_avain=a.openrouter_avain_tiedosto,
                     yhdistelma_oletus=a.yksityinen_yhdistelma, roolit=a.yksityinen_roolit,
+                    ajattelija_aika=a.yksityinen_ajattelija_aika,
                     tiivistelmat=(a.tiivistelmat or str(Path(a.data).parent / "tiivistelmat"))
                     if a.tiivistelmat_kaytossa else None,
                     yks_tiivistelmat=(a.yksityiset_tiivistelmat or str(Path(a.yksityinen_data).parent / "tiivistelmat"))

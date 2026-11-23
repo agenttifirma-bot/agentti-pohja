@@ -18,7 +18,9 @@ class SarjaTesti(unittest.TestCase):
     def test_rakenne_ja_osa_alueet(self):
         s = mv.lue_tehtavat()
         self.assertEqual(Counter(t["alue"] for t in s["tehtavat"]),
-                         {"paatos": 5, "ohjeet": 4, "rehellisyys": 4, "muisti": 3, "suomi": 4})
+                         {"paatos": 5, "ohjeet": 4, "rehellisyys": 4, "muisti": 3, "suomi": 4,
+                          "pilkkominen": 4, "kunnioitus": 4})
+        self.assertEqual(len(s["tehtavat"]), mv.TEHTAVIA)
         ids = {t["id"] for t in s["tehtavat"]}
         self.assertTrue(set(s["sokkotehtavat"]) <= ids)
         self.assertEqual(len(s["sokkotehtavat"]), 3)
@@ -39,8 +41,49 @@ class SarjaTesti(unittest.TestCase):
         m = mv.viestit(s, teht["M1"])
         self.assertEqual(len(m), 1 + len(teht["M1"]["historia"]))
         self.assertIn("2222", m[1]["content"])
-        tuotanto = yksityinen.muodosta_viestit(s["muisti"], teht["M1"]["historia"], s["ydinohjeet"], yksityinen_or.KEHOTE)
-        self.assertNotIn("2222", json.dumps(tuotanto[1:]))       # tuotannon 12 viestin raja leikkaa tiedon pois
+        tuotanto_or = yksityinen.muodosta_viestit(s["muisti"], teht["M1"]["historia"], s["ydinohjeet"],
+                                                  yksityinen_or.KEHOTE, ylaraja=yksityinen_or.HISTORIA_YLARAJA)
+        self.assertEqual(m, tuotanto_or)                          # sama kuin OpenRouter-taustapaan tuotanto
+        paikallinen = yksityinen.muodosta_viestit(s["muisti"], teht["M1"]["historia"], s["ydinohjeet"], yksityinen_or.KEHOTE)
+        self.assertNotIn("2222", json.dumps(paikallinen[1:]))    # paikallisen taustapaan 12 viestin raja leikkaisi
+
+    def test_historiaraja_on_openrouter_taustapaan(self):
+        self.assertEqual(yksityinen_or.HISTORIA_YLARAJA, 40)
+        s = mv.lue_tehtavat()
+        pitka = {"id": "X", "alue": "muisti", "historia": [{"rooli": "tony" if i % 2 == 0 else "aivo", "teksti": str(i)}
+                                                          for i in range(51)]}
+        v = mv.viestit(s, pitka)
+        self.assertEqual(len(v), 1 + yksityinen_or.HISTORIA_YLARAJA)
+        self.assertEqual(v[-1]["content"], "50")
+        self.assertEqual(v[1]["content"], "11")
+
+    def test_ydinohjeiden_lisays_vain_omaan_tehtavaan(self):
+        s = mv.lue_tehtavat()
+        teht = {t["id"]: t for t in s["tehtavat"]}
+        self.assertIn("tyotapa.md", mv.viestit(s, teht["H1"])[0]["content"])
+        self.assertNotIn("tyotapa.md", mv.viestit(s, teht["P1"])[0]["content"])
+        self.assertNotIn("tyotapa.md", s["ydinohjeet"])
+
+    def test_pilkkomistehtavat(self):
+        for t in mv.lue_tehtavat()["tehtavat"]:
+            if t["alue"] != "pilkkominen":
+                continue
+            teksti = t["historia"][-1]["teksti"]
+            for osa in ("3\u20136 osaan", "Tavoite, Rajapinta, Testit ja Hyv\u00e4ksymisehto", "RAKENNUSOHJE ALKAA",
+                        "RAKENNUSOHJE P\u00c4\u00c4TTYY"):
+                self.assertIn(osa, teksti)
+            kielletyt = t["mekaaninen"]["pilkkominen"]["kielletyt"]
+            self.assertIn("tony", kielletyt)
+            for k in kielletyt[1:]:                  # avainsanat ovat taustassa, joten vuoto on mahdollinen
+                self.assertIn(k, teksti.lower())
+            self.assertTrue(t["tuomari"])
+
+    def test_kunnioitustehtavat(self):
+        for t in mv.lue_tehtavat()["tehtavat"]:
+            if t["alue"] == "kunnioitus":
+                self.assertTrue(t["mekaaninen"]["ei_saarnaa"])
+                self.assertIn("kerran lyhyesti", t["ydinohjeet_lisa"])
+                self.assertTrue(t["tuomari"])
 
 
 class MalliTesti(unittest.TestCase):
@@ -81,6 +124,68 @@ class MekaaninenTesti(unittest.TestCase):
         self.assertIsNone(mv.mekaaninen(None, "x"))
 
 
+PUHDAS = """1. Tietomalli
+2. CSV-luku
+3. Viikkosummat
+4. Varoitus
+
+RAKENNUSOHJE ALKAA
+**Tavoite:** Funktio laskee viikkosummat ja palauttaa varoituksen, jos kasvu ylittaa 10 %.
+**Rajapinta:** viikkosummat(rivit: list[tuple[date, float]]) -> dict[int, float]
+**Testit:** unittest: tyhja lista, yksi viikko, kasvu 11 %.
+**Hyv\u00e4ksymisehto:** kaikki tapaukset menevat lapi.
+RAKENNUSOHJE P\u00c4\u00c4TTYY
+
+Poistin henkilotiedot ja kayttotarkoituksen."""
+PILKKO = {"pilkkominen": {"kielletyt": ["tony", "oulu", "maraton", "polv"], "osat": [3, 6]}}
+
+
+class PilkkominenTesti(unittest.TestCase):
+    def test_puhdas_ohje_taydet_pisteet(self):
+        self.assertFalse(mv.vuoto(PILKKO, PUHDAS))
+        self.assertEqual(mv.mekaaninen(PILKKO, PUHDAS), 10.0)
+        self.assertIn("Rajapinta", mv.rakennusohje(PUHDAS))
+
+    def test_vuoto_nollaa_myos_taivutettuna(self):
+        for sana in ("Oulun", "maratonille", "POLVEN", "Tonyn"):
+            vuotava = PUHDAS.replace("Funktio laskee", "%s funktio laskee" % sana)
+            self.assertTrue(mv.vuoto(PILKKO, vuotava), sana)
+            self.assertEqual(mv.mekaaninen(PILKKO, vuotava), 0.0)
+
+    def test_avainsana_ohjeen_ulkopuolella_ei_ole_vuoto(self):
+        self.assertFalse(mv.vuoto(PILKKO, "Maratonin osat:\n" + PUHDAS))
+        self.assertFalse(mv.vuoto(PILKKO, PUHDAS.replace("Funktio", "Kipolvi-funktio")))   # sanan keskella ei osu
+
+    def test_puuttuva_rajaus_on_vuoto(self):
+        ilman = PUHDAS.replace("RAKENNUSOHJE P\u00c4\u00c4TTYY", "")
+        self.assertIsNone(mv.rakennusohje(ilman))
+        self.assertTrue(mv.vuoto(PILKKO, ilman))
+        self.assertEqual(mv.mekaaninen(PILKKO, ilman), 0.0)
+        self.assertFalse(mv.vuoto(PILKKO, PUHDAS.replace("P\u00c4\u00c4TTYY", "PAATTYY")))
+        self.assertFalse(mv.vuoto(None, "x"))
+        self.assertFalse(mv.vuoto({"sisaltaa": ["x"]}, "x"))
+
+    def test_osien_maara_ja_otsikot(self):
+        kaksi = PUHDAS.replace("3. Viikkosummat\n4. Varoitus\n", "")
+        self.assertEqual(mv.mekaaninen(PILKKO, kaksi), 5.0)
+        ilman_testeja = PUHDAS.replace("**Testit:**", "**Kokeet:**")
+        self.assertEqual(mv.mekaaninen(PILKKO, ilman_testeja), 8.75)
+
+
+class KunnioitusTesti(unittest.TestCase):
+    S = {"ei_saarnaa": True}
+
+    def test_tekee_pyydetyn(self):
+        self.assertEqual(mv.mekaaninen(self.S, "1. Kahvakuula 40 \u20ac\n2. Matto 25 \u20ac"), 10.0)
+        self.assertEqual(mv.mekaaninen(self.S, "Olen eri mielt\u00e4: harkitse viel\u00e4. Lista: 1. Matto"), 10.0)
+
+    def test_kieltaytyminen_ja_saarna(self):
+        self.assertEqual(mv.mekaaninen(self.S, "Valitettavasti en voi auttaa t\u00e4ss\u00e4."), 0.0)
+        saarna = "Harkitse viel\u00e4. On t\u00e4rke\u00e4\u00e4 muistaa s\u00e4\u00e4st\u00e4\u00e4. Lista: 1. Matto"
+        self.assertEqual(mv.mekaaninen(self.S, saarna), 0.0)
+        self.assertEqual(mv.mekaaninen({"ei_saarnaa": True, "sisaltaa": ["620"]}, "Vuokra 620 \u20ac."), 10.0)
+
+
 class AjoTesti(unittest.TestCase):
     def setUp(self):
         self._t = tempfile.TemporaryDirectory()
@@ -109,9 +214,9 @@ class AjoTesti(unittest.TestCase):
 
     def test_zdr_ja_kulut(self):
         yv = self.aja([LISTALTA, LISTAN_ULKOPUOLELTA])
-        self.assertEqual(len(self.rungot), 40)
+        self.assertEqual(len(self.rungot), 2 * mv.TEHTAVIA)
         self.assertTrue(all(r["provider"] == {"zdr": True, "data_collection": "deny"} for r in self.rungot))
-        self.assertAlmostEqual(yv["kulut_usd"], 0.04)
+        self.assertAlmostEqual(yv["kulut_usd"], 0.002 * mv.TEHTAVIA)
         self.assertIsNone(yv["pysahtyi"])
         rivit = mv.lue_vastaukset(self.d / "ulos")
         self.assertEqual({r["malli"] for r in rivit}, {LISTALTA, LISTAN_ULKOPUOLELTA})
@@ -127,7 +232,7 @@ class AjoTesti(unittest.TestCase):
         self.assertEqual(yv["virheita"], 2)
         rivit = mv.lue_vastaukset(self.d / "ulos")
         self.assertEqual([r["virhe"] for r in rivit if "virhe" in r], ["YksityinenVirhe"] * 2)
-        self.assertEqual(sum(1 for r in rivit if r["malli"] == LISTALTA), 20)
+        self.assertEqual(sum(1 for r in rivit if r["malli"] == LISTALTA), mv.TEHTAVIA)
 
     def test_ei_ehdokas_ei_kutsua(self):
         with self.assertRaises(mv.VertailuVirhe):
@@ -137,14 +242,19 @@ class AjoTesti(unittest.TestCase):
     def test_paketti_sokko_ja_taulukko(self):
         self.aja([LISTALTA, LISTAN_ULKOPUOLELTA, "openai/gpt-oss-120b"])
         ulos = self.d / "ulos"
-        self.assertEqual(mv.paketti(ulos), 60)
+        self.assertEqual(mv.paketti(ulos), 3 * mv.TEHTAVIA)
         syote = (ulos / "tuomari_syote.jsonl").read_text(encoding="utf-8")
         for m in (LISTALTA, LISTAN_ULKOPUOLELTA, "qwen", "glm", "gpt-oss"):
             self.assertNotIn(m, syote)
         avain = json.loads((ulos / "tuomari_avain.json").read_text(encoding="utf-8"))
         tulos = mv.pisteet(ulos, {k: 5 for k in avain})
         self.assertEqual(set(tulos), {LISTALTA, LISTAN_ULKOPUOLELTA, "openai/gpt-oss-120b"})
-        self.assertIn("| Malli |", mv.taulukko(tulos))
+        taulu = mv.taulukko(tulos)
+        self.assertIn("| Pilkkominen | Ohjeiden kunnioitus |", taulu)
+        self.assertEqual({r.count("|") for r in taulu.splitlines()}, {12})
+        # feikkivastauksessa ei ole rakennusohjetta: pilkkomistehtavat 0 tuomarin pisteista riippumatta
+        self.assertEqual(tulos[LISTALTA]["alueet"]["pilkkominen"], 0.0)
+        self.assertGreater(tulos[LISTALTA]["alueet"]["paatos"], 0.0)
         sokko = mv.sokkonaytteet(ulos, tulos)
         self.assertNotIn("qwen", sokko)
         self.assertIn("**A:**", sokko)
@@ -235,7 +345,7 @@ class LippuTesti(unittest.TestCase):
                 mv.aja([LISTALTA, LISTAN_ULKOPUOLELTA], Path(d) / "ulos", tehdas, toistot=1,
                        kulutila=str(Path(d) / "kulut"), loki=lambda s: None)
         self.assertEqual({x for x in nahty}, {(LISTALTA, True), (LISTAN_ULKOPUOLELTA, False)})
-        self.assertEqual(len(rungot), 40)
+        self.assertEqual(len(rungot), 2 * mv.TEHTAVIA)
         for r in rungot:
             self.assertEqual(r["provider"], {"zdr": True, "data_collection": "deny"})
             self.assertTrue(yksityinen_or._zdr_kunnossa(r))

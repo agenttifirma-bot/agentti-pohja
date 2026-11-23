@@ -482,17 +482,26 @@ class KaistaVahti(Pohja):
         self.tehtava("2026-11-20-27-aivo-a", "aivo", 14)
         self.assertEqual(self.vahti(4, set()), [])
 
-    def test_kaista_seis_ja_aivo_tehtava_odottaa_antaa_rivin(self):
-        self.tehtava("2026-11-20-27-aivo-a", "aivo", 14.2)
-        self.tehtava("2026-11-20-28-aivo-b", "aivo", 3)
-        self.assertEqual(self.vahti(3, {3}), ["Kaista 3 seis: 2 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 14 h)"])
+    def test_kaistat_1_2_seis_ja_portfolio_odottaa_antaa_rivit(self):
+        # A1061: kaista 3 ottaa vain Aivoa tai yllapitoa, joten portfolio jaa kaistojen 1-2 varaan
+        self.tehtava("2026-11-20-27-portfolio-a", "portfolio", 14.2)
+        self.tehtava("2026-11-20-28-portfolio-b", "portfolio", 3)
+        self.tehtava("2026-11-20-29-aivo-a", "aivo", 2)   # kaista 3 ottaa, ei lasketa
+        self.assertEqual(self.vahti(3, {1, 2}), ["Kaista 1 seis: 2 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 14 h)",
+                                                 "Kaista 2 seis: 2 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 14 h)"])
 
-    def test_kaistat_3_ja_4_seis_molemmat_nakyvat(self):
+    def test_kaistat_3_ja_4_seis_aivo_menee_kaistoille_1_2_ei_riviae(self):
+        # A1061: kaistat 1-2 ottavat Aivo-tehtavat ensin, joten kaistojen 3-4 pysahdys ei jata niita ilman ottajaa
         for i in range(6):
             self.tehtava(f"2026-11-20-{27 + i}-aivo", "aivo", 14 + i)
-        self.tehtava("2026-11-21-01-ylla", "yllapito", 1)   # kaista 1-2 ottaa tama, ei lasketa
-        self.assertEqual(self.vahti(4, {3, 4}), ["Kaista 3 seis: 6 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 19 h)",
-                                                 "Kaista 4 seis: 6 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 19 h)"])
+        self.tehtava("2026-11-21-01-ylla", "yllapito", 1)
+        self.assertEqual(self.vahti(4, {3, 4}), [])
+        self.assertEqual(self.vahti(3, {3}), [])
+
+    def test_kaikki_kaistat_seis_aivo_nakyy_jokaisella(self):
+        self.tehtava("2026-11-20-27-aivo-a", "aivo", 14.2)
+        self.assertEqual(self.vahti(4, {1, 2, 3, 4}),
+                         [f"Kaista {n} seis: 1 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 14 h)" for n in (1, 2, 3, 4)])
 
     def test_kaista_seis_mutta_toinen_kaista_ottaa_tehtavat_ei_riviae(self):
         self.tehtava("2026-11-20-27-aivo-a", "aivo", 14)
@@ -533,6 +542,85 @@ class KaistaVahti(Pohja):
             raise OSError("x")
         t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [], kaistavahti=rikki)
         self.assertEqual(aamukooste.rivit(t)[5], "H\u00e4lytykset: ei.")
+
+
+class TavoiteOhitetut(Pohja):
+    """Ajuri ohittaa tehtavan, jonka Tavoite-rivi ei kelpaa: aamukoosteen ensimmainen rivi kertoo sen."""
+
+    def test_ohitettu_nakyy_ensimmaisella_rivilla_ensimmaisena(self):
+        self.kirjoita("tehtavat/2026-11-22-01-hyva.md", "# a\nTavoite: yllapito\n")
+        self.kirjoita("tehtavat/2026-11-22-02-kuvaus.md", "# b\nTavoite: tehda tarkistin\nTavoite: yllapito\n")
+        self.kirjoita("tehtavat/2026-11-22-03-kaksi.md", "# c\nTavoite: portfolio ja TO-paikka\n")
+        self.kirjoita("tehtavat/2026-11-22-04-puuttuu.md", "# d\n")
+        self.kirjoita("tehtavat/2026-11-07-01-vanha.md", "# vanha ilman rivia\n")   # ennen pakollisuutta: ajuri ajaa
+        self.kirjoita("tehtavat/2026-11-22-05-tehty.md", "# e\n")
+        self.kirjoita("tulokset/2026-11-22-05-tehty.md", tulos("e", "VALMIS", "2026-11-22T01:00+02:00"))
+        self.assertEqual(aamukooste.tavoitehylatyt(self.repo), ["2026-11-22-02-kuvaus", "2026-11-22-03-kaksi", "2026-11-22-04-puuttuu"])
+        t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [])
+        eka = aamukooste.rivit(t)[0]
+        self.assertTrue(eka.startswith("P\u00e4\u00e4t\u00f6kset sinulle: 3 teht\u00e4v\u00e4\u00e4 ohitetaan, koska Tavoite-rivi ei kelpaa"), eka)
+        self.assertIn("2026-11-22-02-kuvaus, 2026-11-22-03-kaksi (+1)", eka)
+
+    def test_yllapito_a_kirjaimella_kelpaa_kuten_ajurilla(self):
+        self.kirjoita("tehtavat/2026-11-22-01-a.md", "# a\nTavoite: yll\u00e4pito\n")
+        self.assertEqual(aamukooste.tavoitehylatyt(self.repo), [])
+
+    def test_ei_ohitettuja_ei_mainintaa_ja_virhe_ei_kaada(self):
+        self.kirjoita("tehtavat/2026-11-22-01-a.md", "# a\nTavoite: Aivo\n")
+        t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [])
+        self.assertNotIn("Tavoite-rivi", aamukooste.rivit(t)[0])
+        with mock.patch.object(aamukooste, "tavoitehylatyt", side_effect=OSError("x")):
+            t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [])
+        self.assertEqual(t["tavoite_ohitetut"], [])
+
+
+class SkriptikopioEro(unittest.TestCase):
+    """skriptikopio_ero_rivi tilapaishakemistoilla: ei verkkoa eika oikeita /opt-polkuja."""
+    NIMET = ("katselmoi.sh", "kehitys.sh")
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.pohja = self.tmp / "pohja"
+        (self.pohja / "yojono").mkdir(parents=True)
+        self.kopiot = self.tmp / "kopiot"
+        self.kopiot.mkdir()
+        for n in self.NIMET:
+            (self.pohja / "yojono" / n).write_text("#!/bin/sh\necho " + n + "\n")
+            (self.kopiot / n).write_text("#!/bin/sh\necho " + n + "\n")
+
+    def rivi(self):
+        return aamukooste.skriptikopio_ero_rivi(str(self.pohja), [str(self.kopiot / n) for n in self.NIMET])
+
+    def test_kaikki_samat_ei_rivia(self):
+        self.assertIsNone(self.rivi())
+
+    def test_yksi_eroaa(self):
+        (self.kopiot / "kehitys.sh").write_text("vanha\n")
+        teksti = self.rivi()
+        self.assertIn("eroaa repon versiosta: kehitys.sh", teksti)
+        self.assertNotIn("katselmoi.sh", teksti)
+
+    def test_yksi_puuttuu(self):
+        (self.kopiot / "kehitys.sh").unlink()
+        teksti = self.rivi()
+        self.assertIn("puuttuu: kehitys.sh", teksti)
+        self.assertNotIn("eroaa", teksti)
+
+    def test_lukuvirhe_ei_kaada_ja_nayttaa_vain_tyypin(self):
+        (self.pohja / "yojono" / "kehitys.sh").unlink()   # repon versio puuttuu -> FileNotFoundError
+        teksti = self.rivi()
+        self.assertIn("ei selvinnyt (kehitys.sh: FileNotFoundError)", teksti)
+        self.assertNotIn(str(self.tmp), teksti)
+
+    def test_oletustaulu_luetaan_ajurin_skripteista(self):
+        with mock.patch.object(aamukooste.ajuri_yojono, "SKRIPTIT", {"x": ("YOJONO_X", str(self.kopiot / "kehitys.sh"))}):
+            self.assertIsNone(aamukooste.skriptikopio_ero_rivi(str(self.pohja)))
+
+    def test_yhdista_erot_ohittaa_virheen_ja_tyhjan(self):
+        def rikki():
+            raise RuntimeError("x")
+        self.assertEqual(aamukooste.yhdista_erot(rikki, lambda: None, lambda: "a", lambda: "b"), "a; b")
+        self.assertIsNone(aamukooste.yhdista_erot(rikki, lambda: None))
 
 
 if __name__ == "__main__":

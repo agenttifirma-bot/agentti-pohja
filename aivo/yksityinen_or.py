@@ -152,6 +152,7 @@ def tee_kuljetin(avain: str, avaa: Callable[..., Any] | None = None,
             with avaa(pyynto, timeout=aikaraja) as r:
                 data = json.loads(r.read(MAX_VASTAUS_TAVUA))
         except urllib.error.HTTPError as e:
+            e.close()                               # vapauttaa virhevastauksen socketin
             raise YksityinenVirhe("mallipalvelu hylkasi pyynnon (HTTP %s)" % e.code) from None
         except (OSError, ValueError) as e:
             raise YksityinenVirhe("mallipalvelu ei vastannut (%s)" % type(e).__name__) from None
@@ -226,6 +227,7 @@ def kysy_yhdistelmalla(
     yhdistelma_nimi: str = yhdistelma.OLETUS,
     roolit: Mapping[str, str] | None = None,
     kello: Callable[[], float] | None = None,
+    ajattelija_aika_s: float = yhdistelma.AJATTELIJA_AIKA_OLETUS_S,
     **kw: Any,
 ) -> "yhdistelma.Tulos":
     """Usean mallin yhdistelma (yhdistelma.aja). Jokainen osakutsu kulkee _kysy_viestit-funktion kautta."""
@@ -236,7 +238,7 @@ def kysy_yhdistelmalla(
 
     def kysy(m: str, v: list[dict[str, Any]], aikaraja_s: float | None = None, max_tokens: int | None = None) -> str:
         return _kysy_viestit(m, v, aikaraja_s=aikaraja_s, max_tokens=max_tokens, **kw)
-    return yhdistelma.aja(yhdistelma_nimi, roolit or {}, malli, viestit, kysy,
+    return yhdistelma.aja(yhdistelma_nimi, roolit or {}, malli, viestit, kysy, ajattelija_aika_s=ajattelija_aika_s,
                           **({"kello": kello} if kello is not None else {}))
 
 
