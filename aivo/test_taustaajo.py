@@ -290,6 +290,74 @@ class EpaonnistuminenTesti(Pohja):
         self.assertEqual(rc, 1)
 
 
+class SiirtovirheTesti(Pohja):
+    """Tyotiedoston siirto (kesken/, valmiit/, epaonnistuneet/) voi nostaa OSErrorin (esim. levy taynna, oikeudet).
+    Yksi siirtovirhe ei saa kaataa koko ajoa: loput jonon tyot ajetaan ja virhe kirjataan lokiin."""
+
+    def setUp(self):
+        super().setUp()
+        self.t1 = ta.kirjoita_tyo(self.jono, KID, TEHTAVA)
+        self.t2 = ta.kirjoita_tyo(self.jono, KID, TEHTAVA + " Second.")
+        self.ensimmainen = ta.odottavat(self.jono)[0].stem
+
+    def _siirto_kaatuu_kerran(self, kansio):
+        alkup = ta._siirra
+        tila = {"kaatui": False}
+
+        def siirra(jono, polku, k):
+            if k == kansio and not tila["kaatui"]:
+                tila["kaatui"] = True
+                raise OSError("levy taynna")
+            return alkup(jono, polku, k)
+        return mock.patch.object(ta, "_siirra", side_effect=siirra)
+
+    def loki(self):
+        return (self.jono / ta.LOKI_TIEDOSTO).read_text()
+
+    def test_valmiit_siirron_virhe_ei_kaada_ajoa(self):
+        with self._siirto_kaatuu_kerran(ta.VALMIIT):
+            r = self.aja()
+        self.assertEqual(r["valmis"], 2)
+        self.assertEqual(len(self.kutsut), 4)
+        self.assertEqual(len(self.tausta()), 2)
+        self.assertIn("siirto epaonnistui: %s (OSError, valmiit)" % self.ensimmainen, self.loki())
+        self.assertNotIn("levy taynna", self.loki())
+        self.assertEqual(len(list((self.jono / ta.VALMIIT).glob("*.json"))), 1)
+
+    def test_epaonnistuneet_siirron_virhe_ei_kaada_ajoa(self):
+        alkup = ta.lisaa_keskusteluun
+        tila = {"n": 0}
+
+        def lisaa(*a, **kw):
+            tila["n"] += 1
+            if tila["n"] == 1:
+                raise ta.TaustaVirhe("keskustelu ei kirjoitettavissa")
+            return alkup(*a, **kw)
+        with mock.patch.object(ta, "lisaa_keskusteluun", side_effect=lisaa), \
+                self._siirto_kaatuu_kerran(ta.EPAONNISTUNEET):
+            r = self.aja()
+        self.assertEqual(r["epaonnistui"], 1)
+        self.assertEqual(r["valmis"], 1)
+        self.assertEqual(len(self.kutsut), 4)
+        self.assertIn("tulosta ei voitu lisata: %s (TaustaVirhe)" % self.ensimmainen, self.loki())
+        self.assertIn("siirto epaonnistui: %s (OSError, epaonnistuneet)" % self.ensimmainen, self.loki())
+
+    def test_kesken_siirron_virhe_ei_aja_eika_kuluta_paivapaikkaa(self):
+        with self._siirto_kaatuu_kerran(ta.KESKEN):
+            r = self.aja()
+        self.assertEqual(r["valmis"], 1)
+        self.assertEqual(len(self.kutsut), 2)                       # vain toinen tyo ajettiin
+        self.assertEqual(r["ohitettu"], 1)
+        self.assertIn("siirto epaonnistui: %s (OSError, kesken)" % self.ensimmainen, self.loki())
+        self.assertTrue((self.jono / (self.ensimmainen + ".json")).exists())   # jaa jonoon, ei kadonnut
+        tila = json.loads((self.jono / ta.TILA_TIEDOSTO).read_text())
+        self.assertEqual(tila["ajettu"], 1)                         # paikka varattiin vain ajetulle tyolle
+        r2 = self.aja()                                             # seuraava ajo ajaa jaaneen tyon kerran
+        self.assertEqual(r2["valmis"], 1)
+        self.assertEqual(len(self.kutsut), 4)
+        self.assertEqual(ta.odottavat(self.jono), [])
+
+
 class RoolitTesti(unittest.TestCase):
     def test_roolit_asetuksesta_ja_oletus(self):
         mallit = (MALLI_K, MALLI_A)

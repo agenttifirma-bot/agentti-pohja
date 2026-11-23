@@ -361,16 +361,23 @@ def _syy(e):
     return "malli"
 
 
+def _siirra_tai_kirjaa(jono, polku, kansio, tunnus, nyt, tulosta):
+    """Kuten _siirra, mutta virhe (esim. levy taynna, oikeudet, linkattu kansio) ei kaada ajoa: se kirjataan lokiin
+    (vain tunnus ja virheen tyyppi), ja paluuarvo on None. Muuten palauttaa uuden polun."""
+    try:
+        return _siirra(jono, polku, kansio)
+    except (OSError, TaustaVirhe) as e:
+        kirjaa(jono, nyt, "siirto epaonnistui: %s (%s, %s)" % (tunnus, type(e).__name__, kansio), tulosta)
+        return None
+
+
 def _merkitse_epaonnistuneeksi(jono, chat, polku, kid, tunnus, syy, nyt, tulosta):
     if kid:
         try:
             lisaa_keskusteluun(chat, kid, epaonnistui_teksti(syy), tunnus, nyt)
         except TaustaVirhe as e:
             kirjaa(jono, nyt, "merkinta epaonnistui: %s (%s)" % (tunnus, type(e).__name__), tulosta)
-    try:
-        _siirra(jono, polku, EPAONNISTUNEET)
-    except (OSError, TaustaVirhe) as e:
-        kirjaa(jono, nyt, "siirto epaonnistui: %s (%s)" % (tunnus, type(e).__name__), tulosta)
+    _siirra_tai_kirjaa(jono, polku, EPAONNISTUNEET, tunnus, nyt, tulosta)
     kirjaa(jono, nyt, "epaonnistui: %s (%s)" % (tunnus, syy), tulosta)
 
 
@@ -388,7 +395,7 @@ def aja(jono, chat, kysy, roolit, nyt=None, paivaraja=PAIVARAJA, aikaraja_s=AIKA
     nyt = nyt or _nyt()
     jono = tarkista_kansio(jono, luo=not kuiva)
     chat = tarkista_kansio(chat)
-    tulos = {"valmis": 0, "epaonnistui": 0, "odottaa": 0, "kutsuja": 0}
+    tulos = {"valmis": 0, "epaonnistui": 0, "odottaa": 0, "kutsuja": 0, "ohitettu": 0}
     fd = os.open(jono / LUKKO_TIEDOSTO, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         try:
@@ -422,9 +429,17 @@ def aja(jono, chat, kysy, roolit, nyt=None, paivaraja=PAIVARAJA, aikaraja_s=AIKA
                 _merkitse_epaonnistuneeksi(jono, chat, polku, kid, tunnus, "paivaraja", nyt, tulosta)
                 tulos["epaonnistui"] += 1
                 continue
+            # Ensin siirto kesken/:iin, sitten paivapaikan varaus. Jos siirto ei onnistu, tyota ei ajeta eika paikkaa
+            # varata: tyo jaa jonoon seuraavaan ajoon. Jos tyo ajettaisiin jonosta, epaonnistunut loppusiirto jattaisi
+            # sen jonoon ja seuraava ajo ajaisi sen uudelleen. Jos ajo katkeaa siirron ja varauksen valissa, seuraava
+            # ajo merkitsee tyon keskeytyneeksi ilman mallikutsua, joten maksullista kutsua ei jaa varaamatta.
+            uusi = _siirra_tai_kirjaa(jono, polku, KESKEN, tunnus, nyt, tulosta)
+            if uusi is None:
+                tulos["ohitettu"] += 1
+                continue
+            polku = uusi
             tila["ajettu"] += 1
             kirjoita_tila(jono, tila)                               # varaus ennen kutsua
-            polku = _siirra(jono, polku, KESKEN)
             try:
                 teksti, mallit = aja_tyo(tyo, kysy, roolit, aikaraja_s, kello)
             except (TaustaVirhe, YksityinenVirhe) as e:
@@ -436,10 +451,10 @@ def aja(jono, chat, kysy, roolit, nyt=None, paivaraja=PAIVARAJA, aikaraja_s=AIKA
                 lisaa_keskusteluun(chat, kid, valmis_teksti(teksti), tunnus, nyt, malli=mallit[-1], mallit=mallit)
             except TaustaVirhe as e:
                 kirjaa(jono, nyt, "tulosta ei voitu lisata: %s (%s)" % (tunnus, type(e).__name__), tulosta)
-                _siirra(jono, polku, EPAONNISTUNEET)
+                _siirra_tai_kirjaa(jono, polku, EPAONNISTUNEET, tunnus, nyt, tulosta)
                 tulos["epaonnistui"] += 1
                 continue
-            _siirra(jono, polku, VALMIIT)
+            _siirra_tai_kirjaa(jono, polku, VALMIIT, tunnus, nyt, tulosta)   # tulos on jo keskustelussa
             tulos["valmis"] += 1
             kirjaa(jono, nyt, "valmis: %s, kutsuja %d" % (tunnus, len(mallit)), tulosta)
         return tulos
