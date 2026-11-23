@@ -41,6 +41,7 @@ def _http_post(url, avain, payload):
         with avaaja.open(pyynto, timeout=rajat.LLM_AIKAKATKAISU) as v:
             return json.loads(v.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
+        e.close()  # HTTPError pitaa vastauksen socketin auki, ellei sita suljeta
         raise LLMVirhe("llm_http_%d" % e.code)
     except urllib.error.URLError as e:
         if isinstance(e.reason, (socket.timeout, TimeoutError)):

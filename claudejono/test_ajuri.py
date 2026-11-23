@@ -327,6 +327,36 @@ class Opit(Pohja):
         self.assertFalse((self.repo / ajuri.OPIT).exists())
         self.assertEqual(subprocess.run(["git", "-C", str(self.repo), "status", "--porcelain"], capture_output=True, text=True).stdout, "")
 
+    def test_ajuri_kirjaa_tehtavan_tuloksen_aivon_arvion_viereen(self):
+        from claudejono import aivo_arvio
+        self.lisaa_tehtava("2026-10-30-01-a.md")
+        f = lambda kom, **kw: subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": "r\nTodennettu kaytossa: testi"}), "")
+        viesti = ajuri.aja(self.repo, self.tmp, env={}, suorita=f, aivo_arvioija=lambda teksti: (True, "oleellinen"))
+        self.assertIn("VALMIS", viesti)
+        with open(self.tmp / aivo_arvio.TIEDOSTO, encoding="utf-8") as fh:
+            l = aivo_arvio.laske_osumat(fh)
+        self.assertEqual((l["vertailtavia"], l["osumia"], l["prosentti"]), (1, 1, 100.0))
+
+    def test_ajuri_kirjaa_keskenjaaneen_tehtavan_tilan_ei_valmiiksi(self):
+        from claudejono import aivo_arvio
+        self.lisaa_tehtava("2026-10-30-01-a.md")
+        f = lambda kom, **kw: subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": "r ilman todennusrivia"}), "")
+        viesti = ajuri.aja(self.repo, self.tmp, env={}, suorita=f, aivo_arvioija=lambda teksti: (True, "oleellinen"))
+        self.assertIn("KESKEN", viesti)
+        with open(self.tmp / aivo_arvio.TIEDOSTO, encoding="utf-8") as fh:
+            rivit = [json.loads(r) for r in fh if r.strip()]
+        self.assertEqual([r["tulos"] for r in rivit if r["laji"] == "tulos"], ["KESKEN"])
+        with open(self.tmp / aivo_arvio.TIEDOSTO, encoding="utf-8") as fh:
+            l = aivo_arvio.laske_osumat(fh)
+        self.assertEqual((l["vertailtavia"], l["osumia"]), (1, 0))   # Aivo sanoi kylla, mutta KESKEN = ei
+
+    def test_ajuri_ilman_arvioijaa_ei_kirjaa_tulosta(self):
+        from claudejono import aivo_arvio
+        self.lisaa_tehtava("2026-10-30-01-a.md")
+        f = lambda kom, **kw: subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": "r\nTodennettu kaytossa: testi"}), "")
+        ajuri.aja(self.repo, self.tmp, env={}, suorita=f)
+        self.assertFalse((self.tmp / aivo_arvio.TIEDOSTO).exists())
+
     def test_julkaise_opit_kun_sallittu(self):
         self.lisaa_tehtava("2026-10-30-01-a.md")
         vanha = ajuri.OPIT_JULKAISU_SALLITTU
@@ -369,13 +399,18 @@ class Itsesuunnittelu(Pohja):
             {"nimi": "korjaa-x", "sisalto": "# X\n\nTavoite: yllapito\nValmis kun: x"},
             {"nimi": "HUONO NIMI", "sisalto": "y"},
             {"nimi": "toinen", "sisalto": "# Y\nTavoite: yllapito"},
-            {"nimi": "kolmas", "sisalto": "# Z\nTavoite: yllapito"}], "tonylle": "Nosta katto?"})
+            {"nimi": "kolmas", "sisalto": "# Z\nTavoite: yllapito"},
+            {"nimi": "neljas", "sisalto": "# N\nTavoite: yllapito"},
+            {"nimi": "viides", "sisalto": "# V\nTavoite: yllapito"},
+            {"nimi": "kuudes", "sisalto": "# K\nTavoite: yllapito"}], "tonylle": "Nosta katto?"})
         v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli("Tassa:\n" + vastaus), nyt=self.nyt())
         self.assertIn("itsesuunnittelu", v)
         tied = self.origin_tiedostot()
         self.assertIn("claude-jono/tehtavat/2026-10-30-02-auto-korjaa-x.md", tied)
         self.assertIn("claude-jono/tehtavat/2026-10-30-03-auto-toinen.md", tied)
-        self.assertNotIn("claude-jono/tehtavat/2026-10-30-04-auto-kolmas.md", tied)   # AUTO_PER_AJO = 2
+        self.assertIn("claude-jono/tehtavat/2026-10-30-04-auto-kolmas.md", tied)
+        self.assertIn("claude-jono/tehtavat/2026-10-30-06-auto-viides.md", tied)
+        self.assertNotIn("claude-jono/tehtavat/2026-10-30-07-auto-kuudes.md", tied)   # AUTO_PER_AJO = 5 (A961)
         self.assertIn("claude-jono/tonylle.md", tied)
         self.assertEqual(ajuri.seuraava_tehtava(self.repo).name, "2026-10-30-02-auto-korjaa-x.md")
 
@@ -407,7 +442,7 @@ class Itsesuunnittelu(Pohja):
         self.assertFalse(ajuri.sallittu_polku("claude-jono/tulokset/../../x.md"))
 
     def test_raja_on_laissa(self):
-        self.assertLessEqual(ajuri.AUTO_MAX_PAIVA, 30)
+        self.assertLessEqual(ajuri.AUTO_MAX_PAIVA, 60)
 
     def test_tyhja_kierros_aloittaa_tauon(self):
         kutsut = []
@@ -649,6 +684,60 @@ class JulkaisuPushVirhe(Pohja):
         self.assertEqual(self.yritykset(), 3)
 
 
+class SuunnittelunPudotusloki(Pohja):
+    """Suunnittelijan ehdotus, joka ei paase jonoon, jattaa lokirivin (21.11.2026: 43 merkin nimi katosi hiljaa)."""
+    NYT = datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)
+    PITKA = "aamukooste-varoitus-pysahtyneesta-kaistasta"   # 43 merkkia, AUTO_NIMI_RE sallii 41
+
+    def aja_suunnittelu(self, tehtavat):
+        vastaus = json.dumps({"tehtavat": tehtavat, "tonylle": ""})
+
+        def f(kom, **kw):
+            return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": vastaus}), "")
+        virhe = io.StringIO()
+        with contextlib.redirect_stderr(virhe):
+            v = ajuri.suunnittele(self.repo, self.tmp, {}, f, nyt=self.NYT)
+        return v, virhe.getvalue()
+
+    def test_liian_pitka_nimi_kirjataan(self):
+        virhe = io.StringIO()
+        with contextlib.redirect_stderr(virhe):
+            s = ajuri.jasenna_suunnitelma(json.dumps({"tehtavat": [{"nimi": self.PITKA, "sisalto": "# A\nTavoite: yllapito"}]}))
+        self.assertEqual(s["tehtavat"], [])   # ehto ennallaan: nimi ei kelpaa
+        self.assertIn(self.PITKA, virhe.getvalue())
+        self.assertIn("nimi ei kelpaa", virhe.getvalue())
+        self.assertIn("nyt 43", virhe.getvalue())
+
+    def test_kelvollinen_ehdotus_ei_kirjaa_pudotusta(self):
+        v, virhe = self.aja_suunnittelu([{"nimi": "a", "sisalto": "# A\nTavoite: yllapito"}])
+        self.assertIn("auto-a.md", v)
+        self.assertNotIn("pudotti", virhe)
+
+    def test_suunnittelussa_pudotetut_kirjataan(self):
+        v, virhe = self.aja_suunnittelu([
+            {"nimi": self.PITKA, "sisalto": "# P\nTavoite: yllapito"},
+            {"nimi": "ilman-tavoitetta", "sisalto": "# T\nEi tavoiterivia"},
+            {"nimi": "liian-iso", "sisalto": "# I\nTavoite: yllapito\nPisteet: hyoty 3, varmuus 3, vaiva 5 h"},
+            {"nimi": "a", "sisalto": "# A\nTavoite: yllapito"},
+            {"nimi": "a", "sisalto": "# A2\nTavoite: yllapito"},
+        ])
+        self.assertIn("auto-a.md", v)
+        self.assertEqual(v.count("auto-"), 1)
+        self.assertIn(f"'{self.PITKA}': nimi ei kelpaa", virhe)
+        self.assertIn("'ilman-tavoitetta': Tavoite-rivi puuttuu", virhe)
+        self.assertIn("'liian-iso': sisaltotarkistus: vaiva yli", virhe)
+        self.assertIn("'a': nimi on jo jonossa tai tehty", virhe)
+
+    def test_nimen_ohjausmerkit_suodatetaan(self):
+        virhe = io.StringIO()
+        with contextlib.redirect_stderr(virhe):
+            ajuri.kirjaa_pudotus("x\nvaara\x1b[31m" + "y" * 200, "syy")
+        rivi = virhe.getvalue()
+        self.assertEqual(rivi.count("\n"), 1)
+        self.assertNotIn("\x1b", rivi)
+        self.assertLess(len(rivi), 200)
+
+
 class HylatytPrt(unittest.TestCase):
     """Tarkastajan hylkaamat PR:t suunnittelun kehotteeseen; lokin vapaa teksti ei saa paatya malille."""
     NYT = datetime(2026, 11, 4, 12, 0, tzinfo=timezone.utc)
@@ -800,6 +889,27 @@ class HylatytIlmanKasiteltyja(unittest.TestCase):
     def test_puuttuva_hakemisto_ei_kaada(self):
         self.assertEqual(ajuri.ilman_kasiteltyja(self.h, self.repo / "ei-ole"), self.h)
 
+    def tonylle(self, teksti):
+        p = self.repo / ajuri.JONO / ajuri.TONYLLE
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(teksti, encoding="utf-8")
+
+    def test_sunnuntaiehdotusrivi_pudottaa_rivin(self):
+        self.tonylle("## 15.11.\n- Sunnuntaiehdotus (uusi): pr-303-93060a6 - Korjaa jotain\n")
+        self.assertEqual(ajuri.ilman_kasiteltyja(self.h, self.repo), [])
+
+    def test_sunnuntaiehdotus_eri_shalla_jaa_listalle(self):
+        self.tonylle("- Sunnuntaiehdotus (uusi): pr-303-1111111 - Korjaa jotain\n- Sunnuntaiehdotus (uusi): pr-30-93060a6 - X\n")
+        self.assertEqual(ajuri.ilman_kasiteltyja(self.h, self.repo), self.h)
+
+    def test_puuttuva_tonylle_ei_kaada(self):
+        self.tehtava("2026-11-14-04-auto-pr-999-1111111.md")          # hakemisto on, tonylle.md puuttuu
+        self.assertEqual(ajuri.ilman_kasiteltyja(self.h, self.repo), self.h)
+
+    def test_pelkka_maininta_ilman_sunnuntairivia_ei_pudota(self):
+        self.tonylle("## 15.11.\nHylatty pr-303-93060a6 odottaa.\n- Muu rivi: pr-303-93060a6 - x\n")
+        self.assertEqual(ajuri.ilman_kasiteltyja(self.h, self.repo), self.h)
+
 
 class HylatytKasiteltyOhitetaanSuunnittelussa(Pohja):
     def test_kasitelty_commit_ei_paady_kehotteeseen(self):
@@ -849,6 +959,248 @@ class OmaKayttaja(unittest.TestCase):
         self.assertEqual(cwd, "/opt/agentscope")
         self.assertEqual(alaenv, {"A": "1"})
 
+
+
+class TestRaportinPalautus(Pohja):
+    ISTUNTO = "ae50bf5c-8124-417d-b633-d995646336d8"
+    RAPORTTI = "Iso raportti\nTodennettu kaytossa: testi\n\n## Uusi oppi\n- X ei onnistu, kayta Y\n\n## Tonylle opittavaa\nasia"
+
+    def loki(self, rivit, istunto=None):
+        hak = self.tmp / "koti" / ".claude" / "projects" / "-opt-agentscope-tyo"
+        hak.mkdir(parents=True, exist_ok=True)
+        p = hak / f"{istunto or self.ISTUNTO}.jsonl"
+        p.write_text("\n".join(rivit) + "\n", encoding="utf-8")
+        return p
+
+    @staticmethod
+    def tanaan_nimi():
+        """Tehtavan nimi ajonhetken paivasta: testit eivat sido kiinteaan paivamaaraan."""
+        return datetime.now().strftime("%Y-%m-%d") + "-01-a.md"
+
+    def tyokutsu(self):
+        return self.viesti("", message={"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t2", "name": "Bash", "input": {}}]})
+
+    def viesti(self, teksti, **muut):
+        d = {"type": "assistant", "sessionId": self.ISTUNTO, "isSidechain": False,
+             "message": {"role": "assistant", "content": [{"type": "text", "text": teksti}]}}
+        d.update(muut)
+        return json.dumps(d)
+
+    def lohko(self, mid, **lohko):
+        """Yksi sisaltolohko omalla JSONL-rivillaan: Claude Code kirjoittaa saman viestin lohkot erillisille riveille samalla message.id:lla."""
+        return json.dumps({"type": "assistant", "sessionId": self.ISTUNTO, "isSidechain": False,
+                           "message": {"id": mid, "role": "assistant", "content": [lohko]}})
+
+    def stdout(self, teksti="Lopullinen raportti on aiemmassa viestissani."):
+        return json.dumps({"subtype": "success", "result": teksti, "session_id": self.ISTUNTO})
+
+    def palauta(self, teksti="jalkikommentti", koti=None):
+        return ajuri.palauta_raportti(teksti, self.stdout(teksti), koti or self.tmp / "koti")
+
+    def test_jalkikommentin_alta_loytyy_raportti(self):
+        self.loki(['{"type": "user"}', "ei jsonia", self.viesti(self.RAPORTTI), self.viesti("jalkikommentti")])
+        t = self.palauta()
+        self.assertTrue(t.startswith(self.RAPORTTI))
+        self.assertTrue(t.endswith("jalkikommentti"))
+        self.assertIn("[AJURI: raportti palautettu", t)
+
+    def test_uusin_raportti_voittaa(self):
+        self.loki([self.viesti("vanha\n" + self.RAPORTTI), self.viesti(self.RAPORTTI)])
+        self.assertTrue(self.palauta().startswith(self.RAPORTTI))
+
+    def test_ehja_raportti_ei_muutu_eika_lokia_lueta(self):
+        self.loki([self.viesti("vanha " + self.RAPORTTI)])
+        self.assertEqual(self.palauta(self.RAPORTTI), self.RAPORTTI)
+
+    def test_alitehtava_tai_muu_istunto_ei_kelpaa(self):
+        self.loki([self.viesti(self.RAPORTTI, isSidechain=True), self.viesti(self.RAPORTTI, sessionId="muu")])
+        self.assertEqual(self.palauta(), "jalkikommentti")
+
+    def test_puuttuva_loki_tai_outo_istunto_jattaa_tekstin(self):
+        self.assertEqual(self.palauta(), "jalkikommentti")
+        self.assertEqual(ajuri.palauta_raportti("x", "ei jsonia", self.tmp), "x")
+        self.assertEqual(ajuri.palauta_raportti("x", "[1]", self.tmp), "x")
+        self.assertEqual(ajuri.palauta_raportti("x", json.dumps({"session_id": "../../etc/passwd"}), self.tmp), "x")
+        self.assertEqual(ajuri.palauta_raportti("x", self.stdout(), None), "x")
+
+    def test_rivi_jossa_u2028_ei_katkea(self):
+        raportti = self.RAPORTTI + "\u2028lisaa\u0085viela\u2029"
+        self.loki([self.viesti(raportti)])        # json.dumps escapoi U+2028; kirjoita raakana
+        p = self.loki([])
+        rivi = json.dumps({"type": "assistant", "sessionId": self.ISTUNTO, "isSidechain": False,
+                           "message": {"content": [{"type": "text", "text": raportti}]}}, ensure_ascii=False)
+        p.write_bytes(rivi.encode("utf-8") + b"\n")
+        self.assertTrue(self.palauta().startswith(self.RAPORTTI))
+
+    def test_pelkka_maininta_otsikosta_ei_kelpaa(self):
+        self.loki([self.viesti("Kirjoitan lopuksi osion ## Tonylle opittavaa myohemmin."),
+                   self.viesti("x", message={"content": [{"type": "text", "text": 5}]})])
+        self.assertEqual(self.palauta(), "jalkikommentti")
+        self.assertEqual(self.palauta("Kirjoitan osion ## Tonylle opittavaa myohemmin"),
+                         "Kirjoitan osion ## Tonylle opittavaa myohemmin")  # ei otsikkorivi: haku yritetaan, lokia ei ole
+
+    def test_virhe_jasennyksessa_ei_kaada(self):
+        self.loki([self.viesti(self.RAPORTTI)])
+        with mock.patch.object(ajuri, "_etsi_raportti", side_effect=MemoryError):
+            self.assertEqual(self.palauta(), "jalkikommentti")
+
+    def test_hakemistokuvaajat_suljetaan_silmukassa(self):
+        koti = self.tmp / "koti"
+        for i in range(30):
+            (koti / ".claude" / "projects" / f"p{i:02d}").mkdir(parents=True)
+        self.loki([self.viesti(self.RAPORTTI)])
+        auki = []
+        oikea_open, oikea_close = os.open, os.close
+
+        def seuraa_open(*a, **k):
+            fd = oikea_open(*a, **k)
+            auki.append(fd)
+            return fd
+
+        def seuraa_close(fd):
+            if fd in auki:
+                auki.remove(fd)
+            return oikea_close(fd)
+        maksimi = []
+        with mock.patch("os.open", seuraa_open), mock.patch("os.close", seuraa_close):
+            def tarkka(*a, **k):
+                fd = seuraa_open(*a, **k)
+                maksimi.append(len(auki))
+                return fd
+            with mock.patch("os.open", tarkka):
+                self.assertIsNotNone(ajuri._lue_istuntoloki(koti, self.ISTUNTO))
+        self.assertLess(max(maksimi), 12)
+
+    def test_symlinkki_ja_kova_linkki_torjutaan(self):
+        salainen = self.tmp / "salainen.jsonl"
+        salainen.write_text(self.viesti(self.RAPORTTI) + "\n", encoding="utf-8")
+        p = self.loki([])
+        p.unlink()
+        p.symlink_to(salainen)
+        self.assertEqual(self.palauta(), "jalkikommentti")
+        p.unlink()
+        os.link(salainen, p)
+        self.assertEqual(self.palauta(), "jalkikommentti")
+
+    def _salainen_loki(self):
+        """Loki, joka olisi kelvollinen, mutta sijaitsee koti-hakemiston ulkopuolella."""
+        ulko = self.tmp / "ulko" / "projects" / "-opt-agentscope-tyo"
+        ulko.mkdir(parents=True)
+        (ulko / f"{self.ISTUNTO}.jsonl").write_text(self.viesti(self.RAPORTTI) + "\n", encoding="utf-8")
+        return self.tmp / "ulko"
+
+    def test_koti_symlinkkina_torjutaan(self):
+        self.loki([self.viesti(self.RAPORTTI)])                       # oikea loki hakemistossa koti
+        (self.tmp / "koti").rename(self.tmp / "oikea")
+        (self.tmp / "koti").symlink_to(self.tmp / "oikea")            # muuten kelvollinen, mutta koti on symlinkki
+        self.assertEqual(self.palauta(), "jalkikommentti")
+
+    def test_vanhentunut_raportti_ei_palaudu_jos_tyo_jatkui(self):
+        self.loki([self.viesti(self.RAPORTTI), self.tyokutsu(), self.viesti("jalkikommentti")])
+        self.assertEqual(self.palauta(), "jalkikommentti")
+
+    def test_raportti_palautuu_kun_sen_jalkeen_vain_tekstia(self):
+        self.loki([self.tyokutsu(), self.viesti(self.RAPORTTI), self.viesti("a"), self.viesti("b")])
+        self.assertTrue(self.palauta().startswith(self.RAPORTTI))
+
+    def test_uusi_raportti_tyokutsun_jalkeen_kelpaa(self):
+        self.loki([self.viesti("vanha\n" + self.RAPORTTI), self.tyokutsu(), self.viesti("uusi\n" + self.RAPORTTI)])
+        self.assertTrue(self.palauta().startswith("uusi\n"))
+
+    def test_monirivinen_viesti_raportti_ja_tyokutsu_samalla_id_ei_vanhene(self):
+        """Oikea lokimuoto: thinking, text (raportti) ja tool_use omilla riveillaan samalla message.id:lla."""
+        data = "\n".join([self.lohko("m1", type="thinking", thinking="x"),
+                          self.lohko("m1", type="text", text=self.RAPORTTI),
+                          self.lohko("m1", type="tool_use", id="t1", name="Bash", input={})]).encode()
+        self.assertEqual(ajuri._etsi_raportti(data, self.ISTUNTO), self.RAPORTTI)
+
+    def test_monirivinen_viesti_tyokutsu_ennen_tekstia_samalla_id_ei_vanhene(self):
+        data = "\n".join([self.lohko("m1", type="tool_use", id="t1", name="Bash", input={}),
+                          self.lohko("m1", type="text", text=self.RAPORTTI)]).encode()
+        self.assertEqual(ajuri._etsi_raportti(data, self.ISTUNTO), self.RAPORTTI)
+
+    def test_monirivinen_raportti_vanhenee_kun_eri_id_tyokutsu_seuraa(self):
+        data = "\n".join([self.lohko("m1", type="text", text=self.RAPORTTI),
+                          self.lohko("m2", type="tool_use", id="t2", name="Bash", input={})]).encode()
+        self.assertEqual(ajuri._etsi_raportti(data, self.ISTUNTO), "")
+
+    def test_monirivinen_viesti_palautuu_palauta_raportin_kautta(self):
+        self.loki([self.lohko("m1", type="text", text=self.RAPORTTI),
+                   self.lohko("m1", type="tool_use", id="t1", name="Bash", input={}),
+                   self.viesti("jalkikommentti")])
+        self.assertTrue(self.palauta().startswith(self.RAPORTTI))
+
+    def test_symlinkki_polun_keskella_torjutaan_dotclaude(self):
+        ulko = self._salainen_loki()
+        koti = self.tmp / "koti"
+        koti.mkdir()
+        (koti / ".claude").symlink_to(ulko)
+        self.assertEqual(self.palauta(), "jalkikommentti")
+
+    def test_symlinkki_polun_keskella_torjutaan_projects(self):
+        ulko = self._salainen_loki()
+        (self.tmp / "koti" / ".claude").mkdir(parents=True)
+        (self.tmp / "koti" / ".claude" / "projects").symlink_to(ulko / "projects")
+        self.assertEqual(self.palauta(), "jalkikommentti")
+
+    def test_symlinkki_projektihakemistona_torjutaan(self):
+        ulko = self._salainen_loki()
+        pro = self.tmp / "koti" / ".claude" / "projects"
+        pro.mkdir(parents=True)
+        (pro / "-opt-agentscope-tyo").symlink_to(ulko / "projects" / "-opt-agentscope-tyo")
+        self.assertEqual(self.palauta(), "jalkikommentti")
+
+    def test_lukuvirhe_ei_kaada_ajoa(self):
+        self.loki([self.viesti(self.RAPORTTI)])
+        for virhe in (PermissionError("x"), OSError(5, "io"), ValueError("x")):
+            def rikki(*a, _v=virhe, **k):
+                raise _v
+            with mock.patch.object(ajuri, "_lue_istuntoloki", rikki):
+                self.assertEqual(self.palauta(), "jalkikommentti")
+
+    def test_syvaan_sisakkainen_json_ei_kaada_ajoa(self):
+        self.loki(["[" * 200000, self.viesti(self.RAPORTTI)])
+        self.assertTrue(self.palauta().startswith(self.RAPORTTI))
+
+    def test_ylisuuri_loki_torjutaan(self):
+        self.loki([self.viesti(self.RAPORTTI)])
+        vanha = ajuri.ISTUNTOLOKI_MAX_TAVUA
+        ajuri.ISTUNTOLOKI_MAX_TAVUA = 10
+        try:
+            self.assertEqual(self.palauta(), "jalkikommentti")
+        finally:
+            ajuri.ISTUNTOLOKI_MAX_TAVUA = vanha
+
+    def test_koko_ajo_kirjoittaa_palautetun_raportin_ja_tilan(self):
+        nimi = self.tanaan_nimi()
+        self.lisaa_tehtava(nimi, "tee jotain\n\nTavoite: yllapito\n")
+        koti = self.tmp / "koti"
+        self.loki([self.viesti(self.RAPORTTI), self.viesti("jalkikommentti")])
+        ajuri.aja(self.repo, self.tmp, env={"HOME": str(koti)},
+                  suorita=lambda kom, **kw: subprocess.CompletedProcess(kom, 0, self.stdout("jalkikommentti"), ""))
+        tulos = (self.repo / ajuri.JONO / "tulokset" / nimi).read_text(encoding="utf-8")
+        self.assertIn("Tila: VALMIS", tulos)
+        self.assertIn("Iso raportti", tulos)
+
+    def test_raportti_taustailmoituksen_jalkeen_palautuu(self):
+        """Raportti on omassa viestissaan, sen jalkeen tulee taustatehtavan ilmoitus ja vain lyhyt jalkikommentti."""
+        nimi = self.tanaan_nimi()
+        self.lisaa_tehtava(nimi, "tee jotain\n\nTavoite: yllapito\n")
+        koti = self.tmp / "koti"
+        sekaviesti = [self.lohko("msg_01", type="thinking", thinking="mietin"),
+                      self.lohko("msg_01", type="text", text=self.RAPORTTI),
+                      self.lohko("msg_01", type="tool_use", id="t1", name="Bash", input={})]
+        ilmoitus = json.dumps({"type": "user", "sessionId": self.ISTUNTO,
+                               "message": {"role": "user", "content": "<task-notification>valmis</task-notification>"}})
+        self.loki([*sekaviesti, ilmoitus, self.viesti("Taustatehtava valmistui, ei muuta.")])
+        ajuri.aja(self.repo, self.tmp, env={"HOME": str(koti)},
+                  suorita=lambda kom, **kw: subprocess.CompletedProcess(kom, 0, self.stdout("Taustatehtava valmistui, ei muuta."), ""))
+        tulos = (self.repo / ajuri.JONO / "tulokset" / nimi).read_text(encoding="utf-8")
+        self.assertIn("Tila: VALMIS", tulos)
+        self.assertIn("Todennettu kaytossa: testi", tulos)
+        self.assertIn("## Tonylle opittavaa", tulos)
+        self.assertIn("Taustatehtava valmistui", tulos)
 
 if __name__ == "__main__":
     unittest.main()

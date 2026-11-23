@@ -1,0 +1,2 @@
+- aivo: uudet rajatestit yksityisen tilan ehdotuksen hylkäykselle, kansion ja avaintiedoston linkkitarkistukselle sekä kehotteen valinnalle ja roolisuodatukselle (aivo/test_yksityinen_rajat.py, 25 testiä); mutaatiotestaus ajaa ne myös yksityinen.py:n ja yksityinen_or.py:n testeinä (LISATESTIT). Tuotantokoodi ei muutu; kartoituksen 17 selviytyjää kaatuu.
+- tools/mutantit: testi estää LISATESTIT-taulun päällekkäiset avaimet ja puuttuvat testitiedostot, koska sanakirjaliteraalin toistuva avain ylikirjoittaa aiemman hiljaa.

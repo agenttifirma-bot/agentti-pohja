@@ -1,8 +1,13 @@
 # Mallitiedosto: ei asenna mitaan.
+# OnActiveSec laskee ajastimen omasta kaynnistyksesta (enable --now, start, restart), joten kaista ajaa aina
+# minuutin kuluttua kytkemisesta. Ilman sita kaista jai 22.11.2026 ilman seuraavaa ajoa: OnUnitInactiveSec ei saa
+# laskentapistetta, jos palvelu ei ole ajanut taman kaynnistyksen aikana, ja OnBootSec oli jo mennyt ohi.
+# Testi: claudejono/test_ajastin.py.
 [Unit]
 Description=Claude-jono kaista %i, 10 min valein (edellisen ajon paattymisesta)
 
 [Timer]
+OnActiveSec=1min
 OnBootSec=5min
 OnUnitInactiveSec=10min
 Persistent=true

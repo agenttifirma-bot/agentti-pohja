@@ -1,0 +1,2 @@
+- claudejono: kaistat 1–2 ottavat kolmen tai neljän kaistan tilassa ensin Aivo-tehtävät, sitten ylläpidon, portfolion ja ansainnan (Tonyn päätös A1061). Kaistat 3–4 ja alle kolmen kaistan tila ennallaan; `Kaista: N` ohittaa järjestyksen kuten ennen.
+- claudejono: suunnittelu.md:n painopisterivi (Tonyn päätös A1061) ohjaa vain Aivo- ja ylläpitotehtäviin sekä koulutukeen, joka merkitään `Tavoite: portfolio`. Testi varmistaa, että kehote on ASCII-muotoinen ja mainitsee vain ajurin hyväksymiä Tavoite-arvoja.

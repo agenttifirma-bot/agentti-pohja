@@ -1,0 +1,2 @@
+{"aika": "2026-10-28T11:27:00", "rooli": "tony", "teksti": "Pythonin riippuvuudet menevät sekaisin eri projekteissa.", "lahteet": []}
+{"aika": "2026-10-28T11:27:30", "rooli": "aivo", "teksti": "Luo jokaiselle projektille oma virtuaaliympäristö: python3 -m venv .venv ja aktivoi se.", "lahteet": []}
