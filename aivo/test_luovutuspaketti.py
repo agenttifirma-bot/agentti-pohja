@@ -149,6 +149,19 @@ class HyvaksyntaTesti(PakettiPohja):
                            julkaise=lambda *a, **k: "ei-gitissa", vartija=estaa_c)
         self.assertEqual(len(self.saapuneet_tiedostot()), 1)
 
+    def test_vartijan_epatyypillinen_sallittu_estaa(self):
+        # 0 == False, mutta 0 is not False: aiemmin sallittu=0 tallentui sellaisenaan eika estanyt lahetysta
+        for arvo in (0, 1, 0.0, "true", "False", []):
+            def vartija(teksti, arvo=arvo):
+                return {"tila": "tarkistettu", "sallittu": arvo, "merkinnat": ["vuoto"]}
+            t = lp.tallenna_paketti(self.tila.luovutukset, "V", [(1, "x %r\n" % (arvo,))], vartija=vartija)
+            d = lp.lue_paketti(self.tila.luovutukset, t)
+            self.assertIs(d["palat"][0]["vartija"]["sallittu"], False, arvo)
+            with self.assertRaises(yksityinen.YksityinenVirhe):
+                lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + d["sha"][:8], self.tila.kirjasto,
+                                   julkaise=lambda *a, **k: "ei-gitissa", vartija=vartija)
+        self.assertEqual(self.saapuneet_tiedostot(), [])
+
     def test_koukku_ilman_vartijaa(self):
         r = lp.vartija_koukku("teksti")
         self.assertEqual((r["tila"], r["sallittu"]), ("ei-vartijaa", None))
@@ -333,6 +346,14 @@ class RajatTesti(PakettiPohja):
         self.assertTrue(ulkona.is_file())
         self.assertEqual(self.saapuneet_tiedostot(), [])
         self.assertEqual(lp.listaa_paketit(self.tila.luovutukset), [t])
+
+    def test_palan_numero_vain_ascii_numeroina(self):
+        # "\u00b2".isdigit() on tosi, mutta int() kaatuu: palvelin katkaisi yhteyden ja poikkeusteksti meni stderriin
+        kid, t, v = self.paketti()
+        self.tila.tulos_repo = self.tmp.name
+        for pala in ("%C2%B2", "%E2%91%A0", "%EF%BC%91", "%D9%A1"):
+            s = self.pyynto("GET", "/api/paketti/tulos?keskustelu=%s&tunnus=%s&pala=%s" % (kid, t, pala))[0]
+            self.assertEqual(s, 400, pala)
 
     def test_ilman_kirjautumista_401_ilman_otsaketta_403(self):
         kid, t, v = self.paketti()

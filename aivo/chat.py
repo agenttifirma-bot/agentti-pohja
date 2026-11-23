@@ -1821,7 +1821,7 @@ def tee_kasittelija(tila):
             if not self._yks_keskustelu(d):
                 return self._json(404, {"virhe": "ei loydy"})
             n = d.get("pala")
-            if not isinstance(n, str) or not n.isdigit() or len(n) > 2:
+            if not isinstance(n, str) or not n.isascii() or not n.isdigit() or len(n) > 2:   # "\u00b2".isdigit() on tosi
                 return self._json(400, {"virhe": "virheellinen palan numero"})
             try:
                 teksti = luovutuspaketti.lue_tulos(tila.luovutukset, tila.tulos_repo, d.get("tunnus"), int(n))

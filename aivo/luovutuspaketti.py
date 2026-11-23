@@ -133,7 +133,8 @@ def _vartioi(vartija, teksti):
     if not isinstance(r, dict):
         return {"tila": "virhe", "sallittu": False, "merkinnat": ["Vuotovartijan vastaus ei kelpaa."]}
     s = r.get("sallittu")
-    return {"tila": str(r.get("tila", "tarkistettu"))[:40], "sallittu": s if s in (True, False, None) else False,
+    # identiteettivertailu: "s in (True, False, None)" paastaisi 0:n ja 1:n (0 == False), ja 0 ei estaisi palaa
+    return {"tila": str(r.get("tila", "tarkistettu"))[:40], "sallittu": s if s is True or s is None else False,
             "merkinnat": [str(m)[:300] for m in (r.get("merkinnat") or [])][:20]}
 
 
