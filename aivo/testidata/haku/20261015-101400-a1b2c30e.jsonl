@@ -1,0 +1,2 @@
+{"aika": "2026-10-15T10:14:00", "rooli": "tony", "teksti": "Skripti sanoo permission denied.", "lahteet": []}
+{"aika": "2026-10-15T10:14:30", "rooli": "aivo", "teksti": "Tiedostolta puuttuu suoritusoikeus. Aja chmod +x skripti.sh ja yritä uudelleen.", "lahteet": []}

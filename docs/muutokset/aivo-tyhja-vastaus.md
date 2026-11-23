@@ -1,0 +1,1 @@
+- aivo: onnistunut vastaus, jossa on pelkkä valinta-, ehdotus- tai päätösmerkintä, ei enää näy virheenä "Virhe: 200"; täysin tyhjä vastaus saa paikkatekstin myös historiaan

@@ -1,0 +1,1 @@
+- claudejono/itsesuunnittelu: kierrokselta hyvaksytaan enintaan 2 uutta tehtavaa ja ylimaaraiset kirjataan lokiin syineen; kun agentti-pohjassa on yli 20 avointa PR:aa, kehotteeseen lisataan PR-jarru (vain yhdistaminen, korjaukset, ristiriidat, sulkemisehdotukset). Luvun epaonnistuminen kirjataan varoituksena ja suunnittelu jatkuu ennallaan. (A1068)

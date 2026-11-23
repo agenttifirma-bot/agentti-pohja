@@ -1,0 +1,2 @@
+{"aika": "2026-10-04T11:03:00", "rooli": "tony", "teksti": "Unohdin vaihtaa haaraa ja tein muutokset mainiin. Miten korjaan?", "lahteet": []}
+{"aika": "2026-10-04T11:03:30", "rooli": "aivo", "teksti": "Luo uusi haara nykyisestä tilasta komennolla git switch -c, ja palauta main takaisin origin/mainiin.", "lahteet": []}

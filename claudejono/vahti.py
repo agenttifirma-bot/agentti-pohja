@@ -8,6 +8,8 @@ Paatos (`tarkista`):
   - tauolla: jono on tarkoituksella paikoillaan (pysaytystiedosto, kayttorajan tauko, kulutusjarru/varaus tai tyhja jono)
   - pysahtynyt: ei kumpaakaan -> Telegram-viesti + korjaajan kaynnistys, enintaan kerran 2 h aikana
   - ei_dataa: kaistalokia ei ole tai se on tyhja; ei halyteta (uusi asennus), mutta ei myoskaan pingata
+Lisaksi: jos paalla olevalla kaista-ajastimella ei ole seuraavaa ajoa (NEXT puuttuu) eika palvelu ole kaynnissa,
+vahti lahettaa varoituksen (enintaan kerran 2 h aikana). Se ei kaynnista ajastinta itse.
 
 Uptime Kuma: osoite luetaan ymparistomuuttujasta CLAUDEJONO_KUMA_PUSH_URL (/etc/claude-jono/asetukset.env, ei repoon).
 Ping lahtee vain, kun jono on terve tai tauolla. Pysahtyneena pingia ei laheta, jolloin Kuma halyttaa myos silloin,
@@ -39,6 +41,9 @@ LUKU_TAVUA = 256 * 1024         # kaistalokista luetaan vain loppu
 KORJAAJA_YKSIKKO = "korjaaja@claude-jono.service.service"   # sama nimi kuin README:n kuivakokeessa; yksikko on valvottu
 KUMA_AIKARAJA_S = 10
 KAISTAJARJESTELMA_AJASTIMET = ("claude-jono@1.timer", "claude-jono@2.timer", "claude-jono@3.timer")
+KAISTA_AJASTIMET = tuple(f"claude-jono@{n}.timer" for n in range(1, ajuri.KAISTOJA_MAX + 1))
+AJASTINVAROITUS = "ajastinvaroitus"   # vahti-tila.json-avain: viimeisin varoitus ajastimesta ilman seuraavaa ajoa
+PALVELU_KAYNNISSA = ("active", "activating", "deactivating", "reloading")
 
 
 def viimeisin_valmis(tila, nyt_s):
@@ -114,19 +119,56 @@ def _lue_tila(tila):
         return {}
 
 
-def toisto_estetty(tila, nyt_s):
+def toisto_estetty(tila, nyt_s, avain="halytys"):
     try:
-        return 0 <= nyt_s - float(_lue_tila(tila).get("halytys", 0)) < TOISTOESTE_S
+        return 0 <= nyt_s - float(_lue_tila(tila).get(avain, 0)) < TOISTOESTE_S
     except (TypeError, ValueError):
         return False
 
 
-def kirjaa_halytys(tila, nyt_s):
-    """Kirjataan ennen toimia, jotta kaatuva toimi ei kierra toistoestetta."""
+def kirjaa_halytys(tila, nyt_s, avain="halytys"):
+    """Kirjataan ennen toimia, jotta kaatuva toimi ei kierra toistoestetta. Muut avaimet sailyvat."""
     polku = Path(tila) / TILA_TIEDOSTO
+    d = _lue_tila(tila)
+    d[avain] = nyt_s
     tmp = polku.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"halytys": nyt_s}), encoding="utf-8")
+    tmp.write_text(json.dumps(d), encoding="utf-8")
     os.replace(tmp, polku)
+
+
+def ilman_seuraavaa_ajoa(ajastin, palvelu):
+    """True, jos kaytossa olevalla kaista-ajastimella ei ole seuraavaa ajoa eika palvelu ole kaynnissa.
+
+    ajastin: systemctl show -arvot (ActiveState, NextElapseUSecMonotonic, NextElapseUSecRealtime), palvelu: ActiveState.
+    Kun palvelu on kaynnissa, NEXT puuttuu luonnostaan (OnUnitInactiveSec odottaa ajon paattymista).
+    """
+    if ajastin.get("ActiveState") != "active" or palvelu in PALVELU_KAYNNISSA:
+        return False
+    mono = (ajastin.get("NextElapseUSecMonotonic") or "").strip()
+    real = (ajastin.get("NextElapseUSecRealtime") or "").strip()
+    return mono in ("", "infinity", "0") and real in ("", "n/a", "0")
+
+
+def _systemctl_show(yksikko, ominaisuudet, suorita=subprocess.run):
+    r = suorita(["systemctl", "show", yksikko, "-p", ",".join(ominaisuudet)], capture_output=True, text=True, timeout=15)
+    if r.returncode != 0:
+        raise OSError(f"systemctl show {r.returncode}")
+    return dict(rivi.split("=", 1) for rivi in r.stdout.splitlines() if "=" in rivi)
+
+
+def ajastimet_ilman_seuraavaa(suorita=subprocess.run):
+    """Kaista-ajastimet (claude-jono@N.timer), jotka ovat paalla mutta joilla ei ole seuraavaa ajoa. Virhe -> []."""
+    loydetyt = []
+    for ajastin in KAISTA_AJASTIMET:
+        try:
+            a = _systemctl_show(ajastin, ("ActiveState", "NextElapseUSecMonotonic", "NextElapseUSecRealtime"), suorita)
+            p = _systemctl_show(ajastin.replace(".timer", ".service"), ("ActiveState",), suorita).get("ActiveState", "")
+        except (OSError, ValueError, subprocess.SubprocessError) as virhe:
+            print(f"vahti: ajastimen luku epaonnistui: {type(virhe).__name__}", file=sys.stderr)
+            continue
+        if ilman_seuraavaa_ajoa(a, p):
+            loydetyt.append(ajastin)
+    return loydetyt
 
 
 def kaynnista_korjaaja(suorita=subprocess.run):
@@ -163,13 +205,22 @@ def pingaa_kuma(env, avaa=urllib.request.urlopen):
 
 
 def kasittele(tila, repo, tyohak, env, nyt_s=None, laheta=None, korjaaja=kaynnista_korjaaja, ping=pingaa_kuma,
-              kuiva=False, ajastin_aktiivinen=None):
+              kuiva=False, ajastin_aktiivinen=None, ilman_seuraavaa=None):
     """Tarkistaa ja tekee toimet. Palauttaa (tulos, rivi)."""
     nyt_s = time.time() if nyt_s is None else nyt_s
     t = tarkista(tila, repo, tyohak, env, nyt_s, ajastin_aktiivinen)
     rivi = f"vahti: {t['tila']} ({t['syy']})"
+    jumissa = list(ilman_seuraavaa()) if ilman_seuraavaa else []
+    if jumissa:
+        rivi += "; ajastin ilman seuraavaa ajoa: " + ", ".join(jumissa)
     if kuiva:
         return t, rivi + " [kuiva-ajo]"
+    if jumissa and laheta and not toisto_estetty(tila, nyt_s, AJASTINVAROITUS):
+        kirjaa_halytys(tila, nyt_s, AJASTINVAROITUS)
+        # HALYTYS-alku: lahtee heti myos kooste-tilassa (yojono.ajuri.HETI_ALUT), koska kaista ei kaynnisty itsestaan
+        laheta("HALYTYS: kaista-ajastimella ei ole seuraavaa ajoa (NEXT puuttuu): " + ", ".join(jumissa)
+               + ". Korjaus: systemctl restart " + " ".join(jumissa))
+        rivi += " (varoitus lahetetty)"
     if t["tila"] == "pysahtynyt":
         if toisto_estetty(tila, nyt_s):
             rivi += "; halytys jo lahetetty alle 2 h sitten"
@@ -204,7 +255,7 @@ def main(argv=None):
         laheta_telegram = None
     try:
         _, rivi = kasittele(tila, repo, tyohak, env, laheta=laheta_telegram, kuiva="--kuiva" in argv,
-                            ajastin_aktiivinen=_ajastin_aktiivinen)
+                            ajastin_aktiivinen=_ajastin_aktiivinen, ilman_seuraavaa=ajastimet_ilman_seuraavaa)
     except Exception as virhe:
         print(f"vahti virhe: {type(virhe).__name__}", file=sys.stderr)
         return 1

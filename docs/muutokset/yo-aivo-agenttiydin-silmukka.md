@@ -1,0 +1,1 @@
+- aivo/agentti: silmukka (askelraja, aikaraja, toiston tunnistus) korvikemallilla, ja keskeytyneen kirjoituksen .kirj-*.tmp-jäännösten siivous silmukan alussa
