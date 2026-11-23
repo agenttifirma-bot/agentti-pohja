@@ -10,7 +10,8 @@ User=aivo
 Group=aivo
 UMask=0077
 # Vain luku -avain; osoitteen portti (22 tai Gitean oma) kuten ohjeen askeleessa 8.
-Environment=GIT_SSH_COMMAND=ssh -i /var/lib/aivo/.ssh/agenttidata -o IdentitiesOnly=yes -o BatchMode=yes -o UserKnownHostsFile=/var/lib/aivo/.ssh/known_hosts_agenttidata
+# Lainausmerkit pakollisia: ilman niita systemd pilkkoo arvon valilyonneista (GIT_SSH_COMMAND=ssh).
+Environment="GIT_SSH_COMMAND=ssh -i /var/lib/aivo/.ssh/agenttidata -o IdentitiesOnly=yes -o BatchMode=yes -o UserKnownHostsFile=/var/lib/aivo/.ssh/known_hosts_agenttidata"
 ExecStart=/usr/bin/git -C /var/lib/aivo/agenttidata pull --ff-only --quiet
 TimeoutStartSec=2min
 NoNewPrivileges=yes
