@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from aivo import chat, yksityinen
+from aivo import salasana_apu, chat, yksityinen
 
 SAL = "oikea-salasana-123"
 
@@ -60,7 +60,7 @@ class YksityinenPalveluTesti(unittest.TestCase):
         def julkaise(kirjasto, kid, aika, teksti):
             cls.paatokset.append((kirjasto, teksti))
             return "ei-gitissa"
-        cls.tila = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "data"), [TS],
+        cls.tila = chat.Tila(salasana_apu.tiiviste(SAL), str(r / "kirjasto"), str(r / "data"), [TS],
                              kysy=kysy_claude, julkaise=julkaise, yks_data=str(r / "yks" / "chat"),
                              yks_muisti=str(r / "yks" / "muisti"), ydinohjeet=str(r / "yks" / "ydin"),
                              ehdotukset=str(r / "yks" / "ehd"), kysy_yks=kysy_yks)
@@ -210,13 +210,13 @@ class YksityinenPalveluTesti(unittest.TestCase):
 class KaynnistysTesti(unittest.TestCase):
     def test_ilman_yks_dataa_yksityinen_tila_on_pois(self):
         with tempfile.TemporaryDirectory() as d:
-            tila = chat.Tila(chat.tiivista_salasana(SAL), d, d, [TS])
+            tila = chat.Tila(salasana_apu.tiiviste(SAL), d, d, [TS])
             self.assertIsNone(tila.yks)
 
     def test_ulkoinen_mallipalvelin_estaa_kaynnistyksen(self):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(chat.ChatVirhe):
-                chat.Tila(chat.tiivista_salasana(SAL), d, d, [TS], yks_data=d + "/y", malli_url="http://example.com")
+                chat.Tila(salasana_apu.tiiviste(SAL), d, d, [TS], yks_data=d + "/y", malli_url="http://example.com")
 
     def test_suora_polku_ei_sisalla_sudoa(self):
         kom = []

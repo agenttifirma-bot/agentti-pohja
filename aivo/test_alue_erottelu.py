@@ -25,7 +25,7 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from aivo import alue, chat, tyokalualue, yksityinen_alue
+from aivo import salasana_apu, alue, chat, tyokalualue, yksityinen_alue
 
 SAL = "oikea-salasana-123"
 AIVO = Path(__file__).resolve().parent
@@ -216,7 +216,7 @@ class KanariaTesti(unittest.TestCase):
         def kysy_yks(muisti, historia, ohjeet):
             return "Paikallinen vastaus. Muistissa oli: " + cls.kanaria
 
-        cls.tila = chat.Tila(chat.tiivista_salasana(SAL), str(tp["kirjasto"]), str(tp["chat"]), ["h.example"],
+        cls.tila = chat.Tila(salasana_apu.tiiviste(SAL), str(tp["kirjasto"]), str(tp["chat"]), ["h.example"],
                              kysy=kysy_claude, julkaise=lambda *a: "ei-gitissa", yks_data=str(yp["chat"]),
                              yks_muisti=str(yp["muisti"]), ydinohjeet=str(yp["ydinohjeet"]),
                              ehdotukset=str(yp["ehdotukset"]), kysy_yks=kysy_yks)

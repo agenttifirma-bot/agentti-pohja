@@ -10,7 +10,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from aivo import chat, yksityinen, yksityinen_or
+from aivo import salasana_apu, chat, yksityinen, yksityinen_or
 
 SAL = "oikea-salasana-123"
 TS = ".ts" + ".net"
@@ -40,7 +40,7 @@ class Pohja(unittest.TestCase):
             lisa = dict(yks_data=str(r / "yks" / "chat"), yks_muisti=str(r / "yks" / "muisti"),
                         ydinohjeet=str(self.ydin), ehdotukset=str(r / "yks" / "ehd"),
                         kysy_yks=lambda muisti, historia, ohjeet: self.vastaus)
-        self.tila = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "data"), [TS],
+        self.tila = chat.Tila(salasana_apu.tiiviste(SAL), str(r / "kirjasto"), str(r / "data"), [TS],
                               kysy=kysy_claude, julkaise=lambda *a: "ei-gitissa", **lisa)
         self.srv = chat.kaynnista(LOOP, 0, self.tila)
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
