@@ -1,0 +1,1 @@
+- aivo/agentti: injektiotestit korvikemallilla (olematon tyokalu, kielletyt polut, symbolinen linkki, kaksi lohkoa samassa vastauksessa); suunnitelman kohdan 11 testi 6. Vain testit, ei muutoksia silmukkaan tai polkuihin.

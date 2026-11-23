@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from aivo import (chat, openrouter_kulut as ok, tiivista, tiivista_yksityinen as ty, tiivistelma, tyokalualue,
+from aivo import (salasana_apu, chat, openrouter_kulut as ok, tiivista, tiivista_yksityinen as ty, tiivistelma, tyokalualue,
                   yksityinen, yksityinen_alue, yksityinen_or as yo)
 
 MALLI = "qwen/qwen3-235b-a22b-2507"
@@ -293,7 +293,7 @@ class KehoteTesti(unittest.TestCase):
             return "Muistan [l\u00e4hde: %s]." % cls.yks_nimi
 
         def tila(yks_tiivistelmat):
-            return chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "data"), ["localhost"],
+            return chat.Tila(salasana_apu.tiiviste(SAL), str(r / "kirjasto"), str(r / "data"), ["localhost"],
                              kysy=kysy, yks_data=str(r / "yks" / "chat"), yks_muisti=str(r / "yks" / "muisti"),
                              ydinohjeet=str(r / "yks" / "ydin"), ehdotukset=str(r / "yks" / "ehd"), kysy_yks=kysy_yks,
                              tiivistelmat=str(tk.polku("tiivistelmat")), yks_tiivistelmat=yks_tiivistelmat)

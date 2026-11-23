@@ -9,7 +9,7 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from aivo import chat, kalenteri, kalenteri_kehote
+from aivo import salasana_apu, chat, kalenteri, kalenteri_kehote
 from aivo.kalenteri import IcalLahde, KalenteriVirhe, TZ
 
 ICS = (Path(__file__).parent / "testidata" / "kalenteri.ics").read_bytes()
@@ -138,7 +138,7 @@ class ChatTesti(Pohja):
         def kysy_yks(muisti, historia, ohjeet):
             self.muistit["yksityinen"].append(muisti)
             return "Selv\u00e4."
-        tila = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "chatdata"), [TS], kysy=kysy,
+        tila = chat.Tila(salasana_apu.tiiviste(SAL), str(r / "kirjasto"), str(r / "chatdata"), [TS], kysy=kysy,
                          yks_data=str(r / "yks" / "chat"), yks_muisti=str(r / "yks" / "muisti"),
                          ydinohjeet=str(r / "yks" / "ydin"), ehdotukset=str(r / "yks" / "ehd"), kysy_yks=kysy_yks,
                          kalenteri_lahde=lahde)
