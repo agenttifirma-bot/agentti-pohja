@@ -17,7 +17,7 @@ TURVAPAATOKSET
 - Vain https://api.telegram.org, ei uudelleenohjauksia, ei ymparistoproxya, aikakatkaisu. Token ei koskaan lokiin eika virheviesteihin:
   virheista kirjataan vain kiintea tapahtumatyyppi (tai odottamaton_<Tyyppi>) ja kesto.
 - Rinnakkaisajo estetty flock-lukolla (arkisto/komennot.lock).
-Poistumiskoodit: 0 ok (myos ohimenevä verkko-/Telegram-virhe: seuraava kierros yrittaa uudelleen), 1 pysyva virhe, 64 kayttovirhe.
+Poistumiskoodit: 0 ok (myos ohimeneva verkko-/Telegram-virhe: seuraava kierros yrittaa uudelleen), 1 pysyva virhe, 64 kayttovirhe.
 Journaliin (stderr) kirjoitetaan jokaisesta virheesta yksi rivi: vain tapahtumatyyppi, poikkeuksen tyyppi ja HTTP-tila.
 """
 import fcntl

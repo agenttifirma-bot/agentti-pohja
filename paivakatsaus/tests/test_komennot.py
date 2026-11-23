@@ -316,7 +316,7 @@ class OffsetTesti(Pohja):
     def test_haun_epaonnistuminen_ei_siirra_offsetia(self):
         self.aseta_offset(100)
         p = Palvelin([paivitys(100, "/hyvaksy 3")], hae_virhe=OSError("Verkko " + TOKEN))
-        self.assertEqual(self.aja(p), 0)                                                      # ohimenevä: ei failed-tilaa
+        self.assertEqual(self.aja(p), 0)                                                      # ohimeneva: ei failed-tilaa
         self.assertEqual(self.offset(), 100)
         self.assertEqual(self.tilat()[3], "PENDING")
         self.assertIn("tapahtuma=haku_virhe_ohimeneva", self.loki_rivit()[-1])
@@ -398,7 +398,7 @@ class VirheetJaLokiTesti(Pohja):
         for virhe in (urllib.error.URLError("https://api.telegram.org/bot" + TOKEN + "/getUpdates"), OSError(TOKEN), TimeoutError(TOKEN),
                       urllib.error.HTTPError("https://api.telegram.org/bot" + TOKEN, 401, "Unauthorized", {}, None), ValueError(TOKEN)):
             koodi, ulos = self.kaikki_ulostulo(lambda: self.aja(Palvelin([], hae_virhe=virhe)))
-            self.assertEqual(koodi, 1 if isinstance(virhe, ValueError) or getattr(virhe, "code", 0) == 401 else 0)   # ohimenevä: 0, pysyvä: 1
+            self.assertEqual(koodi, 1 if isinstance(virhe, ValueError) or getattr(virhe, "code", 0) == 401 else 0)   # ohimeneva: 0, pysyva: 1
             self.assert_ei_vuotoa(ulos)
 
     def test_lahetyksen_virhe_ei_paljasta_tokenia_ja_jatkaa(self):
@@ -511,8 +511,8 @@ class SiirtoTesti(Pohja):
 
     def test_oletus_on_vain_https_api_telegram_org(self):
         self.assertEqual(send.TELEGRAM_API, "https://api.telegram.org")
-        for url in ("http://api.telegram.org/bot1/getUpdates", "https://evil.test/bot1/getUpdates", "https://api.telegram.org.evil.test/bot1/x",
-                    "file:///etc/passwd", "ftp://api.telegram.org/bot1/x", "https://api.telegram.org@evil.test/bot1/x"):
+        for url in ("http://api.telegram.org/" "bot1/getUpdates", "https://evil.test/bot1/getUpdates", "https://api.telegram.org.evil.test/bot1/x",
+                    "file:///etc/passwd", "ftp://api.telegram.org/" "bot1/x", "https://api.telegram.org@evil.test/bot1/x"):
             with self.assertRaises(komennot.KomentoVirhe):
                 komennot.post(url, {})
 
@@ -530,7 +530,7 @@ class SiirtoTesti(Pohja):
         self.aseta_offset(1)
         with mock.patch.object(send, "TELEGRAM_API", hidas.api), mock.patch.object(komennot, "AIKAKATKAISU", 0.3):
             koodi = komennot.ajo(env=self.env, nyt=NYT, arkisto=self.arkisto, hakemisto=self.ehd, loki=self.loki, viive=0)
-        self.assertEqual(koodi, 0)                                                            # aikakatkaisu on ohimenevä
+        self.assertEqual(koodi, 0)                                                            # aikakatkaisu on ohimeneva
         self.assertNotIn(TOKEN, self.loki_teksti())
         self.assertIn("tapahtuma=haku_virhe_ohimeneva", self.loki_rivit()[-1])
 
@@ -583,7 +583,7 @@ class YksikkoTesti(unittest.TestCase):
 
 
 class JournaaliJaOhimenevaTesti(Pohja):
-    """Virhetyyppi näkyy journalissa (stderr) ja ohimenevä verkkovirhe ei jätä palvelua failed-tilaan."""
+    """Virhetyyppi nakyy journalissa (stderr) ja ohimeneva verkkovirhe ei jata palvelua failed-tilaan."""
 
     def aja_stderr(self, virhe):
         import contextlib
