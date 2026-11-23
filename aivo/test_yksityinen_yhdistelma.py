@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest import mock
 
 from aivo import salasana_apu, chat, openrouter_kulut as ok, yhdistelma as yh, yksityinen, yksityinen_or as yo
+from aivo import luovutus   # kokooma: #363:n luovutusmoduuli (test_merkinnat_sailyvat_tarkastajan_lapi_chatissa)
 
 M1 = "qwen/qwen3-235b-a22b-2507"
 M2 = "meta-llama/llama-3.3-70b-instruct"
@@ -516,7 +517,10 @@ class Palvelin(unittest.TestCase):
         tallennettu = json.loads(next((self.r / "ehd").glob("*.json")).read_text())
         self.assertEqual(tallennettu["tiedosto"], "tyyli.md")
         self.assertIn("Parempi vastaus.", v["vastaus"])
-        self.assertIn(LUOVUTUS, v["vastaus"])                 # luovutuslohko kulkee sellaisenaan (#363 kasittelee)
+        # luovutuslohko kulkee yhdistelman lapi sellaisenaan, ja #363 tallentaa sen luovutusehdotukseksi
+        self.assertEqual(len(v["luovutukset"]), 1)
+        self.assertEqual(luovutus.lue_ehdotus(self.tila.luovutukset, v["luovutukset"][0])["teksti"].strip(),
+                         "Suunnitelma jonolle.")
         self.assertNotIn("keksitty", json.dumps(v))
 
     def test_paivakatto_katkaisee_http(self):
