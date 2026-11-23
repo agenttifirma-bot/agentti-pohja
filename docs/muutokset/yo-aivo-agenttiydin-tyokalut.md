@@ -1,0 +1,1 @@
+- aivo/agentti: uusi paketti (vakiokirjasto, ei kytkentaa muuhun koodiin): tyokalut lue, kirjoita, listaa ja valmis vain omassa tyokansiossa, polkusaannot (ei .., absoluuttisia polkuja eika symbolisia linkkeja, koko-, paate- ja tayttymisrajat) seka tyokalulohkon jasennin, joka palauttaa virheet arvona. Rakennetesti estaa verkko- ja aliprosessituonnit.

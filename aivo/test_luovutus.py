@@ -5,6 +5,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -314,6 +315,35 @@ class KehoteJaSivuTesti(unittest.TestCase):
             self.assertIn(t, h)
         for kielletty in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
             self.assertNotIn(kielletty, h)
+
+
+class LukkoVapautuuEnnenVastaustaTesti(LuovutusPohja):
+    """Toisto: hyvaksy/hylkaa/kasitelty lahettivat 409-vastauksen ennen lukon vapautusta, joten heti seuraava
+    pyynto sai satunnaisesti 429 (koko sarjassa kaatui test_polkujen_ohitus_tunnuksessa_estyy)."""
+
+    def setUp(self):
+        super().setUp()
+        aito = self.tila.luovutuslukko
+
+        class HidasVapautus:          # vapautus viivastyy: jos vastaus lahtee ennen vapautusta, seuraava saa 429
+            def acquire(self, blocking=True):
+                return aito.acquire(blocking)
+
+            def release(self):
+                time.sleep(0.3)
+                aito.release()
+        self.tila.luovutuslukko = HidasVapautus()
+
+    def test_virhevastauksen_jalkeen_seuraava_pyynto_ei_saa_429(self):
+        kid = self.uusi()
+        t, s8 = self.ehdota_luovutus()
+        tkid = self.uusi("tyokalu")
+        for polku, d in (("/api/luovutus/hyvaksy", {"keskustelu": kid, "tunnus": "0" * 12, "vahvistus": "kyll\u00e4 " + s8}),
+                         ("/api/luovutus/hylkaa", {"keskustelu": kid, "tunnus": "0" * 12}),
+                         ("/api/saapuneet/kasitelty", {"keskustelu": tkid, "tunnus": "0" * 12})):
+            self.assertEqual(self.pyynto("POST", polku, d)[0], 409, polku)
+            s, v = self.pyynto("POST", "/api/luovutus/muokkaa", {"keskustelu": kid, "tunnus": t, "teksti": "Uusi.\n"})
+            self.assertEqual(s, 200, (polku, v))
 
 
 if __name__ == "__main__":

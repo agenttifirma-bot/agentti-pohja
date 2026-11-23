@@ -1,0 +1,1 @@
+- aivo: tiivista_tyokalu tarkistaa vain kayttamansa alikansiot (chat, tiivistelmat, indeksi), joten kirjaston vieras alikansio ei kaada tiivistysta

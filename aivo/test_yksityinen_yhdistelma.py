@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
-from aivo import chat, openrouter_kulut as ok, yhdistelma as yh, yksityinen, yksityinen_or as yo
+from aivo import salasana_apu, chat, openrouter_kulut as ok, yhdistelma as yh, yksityinen, yksityinen_or as yo
 from aivo import luovutus   # kokooma: #363:n luovutusmoduuli (test_merkinnat_sailyvat_tarkastajan_lapi_chatissa)
 
 M1 = "qwen/qwen3-235b-a22b-2507"
@@ -143,8 +143,8 @@ class Roolit(unittest.TestCase):
                        {"taustapaa": "loopback", "yhdistelma_oletus": "tarkastus"},
                        {"taustapaa": "loopback", "roolit": "vastaaja:" + M1}):
                 with self.subTest(kw=kw), self.assertRaises(chat.ChatVirhe):
-                    chat.Tila(chat.tiivista_salasana(SALASANA), d, d, ["localhost"], yks_data=d + "/y", **kw)
-            t = chat.Tila(chat.tiivista_salasana(SALASANA), d, d, ["localhost"], yks_data=d + "/y",
+                    chat.Tila(salasana_apu.tiiviste(SALASANA), d, d, ["localhost"], yks_data=d + "/y", **kw)
+            t = chat.Tila(salasana_apu.tiiviste(SALASANA), d, d, ["localhost"], yks_data=d + "/y",
                           taustapaa="openrouter", or_mallit=[M1, M2], yhdistelma_oletus="tarkastus",
                           roolit="vastaaja:%s,tarkastaja:%s" % (M1, M2))
             self.assertEqual((t.yhdistelma_oletus, t.roolit), ("tarkastus", {"vastaaja": M1, "tarkastaja": M2}))
@@ -436,7 +436,7 @@ class Palvelin(unittest.TestCase):
 
     def kaynnista(self, **kw):
         r = self.r
-        self.tila = chat.Tila(chat.tiivista_salasana(SALASANA), str(r / "kirjasto"), str(r / "data"), ["localhost"],
+        self.tila = chat.Tila(salasana_apu.tiiviste(SALASANA), str(r / "kirjasto"), str(r / "data"), ["localhost"],
                               kysy=lambda m, h: "pilvi", yks_data=str(r / "yks"), yks_muisti=str(r / "yksm"),
                               ydinohjeet=str(r / "ydin"), ehdotukset=str(r / "ehd"), or_avain=str(r / "avain"),
                               or_kulutila=str(r / "kulut"), taustapaa="openrouter", or_mallit=[M1, M2, M3],

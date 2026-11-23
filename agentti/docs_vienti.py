@@ -211,6 +211,27 @@ def vie(lahde, tyo, osoite, avain=OLETUS_AVAIN, aivo=False, kuiva=False, ssh=Tru
         return _vie_lukittuna(lahde, tyo, osoite, avain, aivo, kuiva, ssh)
 
 
+def _peru_kuiva(tyo, aivo):
+    """Kuiva-ajo palauttaa tyoklooonin ennalleen: muuten sen kirjoittamat seuraamattomat tiedostot jaisivat
+    tyoklooniin ja pysayttaisivat toisen ajon (perusajo/--aivo) allowlist-tarkistukseen."""
+    _git(tyo, "reset", "-q")
+    _git(tyo, "checkout", "-q", "--", ".")          # tyhjassa repossa ei mitaan palautettavaa (paluukoodi ohitetaan)
+    _git(tyo, "clean", "-fdq", "--", *((AIVO) if aivo else (KANSIOT + YKSITTAISET)))
+
+
+def _pushaa_aiempi(tyo, osoite, env):
+    """Pushaa tyoklooonin HEADin tyhjaan etarepoon vain, jos jokainen sen polku on jommankumman ajon allowlistissa."""
+    rc, puu = _git(tyo, "ls-tree", "-r", "--name-only", "HEAD")
+    if rc != 0:
+        raise ViennitVirhe("git ls-tree epaonnistui")
+    polut = [n for n in puu.splitlines() if n]
+    if any(not (_sallittu_kohde(n, False) or _sallittu_kohde(n, True)) for n in polut):
+        raise ViennitVirhe("aiemmassa commitissa on allowlistin ulkopuolisia polkuja; ei pushata")
+    rc, _ = _git(tyo, "push", "-q", osoite, "HEAD:refs/heads/" + HAARA, env=env)
+    if rc != 0:
+        raise ViennitVirhe("git push epaonnistui")
+
+
 def _vie_lukittuna(lahde, tyo, osoite, avain, aivo, kuiva, ssh):
     """vie() lukon sisalla; osoite ja isanta on jo tarkistettu."""
     env = _ssh_env(avain, tyo) if ssh else {}
@@ -242,9 +263,14 @@ def _vie_lukittuna(lahde, tyo, osoite, avain, aivo, kuiva, ssh):
         raise ViennitVirhe("allowlistin ulkopuolisia polkuja (%d); ei committia" % len(vaarat))
     ohit = "; ohitettu %d" % len(ohitetut) if ohitetut else ""
     if not muuttuneet:
+        if not nakyy.strip() and not kuiva and _git(tyo, "rev-parse", "-q", "--verify", "HEAD")[0] == 0:
+            # Etarepo on yha tyhja, mutta tyoklooonissa on aiemman ajon commit, jonka push epaonnistui
+            # (esim. avain puuttui asennuksessa). Ilman tata sita ei pushattaisi ennen seuraavaa lahdemuutosta.
+            _pushaa_aiempi(tyo, osoite, env)
+            return "pushattu: aiempi commit tyhjaan etarepoon (kopioitu %d)%s" % (kopioitu, ohit)
         return "ei muutoksia (kopioitu %d)%s; ei committia" % (kopioitu, ohit)
     if kuiva:
-        _git(tyo, "reset", "-q")
+        _peru_kuiva(tyo, aivo)
         return "kuiva-ajo: %d tiedostoa muuttuisi (kopioitu %d)%s; ei committia" % (len(muuttuneet), kopioitu, ohit)
     rc, _ = _git(tyo, "-c", "user.name=docs-vienti", "-c", "user.email=docs-vienti@localhost",
                  "commit", "-q", "-m", "docs-vienti%s: %d tiedostoa muuttui" % (" (aivo)" if aivo else "", len(muuttuneet)))
