@@ -15,7 +15,8 @@ TOIMII_RE = re.compile(r"^[ \t>*_-]*Toimii k(?:\u00e4|a)yt(?:\u00f6|o)ss(?:\u00e
 TODISTE_RE = re.compile(r"^[ \t>*_-]*Todiste[ \t]*:(?:\*\*|__)?[ \t]*(\S.*?)[ \t]*$", re.I | re.M)
 MALLI_RE = re.compile(r"^- Malli:[ \t]*(\S.*?)[ \t]*$", re.M)
 TYHJA_RE = re.compile(r"^[\s\-\u2013\u2014.:*_]*(?:tbd|todo|n/?a|ei mit(?:\u00e4|a)(?:\u00e4|a)n|ei ole|ei todistetta)?[\s\-\u2013\u2014.:*_]*$", re.I)
-KYLLA_RE = re.compile(r"^(?:kyll(?:\u00e4|a)|ok)\b", re.I)
+# Koko arvo (ei alkuosa): "kyll\u00e4, mutta ei toimi" tai "ok mutta rikki" ei ole kyll\u00e4. Korostusmerkit ja loppupiste sallitaan.
+KYLLA_RE = re.compile(r"^[*_`]*(?:kyll(?:\u00e4|a)|ok)[.!]?[*_`]*$", re.I)
 EI_RE = re.compile(r"^(?:ei|false)\b", re.I)
 
 
@@ -48,13 +49,13 @@ def _todiste_ok(todiste):
     return bool(todiste) and not TYHJA_RE.match(todiste)
 
 
-MALLIPERHEET = frozenset(("opus", "sonnet", "haiku", "fable"))
+MALLIPERHEET = frozenset(("opus", "sonnet", "haiku", "fable", "deepseek", "qwen"))
 KIELTOSANAT = frozenset(("ei", "not", "non", "no", "except", "paitsi"))
 
 
 def malliperhe(nimi):
     """Normalisoi mallin tai istunnon nimen perheeseen: 'opus', 'claude-opus-5-5', 'Claude Opus 5.5', 'anthropic/claude-opus-5-5:beta',
-    'Claude Code (Opus 5.5)' ja 'opus-istunto-7' -> 'opus'. Nimi jaetaan kaikista muista merkeist\u00e4 kuin a-z, ja perhe on nimess\u00e4
+    'Claude Code (Opus 5.5)', 'claude3opus' ja 'opus-istunto-7' -> 'opus'; 'openrouter:deepseek-flash' -> 'deepseek', 'qwen-coder' -> 'qwen'. Nimi jaetaan kaikista muista merkeist\u00e4 kuin a-z, ja perhe on nimess\u00e4
     esiintyv\u00e4 tunnettu malliperhe (MALLIPERHEET). Tyhj\u00e4, tunnistamaton ('istunto-7', 'Claude Code'), moniselitteinen ('opus/sonnet')
     tai kielletty ('ei opus') nimi -> '' (ep\u00e4varma). Sallilista vain tiukentaa: tuntematon nimi ei ole koskaan 'eri perhe'."""
     tokenit = re.split(r"[^a-z]+", (nimi or "").lower())

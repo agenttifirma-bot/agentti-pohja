@@ -1,1 +1,0 @@
-- valmis-portti: malliperhe() hyväksyy perheeksi vain tunnetut nimet (opus, sonnet, haiku, fable); tunnistamaton, moniselitteinen tai kielletty nimi on epävarma, joten tarkastajan riippumattomuutta ei voi enää ohittaa istuntonimellä. KYLLA_RE ei enää hyväksy sanaa "on" kyllä-vastaukseksi.

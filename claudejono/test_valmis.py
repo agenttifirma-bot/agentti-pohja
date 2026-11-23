@@ -109,6 +109,25 @@ class Valmis(unittest.TestCase):
         for arvo in ("kyll\u00e4", "Kylla", "ok"):
             self.assertTrue(valmis.kelvollinen(TULOS, OK.replace("kyll\u00e4", arvo)), arvo)
 
+    def test_kylla_vaatii_koko_arvon(self):
+        # Tarkastaja (a26dc2a) ja tulos 23-52: alkuosa 'kylla'/'ok' hyvaksyttiin, vaikka arvo jatkui varauksella.
+        for arvo in ("kyll\u00e4, mutta ei toimi", "ok mutta rikki", "on rikki", "kyll\u00e4 osittain", "ok?", "okei"):
+            teksti = OK.replace("kyll\u00e4", arvo)
+            self.assertIsNot(valmis.lue(teksti)["toimii"], True, arvo)
+            self.assertEqual(valmis.tehokas_tila("VALMIS", TULOS, teksti), "KESKEN", arvo)
+        for arvo in ("kyll\u00e4", "Kyll\u00e4.", "ok", "OK!", "**kyll\u00e4**", "kylla"):
+            teksti = OK.replace("kyll\u00e4", arvo)
+            self.assertTrue(valmis.lue(teksti)["toimii"], arvo)
+            self.assertEqual(valmis.tehokas_tila("VALMIS", TULOS, teksti), "VALMIS", arvo)
+
+    def test_malliperhe_openrouter_perheet(self):
+        for nimi, perhe in (("openrouter:deepseek-flash", "deepseek"), ("deepseek-pro", "deepseek"),
+                            ("qwen-coder", "qwen"), ("openrouter/qwen/qwen3-coder", "qwen"), ("claude3opus", "opus")):
+            self.assertEqual(valmis.malliperhe(nimi), perhe, nimi)
+        tulos = TULOS.replace("- Malli: sonnet", "- Malli: openrouter:deepseek-flash")
+        self.assertEqual(valmis.tehokas_tila("VALMIS", tulos, OK), "VALMIS")   # tarkastaja opus != deepseek
+        self.assertEqual(valmis.tehokas_tila("VALMIS", tulos, OK.replace("opus", "deepseek-pro")), "KESKEN")
+
     def test_tulostiedostot_ohittaa_tarkastukset(self):
         import tempfile
         from pathlib import Path
