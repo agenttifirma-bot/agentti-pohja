@@ -61,6 +61,54 @@ class Valmis(unittest.TestCase):
         tulos = TULOS.replace("sonnet", "Claude Sonnet")
         self.assertTrue(valmis.kelvollinen(tulos, OK.replace("opus", "Claude Opus")))
 
+    def test_malliperhe_tunnistamaton_nimi_on_epavarma(self):
+        # Tarkastajan katselmoinnit 22.-23.11.2026: ensimmainen kirjaintoken hyvaksyttiin perheeksi, vaikka se ei ollut mallin nimi.
+        for nimi in ("istunto-7", "tarkastaja", "min\u00e4", "Claude Code", "claude-agent-sdk", "code", "gpt-5",
+                     "riippumaton tarkastaja", "ClaudeOpus", "opusx", "op us"):
+            self.assertEqual(valmis.malliperhe(nimi), "", nimi)
+
+    def test_malliperhe_tunnettu_perhe_loytyy_muun_tekstin_seasta(self):
+        for nimi in ("Claude Code (Opus 5.5)", "riippumaton tarkastaja (opus)", "tarkastaja opus", "istunto 7 opus",
+                     "OPUS", "opus5", "opus@v2", "claude-opus-5-5:thinking", "claude-opus-4-1-20250805",
+                     "openrouter/anthropic/claude-opus-5-5:beta", "claude-opus-5-5-latest", "\topus\n"):
+            self.assertEqual(valmis.malliperhe(nimi), "opus", nimi)
+        self.assertEqual(valmis.malliperhe("Claude Code (Sonnet 5.5)"), "sonnet")
+        self.assertEqual(valmis.malliperhe("claude-haiku-5-5"), "haiku")
+        self.assertEqual(valmis.malliperhe("claude-fable-5-1"), "fable")
+
+    def test_malliperhe_useampi_perhe_tai_kielto_on_epavarma(self):
+        for nimi in ("opus/sonnet", "claude-opus-5-5 ja sonnet", "Sonnet vs Opus", "haiku, opus",
+                     "ei opus", "not opus", "non-opus", "ei sonnet vaan opus", "anthropic/claude-sonnet-5-5/opus"):
+            self.assertEqual(valmis.malliperhe(nimi), "", nimi)
+
+    def test_tunnistamaton_tarkastaja_ei_ole_riippumaton(self):
+        for nimi in ("istunto-7", "tarkastaja", "min\u00e4", "Claude Code", "claude-agent-sdk", "gpt-5", "opus/sonnet", "ei opus"):
+            self.assertFalse(valmis.kelvollinen(TULOS, OK.replace("opus", nimi)), nimi)
+            self.assertEqual(valmis.tehokas_tila("VALMIS", TULOS, OK.replace("opus", nimi)), "KESKEN", nimi)
+
+    def test_sama_malli_epastandardina_nimena_ei_ole_riippumaton(self):
+        tulos = TULOS.replace("sonnet", "claude-opus-5-5")
+        for nimi in ("Claude Code (Opus 5.5)", "riippumaton tarkastaja (opus)", "istunto 7 opus", "claude-opus-5-5:thinking",
+                     "openrouter/anthropic/claude-opus-5-5", "OPUS", "opus5"):
+            self.assertFalse(valmis.kelvollinen(tulos, OK.replace("opus", nimi)), nimi)
+
+    def test_eri_malli_epastandardina_nimena_on_riippumaton(self):
+        self.assertTrue(valmis.kelvollinen(TULOS, OK.replace("opus", "Claude Code (Opus 5.5)")))
+        self.assertTrue(valmis.kelvollinen(TULOS.replace("sonnet", "claude-opus-5-5"), OK.replace("opus", "claude-sonnet-5-5:beta")))
+
+    def test_tunnistamaton_tekija_ei_ole_riippumaton(self):
+        for malli in ("Claude Code", "istunto-7", "opus/sonnet"):
+            self.assertFalse(valmis.kelvollinen(TULOS.replace("sonnet", malli), OK), malli)
+
+    def test_kylla_ei_hyvaksy_sanaa_on(self):
+        # Tarkastajan katselmointi 23.11.2026: 'on rikki' luettiin kylla-vastaukseksi.
+        for arvo in ("on rikki", "on", "On toimimaton"):
+            teksti = OK.replace("kyll\u00e4", arvo)
+            self.assertIsNot(valmis.lue(teksti)["toimii"], True, arvo)
+            self.assertEqual(valmis.tehokas_tila("VALMIS", TULOS, teksti), "KESKEN", arvo)
+        for arvo in ("kyll\u00e4", "Kylla", "ok"):
+            self.assertTrue(valmis.kelvollinen(TULOS, OK.replace("kyll\u00e4", arvo)), arvo)
+
     def test_tulostiedostot_ohittaa_tarkastukset(self):
         import tempfile
         from pathlib import Path
