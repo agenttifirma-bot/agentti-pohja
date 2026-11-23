@@ -5,11 +5,13 @@ Tama moduuli sisaltaa kolme asiaa, jotka ajuri kutsuu:
    uusi suunta eivat mene jonoon vaan Tonyn sunnuntaiehdotuksiin.
 2. luo_toistuvat: viikoittainen optimointikierros (toisto 7 pv) pohjasta toistuvat/optimointi.md.
 3. pysaytetty: laatuotoksen pysaytysehto (laatu.py kirjaa tilan) estaa itsesuunnittelun ja toistuvat tehtavat.
+4. Laatu ennen maaraa (A1068): kierroskohtainen raja (KIERROS_MAX_UUDET) ja PR-jarru (avoimet_prt, pr_jarru_kehote).
 
 Tama moduuli EI muuta katto-, oikeus- tai polkurajoja. Se vain kiristaa sita, mika paasee jonoon.
 """
 import json
 import re
+import urllib.request
 from datetime import date, datetime
 from pathlib import Path
 
@@ -18,6 +20,12 @@ AVOIMIA_ALARAJA = 5          # alle taman: itsesuunnittelu taydentaa jonoa (komp
 TOISTUVAT_HAKEMISTO = Path(__file__).resolve().parent / "toistuvat"
 TOISTUVAT = {"optimointi": 7}   # nimi -> toistovali vuorokausina
 LAATU_TILA = "laatu-tila.json"
+# Laatu ennen maaraa (Tonyn paatos A1068, 23.11.2026): yhdelta suunnittelukierrokselta enintaan 2 uutta tehtavatiedostoa.
+# Raja lisataan AUTO_PER_AJO- ja AUTO_MAX_PAIVA-rajojen paalle (pienin voittaa); naita arvoja ei muuteta.
+KIERROS_MAX_UUDET = 2
+# PR-jarru (A1068): kun agentti-pohjassa on yli PR_JARRU_RAJA avointa PR:aa, suunnittelija ei ehdota uusia koodi-PR:ia.
+PR_JARRU_RAJA = 20
+PR_JARRU_REPO = "tonyweckstrom1987/agentti-pohja"
 TOISTUVA_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-\d{2}-auto-([a-z0-9-]+)\.md$")
 
 PISTEET_RE = re.compile(
@@ -190,3 +198,28 @@ def pysaytetty(tyohak):
     if isinstance(p, dict) and p.get("syy"):
         return str(p["syy"])[:200]
     return None
+
+
+def avoimet_prt(repo=PR_JARRU_REPO, avaa=urllib.request.urlopen):
+    """(maara, virhe): avointen PR:ien maara GitHubista (yksi GET, vain luku -tunnus github_luku.pyynto-funktion kautta).
+    Yli 100 avointa palauttaa 100 (alaraja riittaa jarrulle). Virhe: (None, poikkeuksen tyypin nimi), ei viestia."""
+    from agentti import github_luku   # myohainen tuonti: silmukka ei tarvitse agentti-pakettia muuhun
+    url = f"https://api.github.com/repos/{repo}/pulls?state=open&per_page=100"
+    try:
+        with avaa(github_luku.pyynto(url, "claudejono-pr-jarru"), timeout=15) as r:
+            lista = json.loads(r.read().decode("utf-8"))
+    except Exception as e:   # verkko-, HTTP- ja JSON-virheet: suunnittelu jatkuu ilman jarrua
+        return None, type(e).__name__
+    if not isinstance(lista, list):
+        return None, "ei lista"
+    return len(lista), ""
+
+
+def pr_jarru_kehote(maara):
+    """Kehotteen lisays, kun avoimia PR:ia on yli PR_JARRU_RAJA. Muuten tyhja (myos kun maaraa ei saatu)."""
+    if not isinstance(maara, int) or isinstance(maara, bool) or maara <= PR_JARRU_RAJA:
+        return ""
+    return (f"\n\nPR-JARRU (Tonyn paatos A1068): agentti-pohjassa on nyt {maara} avointa PR:aa (raja {PR_JARRU_RAJA}). "
+            "Ala ehdota uusia koodi-PR:ia. Ehdota vain tehtavia, jotka yhdistavat paallekkaisia PR:ia, korjaavat tarkastajan "
+            "loydoksia, ratkaisevat ristiriitoja tai kirjoittavat sulkemisehdotuksia vanhoista PR:ista. Tehtava ei sulje PR:ia: "
+            "sulkeminen on Tonyn paatos.\n")

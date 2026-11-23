@@ -21,6 +21,10 @@ class Pohja(unittest.TestCase):
     """Oikea git-repo: paikallinen bare-origin + klooni, jotta pull/push testataan aidosti."""
 
     def setUp(self):
+        # PR-jarrun luku (A1068) ei saa kayttaa verkkoa testeissa: 0 avointa = ei jarrua, ei varoitusta.
+        vanha_prt = ajuri.AVOIMET_PRT
+        ajuri.AVOIMET_PRT = lambda: (0, "")
+        self.addCleanup(setattr, ajuri, "AVOIMET_PRT", vanha_prt)
         self.tmp = Path(tempfile.mkdtemp())
         self.origin = self.tmp / "origin.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)], check=True)
@@ -370,9 +374,8 @@ class Itsesuunnittelu(Pohja):
         tied = self.origin_tiedostot()
         self.assertIn("claude-jono/tehtavat/2026-10-30-02-auto-korjaa-x.md", tied)
         self.assertIn("claude-jono/tehtavat/2026-10-30-03-auto-toinen.md", tied)
-        self.assertIn("claude-jono/tehtavat/2026-10-30-04-auto-kolmas.md", tied)
-        self.assertIn("claude-jono/tehtavat/2026-10-30-06-auto-viides.md", tied)
-        self.assertNotIn("claude-jono/tehtavat/2026-10-30-07-auto-kuudes.md", tied)   # AUTO_PER_AJO = 5 (A961)
+        # Laatu ennen maaraa (A1068): kierrokselta enintaan 2, vaikka AUTO_PER_AJO = 5 (A961) sallisi enemman.
+        self.assertFalse([t for t in tied if "kolmas" in t or "neljas" in t or "viides" in t or "kuudes" in t])
         self.assertIn("claude-jono/tonylle.md", tied)
         self.assertEqual(ajuri.seuraava_tehtava(self.repo).name, "2026-10-30-02-auto-korjaa-x.md")
 
