@@ -107,6 +107,14 @@ def loppurivi(ulos):
     return rivit[-1] if rivit else ""
 
 
+# Testiymparisto sleep-korvike: ohittaa vain julkaise.sh:n lopputoimien 0,2 s odotuksen ("tee ehtii kirjoittaa loppurivin").
+# Testissa ulostulo luetaan putkesta EOF:iin asti, ja tee pitaa putken auki, joten odotus on turha. Muut sleep-kutsut ajetaan oikeasti.
+SLEEP = r'''#!/usr/bin/env bash
+[ "$*" = "0.2" ] && exit 0
+exec /bin/sleep "$@"
+'''
+
+
 class Laatikko:
     """Yksi hiekkalaatikko: isanta (JH), kontti (sim/), git-repo ja pakettikansio."""
 
@@ -123,7 +131,7 @@ class Laatikko:
         self.koodi, self.tila, self.konfig, self.yksikot = self.sim / "opt" / "app", self.sim / "var" / "lib" / "app", self.sim / "etc" / "app", self.sim / "etc" / "systemd" / "system"
         for d in (self.koodi, self.tila / "alihak", self.konfig, self.yksikot):
             d.mkdir(parents=True)
-        for nimi, sisalto in (("PCT", PCT), ("pct", PCT), ("systemctl", SYSTEMCTL), ("runuser", RUNUSER), ("kauppa-asenna", KAUPPA_ASENNA), ("kauppa-palauta", KAUPPA_PALAUTA)):
+        for nimi, sisalto in (("PCT", PCT), ("pct", PCT), ("systemctl", SYSTEMCTL), ("runuser", RUNUSER), ("kauppa-asenna", KAUPPA_ASENNA), ("kauppa-palauta", KAUPPA_PALAUTA), ("sleep", SLEEP)):
             if nimi == "PCT":
                 continue
             (self.bin / nimi).write_text(sisalto)
@@ -196,11 +204,21 @@ class Laatikko:
         (self.jh / ("%s.conf" % nimi)).write_text(teksti)
 
     # ---- ajo ----
-    def aja(self, *args, kohde="app", skripti=None, env=None):
-        julkaisu = "JULKAISU_TS" not in (env or {}) and not any(str(a) in ("--peruuta", "--tila", "--itsetesti", "--katastrofi-tila", "--katastrofi-palauta") for a in args)
-        if julkaisu and int(time.time()) == getattr(self, "_viim_s", None):
-            time.sleep(1.05 - time.time() % 1)        # edellinen ajo sai saman sekunnin: prev-nimi tormaisi
-        r = subprocess.run(["bash", str(skripti or JULKAISE), kohde, *[str(a) for a in args]], env=env or self.env, capture_output=True, text=True, timeout=300)
+    def seuraava_ts(self):
+        """Injektoitu kello: joka ajolle oma, tasmalleen sekunnin edellista suurempi JULKAISU_TS (ei oikeaa odotusta)."""
+        self._kello = getattr(self, "_kello", 1700000000) + 1
+        return time.strftime("%Y%m%d-%H%M%S", time.gmtime(self._kello))
+
+    def aja(self, *args, kohde="app", skripti=None, env=None, oikea_kello=False):
+        env = dict(env or self.env)
+        if not oikea_kello and "JULKAISU_TS" not in env:
+            env["JULKAISU_TS"] = self.seuraava_ts()
+        elif oikea_kello:
+            env.pop("JULKAISU_TS", None)
+            julkaisu = not any(str(a) in ("--peruuta", "--tila", "--itsetesti", "--katastrofi-tila", "--katastrofi-palauta") for a in args)
+            if julkaisu and int(time.time()) == getattr(self, "_viim_s", None):
+                time.sleep(1.05 - time.time() % 1)        # oikea kello: edellinen ajo sai saman sekunnin, prev-nimi tormaisi
+        r = subprocess.run(["bash", str(skripti or JULKAISE), kohde, *[str(a) for a in args]], env=env, capture_output=True, text=True, timeout=300)
         self._viim_s = int(time.time())
         return r.returncode, r.stdout + r.stderr
 
@@ -521,9 +539,24 @@ class JulkaisuTesti(Pohja):
             self.l.commit(v)
             rc, ulos = self.l.julkaise()
             self.assertOk(rc, ulos)
-            time.sleep(1.1)            # prev-nimessa on sekuntitarkkuus
         self.assertEqual(len(self.l.previt()), 3)
         self.assertEqual(self.l.versio_koodissa(), "6")
+
+    def test_oikea_kello_antaa_prev_nimeen_sekuntitarkan_aikaleiman(self):
+        """Muut testit injektoivat JULKAISU_TS:n; tama kattaa oletuksen (date) kerran."""
+        self.l.ensimmainen()
+        self.l.commit(2)
+        p, c, s = self.l.paketoi()
+        ennen = time.strftime("%Y%m%d-%H%M%S")              # paikallinen aika, kuten skriptin date
+        rc, ulos = self.l.aja(p, c, s, oikea_kello=True)
+        jalkeen = time.strftime("%Y%m%d-%H%M%S")
+        self.assertOk(rc, ulos)
+        previt = self.l.previt()
+        self.assertEqual(len(previt), 2)                    # ensijulkaisun (injektoitu) ja taman ajon (oikea kello)
+        for prev in previt:
+            self.assertRegex(prev, r"\.prev-\d{8}-\d{6}$")
+        # sekuntitarkka: aikaleima on ajon alun ja lopun valissa (vaara vyohyke, nollattu aika tai menneisyyden vakio kaatuu)
+        self.assertTrue(ennen <= previt[-1].split(".prev-")[1] <= jalkeen, (ennen, previt[-1], jalkeen))
 
     def test_loki_kirjaa_julkaisun_ja_ohituslipun(self):
         self.l.ensimmainen()
@@ -918,7 +951,6 @@ class PeruutusTesti(Pohja):
         self.l.ensimmainen()
         self.koodi_v1 = puu(self.l.koodi)
         self.l.commit(2)
-        time.sleep(1.1)            # prev-nimessa on sekuntitarkkuus
         self.assertOk(*self.l.julkaise())
 
     def test_peruutus_palauttaa_vain_koodin_ja_tila_pysyy_tiivisteella(self):
@@ -1010,7 +1042,6 @@ class PeruutusTesti(Pohja):
 
     def test_toinen_peruutus_palauttaa_uudelleen_edellisen(self):
         self.kaksi_julkaisua()
-        time.sleep(1.1)
         self.assertOk(*self.l.aja("--peruuta"))
         self.assertEqual(self.l.versio_koodissa(), "1")
 

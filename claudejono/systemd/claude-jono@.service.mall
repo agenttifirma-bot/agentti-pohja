@@ -1,5 +1,5 @@
-# Mallitiedosto: ei asenna mitaan. Asennus README.md:n osion "Rinnakkaiset kaistat" mukaan. Instanssi (%i) = kaista 1..3.
-# Kaistojen maara tulee yhdesta asetuksesta: CLAUDEJONO_KAISTOJA (alla). Ylaraja koodissa on 3.
+# Mallitiedosto: ei asenna mitaan. Asennus README.md:n osion "Rinnakkaiset kaistat" mukaan. Instanssi (%i) = kaista 1..4.
+# Kaistojen maara tulee yhdesta asetuksesta: CLAUDEJONO_KAISTOJA (alla). Ylaraja koodissa on 4.
 [Unit]
 Description=Claude-jono kaista %i: yksi tehtava docs-repon claude-jono/-kansiosta
 After=network-online.target
@@ -11,7 +11,7 @@ Type=oneshot
 WorkingDirectory=/opt/agentti-pohja
 Environment=CLAUDEJONO_REPO=/var/lib/claude-jono/docs
 Environment=CLAUDEJONO_TYOHAK=/opt/agentscope
-Environment=CLAUDEJONO_KAISTOJA=2
+Environment=CLAUDEJONO_KAISTOJA=4
 Environment=CLAUDEJONO_TOISTUVAT=1
 Environment=CLAUDEJONO_KAYTTAJA=claudejono
 Environment=CLAUDEJONO_CLAUDE=/var/lib/claudejono/.local/bin/claude

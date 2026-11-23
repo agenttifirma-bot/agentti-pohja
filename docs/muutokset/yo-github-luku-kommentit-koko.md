@@ -1,0 +1,1 @@
+- github_luku kommentit: valitin `--koko` tulostaa kommentin rungon kokonaan (ohjausmerkit pois, rivinvaihdot sisennettyina, yläraja 20000 merkkiä kommenttia kohden), jotta agentit eivät kierrä 200 merkin lyhennystä tunnuksettomalla curlilla; oletus ei muutu.

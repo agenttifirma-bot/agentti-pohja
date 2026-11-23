@@ -15,6 +15,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from . import github_luku
 from .pr_kutsu import REPOT
 from .yksikot import suodata_kohina
 
@@ -55,7 +56,7 @@ def _json(polku, oletus):
 def github_osio(hae=None):
     """Julkisten repojen viimeisimmat PR:t ja commitit (ilman tunnuksia)."""
     def oletushaku(url):
-        pyynto = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "agenttifirma-tilannekuva"})
+        pyynto = github_luku.pyynto(url, "agenttifirma-tilannekuva")
         with urllib.request.urlopen(pyynto, timeout=20) as v:
             return json.loads(v.read().decode("utf-8"))
     hae = hae or oletushaku
@@ -81,7 +82,7 @@ def mergatut_osio(hae=None, nyt=None):
     ei saa ehdottaa asiaa, joka nakyy jo tassa. Rivit rajattu MERGATUT_MAX_RIVEJA, otsikot MERGATUT_OTSIKKO_MAX merkkiin;
     yhden repon hakuvirhe ei estaa muita."""
     def oletushaku(url):
-        pyynto = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "agenttifirma-tilannekuva"})
+        pyynto = github_luku.pyynto(url, "agenttifirma-tilannekuva")
         with urllib.request.urlopen(pyynto, timeout=20) as v:
             return json.loads(v.read().decode("utf-8"))
     hae = hae or oletushaku
@@ -136,6 +137,21 @@ def yojono_osio(perus):
     return "\n".join(rivit)
 
 
+def _raporttikulut(perus):
+    """{pvm: USD}: raporttitiedostojen (raportit/PVM-*.json) total_cost_usd -arvojen summa paivittain.
+    Raportit eivat ylikirjoitu, kun sama tehtava ajetaan myohemmin uudelleen, toisin kuin tila.json:n tehtavarivi."""
+    summat = {}
+    hakemisto = Path(perus) / "raportit"
+    if not hakemisto.is_dir():
+        return summat
+    for f in hakemisto.glob("????-??-??-*.json"):
+        data = _json(f, {})
+        kulu = data.get("total_cost_usd") if isinstance(data, dict) else None
+        if isinstance(kulu, (int, float)) and not isinstance(kulu, bool):
+            summat[f.name[:10]] = summat.get(f.name[:10], 0.0) + kulu
+    return summat
+
+
 def kulut_osio(perus, portti_tila):
     tila = _json(Path(perus) / "tila.json", {})
     rivit = ["# Kulut (USD)"]
@@ -153,10 +169,16 @@ def kulut_osio(perus, portti_tila):
         rivit.append("kuukausi %s yhteensa: %.2f, kirjattuja paivia %d%s" % (kuu, kk[kuu], paivia, ennuste))
     rivit.append("paivakatto: %s, kuukausikatto: %s" % (jono.get("paivakatto"), jono.get("kuukausikatto")))
     rivit.append("\n## Taasmays (tehtavien kulut vs kirjattu paivakulu)")
+    raportit = _raporttikulut(perus)
     for pvm in sorted(kulut)[-7:]:
         summa = sum(s.get("kulu") or 0 for s in (tila.get("tehtavat") or {}).values() if s.get("pvm") == pvm and isinstance(s.get("kulu"), (int, float)))
         kirjattu = kulut[pvm] if isinstance(kulut[pvm], (int, float)) else 0
-        merkki = "OK" if abs(summa - kirjattu) < 0.01 else "ERO (uudelleenajot ja aiemmat yritykset voivat selittaa)"
+        if abs(summa - kirjattu) < 0.01:
+            merkki = "OK"
+        elif pvm in raportit and abs(raportit[pvm] - kirjattu) < 0.01:
+            merkki = "OK, raporttien summa %.2f tasmaa (tehtavarivi ylikirjoitettu myohemmalla ajolla)" % raportit[pvm]
+        else:
+            merkki = "ERO (uudelleenajot ja aiemmat yritykset voivat selittaa)"
         rivit.append("- %s: tehtavien viimeisimmat ajot %.2f, kirjattu %.2f -> %s" % (pvm, summa, kirjattu, merkki))
     if portti_tila:
         data = _json(Path(portti_tila) / "portti-kulu.json", {})

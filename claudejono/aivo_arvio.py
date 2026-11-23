@@ -1,0 +1,419 @@
+"""Aivon oleellisuusarvio varjotilassa (Tonyn paatos A841, 7.11.2026).
+
+Ennen kuin uusi tehtava ajetaan, Aivo (Clauden tyokalutila, ei OpenRouter/LiteLLM, A329) kirjaa arvion kylla/ei + syy.
+Arvio EI esta ajoa. Kirjaukset menevat isannan tilahakemistoon (`aivo-arviot.jsonl`, repon vieressa), ei GitHubiin eika docs-repoon.
+Tony tarkistaa viikkosuunnittelussa 5 satunnaista arviota (`otos`) ja kirjaa oman tuomionsa (`tarkista`); osumaprosentti =
+Aivon ja Tonyn tuomion yhtenevyys. Kunnes arvioija (Aivon tyokalutila) on kytketty, ajuri ei kirjaa mitaan: arvioija annetaan
+`arvioi_varjossa`-funktiolle parametrina, eika tama moduuli keksi arvioita.
+"""
+import argparse
+import json
+import os
+import random
+import re
+import sys
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+
+from . import tavoite
+
+TIEDOSTO = "aivo-arviot.jsonl"
+KAYTTO_TIEDOSTO = "aivo-kaytto.jsonl"   # kayton seuranta: yksi rivi per arviointiyritys (ei paivarajaa, Tony 11.11. A943)
+SYY_MAX = 300
+OTOS_OLETUS = 5
+VAHIMMAIS_LAHTOTASOON = 20   # aivo-valmius.md: vahintaan 20 arvioitua paatosta
+
+
+def _polku(tila):
+    return Path(tila) / TIEDOSTO
+
+
+def lue(tila):
+    """Kaikki rivit; viallinen rivi ohitetaan. Tuoreempi rivi samalla (tehtava, laji) korvaa vanhan."""
+    p = _polku(tila)
+    if not p.is_file():
+        return []
+    rivit = []
+    for r in p.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            d = json.loads(r)
+        except ValueError:
+            continue
+        if isinstance(d, dict) and d.get("tehtava"):
+            rivit.append(d)
+    return rivit
+
+
+def _liita(tila, d):
+    fd = os.open(_polku(tila), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(json.dumps(d, ensure_ascii=False) + "\n")
+
+
+def kirjaa_kaytto(tila, tehtava, kesto_s, ok, nyt=None):
+    """Kirjaa arvioinnin keston ja onnistumisen; viikkoraportti summaa nama. Ei salaisuuksia: vain nimi, kesto, ok."""
+    nyt = nyt or datetime.now().astimezone()
+    d = {"aika": nyt.isoformat(timespec="seconds"), "tehtava": tehtava, "kesto_s": round(float(kesto_s), 2), "ok": bool(ok)}
+    fd = os.open(Path(tila) / KAYTTO_TIEDOSTO, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(json.dumps(d, ensure_ascii=False) + "\n")
+
+
+def kaytto(tila, alkaen=None):
+    """(arvioita, onnistuneita, kesto yhteensa s) rivit, joiden aika >= alkaen (datetime tai None = kaikki)."""
+    p = Path(tila) / KAYTTO_TIEDOSTO
+    n = ok = 0
+    kesto = 0.0
+    if p.is_file():
+        for r in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                d = json.loads(r)
+                if alkaen is not None and datetime.fromisoformat(d["aika"]) < alkaen:
+                    continue
+                kesto += float(d["kesto_s"])
+                n += 1
+                ok += 1 if d.get("ok") is True else 0
+            except (ValueError, KeyError, TypeError):
+                continue
+    return n, ok, round(kesto, 2)
+
+
+def arviot(tila):
+    """{tehtava: {"kylla": bool, "syy": str, "tony": bool|None}}"""
+    ulos = {}
+    for d in lue(tila):
+        e = ulos.setdefault(d["tehtava"], {"kylla": None, "syy": "", "tony": None})
+        if d.get("laji") == "aivo" and isinstance(d.get("kylla"), bool):
+            e["kylla"], e["syy"] = d["kylla"], str(d.get("syy", ""))[:SYY_MAX]
+        elif d.get("laji") == "tony" and isinstance(d.get("kylla"), bool):
+            e["tony"] = d["kylla"]
+    return {k: v for k, v in ulos.items() if v["kylla"] is not None}
+
+
+def kirjaa_arvio(tila, tehtava, kylla, syy, nyt=None, luokka=None):
+    """luokka = tehtavan Tavoite-rivin arvo (tavoite.TAVOITTEET); muu tai None jatetaan kirjaamatta."""
+    nyt = nyt or datetime.now().astimezone()
+    d = {"aika": nyt.isoformat(timespec="seconds"), "laji": "aivo", "tehtava": tehtava, "kylla": bool(kylla), "syy": str(syy)[:SYY_MAX]}
+    if luokka in tavoite.TAVOITTEET:
+        d["luokka"] = luokka
+    _liita(tila, d)
+
+
+def arvioi_varjossa(tila, tehtava_polku, arvioija, nyt=None):
+    """Kutsuu arvioijaa (teksti -> (kylla: bool, syy: str)) kerran per tehtava. Ei koskaan nosta virhetta eika esta ajoa.
+    Palauttaa True, jos arvio kirjattiin. Virheesta kirjataan vain tyyppi."""
+    if arvioija is None:
+        return False
+    nimi = Path(tehtava_polku).name
+    try:
+        if nimi in arviot(tila):
+            return False
+        teksti = Path(tehtava_polku).read_bytes()[:20000].decode("utf-8", "replace")
+        alku = time.monotonic()
+        try:
+            kylla, syy = arvioija(teksti)
+        except Exception:
+            kirjaa_kaytto(tila, nimi, time.monotonic() - alku, False, nyt)
+            raise
+        kirjaa_kaytto(tila, nimi, time.monotonic() - alku, isinstance(kylla, bool), nyt)
+        if not isinstance(kylla, bool):
+            return False
+        kirjaa_arvio(tila, nimi, kylla, syy, nyt, luokka=tavoite.tavoite_tekstista(teksti))
+        return True
+    except Exception as e:   # varjotila: mikaan ei saa kaataa ajoa; viestia ei tulosteta (voi sisaltaa salaisuuksia)
+        print(f"aivo_arvio: arviointi epaonnistui ({type(e).__name__})", file=sys.stderr)
+        return False
+
+
+TULOS_SALLITUT = ("VALMIS", "HYLATTY", "KESKEN", "EPAONNISTUI")
+
+
+def kirjaa_tulos(tila, tehtava, tulos, nyt=None):
+    """Kirjaa tehtavan lopputuloksen (Tila) samaan tiedostoon kuin Aivon arvio, jotta `osumat` voi verrata niita.
+    Kirjataan vain, jos Aivo on arvioinut tehtavan; tuntematon tila ohitetaan. Ei koskaan nosta virhetta eika esta ajoa.
+    Palauttaa True, jos rivi kirjattiin. Rivilla ei ole tekstia agentin tuotoksesta: vain tehtavan nimi ja tila."""
+    try:
+        tulos = str(tulos).strip().upper()
+        if tulos not in TULOS_SALLITUT or tehtava not in arviot(tila):
+            return False
+        nyt = nyt or datetime.now().astimezone()
+        _liita(tila, {"aika": nyt.isoformat(timespec="seconds"), "laji": "tulos", "tehtava": tehtava, "tulos": tulos})
+        return True
+    except Exception as e:   # varjotila: mikaan ei saa kaataa ajoa; viestia ei tulosteta
+        print(f"aivo_arvio: tuloksen kirjaus epaonnistui ({type(e).__name__})", file=sys.stderr)
+        return False
+
+
+def otos(tila, n=OTOS_OLETUS, rng=None):
+    """n satunnaista arviota, joita Tony ei ole viela tarkistanut."""
+    avoimet = sorted(k for k, v in arviot(tila).items() if v["tony"] is None)
+    rng = rng or random.Random()
+    return [(k, arviot(tila)[k]) for k in rng.sample(avoimet, min(n, len(avoimet)))]
+
+
+def tarkista(tila, tehtava, kylla, nyt=None):
+    if tehtava not in arviot(tila):
+        raise KeyError("ei Aivon arviota tehtavalle")
+    nyt = nyt or datetime.now().astimezone()
+    _liita(tila, {"aika": nyt.isoformat(timespec="seconds"), "laji": "tony", "tehtava": tehtava, "kylla": bool(kylla)})
+
+
+def osuma(tila):
+    """(tarkistettuja, osumia, prosentti|None, arvioituja_yhteensa)"""
+    a = arviot(tila)
+    tark = [v for v in a.values() if v["tony"] is not None]
+    osumat = sum(1 for v in tark if v["tony"] == v["kylla"])
+    return len(tark), osumat, (round(100 * osumat / len(tark), 1) if tark else None), len(a)
+
+
+def viikkoosio(tila, n=OTOS_OLETUS, rng=None):
+    """Markdown viikkosuunnittelun pohjaan: otos Tonyn tarkistettavaksi ja osumaprosentti."""
+    tark, osumia, pros, yht = osuma(tila)
+    rivit = ["## Aivon oleellisuusarviot (varjotila, ei est\u00e4 ajoa)", "",
+             f"Arvioituja yhteens\u00e4 {yht}; Tony on tarkistanut {tark}; osumia {osumia}; osumaprosentti "
+             + (f"{pros} %." if pros is not None else "ei viel\u00e4 laskettavissa.")
+             + f" L\u00e4ht\u00f6tason raja: v\u00e4hint\u00e4\u00e4n {VAHIMMAIS_LAHTOTASOON} arvioitua p\u00e4\u00e4t\u00f6st\u00e4."]
+    k_n, k_ok, k_s = kaytto(tila, datetime.now().astimezone() - timedelta(days=7))
+    rivit += ["", f"K\u00e4ytt\u00f6 viimeiset 7 vrk: {k_n} arviointiajoa ({k_ok} onnistui), kesto yhteens\u00e4 {k_s} s."]
+    o = otos(tila, n, rng)
+    if not o:
+        rivit += ["", "Tarkistettavia arvioita ei ole (arvioija ei ole viel\u00e4 kytketty tai kaikki on tarkistettu)."]
+    else:
+        rivit += ["", f"Tarkista {len(o)} satunnaista arviota (`python3 -m claudejono.aivo_arvio tarkista <tehtava> kylla|ei`):", ""]
+        kylla_sana = "kyll\u00e4"
+        rivit += [f"- {k}: Aivo sanoi {kylla_sana if v['kylla'] else 'ei'} - {v['syy']}" for k, v in o]
+    return "\n".join(rivit) + "\n"
+
+
+OSUMAT_OLETUSPOLKU = "/var/lib/claude-jono/aivo-arviot.jsonl"
+TULOS_KYLLA = ("VALMIS",)
+TULOS_EI = ("HYLATTY", "KESKEN")
+
+
+def _viite(tony, tulos):
+    """Vertailun vertailukohta: Tonyn tuomio (bool), muuten tehtavan lopputulos (VALMIS = kylla, HYLATTY/KESKEN = ei);
+    EPAONNISTUI, tuntematon tai puuttuva -> None (jatetaan pois)."""
+    if isinstance(tony, bool):
+        return tony
+    if tulos in TULOS_KYLLA:
+        return True
+    if tulos in TULOS_EI:
+        return False
+    return None
+
+
+LUOKKA_TUNTEMATON = "tuntematon"
+RAJA_PROSENTTI_OLETUS = 90.0
+RAJA_VERTAILTAVAT_OLETUS = 100
+MIKSI_MAX = 200
+NIMEN_PAIVAYS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-")
+
+
+def luokka_nimesta(nimi):
+    """Tehtavan tyyppi nimesta, kun arviorivilla ei ole luokkaa: paivayksen jalkeinen ensimmainen sana, jos se on
+    sallittu tavoite (esim. 2026-11-18-aivo-x.md -> aivo). Muu -> tuntematon. Suljettu lista: nimen osia ei vuoda tulosteeseen."""
+    n = NIMEN_PAIVAYS_RE.sub("", str(nimi or ""), count=1)
+    sana = re.split(r"[-_. ]", n, maxsplit=1)[0]
+    return tavoite.normalisoi(sana) or LUOKKA_TUNTEMATON
+
+
+def _rivin_luokka(d):
+    l = tavoite.normalisoi(str(d.get("luokka", ""))) if d.get("luokka") else None
+    return l or luokka_nimesta(d["tehtava"])
+
+
+def laske_osumat(rivit):
+    """rivit: iteroitava tekstirivien joukko (jsonl). Palauttaa vain koosteluvut (ei nimia, ei syita):
+    {"arvioita", "ensimmainen", "viimeinen", "vertailtavia", "osumia", "prosentti", "rikkinaisia", "luokat"}.
+    luokat = {luokka: {"arvioita", "vertailtavia", "osumia", "prosentti", "vaaria", "miksi_kirjattu"}}; luokka on arviorivin
+    luokka-kentta tai luokka_nimesta(). Tuoreempi rivi samalle (tehtava, laji) korvaa vanhan, kuten arviot()-funktiossa."""
+    aivo, tony, tulos, luokka, miksi = {}, {}, {}, {}, set()
+    paivat = []
+    rikki = 0
+    for r in rivit:
+        if not r.strip():
+            continue
+        try:
+            d = json.loads(r)
+        except ValueError:
+            rikki += 1
+            continue
+        if not isinstance(d, dict) or not d.get("tehtava"):
+            rikki += 1
+            continue
+        t = d["tehtava"]
+        if d.get("laji") == "miksi" and isinstance(d.get("miksi"), str) and d["miksi"].strip():
+            miksi.add(t)
+            continue
+        if isinstance(d.get("tulos"), str):
+            tulos[t] = d["tulos"].strip().upper()
+        if not isinstance(d.get("kylla"), bool):
+            continue
+        if d.get("laji") == "aivo":
+            aivo[t] = d["kylla"]
+            luokka[t] = _rivin_luokka(d)
+            pv = str(d.get("aika", ""))[:10]
+            try:
+                datetime.strptime(pv, "%Y-%m-%d")
+                paivat.append(pv)
+            except ValueError:
+                pass
+        elif d.get("laji") == "tony":
+            tony[t] = d["kylla"]
+    vertailtavia = osumia = 0
+    luokat = {}
+    for t, kylla in aivo.items():
+        k = luokat.setdefault(luokka[t], {"arvioita": 0, "vertailtavia": 0, "osumia": 0, "vaaria": 0, "miksi_kirjattu": 0})
+        k["arvioita"] += 1
+        v = _viite(tony.get(t), tulos.get(t))
+        if v is None:
+            continue
+        vertailtavia += 1
+        k["vertailtavia"] += 1
+        if v == kylla:
+            osumia += 1
+            k["osumia"] += 1
+        else:
+            k["vaaria"] += 1
+            k["miksi_kirjattu"] += 1 if t in miksi else 0
+    for k in luokat.values():
+        k["prosentti"] = round(100 * k["osumia"] / k["vertailtavia"], 1) if k["vertailtavia"] else None
+    return {"arvioita": len(aivo), "ensimmainen": min(paivat) if paivat else None,
+            "viimeinen": max(paivat) if paivat else None, "vertailtavia": vertailtavia, "osumia": osumia,
+            "prosentti": round(100 * osumia / vertailtavia, 1) if vertailtavia else None, "rikkinaisia": rikki,
+            "luokat": luokat}
+
+
+def osumat_teksti(l):
+    """Tonylle tulostettava teksti. Ei tehtavien nimia, perusteluja eika yksittaisia riveja."""
+    aika = f"{l['ensimmainen']} - {l['viimeinen']}" if l["ensimmainen"] else "ei aikavalia"
+    pros = f"{l['prosentti']} %" if l["prosentti"] is not None else "ei viel\u00e4 laskettavissa"
+    taynna = l["vertailtavia"] >= VAHIMMAIS_LAHTOTASOON
+    rivit = [f"Arvioita yhteens\u00e4: {l['arvioita']} (aikav\u00e4li {aika})",
+             "Vertailu: Aivon kyll\u00e4 = Tonyn kyll\u00e4 tai VALMIS; Aivon ei = Tonyn ei tai HYLATTY/KESKEN; EPAONNISTUI ja tulokseton j\u00e4tet\u00e4\u00e4n pois",
+             f"Vertailtavia: {l['vertailtavia']}, osumia: {l['osumia']}, osumaprosentti: {pros}",
+             f"L\u00e4ht\u00f6tason raja ({VAHIMMAIS_LAHTOTASOON} vertailtavaa) t\u00e4ynn\u00e4: " + ("kyll\u00e4" if taynna else "ei")]
+    if l["rikkinaisia"]:
+        rivit.append(f"Ohitettuja rikkin\u00e4isi\u00e4 rivej\u00e4: {l['rikkinaisia']}")
+    return "\n".join(rivit) + "\n"
+
+
+def luokittain_teksti(l, raja_pros=RAJA_PROSENTTI_OLETUS, raja_n=RAJA_VERTAILTAVAT_OLETUS):
+    """Taulukko luokittain. Raja taytetty = vertailtavia >= raja_n ja prosentti >= raja_pros. Ei tehtavien nimia."""
+    rivit = ["", f"Luokittain (raja: v\u00e4hint\u00e4\u00e4n {raja_pros:g} % ja {raja_n} vertailtavaa):", "",
+             "| Luokka | Arvioita | Vertailtavia | Osumia | Osumaprosentti | V\u00e4\u00e4ri\u00e4 (miksi kirjattu) | Raja t\u00e4ynn\u00e4 |",
+             "|---|---|---|---|---|---|---|"]
+    jarjestys = list(tavoite.TAVOITTEET) + [LUOKKA_TUNTEMATON]
+    for nimi in sorted(l["luokat"], key=lambda x: jarjestys.index(x) if x in jarjestys else len(jarjestys)):
+        k = l["luokat"][nimi]
+        pros = f"{k['prosentti']} %" if k["prosentti"] is not None else "-"
+        taynna = k["prosentti"] is not None and k["vertailtavia"] >= raja_n and k["prosentti"] >= raja_pros
+        nayta = tavoite.NAYTTONIMI.get(nimi, nimi)
+        rivit.append(f"| {nayta} | {k['arvioita']} | {k['vertailtavia']} | {k['osumia']} | {pros} | {k['vaaria']} ({k['miksi_kirjattu']}) | "
+                     + ("kyll\u00e4" if taynna else "ei") + " |")
+    if not l["luokat"]:
+        rivit.append("| - | 0 | 0 | 0 | - | 0 (0) | ei |")
+    return "\n".join(rivit) + "\n"
+
+
+def _vaara_ennuste(tila, tehtava):
+    """True, jos Aivon ennuste tehtavalle on vertailtavissa ja vaara (sama saanto kuin osumat-komennossa)."""
+    aivo = tony = tulos = None
+    for d in lue(tila):
+        if d["tehtava"] != tehtava:
+            continue
+        if isinstance(d.get("tulos"), str):
+            tulos = d["tulos"].strip().upper()
+        if isinstance(d.get("kylla"), bool):
+            if d.get("laji") == "aivo":
+                aivo = d["kylla"]
+            elif d.get("laji") == "tony":
+                tony = d["kylla"]
+    if aivo is None:
+        raise KeyError("ei Aivon arviota teht\u00e4v\u00e4lle")
+    v = _viite(tony, tulos)
+    return v is not None and v != aivo
+
+
+def kirjaa_miksi(tila, tehtava, teksti, nyt=None):
+    """Yhden rivin selitys vaaralle ennusteelle (Tony kirjoittaa). Vain vaaralle ennusteelle; tuoreempi korvaa vanhan.
+    Ohjausmerkit muutetaan valilyonneiksi, pituus enintaan MIKSI_MAX. KeyError = ei arviota, ValueError = ennuste ei ole vaara tai teksti tyhja."""
+    teksti = " ".join(re.sub(r"[\x00-\x1f\x7f]", " ", str(teksti)).split())[:MIKSI_MAX]
+    if not teksti:
+        raise ValueError("selitys on tyhj\u00e4")
+    if not _vaara_ennuste(tila, tehtava):
+        raise ValueError("ennuste ei ole (viel\u00e4) v\u00e4\u00e4r\u00e4, joten selityst\u00e4 ei kirjata")
+    nyt = nyt or datetime.now().astimezone()
+    _liita(tila, {"aika": nyt.isoformat(timespec="seconds"), "laji": "miksi", "tehtava": tehtava, "miksi": teksti})
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description="Aivon oleellisuusarviot (varjotila)")
+    p.add_argument("--tila", default=os.environ.get("CLAUDEJONO_TILA", "/var/lib/claude-jono"))
+    s = p.add_subparsers(dest="komento", required=True)
+    s.add_parser("otos")
+    s.add_parser("osuma")
+    o = s.add_parser("osumat", help="n\u00e4ytt\u00e4\u00e4 osumaprosentin vain p\u00e4\u00e4tteelle (Tony ajaa rootina)")
+    o.add_argument("--polku", default=OSUMAT_OLETUSPOLKU)
+    o.add_argument("--luokittain", action="store_true", help="osumaprosentti tavoiteluokittain")
+    o.add_argument("--raja-prosentti", type=float, default=RAJA_PROSENTTI_OLETUS)
+    o.add_argument("--raja-vertailtavat", type=int, default=RAJA_VERTAILTAVAT_OLETUS)
+    m = s.add_parser("miksi", help="yhden rivin selitys v\u00e4\u00e4r\u00e4lle ennusteelle")
+    m.add_argument("tehtava")
+    m.add_argument("teksti")
+    t = s.add_parser("tarkista")
+    t.add_argument("tehtava")
+    t.add_argument("tuomio", choices=("kylla", "ei"))
+    a = p.parse_args(argv)
+    try:
+        if a.komento == "otos":
+            print(viikkoosio(a.tila), end="")
+        elif a.komento == "osumat":
+            try:
+                with open(a.polku, encoding="utf-8", errors="replace") as f:
+                    l = laske_osumat(f)
+            except OSError as e:   # vain tyyppi (viesti voisi sisaltaa polun tai muuta)
+                print(f"virhe: tiedostoa ei voi lukea ({type(e).__name__})", file=sys.stderr)
+                return 1
+            print(osumat_teksti(l), end="")
+            if a.luokittain:
+                print(luokittain_teksti(l, a.raja_prosentti, a.raja_vertailtavat), end="")
+        elif a.komento == "miksi":
+            try:
+                kirjaa_miksi(a.tila, a.tehtava, a.teksti)
+            except (KeyError, ValueError) as e:
+                print(f"virhe: {e.args[0]}", file=sys.stderr)
+                return 1
+            print("selitys kirjattu")
+        elif a.komento == "osuma":
+            print(osuma(a.tila))
+        else:
+            try:
+                tarkista(a.tila, a.tehtava, a.tuomio == "kylla")
+            except KeyError as e:
+                print(f"virhe: {e.args[0]}", file=sys.stderr)
+                return 1
+    except OSError as e:   # tilatiedosto puuttuu, ei lukuoikeutta tms.; vain tyyppi, ei tracebackia
+        print(f"virhe: tilatiedostoa ei voi lukea tai kirjoittaa ({type(e).__name__})", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+VALMIUS_TIEDOSTO = "claude-jono/aivo-valmius.md"
+RUUTU_RE = __import__("re").compile(r"(?m)^[ \t]*- \[([ xX])\]")
+
+
+def valmius_taynna(repo):
+    """True, kun aivo-valmius.md:ssa on vahintaan 5 ruutua ja jokainen on rastitettu. Puuttuva tiedosto -> False.
+    Ruudut rastittaa Tony tai Claude vasta todennettuaan kohdan; tama funktio vain lukee."""
+    try:
+        teksti = (Path(repo) / VALMIUS_TIEDOSTO).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    ruudut = RUUTU_RE.findall(teksti)
+    return len(ruudut) >= 5 and all(r in "xX" for r in ruudut)

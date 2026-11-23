@@ -470,7 +470,9 @@ class IsantaSkriptiTesti(unittest.TestCase):
                 self.assertIn("EI tuhota", r.stderr)
 
     def test_toinen_ajo_samanaikaisesti_estyy(self):
-        (self.kopio / "adapterit" / "hidas.sh").write_text("#!/usr/bin/env bash\nexec sleep 5\n")
+        # adapteri pitaa lukon, kunnes testi antaa luvan (lippu); ylaraja 30 s varmistaa ettei se jaa roikkumaan
+        lippu = self.d / "vapauta-adapteri"
+        (self.kopio / "adapterit" / "hidas.sh").write_text('#!/usr/bin/env bash\nfor _ in $(seq 600); do [ -e "%s" ] && exit 0; sleep 0.05; done\n' % lippu)
         (self.kopio / "adapterit" / "hidas.sh").chmod(0o755)
         e = dict(self.env)
         p = subprocess.Popen(["bash", str(self.kopio / "aja-kokeilu.sh"), "--kokeilu", "vertailu-01", "--adapteri", "hidas"],
@@ -484,6 +486,7 @@ class IsantaSkriptiTesti(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("toinen kokeilu on kaynnissa", r.stderr)
         finally:
+            lippu.touch()
             p.terminate()
             p.wait(timeout=30)
 

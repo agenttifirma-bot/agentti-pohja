@@ -3,8 +3,10 @@ tarkastaja on hyvaksynyt, paitsi rajatut).
 
 Ajetaan isannalla rootina (systemd-ajastin claude-tarkastaja.timer). Yksi kierros:
   1. hakee avoimet PR:t seurattavista repoista (GitHubin API, botin tunnuksella vain luku + kommentti)
-  2. ohittaa PR:t, jotka eivat muutenkaan kelpaa automergeen (tools/automerge.rakenne_syyt: rajatut, koko, osoitteet)
-     tai joiden head-commit on jo tarkastettu
+  2. tarkastaa myos PR:t, jotka eivat kelpaa automergeen (tools/automerge.rakenne_syyt: rajatut, koko, osoitteet),
+     mutta niiden paatos on enintaan RAJATTU (A962, 14.11.2026; CLAUDEJONO_TARKASTA_RAJATUT=0 palauttaa ohituksen).
+     Ohittaa luonnokset ja PR:t, joiden head-commit on jo tarkastettu. Rakennesyysta ohitettu PR kirjataan lokiin kerran per head-commit
+     (tulos OHITETTU ja syyt), jotta lokista nakee, miksi PR odottaa Tonya.
   3. hakee diffin, ja malli (oletus Opus) arvioi sen ERILLISENA kayttajana (CLAUDEJONO_TARKASTAJA_KAYTTAJA, ei agentin
      kayttaja eika root) ilman tyokaluja: --tools "" ja --strict-mcp-config, kehote stdinista
   4. kirjoittaa PR:aan kommentin, jonka lopussa on merkki
@@ -50,13 +52,17 @@ AIKARAJA_S = 900
 PERUSTELU_MAX = 1500
 LOYDOS_MAX = 300
 LOYDOKSIA_MAX = 10
+VIRHESYY_MAX = 200
+OHITUS_SYITA_MAX = 20
+OHITUS_SYY_MAX = 200
 PAATOKSET = {"HYVAKSY": "HYVAKSYTTY", "HYLKAA": "HYLATTY", "RAJATTU": "RAJATTU", "EN_TIEDA": "EN_TIEDA"}
 KAYTTAJA_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 class TarkastajaVirhe(Exception):
-    """Viesti on turvallinen tulostaa (ei tunnusta)."""
+    """Viesti on turvallinen tulostaa (ei tunnusta). koodi: GitHubin HTTP-tila, jos virhe tuli vastauksesta."""
+    koodi = None
 
 
 def _pyynto(url, tunnus, accept="application/vnd.github+json", data=None, avaa=urllib.request.urlopen):
@@ -71,9 +77,22 @@ def _pyynto(url, tunnus, accept="application/vnd.github+json", data=None, avaa=u
         with avaa(req, timeout=30) as v:
             return v.read()
     except urllib.error.HTTPError as e:
-        raise TarkastajaVirhe("GitHub HTTP %s: %s" % (e.code, url.replace(API, "")))
+        virhe = TarkastajaVirhe("GitHub HTTP %s: %s%s" % (e.code, url.replace(API, ""), _github_syy(e)))
+        virhe.koodi = e.code
+        raise virhe from None
     except (urllib.error.URLError, OSError) as e:
         raise TarkastajaVirhe("GitHub-pyynto epaonnistui: " + type(e).__name__)
+
+
+def _github_syy(e):
+    """GitHubin oma selitys virheelle (esim. 422:n errors-lista), jotta lokista nakee syyn eika pelkkaa koodia."""
+    try:
+        d = json.loads(e.read().decode("utf-8", "replace"))
+        osat = [d.get("message")] + [x.get("message") for x in d.get("errors") or [] if isinstance(x, dict)]
+    except (OSError, ValueError, AttributeError, TypeError):
+        return ""
+    teksti = _siivoa("; ".join(str(o) for o in osat if o), VIRHESYY_MAX)
+    return " (%s)" % teksti if teksti else ""
 
 
 def hae_json(url, tunnus, avaa=urllib.request.urlopen):
@@ -115,9 +134,13 @@ def lue_tila(polku, pvm):
     if not isinstance(d, dict):
         d = {}
     if d.get("pvm") != pvm:
-        d = {"pvm": pvm, "maara": 0, "avattu": 0, "per_pr": d.get("per_pr") if isinstance(d.get("per_pr"), dict) else {}}
+        # per_pr ja avaa_422 ovat pidempaikaisia: ne sailyvat paivan vaihtuessa
+        d = {"pvm": pvm, "maara": 0, "avattu": 0, "per_pr": d.get("per_pr") if isinstance(d.get("per_pr"), dict) else {},
+             **({"avaa_422": d["avaa_422"]} if isinstance(d.get("avaa_422"), dict) and d["avaa_422"] else {})}
     d.setdefault("maara", 0)
     d.setdefault("per_pr", {})
+    if "avaa_422" in d and not isinstance(d["avaa_422"], dict):
+        del d["avaa_422"]                                              # roskaa: ei jateta tyhjaa avainta
     return d
 
 
@@ -154,6 +177,14 @@ def tulkitse(stdout, koodi):
         return "EN_TIEDA", "tarkastajan vastaus ei ollut sovitussa muodossa", [], luvut
     loydokset = [_siivoa(x, LOYDOS_MAX) for x in (v.get("loydokset") or []) if isinstance(x, str) and x.strip()][:LOYDOKSIA_MAX]
     return PAATOKSET[v["paatos"]], _siivoa(v.get("perustelu"), PERUSTELU_MAX), loydokset, luvut
+
+
+def rajaa_paatos(paatos, perustelu, syyt):
+    """Rakenteellisesti rajattu PR (A962): HYVAKSYTTY muuttuu RAJATUKSI, ja syyt kerrotaan perustelun alussa."""
+    syyteksti = "; ".join(_siivoa(x, OHITUS_SYY_MAX) for x in list(syyt)[:OHITUS_SYITA_MAX])
+    if paatos == "HYVAKSYTTY":
+        paatos = "RAJATTU"
+    return paatos, _siivoa("Rakenteellisesti rajattu (%s). %s" % (syyteksti, perustelu or ""), PERUSTELU_MAX)
 
 
 def kommentti(paatos, sha, perustelu, loydokset, malli):
@@ -216,47 +247,95 @@ def tarkasta_pr(repo, nro, d, tunnus, env, suorita=subprocess.run, avaa=urllib.r
 AVAA_HAARA_RE = re.compile(r"^korjaus/[a-z0-9][a-z0-9._-]{0,59}$")
 AVAA_MAX_PAIVASSA = 10
 AVAA_RUNKO_MAX = 4000
+AVAA_422_TAUKO_S = 24 * 3600      # 422:n jalkeen sama haara ohitetaan taman ajan (yksi yritys vuorokaudessa)
 
 
-def avaa_puuttuvat(env, tunnus, tila, avaa=urllib.request.urlopen, kuiva=False):
-    """Avaa PR:t korjaus/*-haaroille, joilla ei ole PR:aa. Palauttaa lokirivit. tila: lue_tila()-sanakirja (paivaraja)."""
+def avaa_puuttuvat(env, tunnus, tila, avaa=urllib.request.urlopen, kuiva=False, nyt=None):
+    """Avaa PR:t korjaus/*-haaroille, joilla ei ole PR:aa. Palauttaa lokirivit. tila: lue_tila()-sanakirja (paivaraja).
+    GitHubin 422 (POST) kirjataan tilaan avaa_422 (repo/haara -> aika); haara ohitetaan ilman kutsuja AVAA_422_TAUKO_S ajan."""
     tehty = []
-    for repo in seurattavat_repot(env):
-        try:
-            haarat = hae_sivutettu("%s/repos/%s/%s/branches" % (API, OMISTAJA, repo), tunnus, avaa=avaa)
-        except TarkastajaVirhe as e:
-            tehty.append({"repo": repo, "tulos": "virhe", "syy": str(e)})
-            continue
-        for h in haarat:
-            nimi = (h or {}).get("name") or ""
-            if not AVAA_HAARA_RE.match(nimi):
-                continue
+    nyt_s = (nyt or datetime.now().astimezone()).timestamp()
+    pysaytetyt = dict(tila.get("avaa_422") or {})                       # avainta ei luoda ennen ensimmaista 422:ta
+    try:
+        for avain in [k for k, t in pysaytetyt.items() if not isinstance(t, (int, float)) or nyt_s - t >= AVAA_422_TAUKO_S or t > nyt_s + 60]:
+            del pysaytetyt[avain]                                          # tauko loppu (tai roskaa): yksi uusi yritys
+        for repo in seurattavat_repot(env):
             try:
-                olemassa = hae_json("%s/repos/%s/%s/pulls?state=all&head=%s:%s" % (API, OMISTAJA, repo, OMISTAJA, urllib.parse.quote(nimi, safe="")),
-                                    tunnus, avaa=avaa)
-                if olemassa:
-                    continue                                           # PR auki, yhdistetty tai Tony sulki sen: ei avata uudelleen
-                pohja = pr_kutsu.pohja_haara(repo)
-                ero = hae_json("%s/repos/%s/%s/compare/%s...%s" % (API, OMISTAJA, repo, pohja, urllib.parse.quote(nimi, safe="")),
-                               tunnus, avaa=avaa)
-                if int(ero.get("ahead_by") or 0) <= 0:
+                haarat = hae_sivutettu("%s/repos/%s/%s/branches" % (API, OMISTAJA, repo), tunnus, avaa=avaa)
+            except TarkastajaVirhe as e:
+                tehty.append({"repo": repo, "tulos": "virhe", "syy": str(e)})
+                continue
+            for h in haarat:
+                nimi = (h or {}).get("name") or ""
+                if not AVAA_HAARA_RE.match(nimi):
                     continue
-                if tila.get("avattu", 0) >= AVAA_MAX_PAIVASSA:
-                    tehty.append({"repo": repo, "haara": nimi, "tulos": "ohitettu", "syy": "avausten paivaraja %d" % AVAA_MAX_PAIVASSA})
-                    continue
-                viesti = ((ero.get("commits") or [{}])[-1].get("commit") or {}).get("message") or nimi
-                otsikko, _, runko = viesti.partition("\n")
-                if kuiva:
-                    tehty.append({"repo": repo, "haara": nimi, "tulos": "avattaisiin"})
-                    continue
-                vastaus = json.loads(_pyynto("%s/repos/%s/%s/pulls" % (API, OMISTAJA, repo), tunnus, avaa=avaa, data={
-                    "title": _siivoa(otsikko, 120) or nimi, "head": nimi, "base": pohja,
-                    "body": _siivoa(runko, AVAA_RUNKO_MAX) + "\n\n---\nAvattu automaattisesti (pilvi-Clauden haara). Tarkastaja ja automerge hoitavat; rajatut yhdistaa Tony."}).decode("utf-8") or "{}")
-                tila["avattu"] = tila.get("avattu", 0) + 1
-                tehty.append({"repo": repo, "haara": nimi, "tulos": "avattu", "pr": vastaus.get("number")})
-            except (TarkastajaVirhe, ValueError, AttributeError, TypeError) as e:
-                tehty.append({"repo": repo, "haara": nimi, "tulos": "virhe", "syy": str(e)[:200]})
+                avain = "%s/%s" % (repo, nimi)
+                if avain in pysaytetyt:
+                    continue                                               # 422 alle vuorokausi sitten: ei kutsuja
+                postataan = False                                          # 422 merkitaan vain PR:n luonti-POSTista, ei hakujen GET-kutsuista
+                try:
+                    olemassa = hae_json("%s/repos/%s/%s/pulls?state=all&head=%s:%s" % (API, OMISTAJA, repo, OMISTAJA, urllib.parse.quote(nimi, safe="")),
+                                        tunnus, avaa=avaa)
+                    if olemassa:
+                        continue                                           # PR auki, yhdistetty tai Tony sulki sen: ei avata uudelleen
+                    pohja = pr_kutsu.pohja_haara(repo)
+                    ero = hae_json("%s/repos/%s/%s/compare/%s...%s" % (API, OMISTAJA, repo, pohja, urllib.parse.quote(nimi, safe="")),
+                                   tunnus, avaa=avaa)
+                    if int(ero.get("ahead_by") or 0) <= 0:
+                        continue
+                    if tila.get("avattu", 0) >= AVAA_MAX_PAIVASSA:
+                        tehty.append({"repo": repo, "haara": nimi, "tulos": "ohitettu", "syy": "avausten paivaraja %d" % AVAA_MAX_PAIVASSA})
+                        continue
+                    viesti = ((ero.get("commits") or [{}])[-1].get("commit") or {}).get("message") or nimi
+                    otsikko, _, runko = viesti.partition("\n")
+                    if kuiva:
+                        tehty.append({"repo": repo, "haara": nimi, "tulos": "avattaisiin"})
+                        continue
+                    postataan = True
+                    vastaus = json.loads(_pyynto("%s/repos/%s/%s/pulls" % (API, OMISTAJA, repo), tunnus, avaa=avaa, data={
+                        "title": _siivoa(otsikko, 120) or nimi, "head": nimi, "base": pohja,
+                        "body": _siivoa(runko, AVAA_RUNKO_MAX) + "\n\n---\nAvattu automaattisesti (pilvi-Clauden haara). Tarkastaja ja automerge hoitavat; rajatut yhdistaa Tony."}).decode("utf-8") or "{}")
+                    tila["avattu"] = tila.get("avattu", 0) + 1
+                    pysaytetyt.pop(avain, None)
+                    tehty.append({"repo": repo, "haara": nimi, "tulos": "avattu", "pr": vastaus.get("number")})
+                except (TarkastajaVirhe, ValueError, AttributeError, TypeError) as e:
+                    if postataan and getattr(e, "koodi", None) == 422:
+                        pysaytetyt[avain] = nyt_s
+                    tehty.append({"repo": repo, "haara": nimi, "tulos": "virhe", "syy": str(e)[:200]})
+    finally:
+        if kuiva:
+            pass                                                       # kuiva-ajo ei muokkaa kutsujan tilaa (vanhentuneet merkinnat jaavat)
+        elif pysaytetyt:
+            tila["avaa_422"] = pysaytetyt
+        else:
+            tila.pop("avaa_422", None)                                 # viimeinen merkinta poistui: ei tyhjaa avainta
     return tehty
+
+
+def ohitetut_lokista(tila_hak):
+    """Lokiin jo kirjatut rakennesyyohitykset: joukko (repo, pr, sha). Puuttuva loki tai roskarivi ei kaada kierrosta."""
+    try:
+        with open(Path(tila_hak) / LOKI, encoding="utf-8", errors="replace") as f:
+            rivit = f.read().splitlines()
+    except OSError:
+        return set()
+    ulos = set()
+    for rivi in rivit:
+        try:
+            d = json.loads(rivi)
+            if d.get("tulos") == "OHITETTU":
+                ulos.add((d.get("repo"), d.get("pr"), d.get("sha")))
+        except (ValueError, AttributeError, TypeError):
+            continue
+    return ulos
+
+
+def ohitusrivi(repo, nro, sha, syyt):
+    """Lokirivi rakennesyysta ohitetulle PR:lle. Syyt sisaltavat tiedostonimia, joten niiden pituus ja maara on rajattu."""
+    siistit = [_siivoa(s, OHITUS_SYY_MAX) for s in syyt[:OHITUS_SYITA_MAX]]
+    if len(syyt) > OHITUS_SYITA_MAX:
+        siistit.append("+%d muuta syyta" % (len(syyt) - OHITUS_SYITA_MAX))
+    return {"repo": repo, "pr": nro, "tulos": "OHITETTU", "syyt": siistit, "sha": sha[:12]}
 
 
 def kierros(env, tunnus, nyt=None, suorita=subprocess.run, avaa=urllib.request.urlopen, kuiva=False):
@@ -267,8 +346,9 @@ def kierros(env, tunnus, nyt=None, suorita=subprocess.run, avaa=urllib.request.u
     tila = lue_tila(tilapolku, nyt.date().isoformat())
     max_pv = int(env.get("CLAUDEJONO_TARKASTUS_MAX_PAIVA", MAX_PAIVASSA))
     tehty, auki = [], set()
+    ohitetut = ohitetut_lokista(tila_hak)
     if env.get("CLAUDEJONO_PR_AVAAJA", "1") == "1":
-        tehty.extend(avaa_puuttuvat(env, tunnus, tila, avaa=avaa, kuiva=kuiva))
+        tehty.extend(avaa_puuttuvat(env, tunnus, tila, avaa=avaa, kuiva=kuiva, nyt=nyt))
     for repo in seurattavat_repot(env):
         try:
             prt = hae_json("%s/repos/%s/%s/pulls?state=open&per_page=50" % (API, OMISTAJA, repo), tunnus, avaa=avaa)
@@ -285,8 +365,15 @@ def kierros(env, tunnus, nyt=None, suorita=subprocess.run, avaa=urllib.request.u
             try:
                 tiedostot = hae_sivutettu("%s/repos/%s/%s/pulls/%s/files" % (API, OMISTAJA, repo, nro), tunnus, avaa=avaa)
                 syyt = automerge.rakenne_syyt(pr, tiedostot)
-                if syyt:
-                    continue                                           # Tonylle joka tapauksessa: ei kuluteta tarkastusta
+                # Tonyn paatos 14.11.2026 (A962): myos rakenteellisesti rajatut tarkastetaan, jotta Tony paattaa
+                # tarkastetusta versiosta. Luonnokset ohitetaan edelleen. Paatos ei voi olla HYVAKSYTTY (fail closed).
+                tarkasta_rajattu = bool(syyt) and not d.get("draft") and env.get("CLAUDEJONO_TARKASTA_RAJATUT", "1") == "1"
+                if syyt and not tarkasta_rajattu:                      # Tonylle joka tapauksessa: ei kuluteta tarkastusta
+                    pari = (repo, nro, pr["head_sha"][:12])
+                    if pari not in ohitetut:
+                        ohitetut.add(pari)
+                        tehty.append(ohitusrivi(repo, nro, pr["head_sha"], syyt))
+                    continue
                 kommentit = [{"user": (k.get("user") or {}).get("login"), "body": k.get("body")}
                              for k in hae_sivutettu("%s/repos/%s/%s/issues/%s/comments" % (API, OMISTAJA, repo, nro), tunnus, avaa=avaa)]
                 if automerge.tarkastajan_paatos(kommentit, pr["head_sha"]) is not None:
@@ -302,6 +389,8 @@ def kierros(env, tunnus, nyt=None, suorita=subprocess.run, avaa=urllib.request.u
                     continue
                 alku = time.monotonic()
                 paatos, perustelu, loydokset, luvut, malli = tarkasta_pr(repo, nro, d, tunnus, env, suorita=suorita, avaa=avaa)
+                if tarkasta_rajattu:
+                    paatos, perustelu = rajaa_paatos(paatos, perustelu, syyt)
                 tila["maara"] += 1
                 tila["per_pr"][avain] = tila["per_pr"].get(avain, 0) + 1
                 kirjoita_tila(tilapolku, tila)
@@ -321,6 +410,23 @@ def kierros(env, tunnus, nyt=None, suorita=subprocess.run, avaa=urllib.request.u
         except OSError:
             pass
     return tehty
+
+
+def virheet_lokista(tila_hak, alku):
+    """Lokin virherivit ajan alku jalkeen: PR-avaajan ja tarkastuksen viat eivat saa jaada vain lokiin. Puuttuva loki -> []."""
+    try:
+        rivit = (Path(tila_hak) / LOKI).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    ulos = []
+    for rivi in rivit:
+        try:
+            d = json.loads(rivi)
+            if d.get("tulos") == "virhe" and datetime.fromisoformat(d["aika"]) >= alku:
+                ulos.append(d)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            continue
+    return ulos
 
 
 def main(argv=None):

@@ -11,6 +11,7 @@ from claudejono import aamukooste, viikkoehdotus
 from yojono import ajuri as yojono_ajuri
 
 TZ = aamukooste.TZ
+PYSAHTYNEET = aamukooste.pysahtyneet_kaistat   # alkuperainen, ennen Pohjan patchia
 NYT = datetime(2026, 11, 3, 6, 30, tzinfo=TZ)
 
 
@@ -27,6 +28,9 @@ class Pohja(unittest.TestCase):
         (self.jono / "tehtavat").mkdir()
         self.yj = self.tmp / "yojono"
         self.yj.mkdir()
+        patcher = mock.patch.object(aamukooste, "pysahtyneet_kaistat", return_value=[])   # ei oikeaa systemd:ta muissa testeissa
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def kirjoita(self, polku, teksti):
         p = self.jono / polku
@@ -65,16 +69,28 @@ class Kooste(Pohja):
     def keraa(self, hae=None, yksikot=None):
         return aamukooste.keraa(self.repo, self.yj, NYT, hae or self.hae, yksikot or (lambda: ["paivakatsaus.service"]))
 
-    def test_viisi_rivia_ja_linkit(self):
+    def test_rivit_paatokset_ensin_ja_linkit(self):
         teksti = aamukooste.muotoile(self.keraa())
         rivit, linkit = teksti.split("\n\nLinkit:\n")
         rivit = rivit.splitlines()
-        self.assertEqual(len(rivit), 5)
+        self.assertLessEqual(len(rivit), 10)
+        self.assertTrue(rivit[0].startswith("P\u00e4\u00e4t\u00f6kset sinulle:"))   # A546: p\u00e4\u00e4t\u00f6kset ensin
         self.assertTrue(all(len(r) <= aamukooste.RIVI_MAX for r in rivit))
-        for alku in ("Tehty:", "Tarvitaan sinulta:", "Opittu:", "H", "Kulut:"):
+        for alku in ("Tehty:", "Kesken", "S\u00e4\u00e4nt\u00f6p\u00e4ivitykset", "Opittu:", "H", "Kulut:"):
             self.assertTrue(any(r.startswith(alku) for r in rivit), alku)
         self.assertIn("https://github.com/tonyweckstrom1987/agentti-pohja/pull/9", linkit)
         self.assertIn("tonylle.md", linkit)
+
+    def test_aivo_valmius_kerrotaan_heti_kun_kaikki_ruudut_rastitettu(self):
+        self.assertNotIn("Aivo on valmis", aamukooste.muotoile(self.keraa()))      # tiedostoa ei ole
+        osa = "- [x] a\n- [x] b\n- [x] c\n- [x] d\n"
+        self.kirjoita("aivo-valmius.md", osa + "- [ ] e\n")
+        self.assertNotIn("Aivo on valmis", aamukooste.muotoile(self.keraa()))      # yksi ruutu auki
+        rivit_ennen = len(aamukooste.muotoile(self.keraa()).split("\n\nLinkit:\n")[0].splitlines())
+        self.kirjoita("aivo-valmius.md", osa + "- [x] e\n")
+        teksti = aamukooste.muotoile(self.keraa())
+        self.assertIn("Aivo on valmis OpenRouteriin", teksti)
+        self.assertEqual(len(teksti.split("\n\nLinkit:\n")[0].splitlines()), rivit_ennen)   # rivimaara ei kasva
 
     def test_ikkuna_rajaa_vanhat_pois(self):
         t = self.keraa()
@@ -84,34 +100,35 @@ class Kooste(Pohja):
 
     def test_sisalto_oikeasta_datasta(self):
         rivit = aamukooste.rivit(self.keraa())
-        self.assertIn("2 jonotulosta (1 valmis, 1 ep", rivit[0])
-        self.assertIn("agentti-pohja#7", rivit[0])
-        self.assertIn("1 PR:", rivit[1])
-        self.assertIn("2 uutta kohtaa", rivit[1])
-        self.assertIn("X ei onnistu, kayta Y", rivit[2])
-        self.assertIn("failed: paivakatsaus.service", rivit[3])
-        self.assertIn("95 %", rivit[3])   # kuukausikulu 4,25 + 0,5 = 4,75 / 5,0
-        self.assertIn("y", rivit[3])
-        self.assertIn("4.25 / 5.00 USD", rivit[4])   # ajopaiva vaihtuu klo 9: klo 6.30 on viela 2.11.
+        self.assertIn("1 PR:", rivit[0])
+        self.assertNotIn("avointa kohtaa", rivit[0])   # fixturen otsikot eiv\u00e4t ole p\u00e4\u00e4t\u00f6spyynt\u00f6j\u00e4
+        self.assertIn("2 jonotulosta (1 valmis, 1 ep", rivit[1])
+        self.assertIn("agentti-pohja#7", rivit[1])
+        self.assertIn("ei mit\u00e4\u00e4n", rivit[2])
+        self.assertIn("ei.", rivit[3])
+        self.assertIn("X ei onnistu, kayta Y", rivit[4])
+        self.assertIn("failed: paivakatsaus.service", rivit[5])
+        self.assertIn("95 %", rivit[5])   # kuukausikulu 4,25 + 0,5 = 4,75 / 5,0
+        self.assertIn("4.25 / 5.00 USD", rivit[6])   # ajopaiva vaihtuu klo 9: klo 6.30 on viela 2.11.
 
     def test_github_virhe_ei_nay_tyhjana_onnistumisena(self):
         def rikki(url):
             raise OSError("verkko")
         t = self.keraa(hae=rikki)
         rivit = aamukooste.rivit(t)
-        self.assertIn("vajaa", rivit[1])
-        self.assertIn("OSError", rivit[1])
+        self.assertIn("tieto puuttuu: PR-lista OSError", rivit[0])
+        self.assertNotIn("ei mergattavia", rivit[0])   # puuttuva tieto ei ole aito nolla
 
     def test_puuttuva_yojono_ja_systemd_ei_kaada(self):
         t = aamukooste.keraa(self.repo, self.tmp / "ei-ole", NYT, self.hae, lambda: None)
         rivit = aamukooste.rivit(t)
-        self.assertEqual(len(rivit), 5)
-        self.assertIn("systemd-tilaa ei saatu", rivit[3])
-        self.assertIn("tilaa ei saatu", rivit[4])
+        self.assertEqual(len(rivit), 7)
+        self.assertIn("systemd-tilaa ei saatu", rivit[5])
+        self.assertIn("tilaa ei saatu", rivit[6])
 
     def test_tyhja_oppi_ei_nay(self):
         self.kirjoita("tulokset/2026-11-03-01-c.md", tulos("c", "VALMIS", "2026-11-03T03:00+02:00", "## Uusi oppi\nTama ajo ei tuottanut uutta oppia.\n"))
-        self.assertNotIn("Tama ajo ei", aamukooste.rivit(self.keraa())[2])
+        self.assertNotIn("Tama ajo ei", aamukooste.rivit(self.keraa())[4])
 
     def test_tonylle_aikaleimat(self):
         self.kirjoita("tonylle.md", "## 2026-11-02T05:00+02:00 a\n## 2026-11-02 klo 23.15 b\n## 2026-11-03 c\n## 2026-11-01 d\n")
@@ -129,6 +146,217 @@ class Kooste(Pohja):
             with mock.patch("sys.stdout"):
                 self.assertEqual(aamukooste.main(["--laheta"]), 0)
         self.assertIs(m.call_args.kwargs.get("pakota"), True)
+
+
+class KayttoonottoEro(Pohja):
+    """Aamukooste kertoo, kun mainissa on ajureihin ottamattomia yhdistettyja muutoksia (tools/kayttoonotto_ero.py)."""
+    def setUp(self):
+        super().setUp()
+        import subprocess
+        # tunnuspolku vaihdetaan olemattomaan valiaikaispolkuun: testi ei saa lukea oikeaa lukutunnusta
+        env = mock.patch.dict(os.environ, {"GITHUB_LUKU_TUNNUS_POLKU": str(Path(self.tmp) / "ei-tunnusta.token")})
+        env.start()
+        self.addCleanup(env.stop)
+        self.pohja = Path(self.tmp) / "pohja"
+        self.pohja.mkdir()
+        for komento in (["init", "-q", "-b", "main"], ["-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "a"]):
+            subprocess.run(["git", "-C", str(self.pohja)] + komento, check=True, capture_output=True)
+        self.yojono_ajuri = Path(self.tmp) / "yojono-ajuri"
+        self.yojono_ajuri.mkdir()
+        (self.yojono_ajuri / ".julkaisu-tieto").write_text("kohde=yojono-ajuri\ncommit=" + "a" * 40 + "\n")
+
+    def rivi(self, vertailu):
+        kutsut = []
+
+        def hae(repo, commit, haara):
+            kutsut.append(commit)
+            return vertailu(commit) if callable(vertailu) else vertailu
+        teksti = aamukooste.kayttoonotto_ero_rivi(str(self.pohja), str(self.yojono_ajuri), hae_vertailu=hae)
+        return teksti, kutsut
+
+    @staticmethod
+    def vertailu(jaljessa, *otsikot):
+        return {"ahead_by": jaljessa, "behind_by": 0, "commits": [{"commit": {"message": o}} for o in otsikot]}
+
+    def test_jaljessa_kertoo_maarat_ja_prt(self):
+        teksti, kutsut = self.rivi(self.vertailu(3, "Merge pull request #251 from x/y", "muu", "Merge pull request #242 from x/z"))
+        self.assertIn("agentti-pohja 3 committia", teksti)
+        self.assertIn("y\u00f6jono-ajuri 3 committia", teksti)
+        self.assertIn("#251, #242", teksti)
+        self.assertIn("paivita-ajurit.sh", teksti)
+        self.assertEqual(len(kutsut), 2)
+        self.assertEqual(kutsut[1], "a" * 40)   # yojonon commit luetaan .julkaisu-tieto-tiedostosta
+
+    def test_ajan_tasalla_ei_tulosta_mitaan(self):
+        self.assertIsNone(self.rivi(self.vertailu(0))[0])
+
+    def test_vain_toinen_jaljessa(self):
+        teksti, _ = self.rivi(lambda commit: self.vertailu(2 if commit == "a" * 40 else 0))
+        self.assertIn("y\u00f6jono-ajuri 2 committia", teksti)
+        self.assertNotIn("agentti-pohja 2", teksti)
+
+    def test_verkkovirhe_nakyy_vain_tyyppina(self):
+        def rikki(commit):
+            raise OSError("salainen-osoite.invalid")
+        teksti, _ = self.rivi(rikki)
+        self.assertIn("ei selvinnyt (OSError)", teksti)
+        self.assertNotIn("salainen", teksti)
+
+    def test_ero_virheen_lyhyt_syy_nakyy_mutta_ei_poikkeuksen_teksti(self):
+        from tools import kayttoonotto_ero as ero
+
+        def rikki(commit):
+            raise ero.EroVirhe("salainen-polku /etc/x", "git: kopion omistaja ei tasmaa (safe.directory ei auttanut)")
+        teksti, _ = self.rivi(rikki)
+        self.assertIn("ei selvinnyt (EroVirhe: git: kopion omistaja ei tasmaa", teksti)
+        self.assertNotIn("salainen", teksti)
+
+    def test_puuttuva_julkaisutieto_ei_kaada(self):
+        (self.yojono_ajuri / ".julkaisu-tieto").unlink()
+        self.assertIn("ei selvinnyt", self.rivi(self.vertailu(0))[0])
+
+    def test_ei_git_kopiota_ei_kaada(self):
+        teksti = aamukooste.kayttoonotto_ero_rivi(str(self.tmp) + "/ei-ole", str(self.yojono_ajuri), hae_vertailu=lambda *a: self.vertailu(0))
+        self.assertIn("ei selvinnyt", teksti)
+
+    def test_vertailuun_valitetaan_pelkka_reponimi_ja_url_on_omistaja_repo(self):
+        """hae_vertailu lisaa omistajan itse: valitetyn repon pitaa olla pelkka nimi, muuten URL olisi omistaja/omistaja/repo."""
+        from tools import kayttoonotto_ero as ero
+        valitetut, urlit = [], []
+
+        class Vastaus:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return b'{"ahead_by": 0, "behind_by": 0, "commits": []}'
+
+        def avaa(pyynto, timeout=None):
+            urlit.append(pyynto.full_url)
+            return Vastaus()
+
+        def hae(repo, commit, haara):
+            valitetut.append(repo)
+            return ero.hae_vertailu(repo, commit, haara, avaa=avaa)
+        aamukooste.kayttoonotto_ero_rivi(str(self.pohja), str(self.yojono_ajuri), hae_vertailu=hae)
+        self.assertEqual(set(valitetut), {"agentti-pohja"})
+        self.assertTrue(all("/" not in r for r in valitetut))
+        self.assertEqual(len(urlit), 2)
+        for url in urlit:
+            self.assertTrue(url.startswith("https://api.github.com/repos/tonyweckstrom1987/agentti-pohja/compare/"), url)
+
+    def test_rivi_nakyy_tarvitaan_rivilla(self):
+        t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [], ero=lambda: "ajurit j\u00e4ljess\u00e4 mainista: testi")
+        self.assertIn("ajurit j\u00e4ljess\u00e4 mainista: testi", aamukooste.rivit(t)[0])
+
+    def test_oletuksena_ei_hae_eroa_eika_nayta_rivia(self):
+        t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [])
+        self.assertIsNone(t["ero"])
+        self.assertNotIn("ajurit", aamukooste.rivit(t)[0])
+
+    def test_ero_virhe_ei_kaada_koostetta(self):
+        def rikki():
+            raise RuntimeError("x")
+        self.assertIsNone(aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [], ero=rikki)["ero"])
+
+
+class UusiMuoto(Kooste):
+    load_tests = None
+    def test_suljettu_paatos_ei_muistuteta_ja_avoin_muistutetaan_seuraavanakin_paivana(self):
+        self.kirjoita("tonylle.md", "## 2026-11-01 AAMULLA ENSIN TEHTY: a\n## 2026-11-01 AAMULLA ENSIN b\n## 2026-11-01 tiedote c\n")
+        t = self.keraa()
+        self.assertEqual([o for _, o in t["paatokset"]], ["AAMULLA ENSIN b"])   # 2 pv vanha, silti avoin
+        self.assertEqual(t["tonylle"], [])   # 24 h:n uusien lista tyhj\u00e4, p\u00e4\u00e4t\u00f6s silti rivill\u00e4
+        self.assertIn("1 avointa kohtaa", aamukooste.rivit(t)[0])
+
+    def test_avainsanaan_osumaton_kohta_ei_katoa_hiljaa(self):
+        self.kirjoita("tonylle.md", "## 2026-11-03T01:00+02:00 Lis\u00e4tietoa X\n## 2026-11-03T02:00+02:00 Ilmoitus Y\n## 2026-11-03T03:00+02:00 AAMULLA ENSIN Z\n")
+        t = self.keraa()
+        rivit = aamukooste.rivit(t)
+        self.assertEqual([o for _, o in t["paatokset"]], ["AAMULLA ENSIN Z"])
+        self.assertIn("+2 muuta kohtaa tonylle.md:ss\u00e4", rivit[0])
+        self.assertLessEqual(len(rivit), 10)
+
+    def test_laskuri_ei_katoa_pitkien_otsikoiden_taakse(self):
+        otsikot = "".join(f"## 2026-11-03T0{i}:00+02:00 AAMULLA ENSIN " + "p" * 150 + "\n" for i in range(1, 4))
+        self.kirjoita("tonylle.md", otsikot + "## 2026-11-03T04:00+02:00 tiedote\n")
+        self.assertIn("+1 muuta kohtaa tonylle.md:ss\u00e4", aamukooste.rivit(self.keraa())[0])
+
+    def test_varaus_kysymys_ei_katoa_pitkien_otsikoiden_taakse(self):
+        otsikot = "".join(f"## 2026-11-03T0{i}:00+02:00 AAMULLA ENSIN " + "p" * 150 + "\n" for i in range(1, 4))
+        self.kirjoita("tonylle.md", otsikot)
+        t = self.keraa()
+        kysymys = 'kerro asetussivun luku "T\u00e4ll\u00e4 viikolla x % k\u00e4ytetty" (python3 -m claudejono.varaus kalibroi <luku>)'
+        t["varaus_kysymys"] = kysymys
+        rivi = aamukooste.rivit(t)[0]
+        self.assertIn(kysymys, rivi)
+        self.assertLessEqual(len(rivi), aamukooste.RIVI_MAX)
+
+    def test_kysymysotsikko_jossa_sana_tehty_ei_ole_suljettu(self):
+        self.kirjoita("tonylle.md", "## 2026-11-03T03:00+02:00 kysymys: onko X tehty?\n")
+        self.assertEqual(len(aamukooste.avoimet_paatokset(self.repo, NYT)), 1)
+
+    def test_suljettu_tunnistaa_tilamerkinnan_ei_sanaa_kesken_otsikkoa(self):
+        for suljettu in ("kysymys: otetaanko X k\u00e4ytt\u00f6\u00f6n? VASTATTU", "kysymys: X [TEHTY]", "TEHTY: kysymys X",
+                         "[p\u00e4\u00e4tetty] kysymys X", "kysymys X (suljettu)", "AAMULLA ENSIN: Y - hoidettu"):
+            self.assertTrue(aamukooste.suljettu(suljettu), suljettu)
+        for avoin in ("kysymys: onko X tehty?", "AAMULLA ENSIN: varmuuskopiota ei ole tehty",
+                      "p\u00e4\u00e4tett\u00e4v\u00e4: aiempi korjaus rikki", "kysymys: ei viel\u00e4 tehty",
+                      "kysymys: tehty vai ei?", "AAMULLA ENSIN Z"):
+            self.assertFalse(aamukooste.suljettu(avoin), avoin)
+
+    def test_sulkusana_pitkan_otsikon_lopussa_toimii_vaikka_nayttorivi_leikataan(self):
+        otsikko = "kysymys: " + "pitka kuvaus " * 8 + "VASTATTU"
+        self.kirjoita("tonylle.md", "## 2026-11-03T03:00+02:00 %s\n## 2026-11-03T04:00+02:00 kysymys: onko X tehty?\n" % otsikko)
+        avoimet = aamukooste.avoimet_paatokset(self.repo, NYT)
+        self.assertEqual([o for _, o in avoimet], ["kysymys: onko X tehty?"])
+
+    def test_varaus_kysymys_sailyy_pitkien_otsikoiden_jalkeen(self):
+        otsikot = "".join("## 2026-11-03T0%d:00+02:00 kysymys: %s\n" % (i, "pitka otsikko " * 4) for i in range(1, 4))
+        self.kirjoita("tonylle.md", otsikot)
+        t = self.keraa()
+        t["varaus_kysymys"] = "kerro asetussivun luku (python3 -m claudejono.varaus kalibroi <luku>)"
+        self.assertIn("kalibroi <luku>", aamukooste.rivit(t)[0])
+
+    def test_ei_laskuria_kun_kaikki_kohdat_ovat_paatoksia(self):
+        self.kirjoita("tonylle.md", "## 2026-11-03T03:00+02:00 AAMULLA ENSIN Z\n")
+        self.assertNotIn("muuta kohtaa", aamukooste.rivit(self.keraa())[0])
+
+    def test_kesken_ja_saantopaivitykset(self):
+        self.kirjoita("tulokset/2026-11-03-01-k.md", tulos("k", "KESKEN", "2026-11-03T03:00+02:00"))
+        self.kirjoita("saantopaivitykset.md", "# S\u00e4\u00e4nn\u00f6t\n## 2026-11-03T01:00+02:00 raja X tarkennettu\n## 2026-10-01 vanha\n")
+        rivit = aamukooste.rivit(self.keraa())
+        self.assertIn("Kesken (ei tarkastajan vahvistusta): 2026-11-03-01-k", rivit[2])
+        self.assertIn("raja X tarkennettu", rivit[3])
+        self.assertNotIn("vanha", rivit[3])
+
+    def test_yli_kymmenen_rivia_ei_tule(self):
+        self.assertLessEqual(len(aamukooste.muotoile(self.keraa()).split("\n\nLinkit:\n")[0].splitlines()), 10)
+
+class TarkastajaVirheet(Pohja):
+    def aineisto(self):
+        return aamukooste.keraa(self.repo, self.yj, NYT, hae=lambda url: [], yksikot=lambda: [])
+
+    def test_virhe_nousee_halytyksiin(self):
+        (self.tmp / "tarkastukset.jsonl").write_text(json.dumps(
+            {"repo": "agentti-pohja", "haara": "korjaus/x", "tulos": "virhe", "syy": "GitHub HTTP 403: /repos", "aika": "2026-11-03T05:00:00+02:00"}) + "\n")
+        rivi = next(r for r in aamukooste.rivit(self.aineisto()) if r.startswith("H\u00e4lytykset:"))
+        self.assertIn("PR-tarkastaja/-avaaja: 1 virhett\u00e4 1 kohteessa, viimeisin korjaus/x: GitHub HTTP 403", rivi)
+
+    def test_toistuvat_virheet_lasketaan_kohteittain(self):
+        rivit = [{"repo": "mcp-doctor", "haara": h, "tulos": "virhe", "syy": "GitHub HTTP 422: /pulls", "aika": "2026-11-03T0%d:00:00+02:00" % t}
+                 for t in (3, 4, 5) for h in ("korjaus/a", "korjaus/b")]
+        (self.tmp / "tarkastukset.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rivit))
+        rivi = next(r for r in aamukooste.rivit(self.aineisto()) if r.startswith("H\u00e4lytykset:"))
+        self.assertIn("PR-tarkastaja/-avaaja: 6 virhett\u00e4 2 kohteessa, viimeisin korjaus/b", rivi)
+
+    def test_ohitettu_pr_ei_nouse_halytyksiin(self):
+        (self.tmp / "tarkastukset.jsonl").write_text(json.dumps(
+            {"repo": "mcp-doctor", "pr": 29, "tulos": "OHITETTU", "syyt": ["luonnos"], "sha": "c" * 12, "aika": "2026-11-03T05:00:00+02:00"}) + "\n")
+        rivi = next(r for r in aamukooste.rivit(self.aineisto()) if r.startswith("H\u00e4lytykset:"))
+        self.assertNotIn("PR-tarkastaja", rivi)
+
+    def test_ilman_lokia_ei_halytysta(self):
+        rivi = next(r for r in aamukooste.rivit(self.aineisto()) if r.startswith("H\u00e4lytykset:"))
+        self.assertNotIn("PR-tarkastaja", rivi)
 
 
 class IlmoitusRajaus(unittest.TestCase):
@@ -235,6 +463,164 @@ class Viikkoehdotus(Pohja):
             self.assertEqual(viikkoehdotus.main(["--repo", str(self.repo), "--hakemisto", str(hak), "--nyt", "2026-11-08T07:00+02:00"]), 0)
         self.assertTrue((hak / "2026-46-ehdotus.md").is_file())
         self.assertFalse(list(self.repo.glob("**/*-ehdotus.md")))   # ei docs-kloonin sisaan
+
+
+class KaistaVahti(Pohja):
+    """Pysahtyneen kaistan varoitus: systemctl injektoidaan, vain luku."""
+
+    def tehtava(self, nimi, tavoite, ika_h=0, kaista=None):
+        teksti = f"# {nimi}\n\nTavoite: {tavoite}\n" + (f"Kaista: {kaista}\n" if kaista else "")
+        self.kirjoita(f"tehtavat/{nimi}.md", teksti)
+        p = self.jono / "tehtavat" / f"{nimi}.md"
+        t = NYT.timestamp() - ika_h * 3600
+        os.utime(p, (t, t))
+
+    def vahti(self, kaistoja, seis):
+        return PYSAHTYNEET(self.repo, NYT, kaistoja=kaistoja, aktiivinen=lambda n: n not in seis)
+
+    def test_kaikki_kaistat_kaynnissa_ei_riviae(self):
+        self.tehtava("2026-11-20-27-aivo-a", "aivo", 14)
+        self.assertEqual(self.vahti(4, set()), [])
+
+    def test_kaistat_1_2_seis_ja_portfolio_odottaa_antaa_rivit(self):
+        # A1061: kaista 3 ottaa vain Aivoa tai yllapitoa, joten portfolio jaa kaistojen 1-2 varaan
+        self.tehtava("2026-11-20-27-portfolio-a", "portfolio", 14.2)
+        self.tehtava("2026-11-20-28-portfolio-b", "portfolio", 3)
+        self.tehtava("2026-11-20-29-aivo-a", "aivo", 2)   # kaista 3 ottaa, ei lasketa
+        self.assertEqual(self.vahti(3, {1, 2}), ["Kaista 1 seis: 2 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 14 h)",
+                                                 "Kaista 2 seis: 2 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 14 h)"])
+
+    def test_kaistat_3_ja_4_seis_aivo_menee_kaistoille_1_2_ei_riviae(self):
+        # A1061: kaistat 1-2 ottavat Aivo-tehtavat ensin, joten kaistojen 3-4 pysahdys ei jata niita ilman ottajaa
+        for i in range(6):
+            self.tehtava(f"2026-11-20-{27 + i}-aivo", "aivo", 14 + i)
+        self.tehtava("2026-11-21-01-ylla", "yllapito", 1)
+        self.assertEqual(self.vahti(4, {3, 4}), [])
+        self.assertEqual(self.vahti(3, {3}), [])
+
+    def test_kaikki_kaistat_seis_aivo_nakyy_jokaisella(self):
+        self.tehtava("2026-11-20-27-aivo-a", "aivo", 14.2)
+        self.assertEqual(self.vahti(4, {1, 2, 3, 4}),
+                         [f"Kaista {n} seis: 1 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 14 h)" for n in (1, 2, 3, 4)])
+
+    def test_kaista_seis_mutta_toinen_kaista_ottaa_tehtavat_ei_riviae(self):
+        self.tehtava("2026-11-20-27-aivo-a", "aivo", 14)
+        self.assertEqual(self.vahti(4, {3}), [])   # kaista 4 ottaa Aivo-tehtavat
+
+    def test_kaista_seis_mutta_ei_tehtavia_ei_riviae(self):
+        self.assertEqual(self.vahti(4, {3, 4}), [])
+        self.tehtava("2026-11-20-30-ylla", "yllapito", 5)   # kaistat 1-2 ottavat
+        self.assertEqual(self.vahti(4, {3, 4}), [])
+
+    def test_tehtava_jolla_on_tulos_ei_odota(self):
+        self.tehtava("2026-11-20-27-aivo-a", "aivo", 14)
+        self.kirjoita("tulokset/2026-11-20-27-aivo-a.md", tulos("a", "VALMIS", "2026-11-21T01:00+02:00"))
+        self.assertEqual(self.vahti(3, {3}), [])
+
+    def test_tuntematon_systemd_tila_ei_halyta(self):
+        self.tehtava("2026-11-20-27-aivo-a", "aivo", 14)
+        self.assertEqual(PYSAHTYNEET(self.repo, NYT, kaistoja=3, aktiivinen=lambda n: None), [])
+
+    def test_kaista_aktiivinen_lukee_is_active_ja_virheet_none(self):
+        def ajo(tila, koodi=3):
+            return lambda *a, **k: mock.Mock(stdout=tila, returncode=koodi)
+        self.assertTrue(aamukooste.kaista_aktiivinen(3, ajo("active\n", 0)))
+        self.assertFalse(aamukooste.kaista_aktiivinen(3, ajo("inactive\n")))
+        self.assertIsNone(aamukooste.kaista_aktiivinen(3, ajo("")))
+        def puuttuu(*a, **k):
+            raise FileNotFoundError("systemctl")
+        self.assertIsNone(aamukooste.kaista_aktiivinen(3, puuttuu))
+        kutsut = []
+        aamukooste.kaista_aktiivinen(3, lambda cmd, **k: kutsut.append(cmd) or mock.Mock(stdout="active", returncode=0))
+        self.assertEqual(kutsut, [["systemctl", "is-active", "claude-jono@3.timer"]])   # vain luku
+
+    def test_varoitus_nakyy_halytykset_rivilla_ja_virhe_ei_kaada(self):
+        rivit_ = ["Kaista 3 seis: 6 teht\u00e4v\u00e4\u00e4 odottaa (vanhin 14 h)"]
+        t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [], kaistavahti=lambda r, n: rivit_)
+        self.assertIn(rivit_[0], aamukooste.rivit(t)[5])
+        def rikki(r, n):
+            raise OSError("x")
+        t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [], kaistavahti=rikki)
+        self.assertEqual(aamukooste.rivit(t)[5], "H\u00e4lytykset: ei.")
+
+
+class TavoiteOhitetut(Pohja):
+    """Ajuri ohittaa tehtavan, jonka Tavoite-rivi ei kelpaa: aamukoosteen ensimmainen rivi kertoo sen."""
+
+    def test_ohitettu_nakyy_ensimmaisella_rivilla_ensimmaisena(self):
+        self.kirjoita("tehtavat/2026-11-22-01-hyva.md", "# a\nTavoite: yllapito\n")
+        self.kirjoita("tehtavat/2026-11-22-02-kuvaus.md", "# b\nTavoite: tehda tarkistin\nTavoite: yllapito\n")
+        self.kirjoita("tehtavat/2026-11-22-03-kaksi.md", "# c\nTavoite: portfolio ja TO-paikka\n")
+        self.kirjoita("tehtavat/2026-11-22-04-puuttuu.md", "# d\n")
+        self.kirjoita("tehtavat/2026-11-07-01-vanha.md", "# vanha ilman rivia\n")   # ennen pakollisuutta: ajuri ajaa
+        self.kirjoita("tehtavat/2026-11-22-05-tehty.md", "# e\n")
+        self.kirjoita("tulokset/2026-11-22-05-tehty.md", tulos("e", "VALMIS", "2026-11-22T01:00+02:00"))
+        self.assertEqual(aamukooste.tavoitehylatyt(self.repo), ["2026-11-22-02-kuvaus", "2026-11-22-03-kaksi", "2026-11-22-04-puuttuu"])
+        t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [])
+        eka = aamukooste.rivit(t)[0]
+        self.assertTrue(eka.startswith("P\u00e4\u00e4t\u00f6kset sinulle: 3 teht\u00e4v\u00e4\u00e4 ohitetaan, koska Tavoite-rivi ei kelpaa"), eka)
+        self.assertIn("2026-11-22-02-kuvaus, 2026-11-22-03-kaksi (+1)", eka)
+
+    def test_yllapito_a_kirjaimella_kelpaa_kuten_ajurilla(self):
+        self.kirjoita("tehtavat/2026-11-22-01-a.md", "# a\nTavoite: yll\u00e4pito\n")
+        self.assertEqual(aamukooste.tavoitehylatyt(self.repo), [])
+
+    def test_ei_ohitettuja_ei_mainintaa_ja_virhe_ei_kaada(self):
+        self.kirjoita("tehtavat/2026-11-22-01-a.md", "# a\nTavoite: Aivo\n")
+        t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [])
+        self.assertNotIn("Tavoite-rivi", aamukooste.rivit(t)[0])
+        with mock.patch.object(aamukooste, "tavoitehylatyt", side_effect=OSError("x")):
+            t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [])
+        self.assertEqual(t["tavoite_ohitetut"], [])
+
+
+class SkriptikopioEro(unittest.TestCase):
+    """skriptikopio_ero_rivi tilapaishakemistoilla: ei verkkoa eika oikeita /opt-polkuja."""
+    NIMET = ("katselmoi.sh", "kehitys.sh")
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.pohja = self.tmp / "pohja"
+        (self.pohja / "yojono").mkdir(parents=True)
+        self.kopiot = self.tmp / "kopiot"
+        self.kopiot.mkdir()
+        for n in self.NIMET:
+            (self.pohja / "yojono" / n).write_text("#!/bin/sh\necho " + n + "\n")
+            (self.kopiot / n).write_text("#!/bin/sh\necho " + n + "\n")
+
+    def rivi(self):
+        return aamukooste.skriptikopio_ero_rivi(str(self.pohja), [str(self.kopiot / n) for n in self.NIMET])
+
+    def test_kaikki_samat_ei_rivia(self):
+        self.assertIsNone(self.rivi())
+
+    def test_yksi_eroaa(self):
+        (self.kopiot / "kehitys.sh").write_text("vanha\n")
+        teksti = self.rivi()
+        self.assertIn("eroaa repon versiosta: kehitys.sh", teksti)
+        self.assertNotIn("katselmoi.sh", teksti)
+
+    def test_yksi_puuttuu(self):
+        (self.kopiot / "kehitys.sh").unlink()
+        teksti = self.rivi()
+        self.assertIn("puuttuu: kehitys.sh", teksti)
+        self.assertNotIn("eroaa", teksti)
+
+    def test_lukuvirhe_ei_kaada_ja_nayttaa_vain_tyypin(self):
+        (self.pohja / "yojono" / "kehitys.sh").unlink()   # repon versio puuttuu -> FileNotFoundError
+        teksti = self.rivi()
+        self.assertIn("ei selvinnyt (kehitys.sh: FileNotFoundError)", teksti)
+        self.assertNotIn(str(self.tmp), teksti)
+
+    def test_oletustaulu_luetaan_ajurin_skripteista(self):
+        with mock.patch.object(aamukooste.ajuri_yojono, "SKRIPTIT", {"x": ("YOJONO_X", str(self.kopiot / "kehitys.sh"))}):
+            self.assertIsNone(aamukooste.skriptikopio_ero_rivi(str(self.pohja)))
+
+    def test_yhdista_erot_ohittaa_virheen_ja_tyhjan(self):
+        def rikki():
+            raise RuntimeError("x")
+        self.assertEqual(aamukooste.yhdista_erot(rikki, lambda: None, lambda: "a", lambda: "b"), "a; b")
+        self.assertIsNone(aamukooste.yhdista_erot(rikki, lambda: None))
 
 
 if __name__ == "__main__":

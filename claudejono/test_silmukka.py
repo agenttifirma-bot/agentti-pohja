@@ -1,6 +1,9 @@
 """Itsekehittyvan silmukan testit: porttitarkistin, toistuvat tehtavat, taydennys ja pysaytys."""
+import contextlib
+import io
 import json
 import subprocess
+import urllib.error
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,13 +11,13 @@ from pathlib import Path
 from claudejono import ajuri, silmukka
 from claudejono.test_ajuri import Pohja, git
 
-OK_TEHTAVA = "# A\n\nPisteet: hyoty 4, varmuus 4, vaiva 1 h\nSuunta: jatkoa (kompassi 1)\n"
+OK_TEHTAVA = "# A\n\nTavoite: yllapito\nPisteet: hyoty 4, varmuus 4, vaiva 1 h\nSuunta: jatkoa (kompassi 1)\n"
 
 NYT = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
 
 
 def teht(lisa="", suunta="jatkoa (kompassi 1)", pisteet="hyoty 4, varmuus 4, vaiva 2 h"):
-    return f"# Tehtava\n\nPisteet: {pisteet}\nSuunta: {suunta}\n{lisa}\nValmis kun: PR.\n"
+    return f"# Tehtava\n\nTavoite: yllapito\nPisteet: {pisteet}\nSuunta: {suunta}\n{lisa}\nValmis kun: PR.\n"
 
 
 class Tarkistin(unittest.TestCase):
@@ -157,10 +160,82 @@ class Silmukka(Pohja):
         self.assertEqual(kutsut, [])
 
     def test_paivaraja_ja_per_ajo_ennallaan(self):
-        self.assertEqual(ajuri.AUTO_MAX_PAIVA, 30)
-        self.assertEqual(ajuri.AUTO_PER_AJO, 2)
+        self.assertEqual(ajuri.AUTO_MAX_PAIVA, 60)
+        self.assertEqual(ajuri.AUTO_PER_AJO, 5)
         self.assertTrue(ajuri.sallittu_polku("claude-jono/tonylle.md"))
         self.assertFalse(ajuri.sallittu_polku("claude-jono/sunnuntaiehdotukset.md"))
+
+    # --- laatu ennen maaraa (A1068) ---
+    def kehote(self, kutsut):
+        return " ".join(str(o) for o in kutsut[0])
+
+    def test_kolmesta_kaksi_hyvaksytaan_ja_kolmas_kirjataan(self):
+        vastaus = json.dumps({"tehtavat": [{"nimi": n, "sisalto": OK_TEHTAVA.replace("# A", "# " + n)}
+                                            for n in ("eka", "toka", "kolmas")], "tonylle": ""})
+        loki = io.StringIO()
+        with contextlib.redirect_stderr(loki):
+            v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli(vastaus), nyt=NYT)
+        self.assertIn("itsesuunnittelu", v)
+        self.assertEqual(self.tehtavat_originissa(), ["2026-11-03-01-auto-eka.md", "2026-11-03-02-auto-toka.md"])
+        self.assertIn("pudotti ehdotuksen 'kolmas': laaturaja A1068: enintaan 2 uutta tehtavaa kierroksella", loki.getvalue())
+        self.assertNotIn("'eka'", loki.getvalue())
+
+    def test_kehote_pyytaa_enintaan_kaksi(self):
+        kutsut = []
+        ajuri.suunnittele(self.repo, self.tmp, {}, self.malli('{"tehtavat": [], "tonylle": ""}', kutsut), nyt=NYT)
+        self.assertIn("Ehdota enintaan 2 tehtavaa.", self.kehote(kutsut))
+
+    def suunnittele_prt(self, tulos):
+        kutsut, loki = [], io.StringIO()
+        with contextlib.redirect_stderr(loki):
+            ajuri.suunnittele(self.repo, self.tmp, {"CLAUDEJONO_SUUNNITTELU_TAUKO_S": "0"},   # tyhjan kierroksen tauko pois
+                              self.malli('{"tehtavat": [], "tonylle": ""}', kutsut), nyt=NYT, hae_prt=lambda: tulos)
+        return self.kehote(kutsut), loki.getvalue()
+
+    def test_21_avointa_lisaa_jarruohjeen(self):
+        kehote, loki = self.suunnittele_prt((21, ""))
+        self.assertIn("PR-JARRU (", kehote)
+        self.assertIn("21 avointa PR:aa", kehote)
+        self.assertIn("Ala ehdota uusia koodi-PR:ia", kehote)
+        self.assertIn("PR-jarru paalla: 21", loki)
+
+    def test_20_avointa_ei_jarrua(self):
+        kehote, loki = self.suunnittele_prt((20, ""))
+        self.assertNotIn("PR-JARRU (", kehote)
+        self.assertNotIn("PR-jarru", loki)
+
+    def test_luku_ei_saatavilla_ennallaan_ja_varoitus(self):
+        kehote, loki = self.suunnittele_prt((None, "URLError"))
+        nolla, _ = self.suunnittele_prt((0, ""))
+        self.assertNotIn("PR-JARRU (", kehote)
+        self.assertEqual(kehote, nolla)
+        self.assertIn("PR-jarru: avointen PR:ien maaraa ei saatu (URLError), suunnittelu ilman jarrua", loki)
+
+    def test_avoimet_prt_laskee_ja_virhe_palauttaa_tyypin(self):
+        class Vastaus(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        urlit = []
+
+        def avaa(req, timeout):
+            urlit.append(req.full_url)
+            return Vastaus(json.dumps([{"number": i} for i in range(21)]).encode())
+        self.assertEqual(silmukka.avoimet_prt(avaa=avaa), (21, ""))
+        self.assertEqual(urlit, ["https://api.github.com/repos/tonyweckstrom1987/agentti-pohja/pulls?state=open&per_page=100"])
+        self.assertEqual(silmukka.avoimet_prt(avaa=lambda req, timeout: Vastaus(b'{"message": "x"}')), (None, "ei lista"))
+
+        def kaatuu(req, timeout):
+            raise urllib.error.URLError("salainen viesti")
+        self.assertEqual(silmukka.avoimet_prt(avaa=kaatuu), (None, "URLError"))
+
+    def test_jarrukehote_rajat(self):
+        self.assertEqual(silmukka.pr_jarru_kehote(None), "")
+        self.assertEqual(silmukka.pr_jarru_kehote(True), "")
+        self.assertEqual(silmukka.pr_jarru_kehote(20), "")
+        self.assertIn("sulkeminen on Tonyn paatos", silmukka.pr_jarru_kehote(21))
 
     # --- taydennys ---
     def test_aja_ei_taydenna_kun_avoimia_vahintaan_viisi(self):

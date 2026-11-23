@@ -1,0 +1,21 @@
+# Mallitiedosto: ei asenna mitaan. Asennus README.md:n osion "Jonon vahti" mukaan (Tonyn kasityo).
+# Root, koska vahti kaynnistaa korjaajan (systemctl start). Koodi vain lukee jonon tilaa ja kirjoittaa yhden tiedoston (vahti-tila.json).
+[Unit]
+Description=Claude-jono: vahti (halytys ja korjaaja, jos 2 h ilman valmista ajoa; Kuma-ping)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/agentti-pohja
+Environment=CLAUDEJONO_TILA=/var/lib/claude-jono
+Environment=CLAUDEJONO_REPO=/var/lib/claude-jono/docs
+Environment=CLAUDEJONO_TYOHAK=/opt/agentscope
+EnvironmentFile=-/etc/yojono/telegram.env
+# Tonyn kirjoittama, ei repossa: CLAUDEJONO_KUMA_PUSH_URL=<Kuman push-osoite>
+EnvironmentFile=-/etc/claude-jono/asetukset.env
+ExecStart=/usr/bin/python3 -B -m claudejono.vahti
+TimeoutStartSec=120
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/claude-jono
+ProtectHome=true
+# Ei NoNewPrivileges-rajoitusta tarvita, mutta systemctl-kutsu vaatii paasyn systemd:hen (ei PrivateNetwork-rajausta: Telegram ja Kuma).

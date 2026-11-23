@@ -51,6 +51,26 @@ class MallinValinta(unittest.TestCase):
     def test_maininta_tekstin_seassa_ei_laukaise(self):
         self.assertEqual(malli.valitse("a", "kirjoita rivi `Malli: opus` tiedostoon").lahde, "oletus")
 
+    def test_aivo_tehtava_aina_opus(self):
+        """A1064: Tavoite: Aivo -> opus riippumatta Malli-rivista tai tyypista; lahde kertoo syyn."""
+        for teksti in ("Tavoite: Aivo\ntee", "Malli: sonnet\nTavoite: Aivo\ntee", "Malli: openrouter:deepseek-flash\nTavoite: Aivo\n",
+                       "Tavoite: aivo\nMalli: gpt-5\n", "Malli: opus\nTavoite: Aivo.\n"):
+            m = malli.valitse("2026-11-22-01-korjaa-x.md", teksti)
+            self.assertEqual((m.reitti, m.nimi, m.tunniste, m.lahde), ("claude", "opus", "opus", "aivo-opus"), teksti)
+        # tyyppitaulukon halpa reitti ei pada Aivoa
+        self.assertEqual(malli.valitse("2026-11-22-02-paivakatsaus-x.md", "Tavoite: Aivo\nTiivista.").lahde, "aivo-opus")
+
+    def test_muut_tavoitteet_ennallaan(self):
+        m = malli.valitse("2026-11-22-01-korjaa-x.md", "Tavoite: yllapito\ntee")
+        self.assertEqual((m.tunniste, m.lahde), ("sonnet", "oletus"))
+        self.assertEqual(malli.valitse("2026-11-22-01-x.md", "Tavoite: portfolio\nMalli: openrouter:qwen-coder\n").tunniste,
+                         "openrouter:qwen-coder")
+        self.assertEqual(malli.valitse("2026-11-22-02-paivakatsaus-x.md", "Tavoite: yllapito\nTiivista.").tunniste,
+                         "openrouter:deepseek-flash")
+        self.assertEqual(malli.valitse("2026-11-22-03-arkkitehtuuri-x.md", "Tavoite: ansainta\n").lahde, "tyyppi")
+        # maininta tekstin seassa (ei rivin alussa) ei tee tehtavasta Aivo-tehtavaa
+        self.assertEqual(malli.valitse("a", "Tavoite: yllapito\nkirjoita `Tavoite: Aivo` mallipohjaan").tunniste, "sonnet")
+
     def test_claude_komento_lisaa_mallin_ja_hylkaa_vieraan(self):
         self.assertEqual(ajuri.claude_komento("k", {}, "opus")[-2:], ["--model", "opus"])
         self.assertNotIn("--model", ajuri.claude_komento("k", {}))
@@ -216,6 +236,24 @@ class AjuriReitit(Pohja):
                          [("opus", "2026-11-03-01-x.md", 3, 0.5), ("sonnet", "2026-11-03-02-y.md", 3, 0.5)])
         self.assertIn("- Malli: opus\n", (self.repo / ajuri.JONO / "tulokset" / "2026-11-03-01-x.md").read_text())
 
+    def test_aivo_tehtava_ajetaan_opuksella_ja_opuksen_rajoilla(self):
+        self.lisaa_tehtava("2026-11-22-01-x.md", "Malli: sonnet\nTavoite: Aivo\ntee")
+        komennot, ajat = [], []
+
+        def suorita(kom, **kw):
+            komennot.append(kom)
+            ajat.append(kw.get("timeout"))
+            return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": "valmis\nTodennettu k\u00e4yt\u00f6ss\u00e4: testi"}), "")
+        def ei_saa(*a, **kw):
+            raise AssertionError("openrouteria ei pida kutsua")
+        self.assertEqual(ajuri.aja(self.repo, self.tmp, env=dict(self.ENV), suorita=suorita, litellm=ei_saa),
+                         "claude-jono: 2026-11-22-01-x.md VALMIS")
+        k = komennot[0]
+        self.assertEqual(k[k.index("--model") + 1], "opus")
+        self.assertEqual(k[k.index("--max-turns") + 1], str(ajuri.OPUS_MAX_KIERROKSET))
+        self.assertEqual(ajat[0], ajuri.aikaraja_s({}, "opus"))
+        self.assertIn("- Malli: opus\n", (self.repo / ajuri.JONO / "tulokset" / "2026-11-22-01-x.md").read_text())
+
     def test_openrouter_reitti_ei_kayta_claudea(self):
         self.lisaa_tehtava("2026-11-03-01-x.md", "Malli: openrouter:deepseek-flash\nTiivista.")
         kutsut = []
@@ -346,11 +384,11 @@ class Aamukooste(Pohja):
         kulutus.kirjaa(self.tmp, "sonnet", "t", 1, "tehtava", True, 1.0, {"usd": 1.25}, nyt - timedelta(days=1, hours=2))
         kulutus.kirjaa(self.tmp, "openrouter:deepseek-flash", "t", 1, "tehtava", True, 1.0, {"usd": 0.002}, nyt - timedelta(days=1, hours=3))
         t = aamukooste.keraa(str(self.repo), str(self.tmp / "yojono"), nyt, hae=lambda url: [], yksikot=lambda: [])
-        rivi = aamukooste.rivit(t)[4]
+        rivi = aamukooste.rivit(t)[6]
         self.assertIn("Mallikulutus eilen: ", rivi)
         self.assertIn("sonnet 1 ajoa 1.25 USD", rivi)
         self.assertIn("Tonyn varaus:", rivi)
-        self.assertIn("T\u00e4ll\u00e4 viikolla", aamukooste.rivit(t)[1])
+        self.assertIn("T\u00e4ll\u00e4 viikolla", aamukooste.rivit(t)[0])
 
 
 if __name__ == "__main__":
