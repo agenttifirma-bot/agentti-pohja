@@ -244,24 +244,27 @@ Ota ensin snapshot kontista 122. Ajastin ei asennu itsestään: tämä on ohje, 
 
    ```
    [Unit]
-   Description=Aivon tiivistys 15 minuutin valein
+   Description=Aivon tiivistys 15 minuutin valein (edellisen ajon paattymisesta)
 
    [Timer]
+   OnActiveSec=1min
    OnBootSec=5min
-   OnUnitActiveSec=15min
+   OnUnitInactiveSec=15min
 
    [Install]
    WantedBy=timers.target
    ```
 
+   Palvelu on `Type=oneshot`, joten toistoväli lasketaan edellisen ajon päättymisestä (`OnUnitInactiveSec`). `OnUnitActiveSec` ei sovi tähän: kontissa 122 ajastin ajoi kerran, mutta seuraavaa ajoa ei ajastettu (`NEXT` `-`). `OnActiveSec=1min` käynnistää ensimmäisen ajon minuutin kuluttua ajastimen käynnistyksestä (`enable --now`, `restart`), joten toistovälillä on aina lähtöpiste. Testi `test/test_ajastin_toisto.py` hylkää repon ajastinmallin, jossa toisto on vain `OnUnitActiveSec`.
+
 6. **Käyttöönotto ja tarkistus.**
 
    ```
    systemctl daemon-reload && systemctl enable --now aivo-tiivista.timer
-   systemctl list-timers aivo-tiivista.timer
+   systemctl list-timers aivo-tiivista.timer --no-pager
    ```
 
-   Odotettu tulos: ajastin näkyy listassa, ja `NEXT`-sarakkeessa on aika enintään 15 minuutin päässä.
+   Odotettu: ajastin näkyy listassa, ja `NEXT`-sarakkeessa on aika enintään 15 minuutin päässä myös ensimmäisen ajon jälkeen. `NEXT` `-` tarkoittaa, ettei seuraavaa ajoa ole ajastettu: tarkista, että `[Timer]`-osiossa on `OnUnitInactiveSec` eikä `OnUnitActiveSec`.
 
 7. **Ensimmäisen ajon tulos.** Ajon jälkeen:
 
