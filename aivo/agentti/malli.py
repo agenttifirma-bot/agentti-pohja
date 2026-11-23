@@ -10,7 +10,7 @@ Saannot (koodi on laki; Tonyn paatos A1072):
     `provider`-osaa eika tuo `openrouter_zdr`-moduulia.
   * Ei agenttikohtaista osuutta eika tehtavakohtaista eurorajaa. Kulut kirjataan samaan kulukirjanpitoon kuin
     chatin kutsut (`openrouter_kulut.OLETUS_TILA`), ja yhteinen paivakatto pysayttaa agentin: tila KESKEYTETTY,
-    syy "paivakatto". Tama moduuli ei lue, valita eika muuta katon arvoa.
+    syy KATTO_SYY (sama este koskee kelvotonta kirjanpitoa, fail closed). Tama moduuli ei lue, valita eika muuta katon arvoa.
   * Silmukkasuoja: ASKELRAJA (mallikutsuja per tehtava, kaikki roolit yhteensa), TEKIJA_ASKELRAJA,
     KORJAUS_ASKELRAJA ja AIKARAJA_S ovat koodin vakioita. Niita ei lueta ymparistosta eika parametreista.
     Arvot nakyvat tuloksen kentassa `rajat`.
@@ -20,6 +20,7 @@ Saannot (koodi on laki; Tonyn paatos A1072):
   * Parametrit `avain_tiedosto`, `kulutila`, `avaa`, `nyt` ja `kello` ovat testeja varten.
 """
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -37,6 +38,7 @@ ROOLIT = ("suunnittelija", "tekija", "tarkastaja")
 MAX_TOKENIA = {"suunnittelija": 1500, "tekija": 4000, "tarkastaja": 1000}
 RAJA_SUUNNITELMA = 20 * 1024    # merkkia
 SUUNNITELMA_TIEDOSTO = "_suunnitelma.md"
+KATTO_SYY = "paivakatto tai kulukirjanpito"    # openrouter_kulut.KutsuEstetty: kutsua ei tehty
 
 VALMIS = "valmis"
 KESKEN = "kesken"
@@ -168,11 +170,16 @@ class _Kutsuja:
                 ilmoita=self.ilmoita, max_tokens=MAX_TOKENIA[rooli], temperature=0.2, stream=False,
                 usage={"include": True}, yksityinen_chat=True)
         except openrouter_kulut.KutsuEstetty:
-            raise _Keskeytys("paivakatto") from None
+            # sama poikkeus kertoo taydesta katosta ja kelvottomasta kirjanpidosta; molemmat pysayttavat (fail closed)
+            raise _Keskeytys(KATTO_SYY) from None
         except openrouter_kulut.ZdrVirhe:
             raise AgenttiVirhe("ZDR-saanto esti pyynnon; kutsua ei tehty") from None
         except yksityinen_or.YksityinenVirhe as e:      # kuljettimen viesti: tyyppi ja HTTP-tila, ei sisaltoa
+            self.tila.kulu_tuntematon = True            # kirjanpito kirjasi varovaisen kulun; summa ei ole tarkka
             raise AgenttiVirhe(str(e)) from None
+        except openrouter_kulut.KulutVirhe:
+            self.tila.kulu_tuntematon = True
+            raise AgenttiVirhe("kulukirjanpitoon ei voi kirjoittaa") from None
         self._kirjaa_kulu(data)
         try:
             teksti = data["choices"][0]["message"]["content"]
@@ -214,19 +221,22 @@ class Tulos:
         return d
 
 
+_ARVIO_RE = re.compile(r"arvio\s*:\s*(hyvaksytty|korjattava|hylatty)\b")
 RAJAT = {"askelraja": ASKELRAJA, "tekija_askelraja": TEKIJA_ASKELRAJA, "korjaus_askelraja": KORJAUS_ASKELRAJA,
          "aikaraja_s": AIKARAJA_S}
 
 
 def _arvio(teksti):
-    """Tarkastajan ensimmainen ei-tyhja rivi 'ARVIO: x'. Muu muoto = HYLATTY (ei koskaan valmis ilman arviota)."""
+    """Tarkastajan ensimmainen ei-tyhja rivi alkaa 'ARVIO: x' (x = hyvaksytty, korjattava tai hylatty; kirjainkoko,
+    aakkoset, lihavointi ja valimerkit sallitaan). Muu muoto = HYLATTY (ei koskaan valmis ilman arviota)."""
     rivit = [r.strip() for r in teksti.strip().splitlines()]
     ensimmainen = rivit[0].lower() if rivit else ""
     ensimmainen = ensimmainen.replace("\u00e4", "a").replace("\u00f6", "o").replace("*", "").strip()
     perustelu = "\n".join(rivit[1:]).strip()[:2000]
-    for arvo in (HYVAKSYTTY, KORJATTAVA, HYLATTY):
-        if ensimmainen == "arvio: " + arvo:
-            return arvo, perustelu
+    m = _ARVIO_RE.match(ensimmainen)
+    if m:
+        lisa = ensimmainen[m.end():].strip(" .,:;-")
+        return m.group(1), ("\n".join(x for x in (lisa, perustelu) if x))[:2000]
     return HYLATTY, "tarkastajan vastaus ei ollut sovitussa muodossa"
 
 

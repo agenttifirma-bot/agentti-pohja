@@ -176,14 +176,14 @@ class KattoTesti(Pohja):
     def test_tysi_katto_estaa_ennen_ensimmaista_kutsua(self):
         self._tayta_katto()
         t = self.aja()
-        self.assertEqual((t.tila, t.syy), (am.KESKEYTETTY, "paivakatto"))
+        self.assertEqual((t.tila, t.syy), (am.KESKEYTETTY, am.KATTO_SYY))
         self.assertEqual(self.rungot, [])
 
     def test_katto_tayttyy_kesken_tekijan_silmukan(self):
         self.vastaukset["tekija"] = [KIRJOITA]
         self.kulu_usd = 4.0             # 4 USD * 0.92 = 3.68 EUR per kutsu -> katto (10 EUR) taynna 3 kutsun jalkeen
         t = self.aja()
-        self.assertEqual((t.tila, t.syy), (am.KESKEYTETTY, "paivakatto"))
+        self.assertEqual((t.tila, t.syy), (am.KESKEYTETTY, am.KATTO_SYY))
         self.assertEqual(self.roolit(), ["suunnittelija", "tekija", "tekija"])
         self.assertEqual(t.kutsuja, 4)       # neljas yritys estettiin ennen lahetysta
 
@@ -295,6 +295,21 @@ class AvainTesti(Pohja):
         self.assertNotEqual(am.OLETUS_AVAIN, yksityinen_or.OLETUS_AVAIN)
         self.assertEqual(inspect.signature(am.aja).parameters["avain_tiedosto"].default, am.OLETUS_AVAIN)
 
+    def test_kuljetinvirhe_merkitsee_kulun_epatarkaksi(self):
+        def avaa(pyynto, timeout=None):
+            raise TimeoutError()
+        t = self.aja(avaa=avaa)
+        self.assertEqual(t.tila, am.VIRHE)
+        self.assertIn("TimeoutError", t.syy)
+        self.assertTrue(t.kulu_tuntematon)
+        self.assertTrue([r for r in self.kulurivit() if r.get("virhe")])     # varovainen kulu kirjattiin
+
+    def test_rikkinainen_kirjanpito_pysayttaa(self):
+        (self.kulut / ok.KULUT).write_text("ei json\n")
+        t = self.aja()
+        self.assertEqual((t.tila, t.syy), (am.KESKEYTETTY, am.KATTO_SYY))
+        self.assertEqual(self.rungot, [])
+
     def test_hylatty_avain_http_virhe_ei_vuoda_avainta(self):
         def avaa(pyynto, timeout=None):
             raise urllib.error.HTTPError(pyynto.full_url, 401, "Unauthorized " + AVAIN, {}, None)
@@ -324,7 +339,9 @@ class RoolitTesti(unittest.TestCase):
     def test_arvion_jasennys(self):
         self.assertEqual(am._arvio("ARVIO: hyv\u00e4ksytty\nok")[0], am.HYVAKSYTTY)
         self.assertEqual(am._arvio("\n**Arvio: korjattava**\nx"), (am.KORJATTAVA, "x"))
-        for teksti in ("", "ARVIO: hyvaksytty, mutta", "Raportti on hyva.\nARVIO: hyvaksytty"):
+        self.assertEqual(am._arvio("ARVIO:korjattava - otsikko puuttuu\nx"), (am.KORJATTAVA, "otsikko puuttuu\nx"))
+        self.assertEqual(am._arvio("ARVIO: korjattava.")[0], am.KORJATTAVA)
+        for teksti in ("", "ARVIO: hyvaksyttyna", "Raportti on hyva.\nARVIO: hyvaksytty", "arvio: ok"):
             self.assertEqual(am._arvio(teksti)[0], am.HYLATTY, teksti)
 
     def test_virheellinen_rooliasetus_ei_kutsu(self):
