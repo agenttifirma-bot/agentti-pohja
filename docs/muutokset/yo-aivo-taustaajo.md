@@ -1,2 +1,3 @@
 - aivo: taustaajo (`aivo/taustaajo.py`) tuo ajattelijan vastauksen yksityisen tilan keskusteluun myöhemmin: jono 0700, päiväraja ja aikaraja, ZDR-kutsut `yksityinen_or.kysy_taustatyo`n kautta, chatin reitti `/api/tausta` ja ohje `docs/aivo-taustaajo.md` (ei asennettu).
 - aivo: taustaajon tiedostosiirron virhe (`kesken/`, `valmiit/`, `epaonnistuneet/`) ei enää kaada koko ajoa: virhe kirjataan lokiin, ja loput jonon työt ajetaan. Jos siirto `kesken/`-kansioon ei onnistu, työtä ei ajeta eikä päiväpaikkaa varata, vaan työ jää jonoon seuraavaan ajoon.
+- aivo: taustaajo siirtää epäonnistuneen työn ensin `epaonnistuneet/`-kansioon ja lisää merkinnän keskusteluun vasta sen jälkeen. Pysyvä siirtovirhe ei siksi lisää samaa merkintää keskusteluun joka ajossa.

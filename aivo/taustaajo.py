@@ -372,12 +372,16 @@ def _siirra_tai_kirjaa(jono, polku, kansio, tunnus, nyt, tulosta):
 
 
 def _merkitse_epaonnistuneeksi(jono, chat, polku, kid, tunnus, syy, nyt, tulosta):
+    """Ensin siirto epaonnistuneet/:iin, sitten merkinta keskusteluun. Jos siirto ei onnistu, tiedosto jaa jonoon
+    tai kesken/:iin, ja seuraava ajo kasittelee sen uudelleen: merkinta lisataan vasta onnistuneen siirron jalkeen,
+    jotta sama epaonnistuminen ei toistu keskustelussa joka ajossa (ajastin noin minuutin valein)."""
+    if _siirra_tai_kirjaa(jono, polku, EPAONNISTUNEET, tunnus, nyt, tulosta) is None:
+        return
     if kid:
         try:
             lisaa_keskusteluun(chat, kid, epaonnistui_teksti(syy), tunnus, nyt)
         except TaustaVirhe as e:
             kirjaa(jono, nyt, "merkinta epaonnistui: %s (%s)" % (tunnus, type(e).__name__), tulosta)
-    _siirra_tai_kirjaa(jono, polku, EPAONNISTUNEET, tunnus, nyt, tulosta)
     kirjaa(jono, nyt, "epaonnistui: %s (%s)" % (tunnus, syy), tulosta)
 
 

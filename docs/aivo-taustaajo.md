@@ -11,7 +11,7 @@ Taustaajo tuo hitaan ajattelijamallin vastauksen keskusteluun myöhemmin. Keskus
 5. Jos työ epäonnistuu, keskusteluun tulee merkintä `[Syvempi analyysi epäonnistui]` ja syy: aikaraja, päiväraja, kulukatto, mallivirhe, keskeytynyt ajo tai virheellinen työ.
 
 Työtiedostoja ei poisteta. Ne siirretään jonon alikansioihin `kesken/`, `valmiit/` ja `epaonnistuneet/`.
-Jos siirto ei onnistu (esimerkiksi levy on täynnä), lokiin tulee rivi `siirto epaonnistui: <tunnus> (<virheen tyyppi>, <kansio>)`, ja ajo jatkuu seuraavaan työhön. Jos työtä ei saada siirrettyä `kesken/`-kansioon, sitä ei ajeta eikä päiväpaikkaa varata. Työ jää jonoon, ja seuraava ajo yrittää sitä uudelleen.
+Jos siirto ei onnistu (esimerkiksi levy on täynnä), lokiin tulee rivi `siirto epaonnistui: <tunnus> (<virheen tyyppi>, <kansio>)`, ja ajo jatkuu seuraavaan työhön. Jos työtä ei saada siirrettyä `kesken/`-kansioon, sitä ei ajeta eikä päiväpaikkaa varata. Työ jää jonoon, ja seuraava ajo yrittää sitä uudelleen. Epäonnistumismerkintä lisätään keskusteluun vasta, kun työ on siirretty `epaonnistuneet/`-kansioon. Näin sama merkintä ei toistu keskustelussa joka ajossa, jos siirto epäonnistuu pysyvästi.
 
 ## Kansiot
 

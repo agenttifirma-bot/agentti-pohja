@@ -357,6 +357,26 @@ class SiirtovirheTesti(Pohja):
         self.assertEqual(len(self.kutsut), 4)
         self.assertEqual(ta.odottavat(self.jono), [])
 
+    def test_pysyva_epaonnistuneet_siirron_virhe_ei_toista_merkintaa(self):
+        p = self.jono / (self.ensimmainen + ".json")
+        ta._siirra(self.jono, p, ta.KESKEN)                         # edellisen ajon jaannos kesken/:ssa
+        alkup = ta._siirra
+
+        def siirra(jono, polku, k):
+            if k == ta.EPAONNISTUNEET and Path(polku).stem == self.ensimmainen:
+                raise PermissionError("ei oikeutta")
+            return alkup(jono, polku, k)
+        with mock.patch.object(ta, "_siirra", side_effect=siirra):
+            for _ in range(3):
+                self.aja()
+        self.assertEqual([v for v in self.tausta() if ta.SYYT["keskeytyi"] in v["teksti"]], [])
+        self.assertTrue((self.jono / ta.KESKEN / (self.ensimmainen + ".json")).exists())
+        self.assertEqual(self.loki().count("siirto epaonnistui: %s (PermissionError, epaonnistuneet)"
+                                           % self.ensimmainen), 3)
+        self.aja()                                                  # siirto onnistuu: merkinta tasan kerran
+        self.assertEqual(len([v for v in self.tausta() if ta.SYYT["keskeytyi"] in v["teksti"]]), 1)
+        self.assertFalse((self.jono / ta.KESKEN / (self.ensimmainen + ".json")).exists())
+
 
 class RoolitTesti(unittest.TestCase):
     def test_roolit_asetuksesta_ja_oletus(self):
