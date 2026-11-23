@@ -1,0 +1,1 @@
+- aivo: yksityisen tilan ydinohjeen ehdotuksen hyväksyntä ja hylkäys chat-sivulta (sha-sidottu, A1018); katkennut ehdotus näytetään, kehote rajaa ehdotuksen 1 200 merkkiin

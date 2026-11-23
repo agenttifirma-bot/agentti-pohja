@@ -1,0 +1,1 @@
+- tools: `mutantit.py` osaa nyt `aivo/`-hakemiston moduulit (nimetty moduuli tai `--kaikki --hakemistot aivo`) ja rajauksen `--rajaa <polun alku>` (esim. `aivo/openrouter_`), jotta raskasta hakemistoa ei tarvitse ajaa kerralla. Oletus `--kaikki` ei muutu. +5 testiä.
