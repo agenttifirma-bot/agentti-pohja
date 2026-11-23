@@ -319,6 +319,10 @@ Odotettu:
 palvelu päättyy ilman virhettä (Already up to date tai päivitetyt tiedostot)
 ```
 
+Mallin `Environment="GIT_SSH_COMMAND=…"`-rivi on lainausmerkeissä. Ilman lainausmerkkejä systemd pilkkoo arvon välilyönneistä, jolloin muuttujan arvoksi jää pelkkä `ssh`. Silloin pull kaatuu virheeseen `Host key verification failed`, ja journalissa näkyy `Invalid environment assignment, ignoring: -i`. Repon testi `tools/test_systemd_ymparisto.py` tarkistaa tämän kaikista malleista.
+
+Kontti 122: ensimmäinen asennus (23.11.2026) tehtiin vanhasta mallista, jossa lainausmerkit puuttuivat. Se korjattiin kontissa drop-inillä `/etc/systemd/system/agenttidata-pull.service.d/ssh.conf`. Kun korjattu malli on kopioitu uudelleen paikalleen, drop-in on tarpeeton ja sen voi poistaa (`rm` + `systemctl daemon-reload`). Tarkista ennen poistoa, että `systemctl cat agenttidata-pull.service` näyttää lainatun rivin.
+
 ### Askel 9. Tarkistus lähteestä
 
 Tarkista kopiosta, ettei salaisuuden näköistä tai osoitteita jäänyt:
