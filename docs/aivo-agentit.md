@@ -56,7 +56,7 @@ Ajuri tarkistaa käynnistyessään, että kulutiedostot eivät kuulu sen omalle 
 
 ## Käyttöönotto
 
-Komennot ajetaan kontissa 122 pääkäyttäjänä (`sudo`), ellei toisin mainita. Jokaisen tarkistuksen jälkeen on Odotettu-rivi. Jos tulos poikkeaa, pysähdy äläkä jatka seuraavaan kohtaan.
+Komennot ajetaan kontissa 122 pääkäyttäjänä (root), ellei toisin mainita. Kontissa ei ole oikeuksien korotustyökalua, joten toisen käyttäjän komennot ajetaan muodossa `runuser -u <käyttäjä> -- <komento>`. Jokaisen tarkistuksen jälkeen on Odotettu-rivi. Jos tulos poikkeaa, pysähdy äläkä jatka seuraavaan kohtaan.
 
 ### 0. Snapshot
 
@@ -83,16 +83,16 @@ Kirjoita tulokset muistiin peruutusta varten. Odotettu: `User=` on chatin käytt
 ### 2. Käyttäjä, ryhmät ja kansiot
 
 ```
-sudo groupadd --system aivo-agentit
-sudo groupadd --system aivo-kulut
-sudo useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --user-group aivo-agentti
-sudo usermod -aG aivo-agentit,aivo-kulut aivo-agentti
-sudo install -d -m 0750 -o aivo-agentti -g aivo-agentit /var/lib/aivo-agentit
-sudo install -d -m 2770 -o aivo-agentti -g aivo-agentit /var/lib/aivo-agentit/jono
-sudo install -d -m 2750 -o aivo-agentti -g aivo-agentit /var/lib/aivo-agentit/tulokset
-sudo install -d -m 0700 -o aivo-agentti -g aivo-agentti /var/lib/aivo-agentit/tyo /var/lib/aivo-agentit/kasitellyt
+groupadd --system aivo-agentit
+groupadd --system aivo-kulut
+useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --user-group aivo-agentti
+usermod -aG aivo-agentit,aivo-kulut aivo-agentti
+install -d -m 0750 -o aivo-agentti -g aivo-agentit /var/lib/aivo-agentit
+install -d -m 2770 -o aivo-agentti -g aivo-agentit /var/lib/aivo-agentit/jono
+install -d -m 2750 -o aivo-agentti -g aivo-agentit /var/lib/aivo-agentit/tulokset
+install -d -m 0700 -o aivo-agentti -g aivo-agentti /var/lib/aivo-agentit/tyo /var/lib/aivo-agentit/kasitellyt
 id aivo-agentti
-sudo ls -la /var/lib/aivo-agentit
+ls -la /var/lib/aivo-agentit
 ```
 
 Odotettu: `id` näyttää ryhmät `aivo-agentti`, `aivo-agentit` ja `aivo-kulut`, mutta ei ryhmiä `aivo-yksityinen`, `aivo-tyokalu` tai `aivo-tyokalu-socket`. Listauksessa on `drwxrws---` (jono), `drwxr-s---` (tulokset) ja `drwx------` (tyo, kasitellyt).
@@ -103,17 +103,17 @@ Agentit ja chat käyttävät samaa kirjanpitoa ja samaa päiväkattoa. Kulumoduu
 
 ```
 CHAT=$(systemctl show -p User --value aivo-chat); [ -n "$CHAT" ] && echo "CHAT=$CHAT" || echo "CHAT PUUTTUU: pysähdy"
-sudo usermod -aG aivo-kulut "$CHAT"
-sudo chgrp aivo-kulut /var/lib/claude-jono
-sudo chmod g+rwx,+t /var/lib/claude-jono
+usermod -aG aivo-kulut "$CHAT"
+chgrp aivo-kulut /var/lib/claude-jono
+chmod g+rwx,+t /var/lib/claude-jono
 cd /var/lib/claude-jono
 for f in openrouter-kulut.jsonl openrouter-katto.jsonl openrouter-kulut.lock; do
-  [ -e "$f" ] || sudo install -m 0660 -o "$CHAT" -g aivo-kulut /dev/null "$f"
-  sudo chgrp aivo-kulut "$f" && sudo chmod 0660 "$f"
+  [ -e "$f" ] || install -m 0660 -o "$CHAT" -g aivo-kulut /dev/null "$f"
+  chgrp aivo-kulut "$f" && chmod 0660 "$f"
 done
 stat -c '%A %U:%G %n' /var/lib/claude-jono openrouter-kulut.jsonl openrouter-katto.jsonl openrouter-kulut.lock
-sudo -u aivo-agentti test -w /var/lib/claude-jono && sudo -u aivo-agentti test -w openrouter-kulut.jsonl && echo KIRJOITUS-OK
-sudo systemctl restart aivo-chat
+runuser -u aivo-agentti -- test -w /var/lib/claude-jono && runuser -u aivo-agentti -- test -w openrouter-kulut.jsonl && echo KIRJOITUS-OK
+systemctl restart aivo-chat
 ```
 
 Odotettu: rivi `CHAT=<käyttäjä>`. Kansion oikeuksien lopussa on `t` (esim. `drwxrwx--T` tai `drwxrwx--t`), ja ryhmä on `aivo-kulut`. Kaikilla kolmella tiedostolla on `-rw-rw---- <chat-käyttäjä>:aivo-kulut`. Viimeinen tarkistusrivi on `KIRJOITUS-OK`. Chat käynnistetään uudelleen, jotta uusi ryhmä tulee voimaan, jos chat ei omista kansiota. Kokeile chatin yksityistä tilaa yhdellä viestillä: vastauksen pitää tulla kuten ennenkin.
@@ -123,7 +123,7 @@ Odotettu: rivi `CHAT=<käyttäjä>`. Kansion oikeuksien lopussa on `t` (esim. `d
 Päivitä repo kuten chatin päivityksessä, kun muutos on mainissa. Tarkista, että ajuri on mukana ja ajurin käyttäjä pääsee lukemaan koodin:
 
 ```
-sudo -u aivo-agentti env PYTHONPATH=/opt/agentti-pohja /usr/bin/python3 -c "import aivo.agentti_ajuri; print('TUONTI-OK')"
+runuser -u aivo-agentti -- env PYTHONPATH=/opt/agentti-pohja /usr/bin/python3 -c "import aivo.agentti_ajuri; print('TUONTI-OK')"
 ```
 
 Odotettu: `TUONTI-OK`.
@@ -131,9 +131,9 @@ Odotettu: `TUONTI-OK`.
 Kirjoita oma OpenRouter-avain itse. Avain ei saa olla sama tiedosto kuin chatin avain, ja sen kannattaa olla oma avain, jotta agenttien kulut näkyvät OpenRouterissa erikseen. Ohje ei tulosta avainta.
 
 ```
-sudo install -m 0600 -o aivo-agentti -g aivo-agentti /dev/null /var/lib/aivo-agentit/openrouter-avain
-sudo nano /var/lib/aivo-agentit/openrouter-avain
-sudo stat -c '%a %U %s' /var/lib/aivo-agentit/openrouter-avain
+install -m 0600 -o aivo-agentti -g aivo-agentti /dev/null /var/lib/aivo-agentit/openrouter-avain
+nano /var/lib/aivo-agentit/openrouter-avain
+stat -c '%a %U %s' /var/lib/aivo-agentit/openrouter-avain
 ```
 
 Odotettu: `600 aivo-agentti` ja koko yli 0.
@@ -142,7 +142,7 @@ Odotettu: `600 aivo-agentti` ja koko yli 0.
 
 ```
 cd /opt/agentti-pohja
-sudo -u aivo-agentti env PYTHONPATH=/opt/agentti-pohja /usr/bin/python3 -m aivo.agentti_ajuri tarkista --roolit qwen/qwen3-235b-a22b-2507
+runuser -u aivo-agentti -- env PYTHONPATH=/opt/agentti-pohja /usr/bin/python3 -m aivo.agentti_ajuri tarkista --roolit qwen/qwen3-235b-a22b-2507
 ```
 
 Odotettu: viimeinen rivi on `OK`. Tarkistus kattaa kansiot, kulukirjanpidon ja mallin. Jos riveillä on `VIRHE`, korjaa oikeudet kohdan 2 tai 3 mukaan. Palvelu tekee saman tarkistuksen käynnistyessään, ja virheen sattuessa se ei aja tehtäviä. Käytä samaa avointa mallia kuin chatissa; mallin pitää olla listalla `AVOIMET_MALLIT`.
@@ -150,10 +150,10 @@ Odotettu: viimeinen rivi on `OK`. Tarkistus kattaa kansiot, kulukirjanpidon ja m
 ### 6. Asennus
 
 ```
-sudo cp /opt/agentti-pohja/systemd/aivo-agentit.service.mall /etc/systemd/system/aivo-agentit.service
-sudo systemd-analyze verify /etc/systemd/system/aivo-agentit.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now aivo-agentit
+cp /opt/agentti-pohja/systemd/aivo-agentit.service.mall /etc/systemd/system/aivo-agentit.service
+systemd-analyze verify /etc/systemd/system/aivo-agentit.service
+systemctl daemon-reload
+systemctl enable --now aivo-agentit
 ```
 
 Jos repo ei ole polussa `/opt/agentti-pohja` tai Python ei ole polussa `/usr/bin/python3`, muuta rivit `WorkingDirectory`, `Environment` ja `ExecStart` ennen `daemon-reload`-komentoa. Malli vaihdetaan `ExecStart`-rivin valitsimella `--roolit`. Yhden mallin sijaan voi antaa kaikki kolme roolia: `--roolit suunnittelija:m1,tekija:m2,tarkastaja:m3`.
@@ -166,9 +166,9 @@ Odotettu: `systemd-analyze verify` ei tulosta yhtään riviä, jossa mainitaan `
 systemctl is-active aivo-agentit
 journalctl -u aivo-agentit -n 20 --no-pager
 systemctl show -p User,SupplementaryGroups,InaccessiblePaths,ReadWritePaths aivo-agentit
-sudo -u aivo-agentti ls /var/lib/aivo-yksityinen/chat
-sudo -u aivo-tyokalu ls /var/lib/aivo-agentit/tyo
-sudo systemd-analyze security aivo-agentit --no-pager | tail -n 1
+runuser -u aivo-agentti -- ls /var/lib/aivo-yksityinen/chat
+runuser -u aivo-tyokalu -- ls /var/lib/aivo-agentit/tyo
+systemd-analyze security aivo-agentit --no-pager | tail -n 1
 ```
 
 Odotettu:
@@ -186,18 +186,18 @@ Pieni tehtävä oikealla mallilla. Kulu on muutamia senttejä, ja se kirjautuu y
 
 ```
 T=$(python3 -c "import secrets; print(secrets.token_hex(6))")
-echo '{"versio": 1, "teksti": "Kirjoita tiedosto tervehdys.md, jossa on yksi rivi: hei."}' | sudo tee /var/lib/aivo-agentit/jono/.$T.tmp >/dev/null
-sudo chmod 0640 /var/lib/aivo-agentit/jono/.$T.tmp
-sudo mv /var/lib/aivo-agentit/jono/.$T.tmp /var/lib/aivo-agentit/jono/$T.json
+echo '{"versio": 1, "teksti": "Kirjoita tiedosto tervehdys.md, jossa on yksi rivi: hei."}' | tee /var/lib/aivo-agentit/jono/.$T.tmp >/dev/null
+chmod 0640 /var/lib/aivo-agentit/jono/.$T.tmp
+mv /var/lib/aivo-agentit/jono/.$T.tmp /var/lib/aivo-agentit/jono/$T.json
 ```
 
 Odota noin minuutti ja tarkista:
 
 ```
 journalctl -u aivo-agentit -n 5 --no-pager
-sudo python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['tila'], d['kutsuja'], d['kulu_eur'], [f['polku'] for f in d['tiedostot']])" /var/lib/aivo-agentit/tulokset/$T.json
-sudo stat -c '%a %G' /var/lib/aivo-agentit/tulokset/$T.json
-sudo tail -n 4 /var/lib/claude-jono/openrouter-kulut.jsonl
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['tila'], d['kutsuja'], d['kulu_eur'], [f['polku'] for f in d['tiedostot']])" /var/lib/aivo-agentit/tulokset/$T.json
+stat -c '%a %G' /var/lib/aivo-agentit/tulokset/$T.json
+tail -n 4 /var/lib/claude-jono/openrouter-kulut.jsonl
 ```
 
 Odotettu:
@@ -211,12 +211,25 @@ Jos tulos on `virhe` ja syy mainitsee avaimen, tarkista kohta 4. Jos syy on `pai
 ### 9. Peruutus
 
 ```
-sudo systemctl disable --now aivo-agentit
-sudo rm /etc/systemd/system/aivo-agentit.service
-sudo systemctl daemon-reload
+systemctl disable --now aivo-agentit
+rm /etc/systemd/system/aivo-agentit.service
+systemctl daemon-reload
 ```
 
-Palauta kansion `/var/lib/claude-jono` ja kulutiedostojen ryhmä ja oikeudet kohdassa 1 kirjatuiksi (esim. `sudo chgrp <vanha ryhmä> <polku>`, `sudo chmod 0644 <tiedosto>` ja kansiolle kirjattu tila, esim. `sudo chmod 0755 /var/lib/claude-jono`). Käyttäjä, ryhmät ja `/var/lib/aivo-agentit` jäävät paikalleen, koska niissä voi olla tuloksia. Niiden poisto on oma päätöksensä. Koko kontin voi palauttaa isännällä komennolla `pct rollback 122 ennen-aivo-agentit`, mutta se kumoaa myös kaikki muut snapshotin jälkeiset muutokset.
+Palauta kansion `/var/lib/claude-jono` ja kulutiedostojen ryhmä ja oikeudet kohdassa 1 kirjatuiksi (esim. `chgrp <vanha ryhmä> <polku>`, `chmod 0644 <tiedosto>` ja kansiolle kirjattu tila, esim. `chmod 0755 /var/lib/claude-jono`).
+
+Poista sen jälkeen chatin käyttäjä ryhmästä `aivo-kulut`, johon kohta 3 sen lisäsi, ja käynnistä chat uudelleen, jotta ryhmä poistuu myös käynnissä olevalta palvelulta:
+
+```
+CHAT=$(systemctl show -p User --value aivo-chat); [ -n "$CHAT" ] && echo "CHAT=$CHAT" || echo "CHAT PUUTTUU: pysähdy"
+gpasswd -d "$CHAT" aivo-kulut
+id "$CHAT"
+systemctl restart aivo-chat
+```
+
+Odotettu: rivi `CHAT=<käyttäjä>` on sama kuin kohdassa 1, ja `gpasswd` kertoo poistaneensa käyttäjän ryhmästä. Rivillä `id` ei ole ryhmää `aivo-kulut`. Jos `gpasswd` ilmoittaa, ettei käyttäjä ole ryhmässä, kohta 3 jäi tekemättä eikä poistettavaa ole. Kokeile chatin yksityistä tilaa yhdellä viestillä: vastauksen pitää tulla kuten ennenkin.
+
+Käyttäjä, ryhmät ja `/var/lib/aivo-agentit` jäävät paikalleen, koska niissä voi olla tuloksia. Niiden poisto on oma päätöksensä. Koko kontin voi palauttaa isännällä komennolla `pct rollback 122 ennen-aivo-agentit`, mutta se kumoaa myös kaikki muut snapshotin jälkeiset muutokset.
 
 ## Testit
 
