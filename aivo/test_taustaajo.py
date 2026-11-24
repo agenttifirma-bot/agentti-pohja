@@ -284,6 +284,23 @@ class PuoliyoTesti(Pohja):
         self.assertEqual((r["valmis"], r["epaonnistui"]), (0, 1))
         self.assertEqual(self.kutsut, [])
 
+    def test_epaonnistuneen_tyon_jalkeen_seuraava_kirjataan_uudelle_paivalle(self):
+        for _ in range(2):
+            ta.kirjoita_tyo(self.jono, KID, TEHTAVA, nyt=self.ALKU)
+        kerrat = []
+
+        def kysy(malli, viestit, aikaraja_s):
+            self.seina += timedelta(minutes=6)
+            kerrat.append(malli)
+            if len(kerrat) == 1:
+                raise yksityinen.YksityinenVirhe("testi")
+            return "vastaus"
+        r = ta.aja(self.jono, self.chat, kysy, ROOLIT, aika=lambda: self.seina, paivaraja=2,
+                   tulosta=self.rivit.append)
+        # tyo 1 alkaa 23.55 ja epaonnistuu 00.01; tyo 2 alkaa 00.01 ja kuuluu 23.11. kiintioon
+        self.assertEqual((r["valmis"], r["epaonnistui"]), (1, 1))
+        self.assertEqual(self.tila(), {"versio": 1, "paiva": "2026-11-23", "ajettu": 1})
+
     def test_valmis_rivi_saa_valmistumisajan(self):
         ta.kirjoita_tyo(self.jono, KID, TEHTAVA, nyt=self.ALKU)
         self.aja_kellolla(paivaraja=1)
@@ -359,12 +376,12 @@ class YksikkoAikarajaTesti(unittest.TestCase):
             tila = {"seina": alku, "mono": 0.0}
 
             def kysy(malli, viestit, aikaraja_s):
-                tila["seina"] += timedelta(seconds=aikaraja_s / 2)
-                tila["mono"] += aikaraja_s / 2
+                tila["seina"] += timedelta(seconds=aikaraja_s)       # kutsu kayttaa kaiken jaljella olevan ajan
+                tila["mono"] += aikaraja_s
                 return "ok"
             r = ta.aja(jono, chat_, kysy, ROOLIT, paivaraja=10_000, aikaraja_s=10_000, aika=lambda: tila["seina"],
                        kello=lambda: tila["mono"], tulosta=lambda *_: None)
-            self.assertLessEqual(r["valmis"], ta.PAIVARAJA_MAX)
+            self.assertEqual(r["valmis"], ta.PAIVARAJA_MAX)
             self.assertLessEqual((tila["seina"] - alku).total_seconds(), ta.PAIVARAJA_MAX * ta.AIKARAJA_MAX_S)
             self.assertLess((tila["seina"] - alku).total_seconds(), aikaraja)
 
