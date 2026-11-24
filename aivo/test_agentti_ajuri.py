@@ -131,7 +131,7 @@ class JonoTesti(Kansiot):
     def test_vanhin_ensin_ja_vain_kelvolliset_nimet(self):
         self.jonoon(T2, aika=1000)
         self.jonoon(T1, aika=2000)
-        for nimi in ("x.json", "ABCDEF012345.json", "0123456789ab.json.tmp", ".0123456789ab.json"):
+        for nimi in ("x.json", "AAAAAAAAAAAA.json", "0123456789ab.json.tmp", ".0123456789ab.json"):
             open(self.p(aj.JONO, nimi), "w").close()
         os.mkdir(self.p(aj.JONO, "fedcba987654.json"))
         os.symlink(self.p(aj.JONO, T1 + ".json"), self.p(aj.JONO, "111111111111.json"))
