@@ -115,6 +115,10 @@ def tarkista_kansiot(perus, uid=None):
     return virheet
 
 
+def _palvelun_uid():
+    return os.geteuid()
+
+
 def tarkista_kulukirjanpito(tila=None):
     """Kulukirjanpidon kayttoedellytykset palvelun kayttajana (sama ehto kuin openrouter_kulut-moduulin varauksessa:
     kansio kirjoitettavissa, lisaksi kolme tiedostoa luettavissa ja kirjoitettavissa). Palauttaa listan virheita.
@@ -128,6 +132,9 @@ def tarkista_kulukirjanpito(tila=None):
         p = os.path.join(tila, nimi)
         if not os.path.isfile(p) or os.path.islink(p) or not os.access(p, os.R_OK | os.W_OK):
             virheet.append("kulukirjanpito: %s puuttuu tai ei ole luettavissa ja kirjoitettavissa" % nimi)
+        elif os.lstat(p).st_uid == _palvelun_uid():
+            # kirjanpito kuuluu chatin kayttajalle; ajuri kirjoittaa siihen vain ryhman kautta (ohje kohta 3)
+            virheet.append("kulukirjanpito: %s kuuluu palvelun kayttajalle (pitaa kuulua chatin kayttajalle)" % nimi)
     return virheet
 
 

@@ -67,6 +67,11 @@ class Kansiot(unittest.TestCase):
         return polku
 
     def kulutila(self):
+        # testin kayttaja omistaa tiedostot: tarkistus nakee ne chatin kayttajan omistamina
+        if not getattr(self, "_euid_estin", None):
+            self._euid_estin = mock.patch.object(aj, "_palvelun_uid", return_value=os.geteuid() + 1)
+            self._euid_estin.start()
+            self.addCleanup(self._euid_estin.stop)
         kt = os.path.join(self._t.name, "kulut")
         if not os.path.isdir(kt):
             os.mkdir(kt, 0o700)
@@ -326,6 +331,12 @@ class AjoTesti(Kansiot):
         os.unlink(os.path.join(kt, "openrouter-kulut.lock"))
         os.symlink(os.path.join(kt, "openrouter-kulut.jsonl"), os.path.join(kt, "openrouter-kulut.lock"))
         self.assertEqual(len(aj.tarkista_kulukirjanpito(kt)), 1)
+
+    def test_omat_kulutiedostot_hylataan(self):
+        kt = self.kulutila()
+        self._euid_estin.stop()
+        self._euid_estin = None
+        self.assertEqual(len(aj.tarkista_kulukirjanpito(kt)), 3)
 
     def test_syvasti_sisakkainen_json_on_syotevirhe(self):
         polku = self.jonoon(T1, "[" * 200000 + "]" * 200000)

@@ -44,7 +44,9 @@ Kentät järjestyksessä: `versio`, `tunnus`, `keskustelu`, `tila` (`valmis`, `k
 | `/var/lib/claude-jono` | nykyinen omistaja, ryhmä `aivo-kulut` | ryhmälle `rwx` ja sticky-bitti (`t`) | chat ja ajuri |
 | kulukirjanpidon kolme tiedostoa | chatin käyttäjä, ryhmä `aivo-kulut` | 0660 | chat ja ajuri |
 
-Kulukirjanpidon moduuli vaatii kirjoitusoikeuden koko kansioon `/var/lib/claude-jono`, ei vain tiedostoihin. Siksi yksikön `ReadWritePaths` sisältää kansion. Sticky-bitin ansiosta ajurin käyttäjä ei voi poistaa, nimetä uudelleen eikä korvata chatin omistamia kulutiedostoja, vaikka se voi kirjoittaa niihin ryhmän kautta.
+Kulukirjanpidon moduuli vaatii kirjoitusoikeuden koko kansioon `/var/lib/claude-jono`, ei vain tiedostoihin. Siksi yksikön `ReadWritePaths` sisältää kansion. Sticky-bitin ansiosta ajurin käyttäjä ei voi poistaa eikä nimetä uudelleen chatin omistamia kulutiedostoja. Ryhmän kirjoitusoikeus sallii kuitenkin tiedostojen sisällön muuttamisen, myös tyhjentämisen. Suoja perustuu siksi koodiin: ajuri kirjoittaa kirjanpitoon vain funktion `openrouter_kulut.kutsu` kautta (rivien lisäys), eikä agentilla ole työkalua oman työkansionsa ulkopuolelle. Tämä on käyttöönoton päätös. Tiukempi vaihtoehto vaatisi muutoksen kulukirjanpidon moduuliin, eikä sitä tehdä tässä.
+
+Ajuri tarkistaa käynnistyessään, että kulutiedostot eivät kuulu sen omalle käyttäjälle. Väärin tehty asennus, jossa ajuri omistaa kirjanpidon, pysäyttää palvelun.
 
 `aivo-agentti` ei kuulu ryhmiin `aivo-yksityinen`, `aivo-tyokalu` eikä `aivo-tyokalu-socket`. Lisäksi yksikön `InaccessiblePaths` piilottaa kansiot `/var/lib/aivo-yksityinen`, `/var/lib/aivo` ja `/var/lib/aivo-tyokalu`.
 
