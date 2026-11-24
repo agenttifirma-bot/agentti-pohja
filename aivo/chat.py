@@ -55,6 +55,7 @@ from pathlib import Path
 
 from aivo import kalenteri, kalenteri_kehote, luovutus, openrouter_kulut, tiivistelmat_kehote, yksityinen, yksityinen_or
 from aivo.yksityinen import YksityinenVirhe as ChatVirhe, julkaise_kirjastoon   # sama poikkeus kaikkialla
+from aivo import agenttidata_kehote   # agenttidata-kopion kompassi, faktat ja paatokset (vain luku)
 from aivo import yhdistelma        # usean mallin yhdistelmat (oma rivi: ei ristiriitaa rinnakkaisten tuontimuutosten kanssa)
 
 OLETUS_SALASANA = "/etc/aivo/chat-salasana"
@@ -871,6 +872,18 @@ def kirjaa_paatos_yksityinen(kirjasto, kid, aika, teksti):
 TAILSCALE_VERKKO = ipaddress.IPv4Network((0x64400000, 10))
 
 
+def tarkista_agenttidata(kansio, kirjoitettavat):
+    """Agenttidata-klooni ei saa olla minkaan palvelun kirjoittaman kansion sisalla, ylapuolella eika sama:
+    mikaan reitti ei saa kirjoittaa kopioon, eika kirjaston haku saa lukea sita toiseen kertaan."""
+    a = os.path.realpath(kansio)
+    for k in kirjoitettavat:
+        if not k:
+            continue
+        r = os.path.realpath(k)
+        if a == r or a.startswith(r.rstrip(os.sep) + os.sep) or r.startswith(a.rstrip(os.sep) + os.sep):
+            raise ChatVirhe("agenttidata-kansio ei saa olla kirjoitettavan kansion kanssa p\u00e4\u00e4llekk\u00e4in")
+
+
 def sallittu_osoite(osoite):
     try:
         ip = ipaddress.ip_address(osoite)
@@ -970,13 +983,14 @@ class Tila:
                  malli_url=yksityinen.OLETUS_MALLI_URL, kysy_yks=None,
                  taustapaa="loopback", or_malli=None, or_avain=yksityinen_or.OLETUS_AVAIN, or_mallit=None,
                  or_kulutila=None, tiivistelmat=None, kalenteri_lahde=None, yks_tiivistelmat=None,   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
-                 yhdistelma_oletus=None, roolit=None, kysy_yhd=None, ajattelija_aika=None):
+                 yhdistelma_oletus=None, roolit=None, kysy_yhd=None, ajattelija_aika=None, agenttidata=None):
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
         self.kulutila = or_kulutila               # None = openrouter_kulut.OLETUS_TILA (yhteinen kirjanpito)
         self.tiivistelmat = tiivistelmat          # tyokalualueen tiivistelmakansio (vain tyokalutila lukee sita)
         self.yks_tiivistelmat = None              # yksityisen alueen tiivistelmakansio (vain yksityinen tila lukee sita)
         self.kalenteri = kalenteri_lahde          # kalenteri.Lahde tai None; vain tyokalutila lukee sita
+        self.agenttidata = agenttidata or None    # agenttidata-klooni (vain luku); molemmat tilat lukevat sita (A1015)
         self.keskustelut = Keskustelut(data)
         self.istunnot = Istunnot()
         self.hostit = sallitut_hostit
@@ -1031,6 +1045,10 @@ class Tila:
             self.kysy_yhd = lambda muisti, historia, ohjeet, malli, yhdistelma_nimi: yksityinen_or.kysy_yhdistelmalla(
                 muisti, historia, ohjeet, malli=malli, yhdistelma_nimi=yhdistelma_nimi, roolit=self.roolit,
                 ajattelija_aika_s=self.ajattelija_aika, avain_tiedosto=or_avain, kulutila=or_kulutila)
+        if self.agenttidata:
+            kal = os.path.dirname(getattr(kalenteri_lahde, "valimuisti", "") or "") or None
+            tarkista_agenttidata(self.agenttidata, [kirjasto, data, self.tiivistelmat, self.yks_tiivistelmat, kal] + (
+                [str(self.yks.data), self.yks_muisti, self.ehdotukset, self.luovutukset] if self.yks else []))
         self.yks_vastauslukko = threading.Lock()
         self.ehdotuslukko = threading.Lock()      # yksi hyvaksynta tai hylkays kerrallaan
         self.luovutuslukko = threading.Lock()     # yksi luovutuksen kasittely kerrallaan (molemmat tilat)
@@ -1268,8 +1286,12 @@ def tee_kasittelija(tila):
                 tila.yks.lisaa(kid, "tony", teksti.strip())
                 historia = tila.yks.lue(kid)
                 oma_idx = len(historia) - 1          # palvelin kertoo Tonyn viestin paikan; selain ei arvaa
-                muisti, tiedostot = lue_muisti(tila.yks_muisti, yksityinen.MUISTI_YLARAJA,
+                ad, ad_tiedostot = agenttidata_kehote.muodosta(tila.agenttidata, RAJA, yksityinen.MUISTI_YLARAJA // 2,
+                                                               yksityinen.MUISTI_YLARAJA // 6)
+                muisti, tiedostot = lue_muisti(tila.yks_muisti, yksityinen.MUISTI_YLARAJA - len(ad),
                                                yksityinen.MUISTI_YLARAJA // 4, teksti)
+                if ad:         # agenttidata mahtuu samaan muistirajaan: kirjastolle jaa loput (A1015)
+                    muisti, tiedostot = ad + muisti, ad_tiedostot + tiedostot
                 if tila.yks_tiivistelmat:     # yksityisen alueen tiivistelmat, sama mekanismi ja 60 kt raja kuin tyokalutilassa
                     tiiv, tiiv_tiedostot = tiivistelmat_kehote.muodosta(tila.yks_tiivistelmat, teksti)
                     if tiiv:
@@ -1356,7 +1378,11 @@ def tee_kasittelija(tila):
                 tila.keskustelut.lisaa(kid, "tony", teksti.strip())
                 historia = tila.keskustelut.lue(kid)
                 oma_idx = len(historia) - 1
-                muisti, tiedostot = lue_muisti(tila.kirjasto)
+                ad, ad_tiedostot = agenttidata_kehote.muodosta(tila.agenttidata, RAJA, MUISTI_YLARAJA // 2,
+                                                               TIEDOSTO_YLARAJA)
+                muisti, tiedostot = lue_muisti(tila.kirjasto, MUISTI_YLARAJA - len(ad))
+                if ad:         # agenttidata mahtuu samaan muistirajaan: kirjastolle jaa loput
+                    muisti, tiedostot = ad + muisti, ad_tiedostot + tiedostot
                 if tila.tiivistelmat:     # keskustelumuisti: tiivistelmat kirjaston rinnalle, enintaan 60 kt (A983 A3)
                     tiiv, tiiv_tiedostot = tiivistelmat_kehote.muodosta(tila.tiivistelmat, teksti)
                     if tiiv:
@@ -1646,6 +1672,9 @@ def main(argv=None):
                     help="kalenterin valimuistin kansio")
     ap.add_argument("--kulut-kerroin", default=os.environ.get("AIVO_KULUT_USD_EUR", KULUT_KERROIN_OLETUS),
                     help="USD->EUR-kerroin kulunakymaan (oletus 0.92); vain nayttoon, ei vaikuta paivakattoon")
+    ap.add_argument("--agenttidata", default=os.environ.get("AIVO_AGENTTIDATA", ""),
+                    help="agenttidata-kloonin juuri (vain luku); kompassi, faktat ja pohdinta-vastausten loppu "
+                         "molempien tilojen kehotteeseen. Oletus tyhja = pois kaytosta")
     ap.add_argument("--malli-url", default=os.environ.get("AIVO_MALLI_URL", yksityinen.OLETUS_MALLI_URL))
     ap.add_argument("--yksityinen-taustapaa", choices=("loopback", "openrouter"),
                     default=os.environ.get("AIVO_YKSITYINEN_TAUSTAPAA", "loopback"),
@@ -1682,7 +1711,8 @@ def main(argv=None):
                     yks_tiivistelmat=(a.yksityiset_tiivistelmat or str(Path(a.yksityinen_data).parent / "tiivistelmat"))
                     if a.yksityiset_tiivistelmat_kaytossa and a.yksityinen_data else None,
                     kalenteri_lahde=kalenteri.IcalLahde(a.kalenteri_osoitetiedosto, a.kalenteri_data)
-                    if a.kalenteri_kaytossa else None)
+                    if a.kalenteri_kaytossa else None,
+                    agenttidata=a.agenttidata or None)
         tila.kulut_kerroin = lue_kulukerroin(a.kulut_kerroin)
         palvelin = kaynnista(a.osoite, a.portti, tila)
     except ChatVirhe as e:
