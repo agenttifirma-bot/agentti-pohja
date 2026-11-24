@@ -274,15 +274,27 @@ class TyokalutilaTesti(Pohja):
         sallitut = {"yksityinen_or.py", "openrouter_kulut.py", "openrouter_zdr.py", "chat.py", "mallivertailu.py"}
         # yksityisen alueen tiivistys saa tuoda vain yksityinen_or-moduulin (ZDR, avoin malli, katto), ei muuta
         vain_yksityinen_or = {"tiivista_yksityinen.py"}
-        for p in sorted(AIVO.glob("*.py")):
-            if p.name.startswith("test_") or p.name in sallitut:
+        # agenttiytimen mallikytkenta (A1072): saa tuoda tasan openrouter_kulut- ja yksityinen_or-moduulit, ei
+        # openrouter_zdr:aa. Polku on suhteellinen aivo/-kansioon, joten samanniminen tiedosto muualla ei paase lapi.
+        agentin_malli = {"agentti/malli.py": {"openrouter_kulut", "yksityinen_or"}}
+        tiedostot = sorted(AIVO.rglob("*.py"))     # myos alikansiot (aivo/agentti/)
+        self.assertTrue(set(agentin_malli) <= {p.relative_to(AIVO).as_posix() for p in tiedostot})
+        for p in tiedostot:
+            suht = p.relative_to(AIVO).as_posix()
+            if p.name.startswith("test_") or suht in sallitut:
                 continue
             for n in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
                 if isinstance(n, (ast.Import, ast.ImportFrom)):
                     nimet = [a.name for a in n.names] + [getattr(n, "module", "") or ""]
-                    self.assertFalse([x for x in nimet if "openrouter" in x], p.name)
+                    if suht in agentin_malli:
+                        osumat = {x for x in nimet if "openrouter" in x or "yksityinen_or" in x}
+                        self.assertLessEqual(osumat, agentin_malli[suht], suht)
+                        if osumat:
+                            self.assertEqual(getattr(n, "level", 0), 2, suht)     # vain "from .. import"
+                        continue
+                    self.assertFalse([x for x in nimet if "openrouter" in x], suht)
                     if p.name not in vain_yksityinen_or:
-                        self.assertFalse([x for x in nimet if "yksityinen_or" in x], p.name)
+                        self.assertFalse([x for x in nimet if "yksityinen_or" in x], suht)
 
     def test_tyokalutilan_viesti_ei_kutsu_openrouteria(self):
         r = self.d

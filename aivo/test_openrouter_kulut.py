@@ -283,8 +283,11 @@ class RakenneTesti(unittest.TestCase):
 
     def test_ei_ohituspolkua_muissa_aivo_moduuleissa(self):
         """Muut aivo-moduulit eivat tee OpenRouter-kutsuja: openrouter.ai tai rakenna_runko vain taman moduulin kautta."""
-        for p in sorted(AIVO.glob("*.py")):
-            if p.name in ("openrouter_kulut.py", "openrouter_zdr.py") or p.name.startswith("test_"):
+        # rglob: myos alikansiot (aivo/agentti/); suunnitelma aivo-eristetyt-agentit.md kohta 1
+        tiedostot = sorted(AIVO.rglob("*.py"))
+        self.assertIn("agentti/malli.py", {p.relative_to(AIVO).as_posix() for p in tiedostot})
+        for p in tiedostot:
+            if p.relative_to(AIVO).as_posix() in ("openrouter_kulut.py", "openrouter_zdr.py") or p.name.startswith("test_"):
                 continue
             puu = ast.parse(p.read_text())
             for n in ast.walk(puu):

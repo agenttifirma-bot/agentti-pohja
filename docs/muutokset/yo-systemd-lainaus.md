@@ -1,0 +1,1 @@
+- systemd-mallit: agenttidata-pull.service.mall lainaa GIT_SSH_COMMAND-arvon, koska systemd pilkkoi lainaamattoman arvon välilyönneistä ja pull kaatui; uusi tools/systemd_ymparisto.py ja testi tarkistavat kaikkien mallien ja ohjeiden Environment=-rivit (ja systemd-analyze verify, jos saatavilla).
