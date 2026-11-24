@@ -44,11 +44,15 @@ class Kansiot(unittest.TestCase):
         self.addCleanup(self._t.cleanup)
         self.perus = os.path.join(self._t.name, "aivo-agentit")
         os.mkdir(self.perus)
+        # macOS (BSD): uusi kansio perii ylakansion ryhman, eika setgid-bittia voi asettaa vieraan ryhman kansiolle.
+        os.chown(self.perus, -1, os.getegid())
         os.chmod(self.perus, 0o750)
         for nimi, tila in ((aj.JONO, 0o2770), (aj.KASITELLYT, 0o700), (aj.TYO, 0o700), (aj.TULOKSET, 0o2750)):
             p = os.path.join(self.perus, nimi)
             os.mkdir(p)
+            os.chown(p, -1, os.getegid())
             os.chmod(p, tila)
+            self.assertEqual(stat.S_IMODE(os.lstat(p).st_mode), tila, "testikansion oikeudet")
 
     def p(self, *osat):
         return os.path.join(self.perus, *osat)
