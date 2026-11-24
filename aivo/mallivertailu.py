@@ -86,10 +86,11 @@ def lue_tehtavat(polku: Path = TEHTAVAT) -> dict[str, Any]:
 
 def viestit(sarja: dict[str, Any], tehtava: dict[str, Any]) -> list[dict[str, str]]:
     """Sama jarjestelmakehote ja historiaraja kuin tuotannon OpenRouter-taustapaassa (yksityinen_or.KEHOTE,
-    yksityinen_or.HISTORIA_YLARAJA) + keksityt ydinohjeet (ja tehtavakohtainen lisays) ja muisti."""
+    yksityinen_or.HISTORIA_YLARAJA ja HISTORIA_MERKIT_YLARAJA) + keksityt ydinohjeet (ja tehtavakohtainen lisays) ja muisti."""
     ohjeet = sarja["ydinohjeet"] + tehtava.get("ydinohjeet_lisa", "")
     return yksityinen.muodosta_viestit(sarja["muisti"], tehtava["historia"], ohjeet, yksityinen_or.KEHOTE,
-                                       ylaraja=yksityinen_or.HISTORIA_YLARAJA)
+                                       ylaraja=yksityinen_or.HISTORIA_YLARAJA,
+                                       merkkiraja=yksityinen_or.HISTORIA_MERKIT_YLARAJA)
 
 
 def tarkista_malli(malli: str) -> bool:
