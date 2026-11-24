@@ -375,6 +375,31 @@ class RajatTesti(PakettiPohja):
         self.assertEqual(luovutus.lue_saapunut(self.tila.kirjasto, t)["teksti"], "yksi teksti\n")
 
 
+class KyselymerkkijonoTesti(PakettiPohja):
+    # reitti valitaan polusta ilman kyselymerkkijonoa kuten muilla POST-reiteilla (#429); ennen korjausta 404
+    def test_pakettireitit_toimivat_kyselymerkkijonon_kanssa(self):
+        kid, t, v = self.paketti()
+        s8 = self.hae(kid, t)["sha8"]
+        s, d = self.pyynto("POST", "/api/paketti/poista-pala?x=1", {"keskustelu": kid, "tunnus": t, "pala": 1, "sha8": s8})
+        self.assertEqual(s, 200, d)
+        uusi = d["paketti"]["sha8"]
+        s, d = self.pyynto("POST", "/api/paketti/hyvaksy?x=1", {"keskustelu": kid, "tunnus": t, "vahvistus": "kyll\u00e4 " + uusi})
+        self.assertEqual((s, d.get("tulos")), (200, "ei-gitissa"), d)
+        self.assertEqual(len(luovutus.listaa_saapuneet(self.tila.kirjasto)), 2)
+        kid2, t2, _ = self.paketti()
+        s, d = self.pyynto("POST", "/api/paketti/hylkaa?x=1", {"keskustelu": kid2, "tunnus": t2})
+        self.assertEqual(s, 200, d)
+        self.assertTrue((Path(self.tila.luovutukset) / lp.PAKETIT / "hylatyt" / (t2 + ".json")).is_file())
+
+    def test_kyselymerkkijono_ei_vaihda_reittia(self):
+        # kyselyosa ei voi ohjata pyyntoa toiselle reitille; tuntematon polku on edelleen 404
+        kid, t, v = self.paketti()
+        s8 = self.hae(kid, t)["sha8"]
+        self.assertEqual(self.pyynto("POST", "/api/paketti/tuntematon?/api/paketti/hyvaksy",
+                                     {"keskustelu": kid, "tunnus": t, "vahvistus": "kyll\u00e4 " + s8})[0], 404)
+        self.assertEqual(self.saapuneet_tiedostot(), [])
+
+
 class SivuTesti(unittest.TestCase):
     def test_sivu_textcontent(self):
         h = chat.sivu_html("loopback")

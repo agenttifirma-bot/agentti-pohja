@@ -1399,11 +1399,11 @@ def tee_kasittelija(tila):
                     return self._luovutus_hylkaa(d)
                 if polku == "/api/saapuneet/kasitelty":
                     return self._saapunut_kasitelty(d)
-                if self.path == "/api/paketti/poista-pala":
+                if polku == "/api/paketti/poista-pala":
                     return self._paketti_poista_pala(d)
-                if self.path == "/api/paketti/hyvaksy":
+                if polku == "/api/paketti/hyvaksy":
                     return self._paketti_hyvaksy(d)
-                if self.path == "/api/paketti/hylkaa":
+                if polku == "/api/paketti/hylkaa":
                     return self._paketti_hylkaa(d)
             except ChatVirhe as e:
                 return self._json(400, {"virhe": str(e)})
