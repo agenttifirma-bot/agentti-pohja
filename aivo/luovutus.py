@@ -26,7 +26,7 @@ OLETUS_LUOVUTUKSET = "/var/lib/aivo-yksityinen/luovutukset"
 SAAPUNEET = "saapuneet"
 KASITELLYT = "kasitellyt"
 LOKI = "luovutetut.jsonl"
-LUOVUTUS_YLARAJA = 8_000          # merkkia yhdessa luovutuksessa
+LUOVUTUS_YLARAJA = 16_000         # merkkia yhdessa luovutuksessa; sama kuin chatin viestiraja, selain kayttaa samaa arvoa
 SAAPUNEET_YLARAJA = 20_000        # tavua tyokalutilan kehotteessa yhteensa
 LOKI_NAYTTO = 200                 # viimeisinta lokirivia sivulla
 
@@ -57,11 +57,17 @@ def _kirjoita_600(polku, teksti, uusi=False):
     os.replace(tmp, polku)
 
 
+def _tuhat(n):
+    return "{:,}".format(n).replace(",", "\u00a0")
+
+
 def _tarkista_teksti(teksti):
     if not isinstance(teksti, str) or not teksti.strip():
         raise YksityinenVirhe("luovutettava teksti puuttuu")
     if len(teksti) > LUOVUTUS_YLARAJA:
-        raise YksityinenVirhe("luovutettava teksti on liian pitka (enintaan %d merkkia)" % LUOVUTUS_YLARAJA)
+        # ei katkaista: koko teksti hylataan, ja virhe kertoo pituuden ja rajan
+        raise YksityinenVirhe("luovutettava teksti on liian pitk\u00e4 (%s merkki\u00e4, raja %s)" % (
+            _tuhat(len(teksti)), _tuhat(LUOVUTUS_YLARAJA)))
     if "\x00" in teksti:
         raise YksityinenVirhe("luovutettavassa tekstissa on NUL-merkki")
     return teksti

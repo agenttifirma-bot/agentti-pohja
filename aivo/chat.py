@@ -70,6 +70,9 @@ VIESTI_YLARAJA = 16_000           # merkkia yhdessa viestissa; selain kayttaa sa
 # /api/viesti-pyynnon runko tavuina. Selain (JSON.stringify) kayttaa enintaan 6 tavua merkkia kohti (\u0001);
 # ensure_ascii-asiakas koodaa emojin pariksi \ud83d\ude00 = 12 tavua yhta Pythonin merkkia kohti. Lisaksi muut kentat.
 VIESTI_RUNKO_YLARAJA = 12 * VIESTI_YLARAJA + 4_000
+# /api/luovutus/muokkaa kantaa koko luovutettavan tekstin samalla tavalla (sama laskutapa kuin viestilla).
+LUOVUTUS_RUNKO_YLARAJA = 12 * luovutus.LUOVUTUS_YLARAJA + 4_000
+SUURI_RUNKO = {"/api/viesti": VIESTI_RUNKO_YLARAJA, "/api/luovutus/muokkaa": LUOVUTUS_RUNKO_YLARAJA}
 HISTORIA_YLARAJA = 40             # viimeisinta viestia mukaan kutsuun
 HISTORIA_MERKIT_YLARAJA = yksityinen_or.HISTORIA_MERKIT_YLARAJA   # tyokalutila: sama kuin OpenRouter (80 000)
 VASTAUS_AIKARAJA_S = 240
@@ -138,8 +141,8 @@ textarea{resize:none;height:3.2rem}button{font:inherit;padding:.5rem .9rem;borde
 .luovutus textarea{display:block;width:100%;min-height:8rem;height:auto;resize:vertical;margin:.4rem 0}
 .luovutus pre{white-space:pre-wrap;word-wrap:break-word;max-height:40vh;overflow:auto;font-size:.8rem;margin:.4rem 0}
 .varoitus{font-weight:bold}
-#laskuri{padding:.2rem .6rem 0;text-align:right}#laskuri.varoitus{color:#b45309;opacity:1}#laskuri.yli{color:#b91c1c}
-@media(prefers-color-scheme:dark){#laskuri.varoitus{color:#fbbf24}#laskuri.yli{color:#f87171}}
+#laskuri{padding:.2rem .6rem 0;text-align:right}#laskuri.varoitus,.laskuri.varoitus{color:#b45309;opacity:1}#laskuri.yli,.laskuri.yli{color:#b91c1c}
+@media(prefers-color-scheme:dark){#laskuri.varoitus,.laskuri.varoitus{color:#fbbf24}#laskuri.yli,.laskuri.yli{color:#f87171}}
 </style></head><body>
 <header><strong>Aivo</strong><span><select id="tila" aria-label="Tila">
 <option value="yksityinen" selected>{YKSITYINEN_TEKSTI}</option>
@@ -153,10 +156,14 @@ textarea{resize:none;height:3.2rem}button{font:inherit;padding:.5rem .9rem;borde
 <div id="laskuri" class="pieni" aria-live="polite">0 / {VIESTI_YLARAJA_TEKSTI}</div>
 <form id="lomake"><textarea id="teksti" placeholder="Kirjoita Aivolle\u2026 (Enter l\u00e4hett\u00e4\u00e4, Shift+Enter rivinvaihto)" aria-describedby="laskuri" required></textarea><button>L\u00e4het\u00e4</button></form>
 <script>
-const RAJA={VIESTI_YLARAJA};
+const RAJA={VIESTI_YLARAJA};const LRAJA={LUOVUTUS_YLARAJA};
 function pituus(s){return Array.from(s).length;}
 function tuhat(n){const s=String(n);let o='';for(let i=0;i<s.length;i++){if(i&&(s.length-i)%3===0)o+='\u00a0';o+=s[i];}return o;}
 function ylipitka(n){return 'Teksti on '+tuhat(n)+' merkki\u00e4, raja '+tuhat(RAJA)+'. Jaa se osiin.';}
+function lYlipitka(n){return 'Teksti on '+tuhat(n)+' merkki\u00e4, raja '+tuhat(LRAJA)+'. Lyhenn\u00e4 teksti\u00e4: ylim\u00e4\u00e4r\u00e4\u00e4 ei katkaista, eik\u00e4 teksti\u00e4 l\u00e4hetet\u00e4.';}
+function lLaskuri(ta,L){const n=pituus(ta.value);
+ L.textContent=tuhat(n)+' / '+tuhat(LRAJA)+(n>LRAJA?' \u2013 '+lYlipitka(n):'');
+ L.className='pieni laskuri'+(n>LRAJA?' varoitus yli':(n>=0.9*LRAJA?' varoitus':''));return n;}
 function laskuri(){const L=document.getElementById('laskuri');const n=pituus(document.getElementById('teksti').value.trim());
  L.textContent=tuhat(n)+' / '+tuhat(RAJA)+(n>RAJA?' \u2013 '+ylipitka(n):'');
  L.className='pieni'+(n>RAJA?' varoitus yli':(n>=0.9*RAJA?' varoitus':''));return n;}
@@ -274,13 +281,16 @@ async function luovutusKortti(t){const d=document.createElement('div');d.classNa
  const x=await haeJson('/api/luovutus?keskustelu='+q(kid)+'&tunnus='+q(t));if(!x)return;
  if(!x.r.ok){o.textContent='Luovutusta ei voi n\u00e4ytt\u00e4\u00e4: '+(x.j.virhe||x.r.status);return;}
  const e=x.j;const va=document.createElement('div');va.className='varoitus';va.textContent='T\u00e4m\u00e4 teksti l\u00e4htee Clauden pilveen';
- const ta=document.createElement('textarea');ta.maxLength=8000;ta.value=e.teksti;ta.setAttribute('aria-label','L\u00e4htev\u00e4 teksti');
+ const ta=document.createElement('textarea');ta.value=e.teksti;ta.setAttribute('aria-label','L\u00e4htev\u00e4 teksti');
+ const ll=document.createElement('div');ll.id='llaskuri-'+e.tunnus;ll.setAttribute('aria-live','polite');ta.setAttribute('aria-describedby',ll.id);
+ ta.addEventListener('input',()=>lLaskuri(ta,ll));lLaskuri(ta,ll);
  const tunn=()=>{o.textContent='Luovutus ty\u00f6kalutilaan (tunnus '+e.tunnus+', sha '+e.sha8+'). Voit muokata teksti\u00e4 ennen l\u00e4hetyst\u00e4.';};tunn();
  const l=document.createElement('button');l.textContent='L\u00e4het\u00e4 ty\u00f6kalutilaan';const h=document.createElement('button');h.textContent='Hylk\u00e4\u00e4';
  const ti=document.createElement('div');ti.className='pieni';
  const post=async(polku,lisa)=>{const r=await fetch(polku,{method:'POST',headers:H,body:JSON.stringify(Object.assign({keskustelu:kid,tunnus:e.tunnus},lisa))});
   if(r.status===401){location.href='/kirjaudu';return null;}let j={};try{j=await r.json();}catch(z){}return {r:r,j:j};};
- l.onclick=async()=>{l.disabled=h.disabled=true;
+ l.onclick=async()=>{if(lLaskuri(ta,ll)>LRAJA){ti.textContent=lYlipitka(pituus(ta.value));ta.focus();return;}
+  l.disabled=h.disabled=true;
   try{if(ta.value!==e.teksti){const m=await post('/api/luovutus/muokkaa',{teksti:ta.value});if(!m)return;
     if(!m.r.ok){ti.textContent='Muokkausta ei tallennettu: '+(m.j.virhe||m.r.status);return;}
     e.teksti=ta.value;e.sha8=m.j.sha8;tunn();ti.textContent='Muokattu teksti sai uuden sha:n '+e.sha8+'.';}
@@ -292,7 +302,7 @@ async function luovutusKortti(t){const d=document.createElement('div');d.classNa
  h.onclick=async()=>{if(!confirm('Hyl\u00e4t\u00e4\u00e4nk\u00f6 luovutus? Se siirret\u00e4\u00e4n kansioon hylatyt/ eik\u00e4 sit\u00e4 poisteta.'))return;
   l.disabled=h.disabled=true;const a=await post('/api/luovutus/hylkaa',{});if(!a)return;
   ti.textContent=a.j.teksti||('Ei hyl\u00e4tty: '+(a.j.virhe||a.r.status));if(a.r.ok){ta.readOnly=true;l.remove();h.remove();}else{l.disabled=h.disabled=false;}};
- d.append(va,ta,l,h,ti);alas();}
+ d.append(va,ta,ll,l,h,ti);alas();}
 function luovuta(d,idx){const b=document.createElement('button');b.textContent='Luovuta ty\u00f6kalutilaan';
  b.onclick=async()=>{b.disabled=true;const r=await fetch('/api/luovutus/uusi',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,indeksi:idx})});
   if(r.status===401){location.href='/kirjaudu';return;}let j={};try{j=await r.json();}catch(z){}
@@ -364,7 +374,8 @@ YKSITYINEN_TEKSTIT = {
 def sivu_html(taustapaa):
     """Paasivu valitun yksityisen taustapaan tekstilla (tuntematon taustapaa -> OpenRouter-teksti, ei vahattelevaa)."""
     return (HTML.replace("{YKSITYINEN_TEKSTI}", YKSITYINEN_TEKSTIT.get(taustapaa, YKSITYINEN_TEKSTIT["openrouter"]))
-            .replace("{VIESTI_YLARAJA_TEKSTI}", tuhaterotin(VIESTI_YLARAJA)).replace("{VIESTI_YLARAJA}", str(VIESTI_YLARAJA)))
+            .replace("{VIESTI_YLARAJA_TEKSTI}", tuhaterotin(VIESTI_YLARAJA)).replace("{VIESTI_YLARAJA}", str(VIESTI_YLARAJA))
+            .replace("{LUOVUTUS_YLARAJA}", str(luovutus.LUOVUTUS_YLARAJA)))
 
 
 def tuhaterotin(n):
@@ -1194,7 +1205,8 @@ def tee_kasittelija(tila):
                 return self._json(401, {"virhe": "ei kirjautunut"})
             if not self._muutos_ok():
                 return self._json(403, {"virhe": "kielletty"})
-            raaka = self._runko(VIESTI_RUNKO_YLARAJA if self.path == "/api/viesti" else 20_000)
+            # raja valitaan polusta ilman kyselymerkkijonoa; muut reitit pitavat 20 000 tavun rajan
+            raaka = self._runko(SUURI_RUNKO.get(urllib.parse.urlsplit(self.path).path, 20_000))
             if raaka is None:
                 self.close_connection = True         # lukematon runko jaa pistorasiaan
                 return self._json(413, {"virhe": "pyynto on liian suuri"})
