@@ -46,12 +46,21 @@ class PalvelinRajaTesti(ChatPalveluPohja):
     def test_tyhja_viesti_saa_edelleen_oman_virheen(self):
         ev, kid = self._uusi("tyokalu")
         s, v = self.api(ev, "/api/viesti", {"keskustelu": kid, "teksti": "   "})
-        self.assertEqual((s, v["virhe"]), (400, "viesti puuttuu tai on liian pitka"))
+        self.assertEqual((s, v["virhe"]), (400, "viesti puuttuu"))
 
     def test_muiden_reittien_runkoraja_ei_kasva(self):
-        self.assertGreaterEqual(chat.VIESTI_RUNKO_YLARAJA, 6 * chat.VIESTI_YLARAJA)
+        self.assertGreaterEqual(chat.VIESTI_RUNKO_YLARAJA, 12 * chat.VIESTI_YLARAJA)
         ev, kid = self._uusi("tyokalu")
         s, _ = self.api(ev, "/api/paatos", {"keskustelu": kid, "indeksi": 0, "taytto": "x" * 25_000})
+        self.assertEqual(s, 413)
+        s, _ = self.api(ev, "/api/viesti", {"keskustelu": kid, "teksti": "x", "taytto": "x" * 25_000})
+        self.assertEqual(s, 200)
+
+    def test_emojit_ensure_ascii_asiakkaalta_mahtuvat_runkorajaan(self):
+        ev, kid = self._uusi("tyokalu")
+        s, _ = self.api(ev, "/api/viesti", {"keskustelu": kid, "teksti": "\U0001f600" * chat.VIESTI_YLARAJA})
+        self.assertEqual(s, 200)
+        s, v = self.api(ev, "/api/paatos", {"keskustelu": kid, "indeksi": 0, "taytto": "x" * 25_000})
         self.assertEqual(s, 413)
 
 
@@ -122,8 +131,20 @@ class HistoriaRajausTesti(unittest.TestCase):
         merkit = sum(len(x["content"]) for x in v[1:])
         self.assertLess(merkit, yksityinen_or.HISTORIA_MERKIT_YLARAJA + 40 * 60)   # merkinnat mukaan
 
+    def test_uusin_tonyn_viesti_suojataan_vaikka_peraan_tulee_merkinta(self):
+        h = [{"rooli": "tony", "teksti": "a" * 15_000}, {"rooli": "aivo", "teksti": "b" * 15_000},
+             {"rooli": "tony", "teksti": "c" * 15_000}, {"rooli": "aivo", "teksti": "ehdotus"},
+             {"rooli": yksityinen.JARJESTELMA_ROOLI, "teksti": "[Jarjestelma: hyvaksytty]"}]
+        v = yksityinen.muodosta_viestit("", h, "")
+        self.assertEqual(v[3]["content"], "c" * 15_000)
+        self.assertEqual(v[-1]["content"], "[Jarjestelma: hyvaksytty]")
+        self.assertIn("lyhennetty", v[1]["content"])
+
+    def test_laskuri_laskee_trimmatun_pituuden_kuten_lahetys(self):
+        self.assertIn("pituus(document.getElementById('teksti').value.trim())", chat.HTML)
+
     def test_paikallinen_oletusraja(self):
-        h = [{"rooli": "tony" if i % 2 == 0 else "aivo", "teksti": "y" * chat.VIESTI_YLARAJA} for i in range(12)]
+        h = [{"rooli": "tony" if i % 2 == 0 else "aivo", "teksti": "y" * chat.VIESTI_YLARAJA} for i in range(13)]
         v = yksityinen.muodosta_viestit("", h, "")
         self.assertEqual(v[-1]["content"], "y" * chat.VIESTI_YLARAJA)
         self.assertLess(sum(len(x["content"]) for x in v[1:]), yksityinen.HISTORIA_MERKIT_YLARAJA + 12 * 60)

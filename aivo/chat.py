@@ -66,10 +66,11 @@ SALLITUT_PAATELIITTEET = (".md", ".txt")
 MUISTI_YLARAJA = 300_000          # tavua yhteensa kehotteessa
 TIEDOSTO_YLARAJA = 120_000        # tavua yhta tiedostoa kohti
 VIESTI_YLARAJA = 16_000           # merkkia yhdessa viestissa; selain kayttaa samaa arvoa (sivu())
-# /api/viesti-pyynnon runko tavuina: JSON-pakotettu merkki vie enintaan 6 tavua (\u0001), lisaksi muut kentat.
-VIESTI_RUNKO_YLARAJA = 6 * VIESTI_YLARAJA + 4_000
+# /api/viesti-pyynnon runko tavuina. Selain (JSON.stringify) kayttaa enintaan 6 tavua merkkia kohti (\u0001);
+# ensure_ascii-asiakas koodaa emojin pariksi \ud83d\ude00 = 12 tavua yhta Pythonin merkkia kohti. Lisaksi muut kentat.
+VIESTI_RUNKO_YLARAJA = 12 * VIESTI_YLARAJA + 4_000
 HISTORIA_YLARAJA = 40             # viimeisinta viestia mukaan kutsuun
-HISTORIA_MERKIT_YLARAJA = 80_000  # historian viestien yhteismerkit tyokalutilassa (yksityinen.lyhenna_historia)
+HISTORIA_MERKIT_YLARAJA = yksityinen_or.HISTORIA_MERKIT_YLARAJA   # tyokalutila: sama kuin OpenRouter (80 000)
 VASTAUS_AIKARAJA_S = 240
 VASTAUS_YLARAJA = 1000000         # tavua; socketista luettavan vastauksen katto
 ISTUNTO_KESTO_S = 30 * 86400
@@ -155,7 +156,7 @@ const RAJA={VIESTI_YLARAJA};
 function pituus(s){return Array.from(s).length;}
 function tuhat(n){const s=String(n);let o='';for(let i=0;i<s.length;i++){if(i&&(s.length-i)%3===0)o+='\u00a0';o+=s[i];}return o;}
 function ylipitka(n){return 'Teksti on '+tuhat(n)+' merkki\u00e4, raja '+tuhat(RAJA)+'. Jaa se osiin.';}
-function laskuri(){const L=document.getElementById('laskuri');const n=pituus(document.getElementById('teksti').value);
+function laskuri(){const L=document.getElementById('laskuri');const n=pituus(document.getElementById('teksti').value.trim());
  L.textContent=tuhat(n)+' / '+tuhat(RAJA)+(n>RAJA?' \u2013 '+ylipitka(n):'');
  L.className='pieni'+(n>RAJA?' varoitus yli':(n>=0.9*RAJA?' varoitus':''));return n;}
 let kid=null;let nyt='yksityinen';const V=document.getElementById('viestit');
@@ -1338,7 +1339,7 @@ def tee_kasittelija(tila):
         def _viesti(self, d):
             kid, teksti = d.get("keskustelu"), d.get("teksti")
             if not isinstance(teksti, str) or not teksti.strip():
-                return self._json(400, {"virhe": "viesti puuttuu tai on liian pitka"})
+                return self._json(400, {"virhe": "viesti puuttuu"})
             if len(teksti) > VIESTI_YLARAJA:         # ei katkaista: koko viesti hylataan, ja selain kertoo syyn
                 return self._json(400, {"virhe": "viesti on liian pitk\u00e4: %s merkki\u00e4, raja %s. Jaa se osiin." % (
                     tuhaterotin(len(teksti)), tuhaterotin(VIESTI_YLARAJA))})
