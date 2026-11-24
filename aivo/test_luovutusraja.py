@@ -55,10 +55,15 @@ class PalvelinRajaTesti(LuovutusPohja):
         # raja valitaan polusta; kyselymerkkijono ei pienenna eika kasvata sita. Reitti itse on edelleen tarkka.
         self.assertEqual(chat.SUURI_RUNKO["/api/luovutus/muokkaa"], chat.LUOVUTUS_RUNKO_YLARAJA)
         kid = self.uusi()
-        s, _ = self.pyynto("POST", "/api/luovutus/muokkaa?x=1", {"keskustelu": kid, "teksti": "\u00e4" * 16_000})
-        self.assertEqual(s, 404)                       # ei 413: runko luettiin luovutuksen rajalla
+        t, _ = self.ehdota_luovutus()
+        uusi = "\u00e4" * luovutus.LUOVUTUS_YLARAJA
+        s, d = self.pyynto("POST", "/api/luovutus/muokkaa?x=1", {"keskustelu": kid, "tunnus": t, "teksti": uusi})
+        self.assertEqual(s, 200)                       # ei 413 eika 404: raja ja reitti polusta
+        self.assertEqual(luovutus.lue_ehdotus(self.tila.luovutukset, t)["teksti"], uusi)
+        type(self).vastaus = "Selv\u00e4."
         s, _ = self.pyynto("POST", "/api/viesti?x=1", {"keskustelu": kid, "teksti": "\u00e4" * 16_000})
-        self.assertEqual(s, 404)
+        self.assertEqual(s, 200)
+        self.assertEqual(self.pyynto("POST", "/api/tuntematon?x=1", {"keskustelu": kid})[0], 404)
 
     def test_muiden_reittien_runkoraja_ei_kasva(self):
         self.assertGreaterEqual(chat.LUOVUTUS_RUNKO_YLARAJA, 12 * luovutus.LUOVUTUS_YLARAJA)
@@ -90,6 +95,7 @@ class SivuRajaTesti(unittest.TestCase):
         self.assertIn("ta.addEventListener('input',()=>lLaskuri(ta,ll));lLaskuri(ta,ll);", self.kortti)
         self.assertIn("ta.setAttribute('aria-describedby',ll.id)", self.kortti)
         self.assertIn("ll.setAttribute('aria-live','polite')", self.kortti)
+        self.assertIn("ll.id='llaskuri-'+(++lLaskureita)", self.kortti)        # yksilollinen myos samalle tunnukselle
         self.assertIn("d.append(va,ta,ll,l,h,ti)", self.kortti)
         self.assertIn("L.textContent=tuhat(n)+' / '+tuhat(LRAJA)", self.h)
         self.assertIn("n>=0.9*LRAJA?' varoitus'", self.h)

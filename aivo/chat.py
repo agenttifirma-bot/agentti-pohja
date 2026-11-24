@@ -161,6 +161,7 @@ function pituus(s){return Array.from(s).length;}
 function tuhat(n){const s=String(n);let o='';for(let i=0;i<s.length;i++){if(i&&(s.length-i)%3===0)o+='\u00a0';o+=s[i];}return o;}
 function ylipitka(n){return 'Teksti on '+tuhat(n)+' merkki\u00e4, raja '+tuhat(RAJA)+'. Jaa se osiin.';}
 function lYlipitka(n){return 'Teksti on '+tuhat(n)+' merkki\u00e4, raja '+tuhat(LRAJA)+'. Lyhenn\u00e4 teksti\u00e4: ylim\u00e4\u00e4r\u00e4\u00e4 ei katkaista, eik\u00e4 teksti\u00e4 l\u00e4hetet\u00e4.';}
+let lLaskureita=0;
 function lLaskuri(ta,L){const n=pituus(ta.value);
  L.textContent=tuhat(n)+' / '+tuhat(LRAJA)+(n>LRAJA?' \u2013 '+lYlipitka(n):'');
  L.className='pieni laskuri'+(n>LRAJA?' varoitus yli':(n>=0.9*LRAJA?' varoitus':''));return n;}
@@ -282,7 +283,7 @@ async function luovutusKortti(t){const d=document.createElement('div');d.classNa
  if(!x.r.ok){o.textContent='Luovutusta ei voi n\u00e4ytt\u00e4\u00e4: '+(x.j.virhe||x.r.status);return;}
  const e=x.j;const va=document.createElement('div');va.className='varoitus';va.textContent='T\u00e4m\u00e4 teksti l\u00e4htee Clauden pilveen';
  const ta=document.createElement('textarea');ta.value=e.teksti;ta.setAttribute('aria-label','L\u00e4htev\u00e4 teksti');
- const ll=document.createElement('div');ll.id='llaskuri-'+e.tunnus;ll.setAttribute('aria-live','polite');ta.setAttribute('aria-describedby',ll.id);
+ const ll=document.createElement('div');ll.id='llaskuri-'+(++lLaskureita);ll.setAttribute('aria-live','polite');ta.setAttribute('aria-describedby',ll.id);
  ta.addEventListener('input',()=>lLaskuri(ta,ll));lLaskuri(ta,ll);
  const tunn=()=>{o.textContent='Luovutus ty\u00f6kalutilaan (tunnus '+e.tunnus+', sha '+e.sha8+'). Voit muokata teksti\u00e4 ennen l\u00e4hetyst\u00e4.';};tunn();
  const l=document.createElement('button');l.textContent='L\u00e4het\u00e4 ty\u00f6kalutilaan';const h=document.createElement('button');h.textContent='Hylk\u00e4\u00e4';
@@ -1205,8 +1206,9 @@ def tee_kasittelija(tila):
                 return self._json(401, {"virhe": "ei kirjautunut"})
             if not self._muutos_ok():
                 return self._json(403, {"virhe": "kielletty"})
-            # raja valitaan polusta ilman kyselymerkkijonoa; muut reitit pitavat 20 000 tavun rajan
-            raaka = self._runko(SUURI_RUNKO.get(urllib.parse.urlsplit(self.path).path, 20_000))
+            # raja ja reitti valitaan polusta ilman kyselymerkkijonoa (kuten do_GET); muilla reiteilla 20 000 tavua
+            polku = urllib.parse.urlsplit(self.path).path
+            raaka = self._runko(SUURI_RUNKO.get(polku, 20_000))
             if raaka is None:
                 self.close_connection = True         # lukematon runko jaa pistorasiaan
                 return self._json(413, {"virhe": "pyynto on liian suuri"})
@@ -1217,25 +1219,25 @@ def tee_kasittelija(tila):
             except ValueError:
                 return self._json(400, {"virhe": "virheellinen pyynto"})
             try:
-                if self.path == "/api/uusi":
+                if polku == "/api/uusi":
                     return self._uusi(d)
-                if self.path == "/api/viesti":
+                if polku == "/api/viesti":
                     return self._viesti(d)
-                if self.path == "/api/paatos":
+                if polku == "/api/paatos":
                     return self._paatos(d)
-                if self.path == "/api/ehdotus/hyvaksy":
+                if polku == "/api/ehdotus/hyvaksy":
                     return self._ehdotus_hyvaksy(d)
-                if self.path == "/api/ehdotus/hylkaa":
+                if polku == "/api/ehdotus/hylkaa":
                     return self._ehdotus_hylkaa(d)
-                if self.path == "/api/luovutus/uusi":
+                if polku == "/api/luovutus/uusi":
                     return self._luovutus_uusi(d)
-                if self.path == "/api/luovutus/muokkaa":
+                if polku == "/api/luovutus/muokkaa":
                     return self._luovutus_muokkaa(d)
-                if self.path == "/api/luovutus/hyvaksy":
+                if polku == "/api/luovutus/hyvaksy":
                     return self._luovutus_hyvaksy(d)
-                if self.path == "/api/luovutus/hylkaa":
+                if polku == "/api/luovutus/hylkaa":
                     return self._luovutus_hylkaa(d)
-                if self.path == "/api/saapuneet/kasitelty":
+                if polku == "/api/saapuneet/kasitelty":
                     return self._saapunut_kasitelty(d)
             except ChatVirhe as e:
                 return self._json(400, {"virhe": str(e)})
