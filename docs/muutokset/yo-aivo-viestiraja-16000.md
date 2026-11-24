@@ -1,0 +1,2 @@
+- aivo/chat: viestiraja 4 000 -> 16 000 merkkiä. Textarean maxlength poistettiin, koska se katkaisi liitetyn tekstin hiljaa. Tilalle tuli merkkilaskuri ja varoitus, ja liian pitkää viestiä ei lähetetä. Palvelin hylkää yli 16 000 merkin viestin virheellä, joka kertoo pituuden ja rajan.
+- aivo/yksityinen: historian viestien yhteismerkit rajataan (OpenRouter ja työkalutila 80 000, paikallinen 24 000). Uusin viesti säilyy kokonaan ja vanhemmat lyhennetään, jotta pidempi viestiraja ei kasvata kehotetta yli vanhan pahimman tapauksen.
