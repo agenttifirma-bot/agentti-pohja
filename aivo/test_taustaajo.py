@@ -238,6 +238,137 @@ class PaivarajaTesti(Pohja):
         self.assertEqual(self.kutsut, [])
 
 
+class PuoliyoTesti(Pohja):
+    """Ajo alkaa klo 23.55 (Europe/Helsinki) ja jatkuu yli puolenyon: jokainen mallikutsu vie 3 min seinakelloa."""
+    ALKU = datetime(2026, 11, 22, 21, 55, tzinfo=timezone.utc)      # 23.55 Helsingissa (UTC+2)
+
+    def setUp(self):
+        super().setUp()
+        self.seina = self.ALKU
+
+    def kello_kysy(self):
+        sisempi = self.kysy()
+
+        def kysy(malli, viestit, aikaraja_s):
+            self.seina += timedelta(minutes=3)
+            return sisempi(malli, viestit, aikaraja_s)
+        return kysy
+
+    def aja_kellolla(self, **kw):
+        return ta.aja(self.jono, self.chat, self.kello_kysy(), ROOLIT, aika=lambda: self.seina,
+                      tulosta=self.rivit.append, **kw)
+
+    def tila(self):
+        return json.loads((self.jono / ta.TILA_TIEDOSTO).read_text())
+
+    def test_tyot_kirjautuvat_alkamispaivalle_eika_raja_tuplaannu(self):
+        self.assertEqual((ta._paiva(self.ALKU), ta._paiva(self.ALKU + timedelta(minutes=6))),
+                         ("2026-11-22", "2026-11-23"))
+        for _ in range(4):
+            ta.kirjoita_tyo(self.jono, KID, TEHTAVA, nyt=self.ALKU)
+        r = self.aja_kellolla(paivaraja=2)
+        # tyo 1 alkaa 23.55 (22.11.), tyo 2 alkaa 00.01 (23.11.); ajo on aloittanut paivarajan verran toita
+        self.assertEqual((r["valmis"], r["epaonnistui"]), (2, 0))
+        self.assertEqual(self.tila(), {"versio": 1, "paiva": "2026-11-23", "ajettu": 1})
+        self.assertEqual(len(ta.odottavat(self.jono)), 2)
+        # seuraava ajo 23.11.: tyo 3 kayttaa paivan toisen paikan, tyo 4 ylittaa rajan
+        r = self.aja_kellolla(paivaraja=2)
+        self.assertEqual((r["valmis"], r["epaonnistui"]), (1, 1))
+        self.assertEqual(self.tila(), {"versio": 1, "paiva": "2026-11-23", "ajettu": 2})
+        self.assertIn(ta.SYYT["paivaraja"], self.tausta()[-1]["teksti"])
+        self.assertEqual(len(self.kutsut), 2 * 3)
+        # Seuraava ajo samana kalenteripaivana ei saa uutta kiintiota: raja ei tuplaannu.
+        self.kutsut.clear()
+        ta.kirjoita_tyo(self.jono, KID, TEHTAVA, nyt=self.seina)
+        r = self.aja_kellolla(paivaraja=2)
+        self.assertEqual((r["valmis"], r["epaonnistui"]), (0, 1))
+        self.assertEqual(self.kutsut, [])
+
+    def test_valmis_rivi_saa_valmistumisajan(self):
+        ta.kirjoita_tyo(self.jono, KID, TEHTAVA, nyt=self.ALKU)
+        self.aja_kellolla(paivaraja=1)
+        self.assertEqual(self.tausta()[-1]["aika"], (self.ALKU + timedelta(minutes=6)).isoformat(timespec="seconds"))
+
+    def test_yksi_ajo_aloittaa_enintaan_paivarajan_verran_toita(self):
+        for _ in range(3):
+            ta.kirjoita_tyo(self.jono, KID, TEHTAVA, nyt=self.ALKU)
+        r = self.aja_kellolla(paivaraja=1)
+        # tyo 1 kuluttaa 22.11. paikan; 23.11. olisi tilaa, mutta ajo on jo aloittanut paivarajan verran toita
+        self.assertEqual((r["valmis"], r["epaonnistui"]), (1, 0))
+        self.assertEqual(len(ta.odottavat(self.jono)), 2)
+        self.assertEqual(self.tila(), {"versio": 1, "paiva": "2026-11-22", "ajettu": 1})
+        self.assertTrue(any("ajon tyoraja taynna, 2 tyota jaa jonoon" in x for x in self.rivit))
+        r = self.aja_kellolla(paivaraja=1)                       # seuraava ajo 23.11.: yksi ajetaan, yksi yli rajan
+        self.assertEqual((r["valmis"], r["epaonnistui"]), (1, 1))
+        self.assertEqual(self.tila(), {"versio": 1, "paiva": "2026-11-23", "ajettu": 1})
+
+    def test_kiintea_nyt_toimii_kuten_ennen(self):
+        ta.kirjoita_tyo(self.jono, KID, TEHTAVA)
+        self.assertEqual(self.aja(paivaraja=1)["valmis"], 1)
+        self.assertEqual(self.tila()["paiva"], ta._paiva(NYT))
+
+
+class YksikkoAikarajaTesti(unittest.TestCase):
+    """docs/aivo-taustaajo.md: systemd ei saa katkaista pisinta mahdollista ajoa (paivaraja x aikaraja)."""
+
+    def yksikko(self):
+        teksti = (AIVO.parent / "docs" / "aivo-taustaajo.md").read_text(encoding="utf-8")
+        alku = teksti.index("aivo-taustaajo.service")
+        lohko = teksti[alku:teksti.index("```", teksti.index("[Service]", alku))]
+        asetukset = {}
+        for rivi in lohko.splitlines():
+            avain, sep, arvo = rivi.strip().partition("=")
+            if sep and avain == "Environment":
+                avain, _, arvo = arvo.partition("=")
+            if sep:
+                asetukset[avain] = arvo
+        return asetukset
+
+    @staticmethod
+    def sekunteina(arvo):
+        import re
+        m = re.fullmatch(r"([0-9]+)(min|s|h)?", arvo)
+        assert m, arvo
+        return int(m.group(1)) * {"min": 60, "h": 3600, "s": 1, None: 1}[m.group(2)]
+
+    def test_timeoutstartsec_kattaa_koodin_ylarajat(self):
+        a = self.yksikko()
+        aikaraja = self.sekunteina(a["TimeoutStartSec"])
+        pisin = ta.PAIVARAJA_MAX * ta.AIKARAJA_MAX_S
+        self.assertGreaterEqual(aikaraja, pisin + 5 * 60)            # pelivara tiedostoille ja lukolle
+
+    def test_yksikon_asetukset_ovat_koodin_rajoissa(self):
+        a = self.yksikko()
+        self.assertLessEqual(int(a["AIVO_TAUSTA_PAIVARAJA"]), ta.PAIVARAJA_MAX)
+        self.assertLessEqual(int(a["AIVO_TAUSTA_AIKARAJA_S"]), ta.AIKARAJA_MAX_S)
+        self.assertEqual((int(a["AIVO_TAUSTA_PAIVARAJA"]), int(a["AIVO_TAUSTA_AIKARAJA_S"])),
+                         (ta.PAIVARAJA, ta.AIKARAJA_S))
+
+    def test_ajo_ei_ylita_yksikon_aikarajaa_puolenyon_yli(self):
+        """Pahin tapaus: ajo alkaa paivan viimeisella minuutilla, jokainen tyo kayttaa koko aikarajansa."""
+        aikaraja = self.sekunteina(self.yksikko()["TimeoutStartSec"])
+        with tempfile.TemporaryDirectory() as t:
+            d = Path(t)
+            os.chmod(d, 0o700)
+            jono, chat_ = d / "tyot", d / "chat"
+            chat_.mkdir(mode=0o700)
+            (chat_ / (KID + ".jsonl")).write_text("")
+            for _ in range(2 * ta.PAIVARAJA_MAX + 1):
+                ta.kirjoita_tyo(jono, KID, TEHTAVA, nyt=NYT)
+            alku = datetime(2026, 11, 22, 21, 59, tzinfo=timezone.utc)
+            tila = {"seina": alku, "mono": 0.0}
+
+            def kysy(malli, viestit, aikaraja_s):
+                tila["seina"] += timedelta(seconds=aikaraja_s / 2)
+                tila["mono"] += aikaraja_s / 2
+                return "ok"
+            r = ta.aja(jono, chat_, kysy, ROOLIT, paivaraja=10_000, aikaraja_s=10_000, aika=lambda: tila["seina"],
+                       kello=lambda: tila["mono"], tulosta=lambda *_: None)
+            self.assertLessEqual(r["valmis"], ta.PAIVARAJA_MAX)
+            self.assertLessEqual((tila["seina"] - alku).total_seconds(), ta.PAIVARAJA_MAX * ta.AIKARAJA_MAX_S)
+            self.assertLess((tila["seina"] - alku).total_seconds(), aikaraja)
+
+
 class EpaonnistuminenTesti(Pohja):
     def test_ajattelijan_virhe_merkitaan_keskusteluun(self):
         ta.kirjoita_tyo(self.jono, KID, TEHTAVA)

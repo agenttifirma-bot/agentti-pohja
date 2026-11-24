@@ -391,12 +391,22 @@ def odottavat(jono):
 
 
 def aja(jono, chat, kysy, roolit, nyt=None, paivaraja=PAIVARAJA, aikaraja_s=AIKARAJA_S, kello=time.monotonic,
-        kuiva=False, tulosta=print):
+        kuiva=False, tulosta=print, aika=None):
     """Yksi ajuriajo: kaikki odottavat tyot vanhin ensin. `kysy(malli, viestit, aikaraja_s) -> teksti`.
-    Palauttaa tilastot. Kahden ajon paallekkaisyyden estaa lukko."""
+    Palauttaa tilastot. Kahden ajon paallekkaisyyden estaa lukko.
+
+    Seinakello luetaan jokaiselle tyolle erikseen (`aika()`, oletus _nyt): ajo voi kestaa yli puolenyon, ja paivaraja
+    on kalenteripaivakohtainen (Europe/Helsinki). Kun paiva vaihtuu kesken ajon, tila luetaan uudelleen, ja varaus
+    kirjataan tyon alkamispaivalle. Kiintea `nyt` (testit, main) tarkoittaa samaa aikaa koko ajolle.
+
+    Yksi ajo aloittaa enintaan `paivaraja` tyota; loput jaavat jonoon seuraavaan ajoon. Ilman tata ajo, joka alkaa
+    illalla ja jatkuu yli puolenyon, voisi ajaa kahden paivan kiintion perakkain. Nain yhden ajon kesto on enintaan
+    paivaraja x aikaraja (koodin ylarajoilla 20 x 15 min), ja systemd-yksikon TimeoutStartSec kattaa sen."""
     paivaraja = min(int(paivaraja), PAIVARAJA_MAX)
     aikaraja_s = min(float(aikaraja_s), AIKARAJA_MAX_S)
-    nyt = nyt or _nyt()
+    if aika is None:
+        aika = (lambda: nyt) if nyt is not None else _nyt
+    nyt = aika()
     jono = tarkista_kansio(jono, luo=not kuiva)
     chat = tarkista_kansio(chat)
     tulos = {"valmis": 0, "epaonnistui": 0, "odottaa": 0, "kutsuja": 0, "ohitettu": 0}
@@ -419,8 +429,12 @@ def aja(jono, chat, kysy, roolit, nyt=None, paivaraja=PAIVARAJA, aikaraja_s=AIKA
                 _merkitse_epaonnistuneeksi(jono, chat, p, _kid_tiedostonimesta(p), p.stem, "keskeytyi", nyt, tulosta)
                 tulos["epaonnistui"] += 1
         tila = lue_tila(jono, nyt)
-        for polku in lista:
+        aloitettu = 0                                               # tassa ajossa aloitetut (varatut) tyot
+        for i, polku in enumerate(lista):
             tunnus = polku.stem
+            nyt = aika()                                            # tyon alkamishetki
+            if tila["paiva"] != _paiva(nyt):                        # puoliyo ohitettu kesken ajon
+                tila = lue_tila(jono, nyt)
             try:
                 tyo = lue_tyo(polku)
             except TaustaVirhe:
@@ -433,6 +447,9 @@ def aja(jono, chat, kysy, roolit, nyt=None, paivaraja=PAIVARAJA, aikaraja_s=AIKA
                 _merkitse_epaonnistuneeksi(jono, chat, polku, kid, tunnus, "paivaraja", nyt, tulosta)
                 tulos["epaonnistui"] += 1
                 continue
+            if aloitettu >= paivaraja:                              # vain kun paiva vaihtui kesken ajon
+                kirjaa(jono, nyt, "ajon tyoraja taynna, %d tyota jaa jonoon" % (len(lista) - i), tulosta)
+                break
             # Ensin siirto kesken/:iin, sitten paivapaikan varaus. Jos siirto ei onnistu, tyota ei ajeta eika paikkaa
             # varata: tyo jaa jonoon seuraavaan ajoon. Jos tyo ajettaisiin jonosta, epaonnistunut loppusiirto jattaisi
             # sen jonoon ja seuraava ajo ajaisi sen uudelleen. Jos ajo katkeaa siirron ja varauksen valissa, seuraava
@@ -442,14 +459,16 @@ def aja(jono, chat, kysy, roolit, nyt=None, paivaraja=PAIVARAJA, aikaraja_s=AIKA
                 tulos["ohitettu"] += 1
                 continue
             polku = uusi
+            aloitettu += 1
             tila["ajettu"] += 1
             kirjoita_tila(jono, tila)                               # varaus ennen kutsua
             try:
                 teksti, mallit = aja_tyo(tyo, kysy, roolit, aikaraja_s, kello)
             except (TaustaVirhe, YksityinenVirhe) as e:
-                _merkitse_epaonnistuneeksi(jono, chat, polku, kid, tunnus, _syy(e), nyt, tulosta)
+                _merkitse_epaonnistuneeksi(jono, chat, polku, kid, tunnus, _syy(e), aika(), tulosta)
                 tulos["epaonnistui"] += 1
                 continue
+            nyt = aika()                                            # valmistumishetki keskusteluun ja lokiin
             tulos["kutsuja"] += len(mallit)
             try:
                 lisaa_keskusteluun(chat, kid, valmis_teksti(teksti), tunnus, nyt, malli=mallit[-1], mallit=mallit)

@@ -72,13 +72,15 @@ Käyttäjän pitää olla sama kuin `aivo-chat.service`-palvelun `User=` (kontis
    Environment=AIVO_TAUSTA_PAIVARAJA=5
    Environment=AIVO_TAUSTA_AIKARAJA_S=600
    ExecStart=/usr/bin/python3 -m aivo.taustaajo
-   TimeoutStartSec=20min
+   TimeoutStartSec=310min
    NoNewPrivileges=true
    ProtectSystem=strict
    ProtectHome=yes
    ReadWritePaths=/var/lib/aivo-yksityinen /var/lib/claude-jono
    PrivateTmp=true
    ```
+
+   `TimeoutStartSec` kattaa pisimmän mahdollisen ajon: koodin ylärajat `PAIVARAJA_MAX` (20 työtä) × `AIKARAJA_MAX_S` (15 min) = 300 min ja 10 minuutin pelivara. Näin systemd ei katkaise maksettua kutsua kesken, vaikka asetuksia nostettaisiin ylärajaan asti. Arvo ei salli enempää töitä tai kuluja: päiväraja, työn aikaraja ja kulukatto ovat koodissa. Testi `YksikkoAikarajaTesti` tarkistaa, että arvo riittää.
 
    Vaihda mallit samoiksi kuin `aivo-chat.service`-tiedostossa. `/var/lib/claude-jono` on mukana, koska kulukirjanpito ja päiväkatto ovat siellä. Ilman sitä jokainen kutsu estyy (fail closed). Kaksi ajoa yhtä aikaa on turvallista: toinen huomaa lukon (`taustaajo.lukko`) ja päättyy.
 
