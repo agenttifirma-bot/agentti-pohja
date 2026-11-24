@@ -54,10 +54,14 @@ MAX_VASTAUS_TAVUA = 2_000_000
 MAX_TOKENIA = yksityinen.MAX_TOKENIA
 # Historia on taustapaakohtainen. Paikallinen malli (yksityinen.HISTORIA_YLARAJA = 12) kasittelee kehotteen hitaasti
 # 900 s aikarajan sisalla; OpenRouterin malli kasittelee pitkan kehotteen sekunneissa, joten raja on sama 40 kuin
-# tyokalutilassa (chat.HISTORIA_YLARAJA). Pahin tapaus: 40 viestia (20 x 4 000 merkkia + 20 x 700 tokenia),
-# muisti 16 000, ydinohjeet 20 000 ja kehote noin 4 000 merkkia = noin 160 000 merkkia, alle 80 000 tokenia
-# varovaisellakin 2 merkkia/token-arviolla. Suositusmallin qwen3-235b-a22b-2507 konteksti on 262 144 tokenia.
+# tyokalutilassa (chat.HISTORIA_YLARAJA). Viestiraja on 16 000 merkkia, joten 40 viestin historia voisi olla
+# yli 320 000 merkkia. Siksi historian viestien yhteismerkit rajataan (HISTORIA_MERKIT_YLARAJA = 80 000, sama kuin
+# vanha pahin tapaus 20 x 4 000): uusin viesti sailyy aina kokonaan ja vanhemmat lyhennetaan
+# (yksityinen.lyhenna_historia). Pahin tapaus: historia 80 000, muisti 16 000, ydinohjeet 20 000 ja kehote noin
+# 4 000 merkkia = noin 120 000 merkkia, alle 60 000 tokenia varovaisellakin 2 merkkia/token-arviolla.
+# Suositusmallin qwen3-235b-a22b-2507 konteksti on 262 144 tokenia.
 HISTORIA_YLARAJA = 40
+HISTORIA_MERKIT_YLARAJA = 80_000
 
 TIIVISTYS_TEHTAVA = "aivo-yksityinen-tiivistys"
 # Tiivistys palauttaa JSON:n (enintaan tiivistelma.MAX_KOHDAT kohtaa, tulkinta enintaan 300 merkkia). 700 tokenia
@@ -213,7 +217,8 @@ def kysy_openrouterilta(
 ) -> str:
     """Yksityisen tilan vastaus OpenRouterin avoimelta mallilta. Nostaa aina YksityinenVirhe (turvallinen viesti)."""
     tarkista_malli(malli)
-    viestit = yksityinen.muodosta_viestit(muisti, historia, ohjeet, KEHOTE, HISTORIA_YLARAJA)
+    viestit = yksityinen.muodosta_viestit(muisti, historia, ohjeet, KEHOTE, HISTORIA_YLARAJA,
+                                         HISTORIA_MERKIT_YLARAJA)
     return _kysy_viestit(malli, viestit, avain_tiedosto=avain_tiedosto, kulutila=kulutila, avaa=avaa, nyt=nyt,
                          ilmoita=ilmoita, **lisa)
 
@@ -234,7 +239,8 @@ def kysy_yhdistelmalla(
     tarkista_malli(malli)
     for m in (roolit or {}).values():
         tarkista_malli(m)
-    viestit = yksityinen.muodosta_viestit(muisti, historia, ohjeet, KEHOTE, HISTORIA_YLARAJA)
+    viestit = yksityinen.muodosta_viestit(muisti, historia, ohjeet, KEHOTE, HISTORIA_YLARAJA,
+                                         HISTORIA_MERKIT_YLARAJA)
 
     def kysy(m: str, v: list[dict[str, Any]], aikaraja_s: float | None = None, max_tokens: int | None = None) -> str:
         return _kysy_viestit(m, v, aikaraja_s=aikaraja_s, max_tokens=max_tokens, **kw)

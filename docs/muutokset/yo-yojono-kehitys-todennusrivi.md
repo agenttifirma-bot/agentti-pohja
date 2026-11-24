@@ -1,0 +1,1 @@
+- yojono/kehitys.sh: PR-kuvaukseen lisätään rivi "Todennettu kaytossa: ..." vain vihreän, testimäärältään positiivisen ajon jälkeen (Python ja npm). Ilman riviä pr_kutsun koodiportti hylkäsi jokaisen kehitystehtävän PR:n. Korvaa saman asian #406:n 5 rivin version.

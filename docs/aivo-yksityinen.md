@@ -219,7 +219,9 @@ Yksityisen tilan kutsuun liitetään keskustelun viimeiset viestit. Raja riippuu
 | Paikallinen malli (loopback) | 12 | `yksityinen.HISTORIA_YLARAJA` | i5-8400 käsittelee pitkän kehotteen hitaasti, ja vastauksen aikaraja on 900 s. Pidempi historia ylittäisi aikarajan. |
 | OpenRouter | 40 | `yksityinen_or.HISTORIA_YLARAJA` | Etämalli käsittelee pitkän kehotteen sekunneissa. Raja on sama kuin työkalutilassa (`chat.HISTORIA_YLARAJA`). |
 
-OpenRouter-taustapään pahin tapaus: 20 Tonyn viestiä (enintään 4 000 merkkiä kukin), 20 vastausta (enintään 700 tokenia kukin), muisti 16 000 merkkiä, ydinohjeet 20 000 merkkiä ja kehote noin 3 000 merkkiä. Yhteensä noin 160 000 merkkiä eli alle 80 000 tokenia, vaikka arvioitaisiin varovasti 2 merkkiä tokenia kohti. Suositusmallin `qwen/qwen3-235b-a22b-2507` konteksti on 262 144 tokenia, joten kehote mahtuu. Jos vaihdat mallin, tarkista, että sen konteksti on vähintään 100 000 tokenia.
+Yhden viestin raja on 16 000 merkkiä (`chat.VIESTI_YLARAJA`). Selain näyttää merkkilaskurin ja estää liian pitkän viestin lähettämisen. Se ei katkaise tekstiä, ja palvelin hylkää liian pitkän viestin virheellä. Historian viestien yhteenlaskettu pituus on rajattu: OpenRouter-taustapäässä ja työkalutilassa 80 000 merkkiä, paikallisessa taustapäässä 24 000 merkkiä. Uusin viesti säilyy aina kokonaan. Vanhemmista viesteistä säilyy alku, ja loppuun tulee merkintä lyhennyksestä (`yksityinen.lyhenna_historia`).
+
+OpenRouter-taustapään pahin tapaus: historia 80 000 merkkiä (40 viestiä), muisti 16 000 merkkiä, ydinohjeet 20 000 merkkiä ja kehote noin 4 000 merkkiä. Yhteensä noin 120 000 merkkiä eli alle 60 000 tokenia, vaikka arvioitaisiin varovasti 2 merkkiä tokenia kohti. Suositusmallin `qwen/qwen3-235b-a22b-2507` konteksti on 262 144 tokenia, joten kehote mahtuu. Jos vaihdat mallin, tarkista, että sen konteksti on vähintään 100 000 tokenia.
 
 Kehotteen sääntö 2 kertoo mallille, että keskustelun aiemmat viestit ovat käytettävissä, ja sääntö 6 kieltää lupaamasta taustatyötä tai arvioimasta kestoa: yksityisessä tilassa ei ole työkaluja, verkkoa eikä taustaprosesseja.
 
