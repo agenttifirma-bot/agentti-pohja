@@ -318,7 +318,7 @@ class SivuTesti(unittest.TestCase):
     def test_kortti_textcontent_ja_varoitus(self):
         h = chat.sivu_html("openrouter")
         for t in ("naytaVartija", "Vartija ei tarkistanut", "Mekaaninen esitarkistus", "createElement('mark')",
-                  "mk.textContent=x.kohta", "d.append(va,vk,ta,l,h,vv,ti)", "vahvistus:'kyll\u00e4 '+e.sha8"):
+                  "mk.textContent=x.kohta", "d.append(va,vk,ta,ll,l,h,vv,ti)", "vahvistus:'kyll\u00e4 '+e.sha8"):
             self.assertIn(t, h)
         for kielletty in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
             self.assertNotIn(kielletty, h)

@@ -96,7 +96,7 @@ class SivuRajaTesti(unittest.TestCase):
         self.assertIn("ta.setAttribute('aria-describedby',ll.id)", self.kortti)
         self.assertIn("ll.setAttribute('aria-live','polite')", self.kortti)
         self.assertIn("ll.id='llaskuri-'+(++lLaskureita)", self.kortti)        # yksilollinen myos samalle tunnukselle
-        self.assertIn("d.append(va,ta,ll,l,h,ti)", self.kortti)
+        self.assertIn("d.append(va,vk,ta,ll,l,h,vv,ti)", self.kortti)
         self.assertIn("L.textContent=tuhat(n)+' / '+tuhat(LRAJA)", self.h)
         self.assertIn("n>=0.9*LRAJA?' varoitus'", self.h)
         self.assertIn("' \u2013 '+lYlipitka(n)", chat.HTML)
