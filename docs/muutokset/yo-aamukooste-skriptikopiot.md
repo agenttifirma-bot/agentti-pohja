@@ -1,0 +1,1 @@
+- aamukooste: yöjonon oletuspolun skriptikopioiden (SKRIPTIT-taulu) ero repon yojono/-versioihin näkyy aamukoosteessa, koska vanhentunut kehitys.sh jäi huomaamatta; vain luku, ympäristömuuttujia ei vertailla

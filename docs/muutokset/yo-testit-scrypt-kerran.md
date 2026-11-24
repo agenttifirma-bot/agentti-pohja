@@ -1,0 +1,1 @@
+- testit: aivo-testit laskevat salasanatiivisteen (scrypt) kerran per prosessi apumoduulilla `aivo/salasana_apu.py`, ei jokaisessa setUp:ssa; tuotannon parametrit ja kirjautumisen tarkistus ennallaan, nopeuttaa sarjaa

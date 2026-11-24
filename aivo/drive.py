@@ -121,6 +121,7 @@ def _pyynto(menetelma, url, otsakkeet=None, data=None, avaa=urllib.request.urlop
         with avaa(pyynto, timeout=60) as vast:
             return vast.status, vast.read(MAX_TAVUA + 1)
     except urllib.error.HTTPError as e:
+        e.close()                                   # vapauttaa virhevastauksen socketin
         return e.code, b""
     except (urllib.error.URLError, OSError) as e:
         raise DriveVirhe("verkkovirhe (%s)" % type(e).__name__)
