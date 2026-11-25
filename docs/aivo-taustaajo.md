@@ -27,9 +27,9 @@ Ajuri kieltäytyy toimimasta, jos jono tai keskustelukansio on linkki, kuuluu to
 ## Rajat
 
 - Enintään `AIVO_TAUSTA_PAIVARAJA` työtä vuorokaudessa (oletus 5). Asetus ei voi ylittää koodin ylärajaa 20. Työ varataan laskuriin ennen ensimmäistä mallikutsua.
-- Työn kokonaisaikaraja `AIVO_TAUSTA_AIKARAJA_S` (oletus 600 s, yläraja 900 s). Kukin kutsu saa enintään jäljellä olevan ajan. Yksittäisen kutsun yläraja on `yksityinen_or.TAUSTA_AIKARAJA_S` (600 s). Chatin oma 120 sekunnin raja ei muutu.
+- Työn kokonaisaikaraja `AIVO_TAUSTA_AIKARAJA_S` (oletus 600 s, yläraja 900 s). Kukin kutsu saa enintään jäljellä olevan ajan. Yksittäisen kutsun yläraja on `yksityinen_or.TAUSTA_AIKARAJA_S` (600 s). Chatin oma aikaraja (`yksityinen_or.CHAT_AIKARAJA_S`, 360 s) on erillinen.
 - Enintään kaksi mallikutsua työtä kohden.
-- Kutsut kulkevat vain funktion `yksityinen_or.kysy_taustatyo` kautta. Malli tarkistetaan funktiolla `avoin_malli()`, ZDR ja `data_collection=deny` pakotetaan, ja yhteinen päiväkatto (10 €/vrk, A1005) tarkistetaan ennen kutsua. Kulut kirjataan tehtävätunnuksella `aivo-yksityinen-tausta`. Vastauksen enimmäispituus on sama kuin chatissa (`yksityinen.MAX_TOKENIA`).
+- Kutsut kulkevat vain funktion `yksityinen_or.kysy_taustatyo` kautta. Malli tarkistetaan funktiolla `avoin_malli()`, ZDR ja `data_collection=deny` pakotetaan, ja yhteinen päiväkatto (10 €/vrk, A1005) tarkistetaan ennen kutsua. Kulut kirjataan tehtävätunnuksella `aivo-yksityinen-tausta`. Vastauksen enimmäispituus on sama kuin OpenRouter-chatissa (`yksityinen_or.MAX_TOKENIA`, 8 000 tokenia, A1095).
 - Taustavastaus ei voi tehdä ehdotuksia eikä päätöksiä, koska kaikki `[[ ]]`-merkinnät poistetaan.
 - Uusia verkkokohteita ei ole.
 

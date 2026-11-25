@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from aivo import chat, openrouter_kulut as ok, taustaajo as ta, yhdistelma, yksityinen
+from aivo import chat, openrouter_kulut as ok, taustaajo as ta, yhdistelma, yksityinen, yksityinen_or
 
 AIVO = Path(__file__).resolve().parent
 MALLI_K = "meta-llama/llama-3.3-70b-instruct"
@@ -570,7 +570,7 @@ class ZdrTesti(Pohja):
             self.assertEqual(runko["provider"]["data_collection"], "deny")
             self.assertTrue(ok.avoin_malli(runko["model"]))
             self.assertEqual(url, ok.OSOITE)
-            self.assertLessEqual(runko["max_tokens"], yksityinen.MAX_TOKENIA)
+            self.assertEqual(runko["max_tokens"], yksityinen_or.MAX_TOKENIA)      # A1095: 8 000
             self.assertLessEqual(timeout, ta.AIKARAJA_S)
         self.assertEqual([p[0]["model"] for p in self.pyynnot], [MALLI_A, MALLI_K])
         kirjatut = [json.loads(x) for x in (self.kulut / ok.KULUT).read_text().splitlines()]

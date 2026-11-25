@@ -430,7 +430,7 @@ class Palvelin(unittest.TestCase):
         (r / "kulut").mkdir(mode=0o700)
         self.verkko = Verkko({"reititin": "kevyt"})
         alkup = yo.tee_kuljetin
-        p = mock.patch.object(yo, "tee_kuljetin", lambda avain, avaa=None, aikaraja_s=None: alkup(avain, self.verkko, aikaraja_s))
+        p = mock.patch.object(yo, "tee_kuljetin", lambda avain, avaa=None, aikaraja_s=None, **kw: alkup(avain, self.verkko, aikaraja_s, **kw))
         p.start()
         self.addCleanup(p.stop)
 
