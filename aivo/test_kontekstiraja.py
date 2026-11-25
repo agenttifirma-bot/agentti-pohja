@@ -9,6 +9,7 @@ import os
 import tempfile
 import types
 import unittest
+import unittest.mock
 from datetime import datetime
 from pathlib import Path
 
@@ -188,6 +189,29 @@ class MuistiEiSyrjaytaHistoriaaTesti(unittest.TestCase):
         self.assertEqual(kr.historiaraja(PIKKU, yo.MAX_TOKENIA, 10 ** 7), 0)
 
 
+class ItsetarkistusRajaTesti(unittest.TestCase):
+    """#445 + #446: itsetarkistuksen kehote rajataan samoin kuin vastauksen, myos pienen tarkastajamallin mukaan."""
+
+    def viestit(self, vastaaja, tarkastaja, h):
+        talteen = {}
+
+        def aja(vastaus, viestit, kysy, **kw):
+            talteen["v"] = viestit
+            return None
+        with unittest.mock.patch.object(yo.itsetarkistus, "aja", aja):
+            yo.tarkista_vastaus("muisti", h, "ohje", "vastaus", vastaaja=vastaaja, tarkastaja=tarkastaja)
+        return talteen["v"]
+
+    def test_pieni_tarkastaja_mahtuu_kontekstiin(self):
+        v = self.viestit(ISO, PIENI, historia(150, 3_000))
+        self.assertLessEqual(kr.viestien_merkit(v), kr.syote_merkit(PIENI, yo.MAX_TOKENIA, VARAUS))
+        self.assertTrue(v[-1]["content"].startswith("v149 "))      # uusin viesti kokonaan
+
+    def test_iso_malli_ei_lyhenna(self):
+        v = self.viestit(ISO, ISO, historia(150, 3_000))
+        self.assertFalse(any("lyhennetty" in x["content"] for x in v[1:]))
+
+
 class SuojattuViestiTesti(unittest.TestCase):
     """Katselmoinnin havainto: uusin Tonyn viesti (enintaan 16 000 merkkia) sailyy aina kokonaan, joten sen pitaa
     mahtua historian osuuteen myos pienella mallilla, kun muisti on taynna."""
@@ -223,7 +247,21 @@ class ChatMuistiTesti(unittest.TestCase):
         os.utime(self.kirjasto / "osuma.md", (1_600_000_000, 1_600_000_000))     # vanhin, mutta osuu
 
     def tila(self):
-        return types.SimpleNamespace(agenttidata=None, yks_muisti=str(self.kirjasto), yks_tiivistelmat=None, roolit={})
+        korj = Path(self._t.name) / "korjaukset"
+        return types.SimpleNamespace(agenttidata=None, yks_muisti=str(self.kirjasto), yks_tiivistelmat=None, roolit={},
+                                     korjaukset=chat.korjaukset.valmistele(str(korj)),
+                                     odottavat_ehdotustiedostot=lambda: [])
+
+    def test_korjaukset_mukana_ja_rajassa(self):
+        """#444 + #446: Tonyn korjaus tulee OpenRouter-muistiin kirjaston edelle, ja kokonaisuus pysyy rajassa."""
+        tila = self.tila()
+        chat.korjaukset.tallenna(tila.korjaukset, "k1", 1, "vanha vastaus", "vaarin",
+                                 next(iter(chat.korjaukset.LUOKAT)), "kissan nimi on Mirri")
+        for malli in (ISO, PIENI):
+            muisti, tiedostot = chat.yksityinen_muisti(tila, "kissa", historia(1, 10), "o", malli, yhdistelma.OLETUS)
+            self.assertEqual(tiedostot[0], chat.korjaukset.LAHDE_NIMI)
+            self.assertIn("kissan nimi on Mirri", muisti)
+            self.assertLessEqual(len(muisti), yo.muistin_merkkiraja(malli, "o", historia(1, 10)) + 1_000)
 
     def test_paikallinen_raja_ennallaan(self):
         self.assertEqual((yksityinen.MUISTI_YLARAJA, yksityinen.HISTORIA_YLARAJA, yksityinen.HISTORIA_MERKIT_YLARAJA,

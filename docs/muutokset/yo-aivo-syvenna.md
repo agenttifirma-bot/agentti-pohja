@@ -1,0 +1,1 @@
+- aivo-syvenna: yksityisen chatin Syvenna-painike kirjoittaa taustaajon tyon vain Tonyn sha-sidotulla kaynnistyksella (aivo/syvennys.py); painike estyy paivarajalla ja paivakatolla ja syy nakyy; mallin [[SYVENNA]] on vain vihje; asennusohje kontille 122 (docs/aivo-taustaajo.md). RAJATTU: rajat ennallaan.

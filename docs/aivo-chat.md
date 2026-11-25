@@ -443,6 +443,25 @@ Väärän tilan keskustelulle reitit vastaavat 404. Tunnus on aina 12 heksamerkk
 
 **Käyttöönotto.** Kansio luodaan automaattisesti yksityisen datan viereen (`--luovutukset` tai `AIVO_LUOVUTUKSET` vaihtaa polun). Jos palvelu ei saa luoda sitä, luo se itse: `sudo install -d -m 700 -o aivo-yksityinen -g aivo-yksityinen /var/lib/aivo-yksityinen/luovutukset`. Chat-palvelun käyttäjällä pitää olla kirjoitusoikeus kirjastoon, kuten päätöskirjauksessakin.
 
+## Palaute ja korjaukset yksityisessä tilassa
+
+Yksityisen tilan jokaisen Aivon vastauksen alla on painikkeet **Hyvä** ja **Väärin**. Väärin-painike avaa luokkavalinnan ja tekstikentän korjaukselle (enintään 2 000 merkkiä). Luokat ovat kiinteät: oma rakenne ja toiminta, väärä tieto, muistin tai lähteiden käyttö, pyynnön tai ohjeen noudattaminen, kieli ja muoto sekä muu.
+
+**Tallennus.** Palaute tallentuu yksityiseen kansioon `/var/lib/aivo-yksityinen/korjaukset` (0700) tiedostoon `korjaukset.jsonl` (0600). Rivit vain lisätään, mitään ei muuteta eikä poisteta. Vastauksen alku (200 merkkiä) otetaan palvelimen tallentamasta historiasta, ei selaimen lähettämänä. Palvelin ei kirjoita palautteen sisältöä lokiin, ja virheviesteissä on vain syy.
+
+**Kehote.** Seuraavan viestin kehotteessa korjaukset ovat MUISTI-osiossa omana tiedostonaan `tonyn-korjaukset` (data, ei ohjeita). Osioon valitaan enintään 8 korjausta ja 3 000 merkkiä: ensin viestiin osuvimmat (sama sananalkuhaku kuin muistitiedostoissa), sitten uusimmat. Osion koko vähennetään muistin rajasta. Tonyn tekstistä neutraloidaan palvelimen merkintöjen ja lohkomerkintöjen matkinta.
+
+**Toistuva korjaus → ehdotus.** Kun samassa luokassa on vähintään kaksi käsittelemätöntä korjausta eri vastauksiin, palvelin lisää osioon merkinnän `TOISTUVA KORJAUS` ja tiedostonimen `korjaukset-<luokka>.md`. Kehotteen sääntö 11 pyytää Aivoa silloin ehdottamaan sääntöä nykyisellä `[[EHDOTUS]]`-mekanismilla. Ehdotus näkyy tavallisena ydinohje-ehdotuksena, ja Tony hyväksyy (`kyllä <sha8>`) tai hylkää sen painikkeella. Mikään korjaus tai mallin teksti ei hyväksy ehdotusta. Kun ehdotus odottaa, samaa merkintää ei toisteta. Kun Tony hyväksyy tai hylkää tiedoston `korjaukset-<luokka>.md` ehdotuksen, luokan korjaukset merkitään käsitellyiksi. Ne näkyvät kehotteessa edelleen, mutta uusi merkintä tulee vasta kahdesta uudesta korjauksesta.
+
+| Reitti | Tila | Kuvaus |
+|---|---|---|
+| `POST /api/palaute` `{keskustelu, indeksi, arvio: "hyva"}` | yksityinen | hyvä-arvio Aivon vastaukseen |
+| `POST /api/palaute` `{keskustelu, indeksi, arvio: "vaarin", luokka, korjaus}` | yksityinen | korjaus Aivon vastaukseen |
+
+Indeksin pitää osoittaa Aivon vastaukseen. Työkalutilan keskustelulle reitti vastaa 404.
+
+**Käyttöönotto.** Kansio ja tiedosto luodaan käynnistyksessä yksityisen datan viereen (`--korjaukset` tai `AIVO_KORJAUKSET` vaihtaa polun). Käynnistys avaa tiedoston samoin liputuksin kuin tallennus, joten kirjoituseste näkyy heti palvelun käynnistyessä eikä vasta ensimmäisessä painalluksessa. Jos palvelu ei käynnisty ja journalissa on `korjaustiedostoa ei voi avata` tai `yksityista kansiota ei voi luoda`, luo kansio itse: `sudo install -d -m 700 -o aivo-yksityinen -g aivo-yksityinen /var/lib/aivo-yksityinen/korjaukset` ja tarkista, että yksikön `ReadWritePaths` kattaa sen.
+
 ## Asennuksen tilatarkistus (vain luku)
 
 Päivityksen jälkeen kontissa 122 yksi komento kertoo, onko asennus kunnossa. Anna argumenttina odotettu commit (`git rev-parse HEAD` agentti-pohjan kloonista, jonka PR on mergattu):

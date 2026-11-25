@@ -113,6 +113,8 @@ Yksityisen tilan päätös kirjataan vain yksityiseen muistiin (tiedosto 0600) e
 
 ## Luovutus työkalutilaan
 
+Tony voi antaa jokaiselle yksityisen tilan vastaukselle palautteen (Hyvä tai Väärin ja korjaus). Korjaukset tallentuvat kansioon `/var/lib/aivo-yksityinen/korjaukset` (0700), tulevat seuraavan viestin kehotteeseen datana ja toistuessaan johtavat ydinohje-ehdotukseen, jonka Tony hyväksyy itse. Tarkemmin: `docs/aivo-chat.md`, kohta Palaute ja korjaukset yksityisessä tilassa.
+
 Yksityisessä tilassa sovitun tekstin voi luovuttaa työkalutilaan vain Tonyn hyväksynnällä. Aivo voi ehdottaa luovutusta lohkolla `[[LUOVUTUS]] … [[/LUOVUTUS]]`, ja Tony voi luovuttaa minkä tahansa viestin painikkeella. Ehdotukset ja loki luovutetuista teksteistä ovat kansiossa `/var/lib/aivo-yksityinen/luovutukset` (0700). Hyväksytty teksti kopioidaan kirjaston kansioon `saapuneet/`. Kehote käskee noudattamaan ydinohjeiden luovutussääntöjä; jos niitä ei ole, Aivo ei ehdota luovutusta ennen kuin Tony pyytää. Tarkemmin: `docs/aivo-chat.md`, kohta Luovutus yksityisestä tilasta työkalutilaan.
 
 ## Keskustelujen tiivistys (komento)
@@ -234,7 +236,7 @@ OpenRouter-taustapäällä muisti, agenttidata ja keskusteluhistoria täyttävä
 
 Esimerkki: mallilla `qwen/qwen3-235b-a22b-2507` kehotteeseen mahtuu noin 228 000 tokenia eli noin 570 000 merkkiä. Täysi kehote maksaa arviolta enintään noin 0,04 USD.
 
-Kehotteen sääntö 2 kertoo mallille, että keskustelun aiemmat viestit ovat käytettävissä, ja sääntö 6 kieltää lupaamasta taustatyötä tai arvioimasta kestoa: yksityisessä tilassa ei ole työkaluja, verkkoa eikä taustaprosesseja.
+Kehotteen sääntö 2 kertoo mallille, että keskustelun aiemmat viestit ovat käytettävissä, ja sääntö 6 kieltää lupaamasta taustatyötä tai arvioimasta kestoa: Aivolla ei ole verkkoa, eikä se voi ajaa ohjelmia itse. Agenttitehtävää se voi ehdottaa säännön 8 mukaisesti. Säännöt 9–11 koskevat omaa rakennetta ja kuluja (9), `[[SYVENNA]]`-vihjettä (10) ja `tonyn-korjaukset`-tiedostoa (11). Testi `aivo/test_yksityinen_saantonumerot.py` varmistaa, että säännöt on numeroitu 1..N ilman aukkoja ja kaksoisnumeroita kummassakin taustapäässä.
 
 ## Mallin valinta (OpenRouter-taustapää)
 
@@ -310,6 +312,24 @@ Käyttöliittymä:
 Rajapinta: `GET /api/mallit` palauttaa OpenRouter-taustapäällä myös kentät `yhdistelmat` ja `yhdistelma` (oletus). `POST /api/uusi` ja `POST /api/viesti` hyväksyvät kentän `yhdistelma`. Muu arvo saa vastauksen 400, eikä viestiä silloin tallenneta. Työkalutila ei hyväksy kenttää (400). Yhdistelmän vastaus sisältää kentät `yhdistelma`, `mallit`, `kutsuja` sekä tarvittaessa `luonnos` ja `merkinta`. Keskustelutiedoston Aivon rivillä ovat `yhdistelma`, `mallit`, `kutsuja` ja `merkinta`.
 
 Kulut: tarkastus ja reititys tekevät 2 kutsua ja rinnakkais 3 kutsua viestiä kohden. Tiimi tekee arkisessa viestissä 2 ja vaativassa 4 kutsua. Tarkastajan ja kokoajan syöte sisältää luonnoksen, joten se on yhden mallin kutsua pidempi.
+
+## Itsetarkistus (OpenRouter-taustapää)
+
+Asetus `AIVO_YKSITYINEN_ITSETARKISTUS=paalla` (tai `--yksityinen-itsetarkistus paalla`) ottaa käyttöön vastauksen itsetarkistuksen. Oletus on `pois`. Muu arvo estää käynnistyksen, ja asetus vaatii yksityisen tilan ja OpenRouter-taustapään. Koodi on tiedostossa `aivo/itsetarkistus.py`, ja kutsut kulkevat funktion `yksityinen_or.tarkista_vastaus` kautta.
+
+1. Tarkistus tehdään vain, jos vastauksessa on lukuja, päivämääriä, A-päätösviittauksia (esim. A984) tai väitteitä Aivon rakenteesta. Muut vastaukset eivät maksa mitään.
+2. Tarkastajamalli saa vastauksen ja sen lähteet: kehotteen järjestelmäosan (ydinohjeet, muisti, tiivistelmät, agenttidata) ja keskustelun viimeiset viestit. Se palauttaa JSON-listan ristiriidoista (`kohta`, `syy`). Malli on roolin `tarkastaja` malli (`AIVO_YKSITYINEN_ROOLIT`), muuten keskustelun malli. Mallin pitää läpäistä `avoin_malli()`-tarkistus.
+3. Jos ristiriitoja on, vastaaja saa korjata vastauksen kerran. Korjattua vastausta ei tarkisteta uudelleen. Vastauksen alla näkyy merkintä, esimerkiksi "tarkistus: 1 kohta epävarma; vastaus korjattiin kerran", ja kohdat luettelona. "Näytä alkuperäinen vastaus" näyttää korjaamattoman vastauksen, ja se tallentuu myös keskustelutiedostoon (`tarkistus.alkuperainen`). Tarkistus ei siis muuta vastausta hiljaa.
+4. Merkinnät (`[[EHDOTUS ..]]`, `[[VALINNAT: ..]]` ym.) tulevat vain alkuperäisestä vastauksesta. Tarkastajan teksti on dataa: siitä poistetaan merkinnät ja ohjausmerkit.
+
+Rajat:
+
+- Kutsut kulkevat samaa ZDR-reittiä (`openrouter_kulut.kutsu`, lippu `yksityinen_chat=True`) ja kuluttavat yhteistä päiväkattoa. Kulukirjanpidossa tehtävä on `aivo-yksityinen-tarkistus`, ja kulunäkymä laskee sen chatiksi.
+- Jos päiväkatto on täynnä, vastaus näytetään ilman tarkistusta ja merkintä kertoo sen. Kelvoton tarkastajan vastaus tai verkkovirhe näkyy merkintänä "tarkistus: ei onnistunut".
+- Kutsuraja 4 per viesti (`yhdistelma.MAX_KUTSUT_VIESTI`) koskee yhdistelmän ja tarkistuksen summaa. Jos raja on täynnä, tarkistus ohitetaan. Jos tilaa on vain yhdelle kutsulle, korjausta ei tehdä.
+- Tarkastajan kutsussa vastausraja on 1 500 tokenia ja aikaraja 120 s. Korjauksessa ne ovat samat kuin chatissa.
+- Tarkistuksella on oma kokonaisaikaraja 240 s (tarkastaja ja korjaus yhteensä). Jokainen kutsu saa enintään jäljellä olevan ajan, ja kun aika loppuu, korjausta ei aloiteta. Tarkistus voi siis pidentää viestin vastausaikaa enintään noin 240 s.
+- `[[AGENTTI]]`-lohkot tulevat vain alkuperäisestä vastauksesta, kuten muutkin merkinnät.
 
 ## Rajat ja avoimet asiat
 
