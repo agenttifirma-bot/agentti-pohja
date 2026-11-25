@@ -251,7 +251,7 @@ class AjoTesti(unittest.TestCase):
         self.assertEqual(set(tulos), {LISTALTA, LISTAN_ULKOPUOLELTA, "openai/gpt-oss-120b"})
         taulu = mv.taulukko(tulos)
         self.assertIn("| Pilkkominen | Ohjeiden kunnioitus |", taulu)
-        self.assertEqual({r.count("|") for r in taulu.splitlines()}, {12})
+        self.assertEqual({r.count("|") for r in taulu.splitlines()}, {13})
         # feikkivastauksessa ei ole rakennusohjetta: pilkkomistehtavat 0 tuomarin pisteista riippumatta
         self.assertEqual(tulos[LISTALTA]["alueet"]["pilkkominen"], 0.0)
         self.assertGreater(tulos[LISTALTA]["alueet"]["paatos"], 0.0)

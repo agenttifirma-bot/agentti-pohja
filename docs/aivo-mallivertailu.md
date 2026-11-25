@@ -36,6 +36,7 @@ Tehtävät ovat tavallisia ja sallittuja pyyntöjä: päätösapu, suunnitelma, 
 
 - Jokainen kutsu kulkee `openrouter_kulut.kutsu`n kautta: yhteinen päiväkatto, ZDR ja `data_collection=deny` pakotettuina sekä kulukirjaus. Kuljetin on tuotannon `yksityinen_or.tee_kuljetin`.
 - Vain `EHDOKKAAT`-listan mallit kelpaavat. `AVOIMET_MALLIT`-listan mallit ajetaan lipulla `yksityinen_chat=True` kuten tuotannossa. Listan ulkopuoliset avoimen painoston mallit ajetaan ilman lippua, koska data on synteettistä. ZDR ja `deny` ovat silti pakotettuja.
+- Ajatteleville malleille (`AJATTELEVAT_MALLIT`) vastausraja on tuotannon 8 000 tokenia, koska päättely kuluttaa samaa rajaa (ks. docs/aivo-itsetuntemus.md, ”Ajattelevat mallit”). Tyhjä vastaus on oma luokkansa ”ei vastausta”: se ei saa nollaa, se jää pois keskiarvoista ja tuomaripaketista, ja taulukossa on sarake ”Ei vastausta” (tyhjät / kutsut).
 - Kuluraja on 3 $ koko ajolle (OpenRouterin ilmoittama `usage.cost`). Malli ohitetaan kahden peräkkäisen virheen jälkeen, ja koko ajo pysähtyy kuuden virheen jälkeen. Syy: kirjanpito kirjaa epäonnistuneen kutsun varovaisena 0,50 $:n kuluna.
 
 ## Ajo kontissa 122

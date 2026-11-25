@@ -39,7 +39,11 @@ Saannot (koodi on laki):
   * Vastauksen pituusraja (A1095): OpenRouter-taustapaan MAX_TOKENIA = 8 000 on erillaan paikallisen loopback-mallin
     rajasta (yksityinen.MAX_TOKENIA = 700, i5-8400 ei ehtisi 8 000 tokenia). Yhden mallin chat-kutsun aikaraja on
     CHAT_AIKARAJA_S. Jos vastaus katkeaa pituusrajaan (finish_reason == "length"), chat lisaa loppuun
-    KATKENNUT_HUOMAUTUS ja kirjaa stderriin vain tiedon katkeamisesta (ei sisaltoa). Paivakatto ja varaus eivat muutu."""
+    KATKENNUT_HUOMAUTUS ja kirjaa stderriin vain tiedon katkeamisesta (ei sisaltoa). Paivakatto ja varaus eivat muutu.
+  * Ajatteleva malli (paattely ja vastaus jakavat max_tokens-rajan): jos raja taytty paattelyssa, content on tyhja ja
+    finish_reason "length". Silloin kaikki reitit (chat, yhdistelman osakutsu, tiivistys, taustaajo) nostavat
+    VastausKatkesi-virheen (YksityinenVirhe), jonka viesti kertoo katkeamisesta; tyhjaa viestia ei palauteta.
+    Taustaajon katkennut mutta ei-tyhja vastaus saa loppuun TAUSTA_KATKENNUT_HUOMAUTUS-merkinnan."""
 from __future__ import annotations
 
 import json
@@ -71,6 +75,9 @@ MAX_TOKENIA = 8_000
 # edelleen VASTAUS_AIKARAJA_S:aa (120 s) tai omaa rajaansa.
 CHAT_AIKARAJA_S = 360
 KATKENNUT_HUOMAUTUS = "[vastaus katkesi pituusrajaan, kirjoita: jatka]"
+TAUSTA_KATKENNUT_HUOMAUTUS = "[vastaus katkesi pituusrajaan]"
+KATKESI_TYHJANA = ("Vastaus katkesi pituusrajaan ennen kuin malli ehti kirjoittaa vastauksen (ajatteleva malli "
+                   "k\u00e4ytti rajan p\u00e4\u00e4ttelyyn). Kokeile uudelleen tai valitse toinen malli.")
 # Historia on taustapaakohtainen. Paikallinen malli (yksityinen.HISTORIA_YLARAJA = 12) kasittelee kehotteen hitaasti
 # 900 s aikarajan sisalla; OpenRouterin malli kasittelee pitkan kehotteen sekunneissa, joten raja on sama 40 kuin
 # tyokalutilassa (chat.HISTORIA_YLARAJA). Viestiraja on 16 000 merkkia, joten 40 viestin historia voisi olla
@@ -100,6 +107,27 @@ _AVAIN_RE = re.compile(r"^[\x21-\x7e]{16,300}$")
 
 
 avoin_malli = openrouter_kulut.avoin_malli
+
+
+class VastausKatkesi(YksityinenVirhe):
+    """Vastaus katkesi pituusrajaan ennen yhtaan vastaustekstia (finish_reason "length", tyhja content)."""
+
+
+def vastauksen_teksti(data: Any) -> str:
+    """Vastauksen teksti (strip). Tyhja content + finish_reason "length" -> VastausKatkesi; muu tyhja tai puuttuva
+    -> YksityinenVirhe. Viesteissa ei ole vastauksen sisaltoa."""
+    try:
+        teksti = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        teksti = None
+        if not katkesi_pituusrajaan(data):
+            raise YksityinenVirhe("OpenRouterin vastauksessa ei ollut tekstia") from None
+    if teksti is None or (isinstance(teksti, str) and not teksti.strip()):
+        if katkesi_pituusrajaan(data):
+            raise VastausKatkesi(KATKESI_TYHJANA)
+    if not isinstance(teksti, str) or not teksti.strip():
+        raise YksityinenVirhe("OpenRouter antoi tyhjan vastauksen")
+    return teksti.strip()
 
 
 def tarkista_malli(malli: Any) -> str:
@@ -223,15 +251,14 @@ def _kysy_viestit(
     except openrouter_kulut.ZdrVirhe:
         raise YksityinenVirhe("ZDR-s\u00e4\u00e4nt\u00f6 est\u00e4\u00e4 pyynn\u00f6n; kutsua ei tehty") from None
     try:
-        teksti = data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError):
-        raise YksityinenVirhe("OpenRouterin vastauksessa ei ollut tekstia") from None
-    if not isinstance(teksti, str) or not teksti.strip():
-        raise YksityinenVirhe("OpenRouter antoi tyhjan vastauksen")
+        teksti = vastauksen_teksti(data)
+    except VastausKatkesi:
+        print("yksityinen_or: vastaus katkesi pituusrajaan ennen tekstia (max_tokens=%d)" % tokenit, file=sys.stderr)
+        raise
     if huomauta_katkeamisesta and katkesi_pituusrajaan(data):
         print("yksityinen_or: vastaus katkesi pituusrajaan (max_tokens=%d)" % tokenit, file=sys.stderr)
-        return teksti.strip() + "\n\n" + KATKENNUT_HUOMAUTUS
-    return teksti.strip()
+        return teksti + "\n\n" + KATKENNUT_HUOMAUTUS
+    return teksti
 
 
 def katkesi_pituusrajaan(data: Any) -> bool:
@@ -323,13 +350,7 @@ def kysy_tiivistys(
         raise PaivakattoTaynna("OpenRouterin p\u00e4iv\u00e4katto on t\u00e4ynn\u00e4 tai kulukirjanpito ei kelpaa; kutsua ei tehty") from None
     except openrouter_kulut.ZdrVirhe:
         raise YksityinenVirhe("ZDR-s\u00e4\u00e4nt\u00f6 est\u00e4\u00e4 pyynn\u00f6n; kutsua ei tehty") from None
-    try:
-        teksti = vastaus["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError):
-        raise YksityinenVirhe("OpenRouterin vastauksessa ei ollut tekstia") from None
-    if not isinstance(teksti, str) or not teksti.strip():
-        raise YksityinenVirhe("OpenRouter antoi tyhjan vastauksen")
-    return teksti.strip()
+    return vastauksen_teksti(vastaus)
 
 
 def kysy_taustatyo(
@@ -357,10 +378,8 @@ def kysy_taustatyo(
         raise PaivakattoTaynna("OpenRouterin p\u00e4iv\u00e4katto on t\u00e4ynn\u00e4 tai kulukirjanpito ei kelpaa; kutsua ei tehty") from None
     except openrouter_kulut.ZdrVirhe:
         raise YksityinenVirhe("ZDR-s\u00e4\u00e4nt\u00f6 est\u00e4\u00e4 pyynn\u00f6n; kutsua ei tehty") from None
-    try:
-        teksti = vastaus["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError):
-        raise YksityinenVirhe("OpenRouterin vastauksessa ei ollut tekstia") from None
-    if not isinstance(teksti, str) or not teksti.strip():
-        raise YksityinenVirhe("OpenRouter antoi tyhjan vastauksen")
-    return teksti.strip()
+    teksti = vastauksen_teksti(vastaus)                    # tyhja + "length" -> VastausKatkesi
+    if katkesi_pituusrajaan(vastaus):
+        print("yksityinen_or: taustatyon vastaus katkesi pituusrajaan (max_tokens=%d)" % MAX_TOKENIA, file=sys.stderr)
+        return teksti + "\n\n" + TAUSTA_KATKENNUT_HUOMAUTUS
+    return teksti

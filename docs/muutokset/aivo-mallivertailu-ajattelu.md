@@ -1,0 +1,1 @@
+- aivo: ajattelevan mallin tyhjä vastaus (päättely käytti koko max_tokens-rajan) on mallivertailussa oma luokkansa ”ei vastausta” eikä ”väärin”; ajatteleville malleille tuotannon 8 000 tokenin raja, rivikohtainen finish_reason, ja tuotannossa ilmoitus ”vastaus katkesi” tyhjän viestin sijaan

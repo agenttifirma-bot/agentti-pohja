@@ -27,8 +27,20 @@ Pisteytys on mekaaninen (säännölliset lausekkeet) ja suuntaa antava. Vastauks
 | "en tiedä" (tieto olisi ollut) | rakennekysymys, malli sanoo ettei tiedä | 0,5 |
 | väärin | väärä tai puutteellinen vastaus, mutta epävarmuus on merkitty (esim. "luultavasti") | 0 |
 | arvaus faktana | kielletty väite tai keksitty vastaus ilman epävarmuuden merkintää | 0 |
+| ei vastausta | malli palautti tyhjän vastauksen (esim. ajatteleva malli käytti koko vastausrajan päättelyyn) | ei pisteitä |
 
 Päättelytehtävät ovat joko oikein tai väärin.
+
+”Ei vastausta” ei ole ”väärin”. Se jää pois lajien ja kokonaispisteiden keskiarvosta, ja taulukossa on sille oma sarake. Jos mallilla ei ole yhtään pisteytettyä vastausta, kokonaispisteiden kohdalla on ”-”. Virhe (poikkeus, esim. aikakatkaisu) lasketaan edelleen vääräksi.
+
+### Ajattelevat mallit
+
+OpenRouterissa päättely ja vastaus jakavat saman `max_tokens`-rajan. Jos raja täyttyy päättelyn aikana, vastauksessa on `finish_reason: "length"` ja tyhjä `content`, ja päättely laskutetaan silti (OpenRouterin ohje *Reasoning Tokens*). Ajossa 25.11.2026 `qwen/qwen3.5-397b-a17b` sai 800 tokenin rajalla 33 tyhjää vastausta, jotka luokiteltiin silloin vääriksi.
+
+- Listan `mallivertailu.AJATTELEVAT_MALLIT` malleille annetaan sama vastausraja kuin tuotannossa (`yksityinen_or.MAX_TOKENIA`, 8 000 tokenia). Muut mallit käyttävät edelleen 800 tokenin rajaa (`ITSE_MAX_TOKENIA`). `reasoning`-parametria ei lähetetä, koska tuotantokaan ei lähetä sitä.
+- Jokaiselle riville kirjataan `finish_reason`, `tyhja`, `ajatteli` (vastauksessa oli päättelyä) ja `tokenit_paattely`. Päättelyn tekstiä ei tallenneta.
+- Lokirivi näyttää tyhjän vastauksen muodossa `tyhja (length)`. Yhteenvedossa (`ajo.json`) ovat `ei_vastausta` ja `ajattelevat_listan_ulkopuolella`: jälkimmäinen kertoo mallit, jotka ajattelivat ja jäivät tyhjiksi, vaikka ne eivät ole listalla.
+- Kuluarvio laskee ajattelevalle mallille 8 000 tokenin enimmäismäärän. Ajon 3 USD:n raja ja päiväkatto eivät muutu.
 
 Kielletty väite ei osu, jos saman lauseenosan alussa ennen sitä on kielto tai lainaus (ei, en, eivät, eikä, mukaan). Esimerkiksi ”saldosta, ei Claude-tilauksesta” tai ”kalenterin mukaan keskiviikko” ei ole väite. Pisteytys on silti mekaaninen: tarkista arvaukset ja väärät vastaukset käsin tiedostosta `vastaukset.jsonl`.
 
@@ -63,7 +75,7 @@ Valitsimilla `--yhdistelma N` (N = 3 tai 5) ja `--kokoaja <malli>` jokainen kysy
 
 - Pisteytys tehdään lopullisesta vastauksesta samalla luokituksella kuin yksittäisille malleille. Jäsenten vastaukset tallentuvat riville (`osat`) käsin tarkistusta varten.
 - Kysymystä kohden tehdään N + 1 kutsua. Kuluarvio laskee ne ja kokoajan pidemmän syötteen (N vastausta enimmäispituudella). Ajon 3 USD:n raja tarkistetaan ennen jokaista kysymystä koko kysymyksen varauksella.
-- Jos jäsen epäonnistuu, kokoaja saa muiden vastaukset. Jos kokoaja epäonnistuu, rivillä on virhe eikä vastausta, ja se lasketaan vääräksi.
+- Jos jäsen epäonnistuu tai vastaa tyhjää, kokoaja saa muiden vastaukset. Jos kaikki jäsenet vastaavat tyhjää, kokoajaa ei kutsuta ja rivi on ”ei vastausta”. Jos kokoajan vastaus on tyhjä, rivi on ”ei vastausta”. Jos kokoaja epäonnistuu, rivillä on virhe eikä vastausta, ja se lasketaan vääräksi. Yhteenvedossa `jasenten_tyhjat` kertoo jäsenten tyhjien vastausten määrän.
 - Kutsut tehdään peräkkäin. Rivin `sekuntia` on arvio rinnakkaisesta ajosta (hitain jäsen + kokoaja), ja `sekuntia_perakkain` on todellinen peräkkäinen aika. Taulukon mediaaniaika käyttää arvoa `sekuntia`.
 - Taulukossa yhdistelmä näkyy omana rivinään nimellä `yhdistelma-N (kokoaja <malli>)`. Yhteenveto kirjoitetaan tiedostoon `ajo-yhdistelma-N.json`.
 - Koe on erillinen ajo. Palvelun yhdistelmärajat (`aivo/yhdistelma.py`: `MAX_MALLEJA = 3`, `MAX_KUTSUT_VIESTI = 4`) eivät muutu.

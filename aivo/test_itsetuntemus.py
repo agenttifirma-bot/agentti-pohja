@@ -100,7 +100,7 @@ class LuokitteluTesti(unittest.TestCase):
         self.assertEqual(it.luokittele(r03, "Luultavasti toimin Claude-mallilla."), "vaarin")
         self.assertEqual(it.luokittele(r03, "En tied\u00e4, mik\u00e4 malli olen."), "en_tieda")
         self.assertEqual(it.luokittele(r03, "Olen kielimalli."), "vaarin")
-        self.assertEqual(it.luokittele(r03, ""), "vaarin")
+        self.assertEqual(it.luokittele(r03, ""), "ei_vastausta")        # tyhja ei ole vaarin
 
     def test_muisti_pilveen(self):
         r01 = self.k["R01"]
@@ -162,7 +162,7 @@ class LuokitteluTesti(unittest.TestCase):
                  {"malli": "a/b", "kysymys": "XX", "vastaus": "ohitetaan"}]
         t = it.pisteet(rivit, sarja)["a/b"]
         self.assertEqual(t["luokat"], {"oikein": 0, "vaarin": 1, "en_tieda_oikein": 1, "arvaus_faktana": 1,
-                                       "en_tieda": 1})
+                                       "en_tieda": 1, "ei_vastausta": 0})
         self.assertEqual(t["lajit"], {"rakenne": round(0.5 / 3, 2), "en_tieda": 1.0})
         self.assertEqual(t["yhteensa"], round(1.5 / 4, 2))
         self.assertEqual(t["kulu"], 0.02)
@@ -184,12 +184,14 @@ class MallitJaArvioTesti(unittest.TestCase):
         a = mv.itse_kuluarvio([LISTALTA, TOINEN], toistot=1)
         n = len(it.lue_kysymykset()["kysymykset"])
         self.assertEqual(a["kutsuja"], 2 * n)
-        self.assertEqual(a["tokenit_ulos_enintaan_per_malli"], n * mv.ITSE_MAX_TOKENIA)
+        # TOINEN (qwen3.5-397b) on ajatteleva: tuotannon vastausraja; LISTALTA: vertailun oma 800
+        self.assertEqual(a["tokenit_ulos_enintaan"], {LISTALTA: n * mv.ITSE_MAX_TOKENIA, TOINEN: n * mv.AJATTELU_MAX_TOKENIA})
+        self.assertEqual(a["tokenit_ulos_enintaan_per_malli"], n * mv.AJATTELU_MAX_TOKENIA)
+        self.assertEqual(a["ajattelevat"], [TOINEN])
         merkit = sum(sum(len(v["content"]) for v in mv.itse_viestit(k)) for k in it.lue_kysymykset()["kysymykset"])
         self.assertGreaterEqual(a["tokenit_sisaan_per_malli"], merkit // 4)   # vahintaan 4 merkkia/token -arvio
-        for usd in a["ylaraja_usd_per_malli"].values():
-            self.assertEqual(usd, float(ok.arvioi_usd(LISTALTA, a["tokenit_sisaan_per_malli"],
-                                                      a["tokenit_ulos_enintaan_per_malli"])))
+        for m, usd in a["ylaraja_usd_per_malli"].items():
+            self.assertEqual(usd, float(ok.arvioi_usd(m, a["tokenit_sisaan_per_malli"], a["tokenit_ulos_enintaan"][m])))
         self.assertEqual(mv.itse_kuluarvio([LISTALTA], toistot=2)["kutsuja"], 2 * n)
         teksti = mv.itse_arvioteksti(a)
         self.assertIn("ei kutsuja tehty", teksti)
@@ -526,7 +528,7 @@ class YhdistelmaTesti(Tilapainen):
         teksti = it.taulukko(tulos)
         self.assertIn("Mediaaniaika s", teksti)
         self.assertIn("| 3.0 |", teksti)
-        self.assertRegex(teksti, r"\| c \|.*\| - \|$")
+        self.assertRegex(teksti, r"(?m)^\| c \|.*\| - \|$")
 
 
 class YhdistelmaKomentoriviTesti(KomentoriviTesti):
