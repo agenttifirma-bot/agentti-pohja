@@ -44,7 +44,7 @@ class MekaaninenTesti(unittest.TestCase):
             "+358 40 123 4567": "puhelinnumero",
             "040-7654321": "puhelinnumero",
             "203.0.113.14": "IP-osoite",
-            "fd12:3456:789a:1:0:0:0:1": "IP-osoite",
+            "fd12:3456:789a:1:0:0:0:1": "yksityinen IP-osoite",
             TAILNET: "tailnet-nimi",
             "131052-308T": "henkil\u00f6tunnus",
             "FI21 1234 5600 0007 85": "tilinumero",
@@ -277,7 +277,7 @@ class KorttiTesti(LuovutusPohja):
         d = self.kortti(kid, t)["vartija"]
         self.assertEqual((d["malli"]["tila"], d["malli"]["merkinnat"], d["mekaaniset"]), (vartija.TILA_TARKISTETTU, [], []))
 
-    def test_vartijan_virhe_nakyy_ja_hyvaksynta_onnistuu(self):
+    def test_vartijan_virhe_nakyy_ja_vaatii_lisavahvistuksen(self):
         def kaatuu(_v):
             raise TimeoutError("x")
         self.tila.vartija_kysy = kaatuu
@@ -287,6 +287,9 @@ class KorttiTesti(LuovutusPohja):
         d = self.kortti(kid, t)["vartija"]
         self.assertEqual(d["malli"]["tila"], vartija.TILA_EI_TARKISTANUT)
         self.assertIn("TimeoutError", d["malli"]["syy"])
+        self.assertEqual((d["tulos"], d["syyt"]), (vartija.TULOS_KYSY, ["vartijamalli ei tarkistanut"]))
+        s, h = self.hyvaksy_l(kid, t, "kyll\u00e4 " + s8, lisa=False)          # vartijan virhe -> kysy, ei turvallinen
+        self.assertEqual((s, h["vartija"]["tulos"]), (409, vartija.TULOS_KYSY))
         s, h = self.hyvaksy_l(kid, t, "kyll\u00e4 " + s8)
         self.assertEqual((s, h["tulos"]), (200, "ei-gitissa"))
 

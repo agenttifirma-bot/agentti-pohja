@@ -36,8 +36,12 @@ class PakettiPohja(LuovutusPohja):
         self.assertEqual(s, 200)
         return d
 
-    def hyvaksy_p(self, kid, t, vahvistus):
-        return self.pyynto("POST", "/api/paketti/hyvaksy", {"keskustelu": kid, "tunnus": t, "vahvistus": vahvistus})
+    def hyvaksy_p(self, kid, t, vahvistus, lisa=True):
+        """lisa=True: mukana vuotovartijan "kysy"-lisavahvistus samasta sha8:sta (paketin palat ovat aina kysy)."""
+        d = {"keskustelu": kid, "tunnus": t, "vahvistus": vahvistus}
+        if lisa and isinstance(vahvistus, str):
+            d["lisavahvistus"] = "tarkistin kohdat " + vahvistus[-8:]
+        return self.pyynto("POST", "/api/paketti/hyvaksy", d)
 
 
 class ShaTesti(PakettiPohja):
@@ -132,7 +136,8 @@ class HyvaksyntaTesti(PakettiPohja):
         def kaatuu(*a, **k):
             raise OSError("verkko")
         with self.assertRaises(OSError):
-            lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + d["sha"][:8], self.tila.kirjasto, julkaise=kaatuu)
+            lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + d["sha"][:8], self.tila.kirjasto, julkaise=kaatuu,
+                               lisavahvistus="tarkistin kohdat " + d["sha"][:8])
         self.assertEqual(self.saapuneet_tiedostot(), [])
         self.assertEqual(lp.listaa_paketit(self.tila.luovutukset), [t])
 
@@ -162,12 +167,15 @@ class HyvaksyntaTesti(PakettiPohja):
                                    julkaise=lambda *a, **k: "ei-gitissa", vartija=vartija)
         self.assertEqual(self.saapuneet_tiedostot(), [])
 
-    def test_koukku_ilman_vartijaa(self):
+    def test_koukku_kayttaa_mekaanista_vartijaa(self):
         r = lp.vartija_koukku("teksti")
-        self.assertEqual((r["tila"], r["sallittu"]), ("ei-vartijaa", None))
+        self.assertEqual((r["tila"], r["sallittu"]), ("kysy", None))     # malli ei tarkista paloja -> kysy
+        r = lp.vartija_koukku("Kone on " + ".".join(["10", "1", "2", "3"]) + ".\n")
+        self.assertEqual((r["tila"], r["sallittu"]), ("esta", False))
+        self.assertEqual(r["merkinnat"], ["Estetty: yksityinen IP-osoite"])         # tyyppi, ei sisaltoa
         kid, t, v = self.paketti()
         for p in self.hae(kid, t)["palat"]:
-            self.assertIn("Vuotovartija ei ole viel\u00e4 k\u00e4yt\u00f6ss\u00e4", p["vartija"]["merkinnat"][0])
+            self.assertIn("Vartijamalli ei tarkista paketin paloja", p["vartija"]["merkinnat"][-1])
 
     def test_hylkays_siirtaa_eika_poista(self):
         kid, t, v = self.paketti()
@@ -383,7 +391,8 @@ class KyselymerkkijonoTesti(PakettiPohja):
         s, d = self.pyynto("POST", "/api/paketti/poista-pala?x=1", {"keskustelu": kid, "tunnus": t, "pala": 1, "sha8": s8})
         self.assertEqual(s, 200, d)
         uusi = d["paketti"]["sha8"]
-        s, d = self.pyynto("POST", "/api/paketti/hyvaksy?x=1", {"keskustelu": kid, "tunnus": t, "vahvistus": "kyll\u00e4 " + uusi})
+        s, d = self.pyynto("POST", "/api/paketti/hyvaksy?x=1", {"keskustelu": kid, "tunnus": t, "vahvistus": "kyll\u00e4 " + uusi,
+                                                               "lisavahvistus": "tarkistin kohdat " + uusi})
         self.assertEqual((s, d.get("tulos")), (200, "ei-gitissa"), d)
         self.assertEqual(len(luovutus.listaa_saapuneet(self.tila.kirjasto)), 2)
         kid2, t2, _ = self.paketti()

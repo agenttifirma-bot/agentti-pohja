@@ -8,9 +8,12 @@ Turvarajat (koodi on laki):
     vain pakettiehdotuksen yksityiseen kansioon <luovutukset>/paketit (0700, tiedostot 0600). Mitaan ei lahde.
   * Paketin sha256 lasketaan koko paketista (nimi, jatkettava paketti ja jokaisen palan numero ja teksti).
     Hyvaksynta "kylla <sha8>" on sidottu siihen. Palan poisto luo uuden sha:n, joten vanha vahvistus ei kelpaa.
-  * Vuotovartija (tehtava 20-31) tarkistaa jokaisen palan koukun vartija_koukku kautta. Kun vartijaa ei ole,
-    palan merkinta kertoo sen, eika automaattinen lisapala koskaan lahde.
-    Vartijan estama pala estaa koko paketin lahetyksen, kunnes Tony poistaa palan.
+  * Vuotovartija (aivo/vartija.py, Tonyn paatos A1096) tarkistaa jokaisen palan koukun vartija_koukku kautta:
+    mekaaninen estotyyppi (avain, henkilotunnus, IBAN, tailnet-nimi, yksityinen IP) -> sallittu=False, muuten
+    sallittu=None ("kysy": vartijamalli ei tarkista paketin paloja). Estetty pala estaa koko paketin lahetyksen,
+    kunnes Tony poistaa palan. Hyvaksynnassa estotyypit lasketaan uudelleen samoista teksteista, eika injektoitu
+    vartija voi ohittaa niita. Jos yksikin pala on "kysy", hyvaksynta vaatii lisavahvistuksen
+    "tarkistin kohdat <sha8>" paketin sha:sta. Automaattinen lisapala lahtee vain, kun jokainen pala on sallittu=True.
   * Hyvaksytty paketti: jokainen pala kopioidaan kirjaston kansioon saapuneet/ omana tiedostonaan
     (luovutus.saapunut_teksti), ja tekstin alussa on rivi, jossa on paketin tunnus ja palan numero.
   * Paluu: AIVO_TULOS_REPO on yksityinen tulosrepo (polku tai klooni). Tulos palalle n on tiedosto
@@ -19,8 +22,6 @@ Turvarajat (koodi on laki):
   * Lisapalat: [[LISAPALA <pakettitunnus>]] teksti [[/LISAPALA]]. AIVO_LISAPALAT=kysy (oletus): jokainen lisapala
     vaatii oman hyvaksynnan. "automaattinen": vartijan hyvaksyma, hyvaksytyn paketin tunnuksella merkitty lisapala
     lahtee ilman painallusta, ja siita kirjataan yhteenveto. Vaihto on Tonyn paatos."""
-import importlib
-import importlib.util
 import json
 import os
 import re
@@ -28,7 +29,7 @@ import secrets
 import stat
 from pathlib import Path
 
-from aivo import luovutus, yksityinen
+from aivo import luovutus, vartija as vuotovartija, yksityinen
 from aivo.yksityinen import YksityinenVirhe
 
 PAKETIT = "paketit"
@@ -106,23 +107,19 @@ def neutraloi_paluumerkinnat(teksti):
 
 
 def vartija_koukku(teksti):
-    """Koukku vuotovartijalle (tehtava 20-31). Kun moduuli aivo.vuotovartija on olemassa ja tarjoaa funktion
-    tarkista(teksti) -> {"sallittu": bool, "merkinnat": [str]}, sita kaytetaan. Ilman vartijaa palautetaan
-    sallittu=None: pala ei esty, mutta Tony tarkistaa sen itse eika automaattinen lisapala lahde."""
+    """Palan vuotovartija: mekaaninen tarkistus (aivo/vartija.py). Estotyyppi -> sallittu=False. Muuten sallittu=None:
+    vartijamalli ei tarkista paketin paloja, joten tulos on "kysy" (lisavahvistus, ei automaattista lisapalaa).
+    Merkinnat ovat tyyppeja, eivat tekstin sisaltoa."""
     try:
-        if importlib.util.find_spec("aivo.vuotovartija") is None:
-            return {"tila": "ei-vartijaa", "sallittu": None,
-                    "merkinnat": ["Vuotovartija ei ole viel\u00e4 k\u00e4yt\u00f6ss\u00e4: tarkista pala itse."]}
-        vuotovartija = importlib.import_module("aivo.vuotovartija")
-    except Exception as e:      # vartijan latausvirhe ei saa paastaa palaa lapi
-        return {"tila": "virhe", "sallittu": False, "merkinnat": ["Vuotovartijaa ei voitu ladata (%s)." % type(e).__name__]}
-    try:
-        r = vuotovartija.tarkista(teksti)
-        sallittu = r.get("sallittu") is True
-        merkinnat = [str(m)[:300] for m in (r.get("merkinnat") or [])][:20]
-    except Exception as e:
+        p = vuotovartija.tekstin_paatos(teksti)
+    except Exception as e:      # vartijan virhe ei saa paastaa palaa lapi
         return {"tila": "virhe", "sallittu": False, "merkinnat": ["Vuotovartija ep\u00e4onnistui (%s)." % type(e).__name__]}
-    return {"tila": "tarkistettu", "sallittu": sallittu, "merkinnat": merkinnat}
+    if p["tulos"] == vuotovartija.TULOS_ESTA:
+        return {"tila": "esta", "sallittu": False, "merkinnat": ["Estetty: " + ", ".join(p["syyt"])]}
+    syyt = [x for x in p["syyt"] if x != "vartijamalli ei tarkistanut"]
+    return {"tila": "kysy", "sallittu": None,
+            "merkinnat": (["Kysy: " + ", ".join(syyt)] if syyt else [])
+            + ["Vartijamalli ei tarkista paketin paloja: tarkista pala itse."]}
 
 
 def _vartioi(vartija, teksti):
@@ -258,17 +255,32 @@ def hyvaksytyt_palat(luovutukset):
 # --- Hyvaksynta ------------------------------------------------------------------------------------
 
 def hyvaksy_paketti(luovutukset, tunnus, vahvistus, kirjasto, julkaise=yksityinen.julkaise_kirjastoon,
-                    nyt=luovutus._nyt, vartija=vartija_koukku):
+                    nyt=luovutus._nyt, vartija=vartija_koukku, lisavahvistus=None):
     """Vie jokaisen palan kirjaston kansioon saapuneet/ omana tiedostonaan vain, jos vahvistus on tasmalleen
-    "kylla <sha8>" koko paketin sha:sta. Jarjestys: (1) sha-tarkistus, (2) vartija tarkistaa jokaisen palan uudelleen,
+    "kylla <sha8>" koko paketin sha:sta. Jarjestys: (1) sha-tarkistus, (2) vartija tarkistaa jokaisen palan uudelleen
+    (esto -> VartijaEsto aina; "kysy" -> VartijaEsto, ellei lisavahvistus ole "tarkistin kohdat <sha8>"),
     (3) lokirivit yksityiseen lokiin, (4) tiedostot kirjastoon ja yksi julkaisu, (5) virheessa kaikki tiedostot
     poistetaan ja paketti jaa odottamaan, (6) onnistuessa paketti siirretaan kansioon paketit/hyvaksytyt/."""
     d = lue_paketti(luovutukset, tunnus)
     if not isinstance(vahvistus, str) or not luovutus.VAHVISTUS_RE.match(vahvistus) or vahvistus != "kyll\u00e4 " + d["sha"][:8]:
         raise YksityinenVirhe("vahvistus ei tasmaa; mitaan ei luovutettu")
-    estetyt = [p["n"] for p in d["palat"] if _vartioi(vartija, p["teksti"])["sallittu"] is False]
+    listat = vuotovartija.lue_listat(Path(luovutukset) / vuotovartija.KANSIO)
+    estetyt, kysy = [], []
+    for p in d["palat"]:
+        # mekaaninen esto aina tassa itse (injektoitu vartija ei voi loiventaa sita), sitten palan vartija
+        tyypit = vuotovartija.mekaaniset_tyypit(p["teksti"], *listat)
+        s = _vartioi(vartija, p["teksti"])["sallittu"]
+        if s is False or any(t in vuotovartija.ESTOTYYPIT for t in tyypit):
+            estetyt.append(p["n"])
+        elif s is not True or tyypit:
+            kysy.append(p["n"])
     if estetyt:
-        raise YksityinenVirhe("vuotovartija esti palat %s; poista ne ennen lahetysta" % ", ".join(map(str, estetyt)))
+        raise luovutus.VartijaEsto("vuotovartija esti palat %s; poista ne ennen lahetysta" % ", ".join(map(str, estetyt)),
+                                   vuotovartija.TULOS_ESTA, ["pala %d" % n for n in estetyt])
+    if kysy and not vuotovartija.lisavahvistus_kelpaa(lisavahvistus, d["sha"]):
+        raise luovutus.VartijaEsto("vuotovartija pyyt\u00e4\u00e4 lis\u00e4vahvistuksen paloille %s: 'tarkistin kohdat %s'; "
+                                   "mit\u00e4\u00e4n ei luovutettu" % (", ".join(map(str, kysy)), d["sha"][:8]),
+                                   vuotovartija.TULOS_KYSY, ["pala %d" % n for n in kysy])
     if d.get("jatkaa"):
         pt, nimi = perusta(luovutukset, d["jatkaa"])
     else:

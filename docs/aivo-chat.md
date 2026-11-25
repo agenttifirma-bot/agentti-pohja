@@ -434,7 +434,7 @@ Reitit (kirjautuminen, `Host`, `X-Aivo` ja sama alkuperä tarkistetaan kuten mui
 | `GET /api/luovutetut?keskustelu=ID` | yksityinen | loki |
 | `POST /api/luovutus/uusi` `{keskustelu, indeksi}` | yksityinen | ehdotus keskustelun viestistä |
 | `POST /api/luovutus/muokkaa` `{keskustelu, tunnus, teksti}` | yksityinen | uusi teksti ja uusi sha8 |
-| `POST /api/luovutus/hyvaksy` `{keskustelu, tunnus, vahvistus}` | yksityinen | vahvistus täsmälleen `kyllä <sha8>` |
+| `POST /api/luovutus/hyvaksy` `{keskustelu, tunnus, vahvistus, lisavahvistus?}` | yksityinen | vahvistus täsmälleen `kyllä <sha8>`; vuotovartijan tulos ”kysy” vaatii lisäksi `lisavahvistus` = `tarkistin kohdat <sha8>`, tulos ”estä” palauttaa aina 409 |
 | `POST /api/luovutus/hylkaa` `{keskustelu, tunnus}` | yksityinen | siirto kansioon `hylatyt/` |
 | `GET /api/saapuneet?keskustelu=ID` | työkalu | käsittelemättömät luovutukset |
 | `POST /api/saapuneet/kasitelty` `{keskustelu, tunnus}` | työkalu | siirto kansioon `saapuneet/kasitellyt/` |
@@ -445,18 +445,30 @@ Väärän tilan keskustelulle reitit vastaavat 404. Tunnus on aina 12 heksamerkk
 
 ### Vuotovartija (A1040, kohta 4)
 
-Ennen kuin Tony hyväksyy luovutuksen, teksti tarkistetaan kahdella tavalla (`aivo/vartija.py`). Vartija ei koskaan muuta tekstiä eikä estä hyväksyntää. Tony päättää aina.
+Ennen kuin Tony hyväksyy luovutuksen, teksti tarkistetaan kahdella tavalla (`aivo/vartija.py`). Vartija ei koskaan muuta tekstiä. Tarkistuksista syntyy yksi kolmesta lopputuloksesta (alla), ja selvä salaisuus estää hyväksynnän (Tonyn päätös A1096, 25.11.2026).
 
 - **Mekaaninen esitarkistus** tehdään aina palvelimella ilman verkkoa: sähköpostiosoitteet, puhelinnumerot, IPv4- ja IPv6-osoitteet, tailnet-nimet (`*.ts.net`, `tail…`), henkilötunnukset, suomalaiset tilinumerot, SSH-avaimet (yksityisavaimen otsikko ja `ssh-ed25519`/`ssh-rsa`-julkisavain), yleiset API-avainten muodot (`sk-`, `ghp_`, `github_pat_`, `xoxb-`, `AKIA`), pitkä satunnainen arvo avainsanan (key, token, secret, salasana) jälkeen sekä Tonyn ylläpitämät listat. Listat ovat kansiossa `luovutukset/vartija/` (`--vartija-listat` tai `AIVO_VARTIJA_LISTAT` vaihtaa polun): `nimet.txt` (henkilönimet) ja `avainsanat.txt`, yksi rivi kerrallaan, `#`-rivit ovat kommentteja. Nimi osuu myös taivutettuna, kun alku on sama (Maija → Maijalle).
 - **Vartijamalli** (rooli `vartija`) tarkistaa tekstin vain OpenRouter-taustapäällä. Malli on `AIVO_YKSITYINEN_ROOLIT`-asetuksen `vartija:<malli>` tai sallittujen mallien listan ensimmäinen. Kutsu kulkee samaa reittiä kuin yksityisen tilan vastaukset (`yksityinen_or._kysy_viestit`): avoin malli, ZDR-runko, yhteinen päiväkatto ja kulukirjaus. Malli palauttaa JSON-listan epäilyttävistä kohdista syineen (henkilö, paikka, tavoite, kokonaiskuva). Loopback-taustapäällä mallia ei käytetä, koska teksti ei muuten lähtisi palvelimelta.
 
 **Mittaus synteettisellä aineistolla.** `python3 -m aivo.vartija_aineisto --ulos HAKEMISTO` kirjoittaa 110 keksittyä tekstiä (50 turvallista, 50 arkaluonteista ja 10 vaikeaa tapausta, 200–500 sanaa) totuustiedostoineen. Aineisto on toistettava siemenluvulla (oletus 413). Sähköpostit ovat vain verkkotunnuksissa example.com, example.org ja test.org, IP-osoitteet vain dokumentaatioalueilta, henkilötunnukset 1800-luvulta, ja henkilöt ja paikat ovat paikkamerkkejä. `python3 -m aivo.vartija_mittaus [--esimerkit]` ajaa mekaanisen tarkistuksen aineistoa vastaan ja tulostaa tyypeittäin osumat, ohitukset ja väärät hälytykset. Mittaus ei käytä verkkoa eikä mallia.
 
-Tarkistus käynnistyy, kun ehdotus tallennetaan (lohko tai painike) ja kun Tony muokkaa tekstiä. Mallin tulos tallentuu erilliseen tiedostoon `luovutukset/vartija/<tunnus>.json` (0600), ja se sidotaan tekstin sha256-tiivisteeseen. Muokatun tekstin tarkistus tehdään uudelleen, eikä vanhaa tulosta näytetä. Hyväksyntä (`/api/luovutus/hyvaksy`) ei lue tulostiedostoa.
+Tarkistus käynnistyy, kun ehdotus tallennetaan (lohko tai painike) ja kun Tony muokkaa tekstiä. Mallin tulos tallentuu erilliseen tiedostoon `luovutukset/vartija/<tunnus>.json` (0600), ja se sidotaan tekstin sha256-tiivisteeseen. Muokatun tekstin tarkistus tehdään uudelleen, eikä vanhaa tulosta näytetä eikä käytetä.
 
-Hyväksyntälaatikko näyttää merkinnät korostettuina (`textContent` ja `<mark>`-elementit). Jos merkintöjä on, lähetyspainikkeen viereen tulee varoitus, ja sama varoitus näkyy vahvistusikkunassa. Jos vartija ei vastaa, vastaus ei kelpaa tai mallia ei ole, laatikossa lukee "Vartija ei tarkistanut" ja syy. Hyväksyntä on silti mahdollinen.
+**Kolme lopputulosta** (`vartija.paatos`):
 
-`GET /api/luovutus` palauttaa kentän `vartija`: `mekaaniset` (lista), `malli` (`tila`: `tarkistettu`, `kesken` tai `ei-tarkistanut`, `syy`, `merkinnat`), `nimilista` ja `avainsanoja` (listojen pituudet). `POST /api/luovutus/muokkaa` palauttaa saman kentän muokatusta tekstistä.
+| Tulos | Milloin | Hyväksyntä |
+|---|---|---|
+| estä | mekaaninen osuma: SSH-yksityis- tai julkisavain, API-avain, pitkä satunnainen arvo avainsanan jälkeen, henkilötunnus, IBAN-tilinumero, tailnet-nimi tai yksityinen IP-osoite (RFC 1918 -alueet 10/8, 172.16/12 ja 192.168/16, Tailscalen CGNAT-alue 100.64/10, link-local 169.254/16 sekä IPv6:n fc00::/7 ja fe80::/10) | ei mahdollinen; Tony muokkaa tekstiä, ja muokattu teksti tarkistetaan uudelleen. Estoa ei voi ohittaa. |
+| kysy | muu mekaaninen osuma (sähköposti, puhelinnumero, muu IP-osoite kuten dokumentaatio- tai julkinen osoite, nimi- tai avainsanalista), vartijamallin arvio ”suuri”, tai vartijamalli ei tarkistanut tekstiä (ei käytössä, kesken, virhe, kelvoton vastaus tai arvio puuttuu) | vaatii erillisen vahvistuksen, jossa merkityt kohdat näkyvät: `lisavahvistus` = `tarkistin kohdat <sha8>` |
+| turvallinen | ei mekaanisia osumia ja vartijamallin arvio ”ei” tai ”pieni” | kuten ennen: `kyllä <sha8>` |
+
+Vartijamallin arvio ”suuri” muuttuu estoksi vasta, kun synteettinen mittaus (tehtävä 25-45) näyttää väärien hälytysten osuuden ja Tony päättää. Loopback-taustapäällä vartijamallia ei käytetä, joten siellä jokainen luovutus on vähintään ”kysy”.
+
+**Palvelin päättää.** Lopputulos lasketaan uudelleen hyväksyntähetkellä (`luovutus.hyvaksy`, luovutuslukon alla) samasta tekstistä, joka luovutetaan, ja mallin tulos kelpaa vain saman sha:n tekstille. Mekaaninen esto lasketaan hyväksynnässä aina itse, joten kutsujan antama tarkistus ei voi muuttaa estoa kysyksi tai turvalliseksi. Päätös käyttää kaikkia mekaanisia osumia, ei vain näytettäviä 50 ensimmäistä. Estetty tai vahvistamaton hyväksyntä palauttaa 409 ja kentän `vartija` = `{tulos, syyt}`. Syyt ovat tyyppejä (esim. ”API-avain”), eivät tekstin sisältöä. Lokiin ei kirjoiteta mitään, koska mitään ei luovutettu.
+
+Hyväksyntälaatikko näyttää lopputuloksen ja syyt tyyppeinä sekä merkinnät korostettuina (`textContent` ja `<mark>`-elementit). ”Estä”-tuloksella lähetyspainike on pois käytöstä, kunnes tekstiä muokataan. ”Kysy”-tuloksella ensimmäisen vahvistuksen jälkeen avautuu toinen ikkuna, jossa merkityt kohdat näkyvät. Jos vartija ei vastaa, vastaus ei kelpaa tai mallia ei ole, laatikossa lukee "Vartija ei tarkistanut" ja syy, ja tulos on ”kysy”.
+
+`GET /api/luovutus` palauttaa kentän `vartija`: `mekaaniset` (lista), `malli` (`tila`: `tarkistettu`, `kesken` tai `ei-tarkistanut`, `syy`, `merkinnat`, `arvio`, jos malli antoi sen), `nimilista` ja `avainsanoja` (listojen pituudet) sekä `tulos` (`turvallinen`, `kysy` tai `esta`) ja `syyt` (tyypit). `POST /api/luovutus/muokkaa` palauttaa saman kentän muokatusta tekstistä.
 
 ## Luovutuspaketti: monta palaa, yksi hyväksyntä
 
@@ -475,9 +487,7 @@ Paketissa on 1–20 palaa (numerot 1–99, ei toistoja), yhteensä enintään 40
 
 **Sha.** Paketin sha256 lasketaan koko paketista: nimi, jatkettava paketti sekä jokaisen palan numero ja teksti. Lähetys vaatii vahvistuksen `kyllä <sha8>` tästä tiivisteestä.
 
-**Vuotovartija.** Jokainen pala kulkee koukun `vartija_koukku` kautta. Kun moduuli `aivo/vuotovartija.py` on olemassa (tehtävä 20-31) ja tarjoaa funktion `tarkista(teksti) -> {"sallittu": bool, "merkinnat": [...]}`, sitä käytetään. Ilman vartijaa palan merkintä kertoo, ettei vartija ole vielä käytössä, ja Tony tarkistaa palan itse. Vartijan estämä pala estää koko paketin lähetyksen, kunnes Tony poistaa palan. Vartija tarkistaa palat uudelleen lähetyshetkellä.
-
-Huomio: yksittäisen luovutuksen vuotovartija (`aivo/vartija.py`, yllä) ei vielä kytkeydy pakettien koukkuun, koska koukku etsii moduulia `aivo.vuotovartija`. Siksi paketin palat näyttävät toistaiseksi merkinnän "Vuotovartija ei ole vielä käytössä", eikä mikään lisäpala lähde automaattisesti. Kytkentä on oma, erikseen päätettävä muutoksensa.
+**Vuotovartija.** Jokainen pala kulkee koukun `vartija_koukku` kautta, ja koukku käyttää yksittäisen luovutuksen mekaanista tarkistusta (`aivo/vartija.py`). Estotyyppi (sama lista kuin yllä) antaa palalle `sallittu=False`, ja merkintä kertoo tyypin. Muuten pala on ”kysy” (`sallittu=None`), koska vartijamalli ei tarkista paketin paloja. Estetty pala estää koko paketin lähetyksen, kunnes Tony poistaa palan. Lähetyshetkellä estotyypit lasketaan uudelleen samoista teksteistä Tonyn listojen kanssa, eikä palan vartija voi ohittaa niitä. Jos yksikin pala on ”kysy”, hyväksyntä vaatii lisävahvistuksen `tarkistin kohdat <sha8>` paketin sha:sta. Mikään lisäpala ei lähde automaattisesti, koska mikään pala ei saa tilaa `sallittu=True` ilman vartijamallia.
 
 **Laatikko.** Kaikki palat näkyvät allekkain vartijan merkintöineen. Painikkeet:
 
@@ -507,7 +517,7 @@ Reitit (kaikki vain yksityinen tila; työkalutilan keskustelulle 404):
 | `GET /api/paketit?keskustelu=ID` | odottavat paketit: tunnus, nimi, sha8, palojen määrä |
 | `GET /api/paketti?keskustelu=ID&tunnus=T` | paketin palat, vartijan merkinnät ja sha8 |
 | `POST /api/paketti/poista-pala` `{keskustelu, tunnus, pala, sha8}` | palan poisto, uusi sha8 |
-| `POST /api/paketti/hyvaksy` `{keskustelu, tunnus, vahvistus}` | vahvistus täsmälleen `kyllä <sha8>` |
+| `POST /api/paketti/hyvaksy` `{keskustelu, tunnus, vahvistus, lisavahvistus?}` | vahvistus täsmälleen `kyllä <sha8>`; ”kysy”-palat vaativat `lisavahvistus` = `tarkistin kohdat <sha8>`, estetty pala palauttaa aina 409 |
 | `POST /api/paketti/hylkaa` `{keskustelu, tunnus}` | siirto kansioon `paketit/hylatyt/` |
 | `GET /api/paluut?keskustelu=ID` | uudet tulokset ja merkinnät |
 | `GET /api/paketti/tulos?keskustelu=ID&tunnus=T&pala=N` | hyväksytyn palan tulos tulosreposta |
@@ -556,7 +566,7 @@ Sivu näyttää kaiken `textContent`-ominaisuudella, ei HTML:nä.
 ## Testit
 
 ```
-python3 -m unittest aivo.test_chat aivo.test_tiivista aivo.test_kalenteri_kytkenta aivo.test_yksityinen_hyvaksynta aivo.test_luovutus aivo.test_vartija aivo.test_tarkista_asennus aivo.test_kulunakyma
+python3 -m unittest aivo.test_chat aivo.test_tiivista aivo.test_kalenteri_kytkenta aivo.test_yksityinen_hyvaksynta aivo.test_luovutus aivo.test_vartija aivo.test_vartija_paatos aivo.test_tarkista_asennus aivo.test_kulunakyma
 ```
 
 Testit kattavat salasanan tiivisteen ja lukituksen, osoite- ja Host-rajat, CSRF-suojan, muistin lukemisen (ei linkkejä kirjaston ulkopuolelle), lähdeviitteiden tarkistuksen, päätöksen kirjaamisen sanasta sanaan, GitHub-pushin eston ja sen, että Claude-kutsu ei käytä työkaluja eikä välittäjiä.

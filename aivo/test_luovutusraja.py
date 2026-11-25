@@ -92,7 +92,8 @@ class SivuRajaTesti(unittest.TestCase):
         self.assertNotIn("8000", self.h)
 
     def test_laskuri_ja_varoitus_kentassa(self):
-        self.assertIn("ta.addEventListener('input',()=>lLaskuri(ta,ll));lLaskuri(ta,ll);", self.kortti)
+        self.assertIn("ta.addEventListener('input',()=>{lLaskuri(ta,ll);", self.kortti)
+        self.assertIn("});lLaskuri(ta,ll);", self.kortti)
         self.assertIn("ta.setAttribute('aria-describedby',ll.id)", self.kortti)
         self.assertIn("ll.setAttribute('aria-live','polite')", self.kortti)
         self.assertIn("ll.id='llaskuri-'+(++lLaskureita)", self.kortti)        # yksilollinen myos samalle tunnukselle

@@ -10,7 +10,10 @@ Turvarajat (koodi on laki):
     kirjasto commitoidaan ja pushataan samalla mekanismilla kuin paatoskirjaus (yksityinen.julkaise_kirjastoon).
   * Tyokalutila lukee vain kirjaston saapuneet/-kansiota; se ei koskaan lue yksityisia kansioita.
     Tyokalutilasta yksityiseen ei kulje mitaan.
-  * Jokainen hyvaksytty luovutus kirjataan yksityiseen lokiin (aika, sha, teksti) ennen kuin se lahtee."""
+  * Jokainen hyvaksytty luovutus kirjataan yksityiseen lokiin (aika, sha, teksti) ennen kuin se lahtee.
+  * Vuotovartijan lopputulos (aivo/vartija.py, Tonyn paatos A1096) lasketaan hyvaksynnassa samasta tekstista:
+    "esta" hylkaa hyvaksynnan aina (mekaaninen estotarkistus tehdaan tassa itse, eika kutsujan tarkistus voi
+    loiventaa sita), "kysy" vaatii lisavahvistuksen "tarkistin kohdat <sha8>", "turvallinen" kulkee kuten ennen."""
 import json
 import os
 import re
@@ -19,7 +22,7 @@ import stat
 from datetime import datetime, timezone
 from pathlib import Path
 
-from aivo import yksityinen
+from aivo import vartija, yksityinen
 from aivo.yksityinen import YksityinenVirhe
 
 OLETUS_LUOVUTUKSET = "/var/lib/aivo-yksityinen/luovutukset"
@@ -36,6 +39,13 @@ KATKENNUT_LUOVUTUS_RE = re.compile(r"\[\[LUOVUTUS\]\].*\Z", re.S)
 KATKENNUT_LUOVUTUS = "[luovutusehdotusta ei tallennettu: vastaus katkesi]"
 VAHVISTUS_RE = re.compile(r"\Akyll\u00e4 [0-9a-f]{8}\Z")
 OTSAKE_RE = re.compile(r"\A<!-- luovutus tunnus=([0-9a-f]{12}) sha256=([0-9a-f]{64}) hyvaksytty=([0-9T:+\-]{1,40}) -->\n")
+
+
+class VartijaEsto(YksityinenVirhe):
+    """Vuotovartija esti hyvaksynnan (tulos "esta") tai lisavahvistus puuttuu (tulos "kysy"). Syyt ovat tyyppeja."""
+    def __init__(self, viesti, tulos, syyt):
+        super().__init__(viesti)
+        self.tulos, self.syyt = tulos, list(syyt)
 
 
 def _nyt():
@@ -185,14 +195,45 @@ def saapunut_teksti(tunnus, sha, aika, teksti):
     return "<!-- luovutus tunnus=%s sha256=%s hyvaksytty=%s -->\n%s" % (tunnus, sha, aika, teksti)
 
 
-def hyvaksy(hakemisto, tunnus, vahvistus, kirjasto, julkaise=yksityinen.julkaise_kirjastoon, nyt=_nyt):
+def vartijan_paatos(teksti, sha, tarkistus=None):
+    """Vuotovartijan lopputulos hyvaksyntaa varten. tarkistus(teksti, sha) -> {"tulos", "syyt"} (chat: listat ja
+    vartijamallin tulos); ilman sita pelkka mekaaninen tarkistus, jolloin tulos on vahintaan "kysy".
+    Mekaaninen esto lasketaan aina tassa itse: kutsujan tarkistus ei voi muuttaa estoa kysyksi tai turvalliseksi.
+    Kelvoton tai kaatuva tarkistus -> "kysy", ei koskaan "turvallinen"."""
+    esto = [t for t in vartija.mekaaniset_tyypit(teksti) if t in vartija.ESTOTYYPIT]
+    if esto:
+        return {"tulos": vartija.TULOS_ESTA, "syyt": esto}
+    try:
+        p = vartija.tekstin_paatos(teksti) if tarkistus is None else tarkistus(teksti, sha)
+    except Exception as e:
+        return {"tulos": vartija.TULOS_KYSY, "syyt": ["vartijan tarkistus ep\u00e4onnistui (%s)" % type(e).__name__]}
+    tulos = p.get("tulos") if isinstance(p, dict) else None
+    syyt = [str(x)[:80] for x in (p.get("syyt") or [])][:20] if isinstance(p, dict) and isinstance(p.get("syyt"), list) else []
+    if tulos not in (vartija.TULOS_TURVALLINEN, vartija.TULOS_KYSY, vartija.TULOS_ESTA):
+        return {"tulos": vartija.TULOS_KYSY, "syyt": ["vartijan tulos ei kelpaa"]}
+    if tulos == vartija.TULOS_KYSY and not syyt:
+        syyt = ["vartija pyysi vahvistusta"]
+    return {"tulos": tulos, "syyt": syyt if tulos != vartija.TULOS_TURVALLINEN else []}
+
+
+def hyvaksy(hakemisto, tunnus, vahvistus, kirjasto, julkaise=yksityinen.julkaise_kirjastoon, nyt=_nyt,
+            tarkistus=None, lisavahvistus=None):
     """Vie ehdotuksen tekstin sellaisenaan kirjaston kansioon saapuneet/ vain, jos vahvistus on tasmalleen
-    "kylla <sha8>" (a-kirjaimella). Jarjestys: (1) sha-tarkistus, (2) lokirivi yksityiseen kansioon, (3) tiedosto
-    kirjastoon ja julkaisu (commit + push), (4) virheessa tiedosto poistetaan kirjastosta ja ehdotus jaa odottamaan,
-    (5) onnistuessa ehdotus siirretaan alikansioon hyvaksytyt/. Palauttaa julkaisun tuloksen."""
+    "kylla <sha8>" (a-kirjaimella) ja vuotovartija sallii. Jarjestys: (1) sha-tarkistus, (1b) vartijan lopputulos
+    samasta tekstista: "esta" -> VartijaEsto aina, "kysy" -> VartijaEsto, ellei lisavahvistus ole tasmalleen
+    "tarkistin kohdat <sha8>", (2) lokirivi yksityiseen kansioon, (3) tiedosto kirjastoon ja julkaisu (commit + push),
+    (4) virheessa tiedosto poistetaan kirjastosta ja ehdotus jaa odottamaan, (5) onnistuessa ehdotus siirretaan
+    alikansioon hyvaksytyt/. Palauttaa julkaisun tuloksen."""
     d = lue_ehdotus(hakemisto, tunnus)
     if not isinstance(vahvistus, str) or not VAHVISTUS_RE.match(vahvistus) or vahvistus != "kyll\u00e4 " + d["sha"][:8]:
         raise YksityinenVirhe("vahvistus ei tasmaa; mitaan ei luovutettu")
+    p = vartijan_paatos(d["teksti"], d["sha"], tarkistus)                                           # (1b)
+    if p["tulos"] == vartija.TULOS_ESTA:
+        raise VartijaEsto("vuotovartija esti luovutuksen (%s); muokkaa teksti\u00e4, mit\u00e4\u00e4n ei luovutettu"
+                          % ", ".join(p["syyt"]), p["tulos"], p["syyt"])
+    if p["tulos"] == vartija.TULOS_KYSY and not vartija.lisavahvistus_kelpaa(lisavahvistus, d["sha"]):
+        raise VartijaEsto("vuotovartija pyyt\u00e4\u00e4 lis\u00e4vahvistuksen (%s): 'tarkistin kohdat %s'; mit\u00e4\u00e4n ei luovutettu"
+                          % (", ".join(p["syyt"]), d["sha"][:8]), p["tulos"], p["syyt"])
     aika = nyt().isoformat(timespec="seconds")
     saap = Path(kirjasto) / SAAPUNEET
     saap.mkdir(mode=0o700, parents=True, exist_ok=True)

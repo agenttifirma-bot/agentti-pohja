@@ -32,8 +32,10 @@ Turvarajat (koodi on laki):
     vain ehdotuksen yksityiseen kansioon. Teksti lahtee vasta POST /api/luovutus/hyvaksy -kutsulla (vahvistus
     "kylla <sha8>"), ja se kopioidaan sellaisenaan kirjaston kansioon saapuneet/. Tyokalutila nakee vain sen kansion.
   * Vuotovartija (aivo/vartija.py): luovutusehdotuksen tallennus ja muokkaus kaynnistavat tarkistuksen. Kortti nayttaa
-    mekaanisen esitarkistuksen ja vartijamallin merkinnat (textContent). Vartija ei muuta tekstia eika esta
-    hyvaksyntaa; jos se ei vastaa, kortti nayttaa "Vartija ei tarkistanut"."""
+    mekaanisen esitarkistuksen ja vartijamallin merkinnat (textContent) seka lopputuloksen syineen (tyypit).
+    Vartija ei muuta tekstia. Lopputulos (vartija.paatos) lasketaan uudelleen palvelimella hyvaksyntahetkella:
+    "esta" hylkaa hyvaksynnan (409), "kysy" vaatii kentan lisavahvistus = "tarkistin kohdat <sha8>", "turvallinen"
+    kulkee kuten ennen. Jos vartijamalli ei vastaa, tulos on "kysy" ja kortti nayttaa "Vartija ei tarkistanut"."""
 import argparse
 import getpass
 import hashlib
@@ -290,7 +292,7 @@ async function luovutusKortti(t){const d=document.createElement('div');d.classNa
  const e=x.j;const va=document.createElement('div');va.className='varoitus';va.textContent='T\u00e4m\u00e4 teksti l\u00e4htee Clauden pilveen';
  const ta=document.createElement('textarea');ta.value=e.teksti;ta.setAttribute('aria-label','L\u00e4htev\u00e4 teksti');
  const ll=document.createElement('div');ll.id='llaskuri-'+(++lLaskureita);ll.setAttribute('aria-live','polite');ta.setAttribute('aria-describedby',ll.id);
- ta.addEventListener('input',()=>lLaskuri(ta,ll));lLaskuri(ta,ll);
+ ta.addEventListener('input',()=>{lLaskuri(ta,ll);if(e.tulos==='esta')l.disabled=ta.value===e.teksti;});lLaskuri(ta,ll);
  const tunn=()=>{o.textContent='Luovutus ty\u00f6kalutilaan (tunnus '+e.tunnus+', sha '+e.sha8+'). Voit muokata teksti\u00e4 ennen l\u00e4hetyst\u00e4.';};tunn();
  const l=document.createElement('button');l.textContent='L\u00e4het\u00e4 ty\u00f6kalutilaan';const h=document.createElement('button');h.textContent='Hylk\u00e4\u00e4';
  const ti=document.createElement('div');ti.className='pieni';
@@ -309,6 +311,11 @@ async function luovutusKortti(t){const d=document.createElement('div');d.classNa
    pre.appendChild(document.createTextNode(tx.slice(i)));vk.appendChild(pre);
    vv.textContent=' Huom: '+kaikki.length+' merkitty\u00e4 kohtaa. Tarkista ennen l\u00e4hetyst\u00e4.';}
   else if(m.tila!=='tarkistettu')vv.textContent=m.tila==='kesken'?' Vartija tarkistaa viel\u00e4.':' Vartija ei tarkistanut t\u00e4t\u00e4 teksti\u00e4.';
+  e.tulos=(v.tulos==='turvallinen'||v.tulos==='esta')?v.tulos:'kysy';const sy=Array.isArray(v.syyt)?v.syyt.map(String).join(', '):'';
+  const lt=document.createElement('div');lt.className=e.tulos==='turvallinen'?'pieni':'varoitus';
+  lt.textContent=e.tulos==='esta'?('Estetty: '+sy+'. Muokkaa teksti\u00e4; l\u00e4hetys on mahdollinen vasta uuden tarkistuksen j\u00e4lkeen.')
+   :(e.tulos==='kysy'?('Kysy: '+(sy||'vartija ei vahvistanut')+'. L\u00e4hetys vaatii erillisen vahvistuksen.'):'Turvallinen: ei osumia.');
+  vk.prepend(lt);if(!ta.readOnly)l.disabled=e.tulos==='esta';
   return m.tila;};
  let kierros=0;const seuraa=async()=>{if(!d.isConnected||ta.readOnly||kierros++>40)return;const y=await haeJson('/api/luovutus?keskustelu='+q(kid)+'&tunnus='+q(e.tunnus));
   if(!y||!y.r.ok||y.j.sha8!==e.sha8)return;if(naytaVartija(y.j.vartija)==='kesken')setTimeout(seuraa,3000);};
@@ -321,11 +328,16 @@ async function luovutusKortti(t){const d=document.createElement('div');d.classNa
     if(!m.r.ok){ti.textContent='Muokkausta ei tallennettu: '+(m.j.virhe||m.r.status);return;}
     e.teksti=ta.value;e.sha8=m.j.sha8;tunn();ti.textContent='Muokattu teksti sai uuden sha:n '+e.sha8+'.';
     kierros=0;if(naytaVartija(m.j.vartija)==='kesken')setTimeout(seuraa,3000);}
+   if(e.tulos==='esta'){ti.textContent='Vuotovartija esti l\u00e4hetyksen. Muokkaa teksti\u00e4 ensin.';return;}
    if(!confirm('L\u00e4hetet\u00e4\u00e4nk\u00f6 laatikon teksti (sha '+e.sha8+') ty\u00f6kalutilaan? Se l\u00e4htee Clauden pilveen.'+(vv.textContent?' '+vv.textContent.trim():'')))return;
-   const a=await post('/api/luovutus/hyvaksy',{vahvistus:'kyll\u00e4 '+e.sha8});if(!a)return;
+   const lisa={vahvistus:'kyll\u00e4 '+e.sha8};
+   if(e.tulos!=='turvallinen'){const kk=Array.from(vk.querySelectorAll('li')).map(x=>x.textContent).join('\\n');
+    if(!confirm('Vuotovartija pyyt\u00e4\u00e4 erillisen vahvistuksen. Merkityt kohdat:\\n'+(kk||'(ei merkint\u00f6j\u00e4; vartija ei vahvistanut teksti\u00e4)')+'\\n\\nOletko tarkistanut kohdat ja l\u00e4hetet\u00e4\u00e4nk\u00f6 silti?'))return;
+    lisa.lisavahvistus='tarkistin kohdat '+e.sha8;}
+   const a=await post('/api/luovutus/hyvaksy',lisa);if(!a)return;
    ti.textContent=a.j.teksti||('Ei l\u00e4hetetty: '+(a.j.virhe||a.r.status));
    if(a.r.ok){ta.readOnly=true;l.remove();h.remove();}}
-  finally{if(l.isConnected){l.disabled=h.disabled=false;}alas();}};
+  finally{if(l.isConnected){l.disabled=e.tulos==='esta';h.disabled=false;}alas();}};
  h.onclick=async()=>{if(!confirm('Hyl\u00e4t\u00e4\u00e4nk\u00f6 luovutus? Se siirret\u00e4\u00e4n kansioon hylatyt/ eik\u00e4 sit\u00e4 poisteta.'))return;
   l.disabled=h.disabled=true;const a=await post('/api/luovutus/hylkaa',{});if(!a)return;
   ti.textContent=a.j.teksti||('Ei hyl\u00e4tty: '+(a.j.virhe||a.r.status));if(a.r.ok){ta.readOnly=true;l.remove();h.remove();}else{l.disabled=h.disabled=false;}};
@@ -353,8 +365,13 @@ async function pakettiKortti(t){const d=document.createElement('div');d.classNam
      e=a.j.paketti;piirra();ti.textContent='Pala '+p.n+' poistettu. Paketin uusi sha on '+e.sha8+'.';};pd.appendChild(pb);}
    lista.appendChild(pd);});};
  piirra();
- l.onclick=async()=>{if(!confirm('L\u00e4hetet\u00e4\u00e4nk\u00f6 koko paketti ('+e.palat.length+' palaa, sha '+e.sha8+') ty\u00f6kalutilaan? Se l\u00e4htee Clauden pilveen.'))return;
-  l.disabled=h.disabled=true;const a=await post('/api/paketti/hyvaksy',{vahvistus:'kyll\u00e4 '+e.sha8});if(!a)return;
+ l.onclick=async()=>{if(e.palat.some(p=>(p.vartija||{}).sallittu===false)){ti.textContent='Vuotovartija esti palan. Poista estetyt palat ennen l\u00e4hetyst\u00e4.';return;}
+  if(!confirm('L\u00e4hetet\u00e4\u00e4nk\u00f6 koko paketti ('+e.palat.length+' palaa, sha '+e.sha8+') ty\u00f6kalutilaan? Se l\u00e4htee Clauden pilveen.'))return;
+  const lisa={vahvistus:'kyll\u00e4 '+e.sha8};const kp=e.palat.filter(p=>(p.vartija||{}).sallittu!==true);
+  if(kp.length){const kk=kp.map(p=>'Pala '+p.n+': '+(Array.isArray((p.vartija||{}).merkinnat)?p.vartija.merkinnat.map(String).join(' '):'')).join('\\n');
+   if(!confirm('Vuotovartija pyyt\u00e4\u00e4 erillisen vahvistuksen:\\n'+kk+'\\n\\nOletko tarkistanut palat ja l\u00e4hetet\u00e4\u00e4nk\u00f6 silti?'))return;
+   lisa.lisavahvistus='tarkistin kohdat '+e.sha8;}
+  l.disabled=h.disabled=true;const a=await post('/api/paketti/hyvaksy',lisa);if(!a)return;
   ti.textContent=a.j.teksti||('Ei l\u00e4hetetty: '+(a.j.virhe||a.r.status));
   if(a.r.ok){valmis=true;l.remove();h.remove();piirra();}else{l.disabled=h.disabled=false;}alas();};
  h.onclick=async()=>{if(!confirm('Hyl\u00e4t\u00e4\u00e4nk\u00f6 paketti? Se siirret\u00e4\u00e4n kansioon paketit/hylatyt/ eik\u00e4 sit\u00e4 poisteta.'))return;
@@ -1224,7 +1241,22 @@ class Tila:
             malli = {"tila": vartija.TILA_KESKEN if kesken else vartija.TILA_EI_TARKISTANUT, "syy": syy, "merkinnat": []}
         else:
             malli = {"tila": t["tila"], "syy": str(t.get("syy") or ""), "merkinnat": t["merkinnat"]}
-        return {"mekaaniset": mek, "malli": malli, "nimilista": len(nimet), "avainsanoja": len(sanat)}
+            if t.get("arvio") in vartija.ARVIOT:
+                malli["arvio"] = t["arvio"]
+        p = luovutus.vartijan_paatos(ehdotus["teksti"], ehdotus["sha"], self.luovutuksen_tarkistus(tunnus))
+        return {"mekaaniset": mek, "malli": malli, "nimilista": len(nimet), "avainsanoja": len(sanat),
+                "tulos": p["tulos"], "syyt": p["syyt"]}
+
+    def luovutuksen_tarkistus(self, tunnus):
+        """tarkistus(teksti, sha) luovutus.hyvaksy:lle: mekaaninen tarkistus Tonyn listoilla ja vartijamallin tulos,
+        jos se on tehty juuri taman sha:n tekstista. Kesken tai puuttuva tulos -> vahintaan "kysy"."""
+        def tarkista(teksti, sha):
+            t = vartija.lue_tulos(self.luovutukset, tunnus, sha)
+            if t is None:
+                with self.vartija_lukko:
+                    t = {"tila": vartija.TILA_KESKEN} if (tunnus, sha) in self.vartija_kesken else None
+            return vartija.tekstin_paatos(teksti, self.vartija_listat, t)
+        return tarkista
 
     def valitse_malli(self, pyydetty):
         """Selaimen lahettama malli kelpaa vain, jos se on asetuksen listalla (muuten ChatVirhe -> 400)."""
@@ -1804,15 +1836,22 @@ def tee_kasittelija(tila):
         def _luovutus_hyvaksy(self, d):
             if not self._yks_keskustelu(d):
                 return self._json(404, {"virhe": "ei loydy"})
-            t, vahvistus = d.get("tunnus"), d.get("vahvistus")
+            t, vahvistus, lisa = d.get("tunnus"), d.get("vahvistus"), d.get("lisavahvistus")
             if not isinstance(t, str) or not isinstance(vahvistus, str) or not luovutus.VAHVISTUS_RE.match(vahvistus):
                 return self._json(400, {"virhe": "vahvistuksen pit\u00e4\u00e4 olla t\u00e4sm\u00e4lleen 'kyll\u00e4 <sha8>'"})
+            if lisa is not None and not (isinstance(lisa, str) and vartija.LISAVAHVISTUS_RE.match(lisa)):
+                return self._json(400, {"virhe": "lis\u00e4vahvistuksen pit\u00e4\u00e4 olla t\u00e4sm\u00e4lleen 'tarkistin kohdat <sha8>'"})
             if not tila.luovutuslukko.acquire(blocking=False):
                 return self._json(429, {"virhe": "edellinen k\u00e4sittely on kesken"})
             vastaus = None
             try:
-                tulos = luovutus.hyvaksy(tila.luovutukset, t, vahvistus, tila.kirjasto)
+                # vartijan lopputulos lasketaan hyvaksynnan sisalla samasta (sha-sidotusta) tekstista, lukon alla
+                tulos = luovutus.hyvaksy(tila.luovutukset, t, vahvistus, tila.kirjasto,
+                                         tarkistus=tila.luovutuksen_tarkistus(t), lisavahvistus=lisa)
                 vastaus = (200, {"tulos": tulos, "teksti": LUOVUTUS_TULOKSET.get(tulos, "L\u00e4hetetty (%s)." % tulos)})
+            except luovutus.VartijaEsto as e:
+                # lokiin ja vastaukseen vain tyypit (esim. "API-avain"), ei tekstin sisaltoa
+                vastaus = (409, {"virhe": str(e), "vartija": {"tulos": e.tulos, "syyt": e.syyt}})
             except ChatVirhe as e:
                 vastaus = (409, {"virhe": str(e)})
             except OSError as e:
@@ -1885,12 +1924,17 @@ def tee_kasittelija(tila):
         def _paketti_hyvaksy(self, d):
             if not self._yks_keskustelu(d):
                 return self._json(404, {"virhe": "ei loydy"})
-            t, vahvistus = d.get("tunnus"), d.get("vahvistus")
+            t, vahvistus, lisa = d.get("tunnus"), d.get("vahvistus"), d.get("lisavahvistus")
             if not isinstance(t, str) or not isinstance(vahvistus, str) or not luovutus.VAHVISTUS_RE.match(vahvistus):
                 return self._json(400, {"virhe": "vahvistuksen pit\u00e4\u00e4 olla t\u00e4sm\u00e4lleen 'kyll\u00e4 <sha8>'"})
+            if lisa is not None and not (isinstance(lisa, str) and vartija.LISAVAHVISTUS_RE.match(lisa)):
+                return self._json(400, {"virhe": "lis\u00e4vahvistuksen pit\u00e4\u00e4 olla t\u00e4sm\u00e4lleen 'tarkistin kohdat <sha8>'"})
 
             def tee():
-                tulos = luovutuspaketti.hyvaksy_paketti(tila.luovutukset, t, vahvistus, tila.kirjasto)
+                try:
+                    tulos = luovutuspaketti.hyvaksy_paketti(tila.luovutukset, t, vahvistus, tila.kirjasto, lisavahvistus=lisa)
+                except luovutus.VartijaEsto as e:
+                    return 409, {"virhe": str(e), "vartija": {"tulos": e.tulos, "syyt": e.syyt}}
                 return 200, {"tulos": tulos, "teksti": "Paketti: " + LUOVUTUS_TULOKSET.get(tulos, "L\u00e4hetetty (%s)." % tulos)}
             return self._lukossa(tee)
 
