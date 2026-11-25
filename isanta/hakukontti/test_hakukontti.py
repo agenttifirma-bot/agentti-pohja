@@ -110,7 +110,8 @@ def ip4(a, b, c, d):
 VASTAUS_122 = 'oifname "eth0" ip daddr $CT122 tcp sport 8890 ct state established accept'
 ESTOT = ('ip daddr $KIELLETYT4 counter drop comment "yksityinen tai erikoisosoite"',
          'ip daddr $LAHIVERKOT4 counter drop comment "lahiverkko"',
-         'ip6 daddr $KIELLETYT6 counter drop comment "yksityinen tai erikoisosoite"')
+         'ip6 daddr $KIELLETYT6 counter drop comment "yksityinen tai erikoisosoite"',
+         'meta nfproto ipv6 counter drop comment "ei IPv6-ulosmenoa"')
 
 
 def maaritelma(rivit, nimi):
@@ -181,6 +182,13 @@ class YksityisetEstoTesti(unittest.TestCase):
         viimeinen = max(self.output.index(e) for e in ESTOT)
         self.assertGreater(self.output.index("ct state established,related accept"), viimeinen)
         self.assertGreater(self.output.index('meta skuid "debian-tor" oifname "eth0" accept'), viimeinen)
+
+    def test_ipv6_ulosmeno_vain_silmukkaan_ja_naapurinhakuun(self):
+        # Globaalit IPv6-osoitteet lahiverkossa (SLAAC) eivat ole KIELLETYT6:ssa, joten IPv6 estetaan kokonaan.
+        esto = self.output.index('meta nfproto ipv6 counter drop comment "ei IPv6-ulosmenoa"')
+        for r in self.output[esto + 1:]:
+            self.assertNotIn("ip6", r)
+        self.assertGreater(self.output.index('meta skuid "debian-tor" oifname "eth0" accept'), esto)
 
     def test_ainoa_poikkeus_on_vastaus_kontille_122(self):
         poikkeus = [r for r in self.output if "$CT122" in r]
