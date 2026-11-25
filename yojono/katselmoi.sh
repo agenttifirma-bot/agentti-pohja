@@ -34,6 +34,12 @@ PROMPT='Tee koodikatselmointi vain tämän repon MUUTOKSILLE edellisen katselmoi
 "${KATSELMOI_CLAUDE:-/root/.local/bin/claude}" -p "$PROMPT" --model sonnet --max-budget-usd "$BUDJETTI" --allowedTools "Read,Grep,Glob" --output-format json > "$RAP.json" || true
 "$PYTHON" -c "import sys,json; d=json.load(open(sys.argv[1])); r=d.get('result'); (r is None) and (print('EI RAPORTTIA:', d.get('subtype'), d.get('errors'), 'kulu USD:', d.get('total_cost_usd')) or sys.exit(1)); open(sys.argv[2],'w').write(d['result']); print('kulu USD:', d.get('total_cost_usd'))" "$RAP.json" "$RAP.md"
 # rajauksen yhteenveto raportin alkuun (koodi, ei mallin kirjoittama) ja onnistunut ajo pohjaksi seuraavalle
+# pohja siirtyy vasta, kun raportti on ehja: claude ei palauttanut virhetta (is_error/subtype), mallin tuloksen ensimmainen ei-tyhja rivi on "# "-otsikko
+# ja koko raportti on vahintaan 200 tavua (sama raja kuin ajurin RAPORTTI_MIN_KOKO). Muuten ajuri merkitsee raportin vajaaksi tai tyhjaksi,
+# ja seuraavan ajon pitaa katselmoida samat muutokset uudelleen.
+EHJA=0
+"$PYTHON" -c "import sys,json; d=json.load(open(sys.argv[1])); r=d.get('result') or ''; eka=next((x.strip() for x in r.splitlines() if x.strip()), ''); sys.exit(0 if d.get('is_error') is not True and d.get('subtype') in (None, 'success') and eka.startswith('# ') else 1)" "$RAP.json" && EHJA=1
 cat "$RAJAUS/otsikko.md" "$RAP.md" > "$RAP.md.uusi" && mv "$RAP.md.uusi" "$RAP.md"
-tallenna_commit
+[ "$(wc -c < "$RAP.md")" -ge 200 ] || EHJA=0
+if [ "$EHJA" = "1" ]; then tallenna_commit; else echo "raportti vajaa tai virheellinen: pohjaa ei siirretty, seuraava ajo katselmoi samat muutokset uudelleen" >&2; fi
 echo "raportti: $BASE/raportit/$PVM-$REPO.md"

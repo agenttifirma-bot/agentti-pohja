@@ -1,4 +1,5 @@
 """Testit katselmoinnin rajaukselle (yojono/rajaus.py ja katselmoi.sh): kiintea git-repo tilapaishakemistossa, ei verkkoa, ei claudea."""
+import json
 import os
 import stat
 import subprocess
@@ -76,8 +77,9 @@ class TestPohja(Pohja):
         self.commit("2026-10-10", a="1\n")
         self.commit("2026-10-15", b="2\n")
         self.commit("2026-11-03", c="3\n")
-        (self.perus / "raportit" / "2026-10-12-r.md").write_text("x")
-        (self.perus / "raportit" / "2026-10-01-r.md").write_text("x")
+        (self.perus / "raportit" / "2026-10-12-r.md").write_text("# Koodikatselmointi: x\n")
+        (self.perus / "raportit" / "2026-10-01-r.md").write_text("# Koodikatselmointi: x\n")
+        (self.perus / "raportit" / "2026-10-20-r.md").write_text("> Rajaus: x\n\n> VAJAA: otsikko puuttuu\n\nloppuosa\n")  # vajaa raportti ei ole katselmointi
         (self.perus / "raportit" / "2026-11-04-ideointi-r.md").write_text("x")  # toisen tyypin raportti ei kelpaa pohjaksi
         t = self.aja()
         self.assertEqual(t["muuttuneita"], 2)
@@ -161,10 +163,14 @@ class TestSkripti(Pohja):
         self.etuosa = self.tmp / "gh"
         self.etuosa.mkdir()
         self.claude = self.tmp / "claude"
-        self.claude.write_text('#!/bin/sh\necho "$@" > "$KATSELMOI_PERUS/claude-argit"\n'
-                               'echo \'{"result": "Ei loydoksia muutoksissa, kaikki kunnossa ja muutokset tarkistettu rajauksen mukaisesti ja huolellisesti tassa.", "total_cost_usd": 0.4}\'\n')
+        self.claude.write_text('#!/bin/sh\necho "$@" > "$KATSELMOI_PERUS/claude-argit"\ncat "$KATSELMOI_PERUS/claude-vastaus.json"\n')
+        self.vastaus({"result": "# Koodikatselmointi: ei l\u00f6yd\u00f6ksi\u00e4\n\nEi l\u00f6yd\u00f6ksi\u00e4 muutoksissa, kaikki kunnossa ja muutokset tarkistettu rajauksen mukaisesti ja huolellisesti t\u00e4ss\u00e4.", "total_cost_usd": 0.4})
         self.claude.chmod(self.claude.stat().st_mode | stat.S_IXUSR)
         (self.tmp / "env").write_text("")
+
+    def vastaus(self, data):
+        """Tekoclauden JSON-vastaus (claude -p --output-format json)."""
+        (self.perus / "claude-vastaus.json").write_text(json.dumps(data), encoding="utf-8")
 
     def katselmoi(self, budjetti="2.50"):
         subprocess.run(["rm", "-rf", str(self.etuosa / "r")], check=True)
@@ -199,6 +205,35 @@ class TestSkripti(Pohja):
         r = self.katselmoi()
         self.assertEqual(r.returncode, 0, r.stderr[-300:])
         self.assertIn("1/1 tiedostoa", self.raportti().read_text())
+
+    def test_vajaa_raportti_ei_siirra_pohjaa_ja_seuraava_ajo_katselmoi_uudelleen(self):
+        """Tarkastajan loydos (#452): raportti ilman otsikkoa (VAJAA) ei saa merkita commitia katselmoiduksi."""
+        self.commit("2026-11-03", a="a\n")
+        self.vastaus({"result": "loppuosa raportista ilman otsikkoa, joka on kadonnut kesken lauseen ja on riittavan pitka ohittaakseen vajaan tarkistuksen.", "total_cost_usd": 0.4})
+        r = self.katselmoi()
+        self.assertEqual(r.returncode, 0, r.stderr[-300:])
+        self.assertFalse((self.perus / "rajaus" / "r.commit").exists())
+        (self.perus / "claude-argit").unlink()
+        self.vastaus({"result": "# Koodikatselmointi: ei l\u00f6yd\u00f6ksi\u00e4\n\n" + "Ei l\u00f6yd\u00f6ksi\u00e4 muutoksissa, tarkistettu huolellisesti. " * 3, "total_cost_usd": 0.4})
+        r = self.katselmoi()
+        self.assertEqual(r.returncode, 0, r.stderr[-300:])
+        self.assertTrue((self.perus / "claude-argit").exists())  # katselmoitiin uudelleen, ei "ei muutoksia"
+        self.assertIn("1/1 tiedostoa", self.raportti().read_text())
+        self.assertEqual((self.perus / "rajaus" / "r.commit").read_text().strip(), git(self.repo, "rev-parse", "HEAD"))
+
+    def test_budjetti_loppui_osittaisella_tuloksella_ei_siirra_pohjaa(self):
+        self.commit("2026-11-03", a="a\n")
+        self.vastaus({"subtype": "error_max_budget_usd", "is_error": True, "result": "# Koodikatselmointi: kesken\n\n" + "osittainen havainto. " * 20, "total_cost_usd": 2.5})
+        self.katselmoi()
+        self.assertFalse((self.perus / "rajaus" / "r.commit").exists())
+
+    def test_rajausyhteenveto_ei_riita_otsikoksi(self):
+        """Raportin alussa oleva '> Rajaus:' -yhteenveto on koodin kirjoittama: mallin otsikko ratkaisee."""
+        self.commit("2026-11-03", a="a\n")
+        self.vastaus({"result": "ei otsikkoa mutta tarpeeksi pitka teksti, jotta koko raportti ylittaa kaksisataa tavua ja ajurin tyhja-raja ei laukea.", "total_cost_usd": 0.1})
+        self.katselmoi()
+        self.assertTrue(self.raportti().read_text().startswith("> Rajaus:"))
+        self.assertFalse((self.perus / "rajaus" / "r.commit").exists())
 
 
 if __name__ == "__main__":

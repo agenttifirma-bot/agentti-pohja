@@ -37,12 +37,24 @@ def commit_olemassa(klooni, sha):
     return r.returncode == 0
 
 
+def raportti_ehja(polku):
+    """Ehja = ensimmainen rivi, joka ei ala `> `-merkinnalla (rajaus, VAJAA), on mallin `# `-otsikko. Vajaata raporttia ei lasketa katselmoinniksi."""
+    try:
+        teksti = Path(polku).read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return False
+    eka = next((r.strip() for r in teksti.splitlines() if r.strip() and not r.startswith("> ")), "")
+    return eka.startswith("# ")
+
+
 def viimeisin_raportin_pvm(perus, repo):
-    """Viimeisin onnistunut (md olemassa) raportti <pvm>-<repo>.md: palauttaa date-olion tai None."""
+    """Viimeisin onnistunut (ehja md olemassa) raportti <pvm>-<repo>.md: palauttaa date-olion tai None."""
     kansio = Path(perus) / "raportit"
     pvmt = []
     if kansio.is_dir():
         for p in kansio.glob(f"????-??-??-{repo}.md"):
+            if not raportti_ehja(p):
+                continue
             try:
                 pvmt.append(datetime.strptime(p.name[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc))
             except ValueError:
