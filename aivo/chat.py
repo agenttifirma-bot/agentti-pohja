@@ -201,7 +201,8 @@ async function aloita(){const r=await fetch('/api/uusi',{method:'POST',headers:H
  ['odottavat','luovutukset','luovutetut'].forEach(x=>{document.getElementById(x).hidden=(nyt!=='yksityinen');});
  document.getElementById('saapuneet').hidden=(nyt!=='tyokalu');
  if(typeof j.malli==='string'&&mallit.includes(j.malli))M.value=j.malli;
- if(typeof j.yhdistelma==='string'&&mallit.includes('yhdistelma:'+j.yhdistelma)&&j.yhdistelma!=='yksi')M.value='yhdistelma:'+j.yhdistelma;nayta();}
+ if(typeof j.yhdistelma==='string'&&mallit.includes('yhdistelma:'+j.yhdistelma)&&j.yhdistelma!=='yksi')M.value='yhdistelma:'+j.yhdistelma;nayta();
+ if(nyt==='yksityinen')tausta().catch(()=>{});}
 async function haeMallit(){const x=await haeJson('/api/mallit');if(!x||!x.r.ok||!Array.isArray(x.j.mallit))return;
  mallit=x.j.mallit.filter(m=>typeof m==='string');M.textContent='';
  mallit.forEach(m=>{const o=document.createElement('option');o.value=m;o.textContent=m;M.appendChild(o);});
@@ -349,11 +350,13 @@ async function laheta(s){if(pituus(s)>RAJA){lisaa('aivo',ylipitka(pituus(s)));re
  finally{lahetyksessa=false;kulut().catch(()=>{});}}
 document.getElementById('lomake').onsubmit=async e=>{e.preventDefault();if(lahetyksessa)return;const t=document.getElementById('teksti');
  const s=t.value.trim();if(!s)return;if(pituus(s)>RAJA){laskuri();t.focus();return;}t.value='';laskuri();await laheta(s);};
-let taustaAlkaen=0;let taustaKid=null;
-async function tausta(){if(!kid||nyt!=='yksityinen'||document.hidden)return;if(taustaKid!==kid){taustaKid=kid;taustaAlkaen=0;}
- const k=kid;const x=await haeJson('/api/tausta?keskustelu='+q(k)+'&alkaen='+taustaAlkaen);
- if(!x||!x.r.ok||k!==kid||!Array.isArray(x.j.viestit))return;
- x.j.viestit.forEach(v=>{if(v&&Number.isInteger(v.indeksi)&&v.indeksi>=taustaAlkaen&&typeof v.teksti==='string'){lisaa('aivo',v.teksti);taustaAlkaen=v.indeksi+1;}});}
+const taustaKohta=new Map();
+async function tausta(){if(!kid||nyt!=='yksityinen')return;const k=kid;const uusi=!taustaKohta.has(k);if(document.hidden&&!uusi)return;
+ const x=await haeJson('/api/tausta?keskustelu='+q(k)+'&alkaen='+(uusi?999999:taustaKohta.get(k)));
+ if(!x||!x.r.ok||!Array.isArray(x.j.viestit))return;
+ if(uusi){if(!taustaKohta.has(k)&&Number.isInteger(x.j.pituus)&&x.j.pituus>=0)taustaKohta.set(k,x.j.pituus);return;}
+ if(k!==kid)return;
+ x.j.viestit.forEach(v=>{if(v&&Number.isInteger(v.indeksi)&&v.indeksi>=taustaKohta.get(k)&&typeof v.teksti==='string'){lisaa('aivo',v.teksti);taustaKohta.set(k,v.indeksi+1);}});}
 setInterval(()=>{tausta().catch(()=>{});},30000);
 haeMallit().finally(aloita);alas();
 </script></body></html>

@@ -3,6 +3,10 @@ import ast
 import http.client
 import json
 import os
+import re
+import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -670,6 +674,59 @@ class ChatReittiTesti(unittest.TestCase):
         html = chat.sivu_html("openrouter")
         self.assertIn("/api/tausta?keskustelu=", html)
         self.assertIn("setInterval", html)
+
+    @unittest.skipUnless(shutil.which("node"), "node puuttuu")
+    def test_sivun_js_nayttaa_taustarivin_kerran_myos_keskustelun_vaihdon_jalkeen(self):
+        """Sivun oma JS Nodella oikeaa palvelinta vasten. Sivulle uuden keskustelun alkukohta on palvelimen pituus
+        (historian taustarivia ei lisata uudelleen); jo nahdyn keskustelun haku jatkuu sen omasta kohdasta."""
+        ev = self.kirjaudu()
+        js = re.search(r"<script>(.*)</script>", chat.sivu_html("loopback"), re.S).group(1)
+        f = self.r / "sivu_ajo.js"
+        f.write_text(NODE_RUNKO.replace("/*SIVU*/", js), encoding="utf-8")
+        env = dict(os.environ, PORTTI=str(self.portti), EV=ev, CHAT=str(self.r / "yks" / "chat"),
+                   REPO=str(AIVO.parent), PY=sys.executable)
+        p = subprocess.run(["node", str(f)], env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr[-500:])
+        self.assertEqual(json.loads(p.stdout.strip().splitlines()[-1]),
+                         {"A_kaksi_hakua": 1, "A_vaihdon_jalkeen": 0, "C_uusi_rivi_vaihdon_jalkeen": 1,
+                          "B_toinen_keskustelu": 1, "A_toisessa": 0})
+
+
+# Minimaalinen DOM ja fetch Nodelle; /*SIVU*/ korvataan chat-sivun omalla JS:lla. Taustarivit kirjoitetaan
+# taustaajon omalla funktiolla (lisaa_keskusteluun), kuten tuotannossa.
+NODE_RUNKO = r"""
+const http=require('http');const {execFileSync}=require('child_process');
+function el(id){return {id,children:[],hidden:false,disabled:false,value:id==='tila'?'yksityinen':'',textContent:'',className:'',style:{},
+ appendChild(c){this.children.push(c);return c;},append(...c){c.forEach(x=>{if(typeof x!=='string')this.children.push(x);});},
+ get lastElementChild(){return this.children[this.children.length-1];},
+ addEventListener(){},setAttribute(){},remove(){},querySelectorAll(){return [];},scrollIntoView(){},focus(){}};}
+const els={};const viestit=el('viestit');
+Object.defineProperty(viestit,'textContent',{get(){return '';},set(v){if(v==='')viestit.children.length=0;}});
+global.document={hidden:false,getElementById(i){return i==='viestit'?viestit:(els[i]=els[i]||el(i));},
+ querySelector(){return el('header');},querySelectorAll(){return [];},createElement(t){return el(t);}};
+global.location={href:''};global.confirm=()=>true;global.setInterval=()=>0;
+global.fetch=(url,o={})=>new Promise((res,rej)=>{const q=http.request({host:'127.0.0.1',port:+process.env.PORTTI,path:url,
+ method:o.method||'GET',headers:Object.assign({},o.headers||{},{Cookie:process.env.EV})},r=>{let b='';r.on('data',d=>b+=d);
+ r.on('end',()=>res({status:r.statusCode,ok:r.statusCode<300,json:async()=>JSON.parse(b)}));});q.on('error',rej);
+ if(o.body)q.write(o.body);q.end();});
+/*SIVU*/
+const kirjoita=(k,t)=>execFileSync(process.env.PY,['-c',
+ 'import sys;sys.path.insert(0,sys.argv[1]);from pathlib import Path;from datetime import datetime,timezone;'+
+ 'from aivo import taustaajo as ta;ta.lisaa_keskusteluun(Path(sys.argv[2]),sys.argv[3],ta.valmis_teksti(sys.argv[4]),"t1",'+
+ 'datetime.now(timezone.utc))',process.env.REPO,process.env.CHAT,k,t]);
+const n=t=>viestit.children.filter(d=>typeof d.textContent==='string'&&d.textContent.includes(t)).length;
+(async()=>{for(let i=0;i<50&&!kid;i++)await new Promise(r=>setTimeout(r,50));
+ await new Promise(r=>setTimeout(r,100));if(!kid)throw new Error('ei keskustelua');
+ const tulos={};await laheta('moi');const k1=kid;kirjoita(k1,'TULOS-A');
+ await tausta();await tausta();tulos.A_kaksi_hakua=n('TULOS-A');
+ await aloita();const k2=kid;await tausta();
+ kid=k1;await tausta();await tausta();tulos.A_vaihdon_jalkeen=n('TULOS-A');
+ kirjoita(k1,'TULOS-C');await tausta();await tausta();tulos.C_uusi_rivi_vaihdon_jalkeen=n('TULOS-C');
+ viestit.children.length=0;kid=k2;await laheta('toinen');kirjoita(k2,'TULOS-B');
+ await tausta();await tausta();tulos.B_toinen_keskustelu=n('TULOS-B');tulos.A_toisessa=n('TULOS-A');
+ console.log(JSON.stringify(tulos));
+})().catch(e=>{console.error('VIRHE',e.constructor.name);process.exit(1);});
+"""
 
 
 class RakenneTesti(unittest.TestCase):
