@@ -142,6 +142,13 @@ class AvainTesti(unittest.TestCase):
                   "Valimuistin key on build-2026-11-25-linux-py312"):
             self.assertEqual(self.syyt(t), [], t)
 
+    def test_pahin_syote_ei_ole_neliollinen(self):
+        import time
+        for teksti in ("key" * 5400, "token " * 2700, "key " + "a1" * 8000 + "\u00e4", "ssh-rsa AAAA" * 1400):
+            alku = time.perf_counter()
+            vartija.mekaaninen(teksti)
+            self.assertLess(time.perf_counter() - alku, 1.0, teksti[:12])
+
     def test_avain_ei_muuta_tekstia_ja_paikka_oikein(self):
         a = _k("gh", "p_", "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3z00")
         teksti = "token=" + a + " ja ssh-ed25519 " + _k("AAAA", "C3NzaC1lZDI1NTE5AAAAIHq3x9k2")

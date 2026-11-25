@@ -59,8 +59,9 @@ API_AVAIN_RE = re.compile(
     r"(?<![\w-])(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{22,}"
     r"|xox[abposr]-[A-Za-z0-9-]{10,}|(?:AKIA|ASIA)[0-9A-Z]{16})(?![\w-])")
 # Avainsana (key, token, secret, password, salasana, avain) ja sen jalkeen pitka satunnainen arvo. Vain arvo merkitaan.
+# Avainsanan jatko on rajattu (\w{0,30}): rajaton \w* teki syotteesta keykeykey... neliollisen (3 s / 16 000 merkkia).
 AVAINSANA_ARVO_RE = re.compile(
-    r"(?i)(?:key|token|secret|passw(?:or)?d|salasana|avain)\w*[\"']?(?:\s*[:=]\s*|\s+(?:on|is)\s+|\s+)[\"']?"
+    r"(?i)(?:key|token|secret|passw(?:or)?d|salasana|avain)\w{0,30}[\"']?(?:\s*[:=]\s*|\s+(?:on|is)\s+|\s+)[\"']?"
     r"(?P<arvo>[A-Za-z0-9+/_.~-]{20,}={0,2})(?![\w+/=.~-])")
 AVAIN_MIN_ENTROPIA = 3.5           # bittia merkkia kohden: sanat ja tiedostonimet jaavat alle
 
