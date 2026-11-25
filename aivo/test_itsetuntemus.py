@@ -324,20 +324,254 @@ class RakenneTesti(unittest.TestCase):
     def test_aja_itsetuntemus_kutsuu_vain_openrouter_kulut_kautta(self):
         puu = ast.parse((AIVO / "mallivertailu.py").read_text(encoding="utf-8"))
         funktiot = {f.name: f for f in puu.body if isinstance(f, ast.FunctionDef)}
-        f = funktiot["aja_itsetuntemus"]
-        kutsut = [n for n in ast.walk(f) if isinstance(n, ast.Call)]
-        self.assertFalse([n for n in kutsut if isinstance(n.func, ast.Name) and n.func.id == "laheta"])
-        lahetyt = [n for n in kutsut if any(isinstance(a, ast.Name) and a.id == "laheta" for a in n.args)]
+
+        def kutsut(nimi):
+            return [n for n in ast.walk(funktiot[nimi]) if isinstance(n, ast.Call)]
+
+        def on_or_kutsu(n):
+            return (isinstance(n.func, ast.Attribute) and n.func.attr == "kutsu"
+                    and isinstance(n.func.value, ast.Name) and n.func.value.id == "openrouter_kulut")
+        # ainoa itsetuntemusajon kutsukohta on _itse_kutsu: yksi openrouter_kulut.kutsu(..., laheta, ...) lipulla
+        k_lista = kutsut("_itse_kutsu")
+        self.assertFalse([n for n in k_lista if isinstance(n.func, ast.Name) and n.func.id == "laheta"])
+        lahetyt = [n for n in k_lista if any(isinstance(a, ast.Name) and a.id == "laheta" for a in n.args)]
         self.assertEqual(len(lahetyt), 1)
         k = lahetyt[0]
-        self.assertTrue(isinstance(k.func, ast.Attribute) and k.func.attr == "kutsu"
-                        and isinstance(k.func.value, ast.Name) and k.func.value.id == "openrouter_kulut")
+        self.assertTrue(on_or_kutsu(k))
         lippu = [kw for kw in k.keywords if kw.arg == "yksityinen_chat"]
         self.assertTrue(len(lippu) == 1 and isinstance(lippu[0].value, ast.Constant) and lippu[0].value.value is True)
+        # ajosilmukka ja yhdistelma eivat kutsu verkkoa itse, vaan _itse_kutsun kautta
+        for nimi in ("aja_itsetuntemus", "_itse_yhdistelmarivi"):
+            self.assertFalse([n for n in kutsut(nimi) if on_or_kutsu(n)], nimi)
+            self.assertFalse([n for n in kutsut(nimi) if isinstance(n.func, ast.Name)
+                              and n.func.id in ("laheta", "laheta_tehdas")], nimi)
+        self.assertIn("_itse_kutsu", {n.func.id for n in kutsut("aja_itsetuntemus") if isinstance(n.func, ast.Name)})
 
     def test_koodi_on_ascii(self):
         for nimi in ("itsetuntemus.py", "test_itsetuntemus.py", "mallivertailu.py"):
             self.assertIsNone(re.search(r"[^\x00-\x7f]", (AIVO / nimi).read_text(encoding="utf-8")), nimi)
+
+
+KOKOAJA = TOINEN
+JASENET3 = [LISTALTA, TOINEN, "deepseek/deepseek-chat-v3.1"]
+JASENET5 = JASENET3 + ["mistralai/mistral-small-2603", "meta-llama/llama-4-maverick"]
+
+
+def yhdistelmatehdas(rungot, jasen="J\u00e4senen vastaus [[PAATOS 1]]", kokoaja="En tied\u00e4.", kulu=0.001,
+                     virhe_malli=None, kokoaja_virhe=False):
+    """Feikki: kokoajan kutsu tunnistetaan kehotteen roolirivista."""
+    def tehdas():
+        def laheta(runko):
+            rungot.append(runko)
+            on_kokoaja = "kokoaja" in runko["messages"][0]["content"]
+            if (on_kokoaja and kokoaja_virhe) or (not on_kokoaja and runko["model"] == virhe_malli):
+                raise TimeoutError("salainen-osoite")
+            return {"choices": [{"message": {"content": kokoaja if on_kokoaja else jasen}}],
+                    "usage": {"cost": kulu, "prompt_tokens": 1000, "completion_tokens": 50}, "provider": "Feikki"}
+        return laheta
+    return tehdas
+
+
+def kokoajan_rungot(rungot):
+    return [r for r in rungot if "kokoaja" in r["messages"][0]["content"]]
+
+
+class YhdistelmaTesti(Tilapainen):
+    def test_valinta_tarkistetaan(self):
+        self.assertEqual(mv.itse_yhdistelma(JASENET3, 3, KOKOAJA), (3, KOKOAJA))
+        self.assertEqual(mv.itse_yhdistelma(JASENET5, 5, LISTALTA), (5, LISTALTA))
+        self.assertEqual(mv.itse_yhdistelma([LISTALTA], None, None), (None, None))
+        for mallit, n, kok in ((JASENET3, 4, KOKOAJA), (JASENET3, 5, KOKOAJA), (JASENET5, 3, KOKOAJA),
+                               (JASENET3, 3, None), (JASENET3, 3, "z-ai/glm-5.3"), (JASENET3, 3, KOKOAJA + ":free"),
+                               ([LISTALTA], None, KOKOAJA)):
+            with self.assertRaises(mv.VertailuVirhe):
+                mv.itse_yhdistelma(mallit, n, kok)
+
+    def test_tuotannon_rajat_ennallaan(self):
+        from aivo import yhdistelma
+        self.assertEqual(yhdistelma.MAX_MALLEJA, 3)
+        self.assertEqual(yhdistelma.MAX_KUTSUT_VIESTI, 4)
+        self.assertEqual(mv.ITSE_YHDISTELMAT, (3, 5))
+        self.assertEqual(mv.ITSE_KULURAJA_USD, 3.0)
+
+    def test_kuluarvio_n_plus_1_kutsua(self):
+        n = len(it.lue_kysymykset()["kysymykset"])
+        for jasenet in (JASENET3, JASENET5):
+            a = mv.itse_kuluarvio(jasenet, kokoaja=KOKOAJA)
+            self.assertEqual(a["kutsuja"], (len(jasenet) + 1) * n)
+            self.assertEqual(a["kutsuja_per_kysymys"], len(jasenet) + 1)
+            self.assertEqual(len(a["ylaraja_usd_per_malli"]), len(jasenet) + 1)
+            self.assertIn("kokoaja " + KOKOAJA, a["ylaraja_usd_per_malli"])
+            self.assertGreaterEqual(a["tokenit_sisaan_kokoaja"],
+                                    a["tokenit_sisaan_per_malli"] + len(jasenet) * mv.ITSE_MAX_TOKENIA * n)
+            self.assertAlmostEqual(a["ylaraja_usd"], sum(a["ylaraja_usd_per_malli"].values()), places=3)
+            teksti = mv.itse_arvioteksti(a)
+            self.assertIn("%d per kysymys" % (len(jasenet) + 1), teksti)
+            self.assertIn("kokoaja " + KOKOAJA, teksti)
+        self.assertEqual(mv.itse_kuluarvio(JASENET3)["kutsuja_per_kysymys"], 3)   # ilman kokoajaa: yksittain
+
+    def test_ajo_kolme_mallia_ja_kokoaja(self):
+        rungot = []
+        yv = mv.aja_itsetuntemus(JASENET3, self.ulos, yhdistelmatehdas(rungot), kokoaja=KOKOAJA,
+                                 kulutila=str(self.kulut), loki=lambda s: None)
+        kys = it.lue_kysymykset()["kysymykset"]
+        n = len(kys)
+        self.assertEqual(len(rungot), 4 * n)
+        for r in rungot:
+            self.assertEqual(r["provider"], {"zdr": True, "data_collection": "deny"})
+            self.assertTrue(yksityinen_or._zdr_kunnossa(r))
+        kok = kokoajan_rungot(rungot)
+        self.assertEqual(len(kok), n)
+        self.assertEqual({r["model"] for r in kok}, {KOKOAJA})
+        self.assertEqual([r["model"] for r in rungot[:4]], JASENET3 + [KOKOAJA])   # jasenet ensin, sitten kokoaja
+        for r in kok:
+            viimeinen = r["messages"][-1]["content"]
+            self.assertIn("VASTAUS 3:", viimeinen)
+            self.assertNotIn("VASTAUS 4:", viimeinen)
+            self.assertNotIn("[[", viimeinen)                  # jasenten merkinnat neutraloitu
+            for m in JASENET3:
+                self.assertNotIn(m, viimeinen)                 # mallien nimet eivat nay kokoajalle
+        rivit = it.lue_vastaukset(self.ulos)
+        self.assertEqual(len(rivit), n)
+        nimi = mv.itse_yhdistelman_nimi(JASENET3, KOKOAJA)
+        self.assertEqual({r["malli"] for r in rivit}, {nimi})
+        self.assertTrue(all(len(r["osat"]) == 3 and r["vastaus"] == "En tied\u00e4." for r in rivit))
+        self.assertTrue(all(abs(r["kulu_usd"] - 0.004) < 1e-9 for r in rivit))
+        self.assertEqual(yv["kulut_usd"], round(0.004 * n, 4))
+        self.assertEqual((yv["yhdistelma"], yv["kokoaja"], yv["kutsuja_per_kysymys"]), (3, KOKOAJA, 4))
+        self.assertTrue((self.ulos / "ajo-yhdistelma-3.json").exists())
+        self.assertFalse((self.ulos / "ajo.json").exists())
+        kirjaukset = [r for r in self.kirjanpito() if r.get("tehtava") == mv.ITSE_TEHTAVA and not r.get("varaus")]
+        self.assertEqual(len(kirjaukset), 4 * n)
+        # pisteytys lopullisesta vastauksesta: kokoajan "En tieda" -> en_tieda-kysymykset oikein
+        tulos = it.pisteet(rivit)[nimi]
+        self.assertEqual(tulos["luokat"]["en_tieda_oikein"], sum(1 for k in kys if k["laji"] == "en_tieda"))
+
+    def test_viisi_mallia(self):
+        rungot = []
+        mv.aja_itsetuntemus(JASENET5, self.ulos, yhdistelmatehdas(rungot), kokoaja=LISTALTA,
+                            kulutila=str(self.kulut), loki=lambda s: None)
+        n = len(it.lue_kysymykset()["kysymykset"])
+        self.assertEqual(len(rungot), 6 * n)
+        self.assertTrue(all("VASTAUS 5:" in r["messages"][-1]["content"] for r in kokoajan_rungot(rungot)))
+
+    def test_kuluraja_varaa_koko_kysymyksen(self):
+        rungot = []
+        yv = mv.aja_itsetuntemus(JASENET3, self.ulos, yhdistelmatehdas(rungot, kulu=0.2), kokoaja=KOKOAJA, raja=1.0,
+                                 kulutila=str(self.kulut), loki=lambda s: None)
+        self.assertEqual(yv["pysahtyi"], "kuluraja")
+        self.assertEqual(len(rungot), 4)                       # 0.8 + 2 * 0.8 > 1.0: toista kysymysta ei aloiteta
+        self.assertLessEqual(yv["kulut_usd"], 1.0)
+        rungot2 = []
+        yv2 = mv.aja_itsetuntemus(JASENET5, self.d / "u2", yhdistelmatehdas(rungot2, kulu=0.001), kokoaja=KOKOAJA,
+                                  raja=0.29, kulutila=str(self.kulut), loki=lambda s: None)
+        self.assertEqual((yv2["pysahtyi"], rungot2), ("kuluraja", []))   # varaus 6 * 0.05 > 0.29
+
+    def test_jasenen_virhe_kokoaja_saa_loput(self):
+        rungot = []
+        yv = mv.aja_itsetuntemus(JASENET3, self.ulos, yhdistelmatehdas(rungot, virhe_malli=TOINEN), kokoaja=LISTALTA,
+                                 kulutila=str(self.kulut), loki=lambda s: None)
+        self.assertEqual(yv["pysahtyi"], "virheita")           # MAX_VIRHEITA epaonnistunutta kutsua
+        self.assertEqual(yv["virheita"], mv.MAX_VIRHEITA)
+        rivit = it.lue_vastaukset(self.ulos)
+        self.assertTrue(all(r["vastauksia"] == 2 and "virhe" not in r for r in rivit))
+        self.assertTrue(all("VASTAUS 2:" in r["messages"][-1]["content"] and "VASTAUS 3:" not in r["messages"][-1]["content"]
+                            for r in kokoajan_rungot(rungot)))
+        teksti = (self.ulos / "vastaukset.jsonl").read_text(encoding="utf-8")
+        self.assertIn("TimeoutError", teksti)
+        self.assertNotIn("salainen", teksti)
+
+    def test_kokoajan_virhe_on_vaarin(self):
+        rungot = []
+        yv = mv.aja_itsetuntemus(JASENET3, self.ulos, yhdistelmatehdas(rungot, kokoaja_virhe=True), kokoaja=KOKOAJA,
+                                 kulutila=str(self.kulut), loki=lambda s: None)
+        rivit = it.lue_vastaukset(self.ulos)
+        self.assertEqual(len(rivit), 2)                        # kaksi perakkaista epaonnistunutta kysymysta
+        self.assertTrue(all(r["virhe"] == "TimeoutError" and "vastaus" not in r for r in rivit))
+        self.assertEqual(yv["virheita"], 2)
+        tulos = it.pisteet(rivit)[mv.itse_yhdistelman_nimi(JASENET3, KOKOAJA)]
+        self.assertEqual(tulos["luokat"]["vaarin"], 2)
+
+    def test_paivakatto_kesken_kysymyksen(self):
+        tehdyt = []
+
+        def feikki(malli, viestit, laheta_tehdas, kulutila, kello):
+            if len(tehdyt) == 2:
+                raise ok.KutsuEstetty("katto")
+            tehdyt.append(malli)
+            return {"vastaus": "x", "kulu_usd": 0.01, "sekuntia": 1.0, "tokenit_sisaan": 1, "tokenit_ulos": 1,
+                    "tarjoaja": None}
+        with mock.patch.object(mv, "_itse_kutsu", feikki):
+            yv = mv.aja_itsetuntemus(JASENET3, self.ulos, yhdistelmatehdas([]), kokoaja=KOKOAJA, loki=lambda s: None)
+        self.assertEqual(yv["pysahtyi"], "paivakatto")
+        self.assertEqual(yv["kulut_usd"], 0.02)                # keskeytyneen kysymyksen kulu mukana
+        self.assertEqual(it.lue_vastaukset(self.ulos), [])
+
+    def test_mediaaniaika_rinnakkaisena(self):
+        ajat = iter([0, 2, 10, 15, 20, 21, 30, 34])        # jasenet 2, 5, 1 s, kokoaja 4 s
+
+        with mock.patch.object(it, "lue_kysymykset", return_value={"kysymykset": it.lue_kysymykset()["kysymykset"][:1]}):
+            mv.aja_itsetuntemus(JASENET3, self.ulos, yhdistelmatehdas([]), kokoaja=KOKOAJA, kello=lambda: next(ajat),
+                                kulutila=str(self.kulut), loki=lambda s: None)
+        r = it.lue_vastaukset(self.ulos)[0]
+        self.assertEqual((r["sekuntia"], r["sekuntia_perakkain"]), (9.0, 12.0))
+
+    def test_taulukossa_mediaaniaika(self):
+        k = it.lue_kysymykset()["kysymykset"]
+        rivit = [{"malli": "a", "kysymys": k[i]["id"], "vastaus": "", "sekuntia": s} for i, s in enumerate((1, 3, 10))]
+        rivit += [{"malli": "b", "kysymys": k[0]["id"], "vastaus": "", "sekuntia": s} for s in (2, 4)]
+        rivit += [{"malli": "c", "kysymys": k[0]["id"], "virhe": "X"}]
+        tulos = it.pisteet(rivit)
+        self.assertEqual((tulos["a"]["mediaani_s"], tulos["b"]["mediaani_s"], tulos["c"]["mediaani_s"]), (3.0, 3.0, None))
+        teksti = it.taulukko(tulos)
+        self.assertIn("Mediaaniaika s", teksti)
+        self.assertIn("| 3.0 |", teksti)
+        self.assertRegex(teksti, r"\| c \|.*\| - \|$")
+
+
+class YhdistelmaKomentoriviTesti(KomentoriviTesti):
+    def test_arvio_ja_ilman_vahvistusta_ei_kutsuja(self):
+        jasenet = ",".join(JASENET3)
+        with mock.patch.object(yksityinen_or, "lue_avain") as avain, \
+                mock.patch.object(yksityinen_or, "tee_kuljetin") as kuljetin:
+            rc, out, _ = self.aja_main(["itse-arvio", "--mallit", jasenet, "--yhdistelma", "3", "--kokoaja", KOKOAJA])
+            rc2, out2, _ = self.aja_main(["itse-aja", "--ulos", str(self.ulos), "--mallit", jasenet,
+                                          "--yhdistelma", "3", "--kokoaja", KOKOAJA])
+        self.assertEqual((rc, rc2), (0, 2))
+        self.assertIn("4 per kysymys", out)
+        self.assertIn("kokoaja " + KOKOAJA, out)
+        self.assertIn("--vahvista", out2)
+        avain.assert_not_called()
+        kuljetin.assert_not_called()
+        self.assertFalse(self.ulos.exists())
+
+    def test_virheelliset_valinnat(self):
+        jasenet = ",".join(JASENET3)
+        for argv in (["--mallit", jasenet, "--kokoaja", KOKOAJA],
+                     ["--mallit", jasenet, "--yhdistelma", "4", "--kokoaja", KOKOAJA],
+                     ["--mallit", jasenet, "--yhdistelma", "5", "--kokoaja", KOKOAJA],
+                     ["--mallit", jasenet, "--yhdistelma", "3"],
+                     ["--mallit", jasenet, "--yhdistelma", "3", "--kokoaja", "anthropic/claude-opus-4"]):
+            with mock.patch.object(yksityinen_or, "lue_avain") as avain:
+                rc, _, err = self.aja_main(["itse-aja", "--ulos", str(self.ulos), "--vahvista"] + argv)
+            self.assertEqual((rc, err.strip()), (1, "virhe: VertailuVirhe"), argv)
+            avain.assert_not_called()
+
+    def test_vahvistettu_yhdistelma_ja_taulukko(self):
+        rungot = []
+        with mock.patch.object(yksityinen_or, "lue_avain", return_value="x" * 20), \
+                mock.patch.object(yksityinen_or, "tee_kuljetin", lambda avain: yhdistelmatehdas(rungot)()):
+            rc, out, _ = self.aja_main(["itse-aja", "--ulos", str(self.ulos), "--vahvista"])
+            rc2, out2, _ = self.aja_main(["itse-aja", "--ulos", str(self.ulos), "--mallit", ",".join(JASENET3),
+                                          "--yhdistelma", "3", "--kokoaja", KOKOAJA, "--vahvista"])
+        n = len(it.lue_kysymykset()["kysymykset"])
+        self.assertEqual((rc, rc2), (0, 0))
+        self.assertTrue(out2.index("Kuluarvio") < out2.index("kulut_usd"))
+        self.assertEqual(len(rungot), n + 4 * n)
+        rc, out, _ = self.aja_main(["itse-taulukko", "--ulos", str(self.ulos)])
+        self.assertEqual(rc, 0)
+        self.assertIn("| %s |" % LISTALTA, out)
+        self.assertIn("| %s |" % mv.itse_yhdistelman_nimi(JASENET3, KOKOAJA), out)
 
 
 if __name__ == "__main__":

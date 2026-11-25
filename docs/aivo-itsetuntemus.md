@@ -57,9 +57,26 @@ runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -B -m aivo.malliver
 
 Käytä jokaiselle ajolle omaa tuloskansiota (esimerkiksi `itsetuntemus-ennen` ja `itsetuntemus-jalkeen`), koska `vastaukset.jsonl` kasvaa lisäyksinä.
 
+## Yhdistelmäkoe: kolme tai viisi mallia (A1105)
+
+Valitsimilla `--yhdistelma N` (N = 3 tai 5) ja `--kokoaja <malli>` jokainen kysymys kysytään kaikilta `--mallit`-listan malleilta (listassa on oltava tasan N mallia). Sen jälkeen kokoaja saa samat kehotteet ja numeroidut vastaukset ja kirjoittaa lopullisen vastauksen. Kokoajan ohje on lyhyt: valitse tai yhdistä, jätä pois väitteet, joita vastaukset eivät tue, ja merkitse epävarmuus. Kokoaja ei näe mallien nimiä, ja vastauksista poistetaan `[[ ]]`-merkinnät.
+
+- Pisteytys tehdään lopullisesta vastauksesta samalla luokituksella kuin yksittäisille malleille. Jäsenten vastaukset tallentuvat riville (`osat`) käsin tarkistusta varten.
+- Kysymystä kohden tehdään N + 1 kutsua. Kuluarvio laskee ne ja kokoajan pidemmän syötteen (N vastausta enimmäispituudella). Ajon 3 USD:n raja tarkistetaan ennen jokaista kysymystä koko kysymyksen varauksella.
+- Jos jäsen epäonnistuu, kokoaja saa muiden vastaukset. Jos kokoaja epäonnistuu, rivillä on virhe eikä vastausta, ja se lasketaan vääräksi.
+- Kutsut tehdään peräkkäin. Rivin `sekuntia` on arvio rinnakkaisesta ajosta (hitain jäsen + kokoaja), ja `sekuntia_perakkain` on todellinen peräkkäinen aika. Taulukon mediaaniaika käyttää arvoa `sekuntia`.
+- Taulukossa yhdistelmä näkyy omana rivinään nimellä `yhdistelma-N (kokoaja <malli>)`. Yhteenveto kirjoitetaan tiedostoon `ajo-yhdistelma-N.json`.
+- Koe on erillinen ajo. Palvelun yhdistelmärajat (`aivo/yhdistelma.py`: `MAX_MALLEJA = 3`, `MAX_KUTSUT_VIESTI = 4`) eivät muutu.
+
+Esimerkki (sama tuloskansio kaikille ajoille, jotta taulukko näyttää kaikki rivit):
+
+```
+runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -B -m aivo.mallivertailu itse-aja --ulos /var/lib/aivo-yksityinen/itsetuntemus-yhd --mallit qwen/qwen3-235b-a22b-2507,qwen/qwen3.5-397b-a17b,deepseek/deepseek-chat-v3.1 --yhdistelma 3 --kokoaja qwen/qwen3.5-397b-a17b --vahvista
+```
+
 ## Rajat
 
 - Jokainen kutsu kulkee `openrouter_kulut.kutsu`n kautta: yhteinen päiväkatto (10 €/vrk), ZDR ja `data_collection=deny` sekä kulukirjaus tehtävätunnisteella `aivo-itsetuntemus`.
 - Vain `AVOIMET_MALLIT`-listan mallit. Muut mallit hylätään ennen ensimmäistä kutsua.
-- Ajon oma kuluraja on 3 USD toteutunutta kulua (`mallivertailu.ITSE_KULURAJA_USD`). Ajo pysähtyy ennen rajaa, samoin kuin mallivertailu.
+- Ajon oma kuluraja on 3 USD toteutunutta kulua (`mallivertailu.ITSE_KULURAJA_USD`). Ajo pysähtyy ennen rajaa, samoin kuin mallivertailu. Raja koskee yhtä komentoa: jokaisella `itse-aja`-komennolla on oma 3 USD:n rajansa.
 - Kuluarvio on varovainen yläraja: tokenit arvioidaan merkkimäärästä (2,5 merkkiä/token) ja vastaukset enimmäispituudella (800 tokenia). Hintana on kulukirjanpidon arviohinta, joka tuntemattomalle mallille on korkea. Todellinen kulu näkyy tiedostossa `ajo.json`.

@@ -116,7 +116,8 @@ def lue_vastaukset(ulos: Path) -> list[dict[str, Any]]:
 
 
 def pisteet(rivit: list[dict[str, Any]], sarja: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
-    """Malleittain: luokkien maarat, lajikohtaiset pisteet 0-1 ja kokonaispisteet. Virhe tai puuttuva vastaus = vaarin."""
+    """Malleittain: luokkien maarat, lajikohtaiset pisteet 0-1, kokonaispisteet, kulu ja mediaaniaika per kysymys
+    (rivin "sekuntia"; yhdistelmarivilla hitain vastaaja + kokoaja). Virhe tai puuttuva vastaus = vaarin."""
     kys = {k["id"]: k for k in (sarja or lue_kysymykset())["kysymykset"]}
     tulos: dict[str, dict[str, Any]] = {}
     for r in rivit:
@@ -124,28 +125,34 @@ def pisteet(rivit: list[dict[str, Any]], sarja: dict[str, Any] | None = None) ->
         if k is None:
             continue
         m = tulos.setdefault(r["malli"], {"luokat": {l: 0 for l in LUOKAT}, "lajit": {l: [] for l in LAJIT},
-                                          "kysymykset": {}, "kulu": 0.0})
+                                          "kysymykset": {}, "kulu": 0.0, "ajat": []})
         luokka = luokittele(k, r.get("vastaus", "")) if "vastaus" in r else "vaarin"
         m["luokat"][luokka] += 1
         m["lajit"][k["laji"]].append(PISTEET[luokka])
         m["kysymykset"].setdefault(k["id"], []).append(luokka)
         m["kulu"] += r.get("kulu_usd") or 0.0
+        if isinstance(r.get("sekuntia"), (int, float)):
+            m["ajat"].append(float(r["sekuntia"]))
     for m in tulos.values():
         kaikki = [p for ps in m["lajit"].values() for p in ps]
         m["lajit"] = {l: round(sum(ps) / len(ps), 2) for l, ps in m["lajit"].items() if ps}
         m["yhteensa"] = round(sum(kaikki) / len(kaikki), 2) if kaikki else 0.0
         m["kulu"] = round(m["kulu"], 4)
+        ajat = sorted(m.pop("ajat"))
+        m["mediaani_s"] = round((ajat[(len(ajat) - 1) // 2] + ajat[len(ajat) // 2]) / 2, 1) if ajat else None
     return tulos
 
 
 def taulukko(tulos: dict[str, dict[str, Any]]) -> str:
     rivit = ["| Malli | Yhteens\u00e4 | Rakenne | En tied\u00e4 | P\u00e4\u00e4ttely | Oikein | V\u00e4\u00e4rin | "
-             "\"En tied\u00e4\" oikein | Arvaus faktana | \"En tied\u00e4\" (tieto olisi ollut) | Kulu USD |",
-             "|---|---|---|---|---|---|---|---|---|---|---|"]
+             "\"En tied\u00e4\" oikein | Arvaus faktana | \"En tied\u00e4\" (tieto olisi ollut) | Kulu USD | "
+             "Mediaaniaika s |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for malli, m in sorted(tulos.items(), key=lambda x: -x[1]["yhteensa"]):
         lajit = ["%.2f" % m["lajit"][l] if l in m["lajit"] else "-" for l in LAJIT]
         l = m["luokat"]
-        rivit.append("| %s | %.2f | %s | %s | %s | %d | %d | %d | %d | %d | %.4f |" % (
+        aika = "-" if m.get("mediaani_s") is None else "%.1f" % m["mediaani_s"]
+        rivit.append("| %s | %.2f | %s | %s | %s | %d | %d | %d | %d | %d | %.4f | %s |" % (
             malli, m["yhteensa"], *lajit, l["oikein"], l["vaarin"], l["en_tieda_oikein"], l["arvaus_faktana"],
-            l["en_tieda"], m["kulu"]))
+            l["en_tieda"], m["kulu"], aika))
     return "\n".join(rivit)

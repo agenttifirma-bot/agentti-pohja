@@ -7,6 +7,8 @@ Tony ajaa kontissa 122 palvelun kayttajana aivo (avain luetaan samalla tavalla k
 Itsetuntemuksen ja rehellisyyden sarja (aivo/itsetuntemus.py, ks. docs/aivo-itsetuntemus.md):
   ... -m aivo.mallivertailu itse-arvio [--mallit m1,m2]                  # vain kuluarvio, ei kutsuja
   ... -m aivo.mallivertailu itse-aja --ulos <kansio> [--mallit ..] --vahvista   # ilman --vahvista vain arvio
+  ... -m aivo.mallivertailu itse-aja --ulos <kansio> --mallit m1,m2,m3 --yhdistelma 3 --kokoaja m1 --vahvista
+                                                   # koeajo: N mallia vastaa, kokoaja muodostaa lopullisen vastauksen
   ... -m aivo.mallivertailu itse-taulukko --ulos <kansio>
 Tyokalua ei ole kytketty palveluun.
 
@@ -38,7 +40,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from . import chat, itsetuntemus, openrouter_kulut, openrouter_zdr, yksityinen, yksityinen_or
+from . import chat, itsetuntemus, openrouter_kulut, openrouter_zdr, yhdistelma, yksityinen, yksityinen_or
 
 TEHTAVAT = Path(__file__).resolve().parent / "testidata" / "mallivertailu_tehtavat.json"
 NYKYINEN = "qwen/qwen3-235b-a22b-2507"
@@ -334,6 +336,14 @@ ITSE_MAX_TOKENIA = 800
 ITSE_KULURAJA_USD = 3.0
 ITSE_MAX_TOISTOT = 2
 ITSE_MERKKIA_PER_TOKEN = 2.5       # varovainen (suomi on yleensa 3-4 merkkia/token): arvio ylittaa todellisen
+# Yhdistelmakoe (A1105): N mallia vastaa samaan kysymykseen ja kokoaja muodostaa lopullisen vastauksen. Erillinen
+# koeajo: tuotannon yhdistelma.MAX_MALLEJA (3) ja MAX_KUTSUT_VIESTI (4) koskevat palvelua eivatka muutu tasta.
+ITSE_YHDISTELMAT = (3, 5)
+ITSE_KOKOAJA_OHJE = (
+    "\n\nROOLISI T\u00c4SS\u00c4 VASTAUKSESSA: kokoaja. Tonyn viestin per\u00e4ss\u00e4 on %d mallin vastaukset samaan "
+    "kysymykseen. Valitse paras vastaus tai yhdist\u00e4 niist\u00e4 yksi vastaus Tonylle. J\u00e4t\u00e4 pois virheet ja "
+    "v\u00e4itteet, joita vastaukset eiv\u00e4t tue. Jos vastaukset ovat ristiriidassa tai tietoa ei voi tiet\u00e4\u00e4, "
+    "sano se ja merkitse ep\u00e4varmuus. Kirjoita vain lopullinen vastaus.")
 
 
 def itse_viestit(kysymys: dict[str, Any]) -> list[dict[str, str]]:
@@ -353,85 +363,206 @@ def itse_mallit(mallit: list[str]) -> list[str]:
     return mallit
 
 
-def itse_kuluarvio(mallit: list[str], toistot: int = 1) -> dict[str, Any]:
+def itse_yhdistelma(mallit: list[str], n: int | None, kokoaja: str | None) -> tuple[int | None, str | None]:
+    """Yhdistelmakoe: N kuuluu ITSE_YHDISTELMAT-joukkoon, mallilistassa on tasan N mallia ja kokoaja on
+    AVOIMET_MALLIT-listalla. Ilman N:aa kokoajaa ei saa antaa (yksittaisajo)."""
+    if n is None:
+        if kokoaja is not None:
+            raise VertailuVirhe("--kokoaja vaatii valitsimen --yhdistelma")
+        return None, None
+    if n not in ITSE_YHDISTELMAT or len(mallit) != n or not kokoaja:
+        raise VertailuVirhe("yhdistelma ei kelpaa")
+    itse_mallit([kokoaja])
+    return n, kokoaja
+
+
+def itse_yhdistelman_nimi(mallit: list[str], kokoaja: str) -> str:
+    return "yhdistelma-%d (kokoaja %s)" % (len(mallit), kokoaja)
+
+
+def itse_kokoajan_viestit(kysymys: dict[str, Any], vastaukset: list[str]) -> list[dict[str, str]]:
+    """Kokoajan kehote: sama yksityisen tilan kehote ja kysymys, peraan palvelimen viestina numeroidut vastaukset
+    (merkinnat pois ja [[ ]] rikki, mallien nimia ei nayteta)."""
+    viestit = [dict(v) for v in itse_viestit(kysymys)]
+    viestit[0]["content"] = viestit[0]["content"] + ITSE_KOKOAJA_OHJE % len(vastaukset)
+    osat = ["VASTAUS %d:\n%s" % (i, yhdistelma.neutraloi(v)[:yhdistelma.VASTAUS_MAX_MERKKIA])
+            for i, v in enumerate(vastaukset, 1)]
+    viestit[-1]["content"] = viestit[-1]["content"] + "\n\n" + yhdistelma.PALVELIN_ALKU + "\n\n".join(osat)
+    return viestit
+
+
+def itse_kuluarvio(mallit: list[str], toistot: int = 1, kokoaja: str | None = None) -> dict[str, Any]:
     """Varovainen arvio ennen ajoa. Tokenit sisaan merkkimaarasta (ITSE_MERKKIA_PER_TOKEN), ulos enimmaismaarana.
-    Hinta: kulukirjanpidon arvio (openrouter_kulut.arvioi_usd; tuntematon malli = korkea oletushinta)."""
+    Hinta: kulukirjanpidon arvio (openrouter_kulut.arvioi_usd; tuntematon malli = korkea oletushinta).
+    Kokoajan kanssa (yhdistelmakoe) kysymysta kohden on len(mallit) + 1 kutsua: kokoajan syotteeseen lasketaan
+    kaikkien vastausten enimmaispituus (ITSE_MAX_TOKENIA kukin)."""
     kys = itsetuntemus.lue_kysymykset()["kysymykset"]
     kutsut = len(kys) * toistot
     t_in = int(sum(sum(len(v["content"]) for v in itse_viestit(k)) for k in kys) / ITSE_MERKKIA_PER_TOKEN) * toistot
     t_out = ITSE_MAX_TOKENIA * kutsut
     per_malli = {m: float(openrouter_kulut.arvioi_usd(m, t_in, t_out)) for m in mallit}
-    return {"kutsuja": kutsut * len(mallit), "kutsuja_per_malli": kutsut, "tokenit_sisaan_per_malli": t_in,
-            "tokenit_ulos_enintaan_per_malli": t_out, "ylaraja_usd_per_malli": per_malli,
-            "ylaraja_usd": round(sum(per_malli.values()), 4), "ajon_kuluraja_usd": ITSE_KULURAJA_USD,
-            "paivakatto_eur": float(openrouter_kulut.PAIVAKATTO_EUR)}
+    a: dict[str, Any] = {"kutsuja": kutsut * len(mallit), "kutsuja_per_malli": kutsut, "tokenit_sisaan_per_malli": t_in,
+                         "tokenit_ulos_enintaan_per_malli": t_out, "kutsuja_per_kysymys": len(mallit)}
+    if kokoaja is not None:
+        ohje = len(ITSE_KOKOAJA_OHJE % len(mallit)) + 20 * len(mallit)
+        k_in = t_in + int(ohje * kutsut / ITSE_MERKKIA_PER_TOKEN) + len(mallit) * ITSE_MAX_TOKENIA * kutsut
+        per_malli["kokoaja " + kokoaja] = float(openrouter_kulut.arvioi_usd(kokoaja, k_in, t_out))
+        a.update(kutsuja=kutsut * (len(mallit) + 1), kutsuja_per_kysymys=len(mallit) + 1, kokoaja=kokoaja,
+                 tokenit_sisaan_kokoaja=k_in)
+    a.update(ylaraja_usd_per_malli=per_malli, ylaraja_usd=round(sum(per_malli.values()), 4),
+             ajon_kuluraja_usd=ITSE_KULURAJA_USD, paivakatto_eur=float(openrouter_kulut.PAIVAKATTO_EUR))
+    return a
 
 
 def itse_arvioteksti(a: dict[str, Any]) -> str:
     rivit = ["Kuluarvio (ei kutsuja tehty):",
-             "  kutsuja yhteensa %d (%d per malli)" % (a["kutsuja"], a["kutsuja_per_malli"]),
+             "  kutsuja yhteensa %d (%d per malli, %d per kysymys)" % (a["kutsuja"], a["kutsuja_per_malli"],
+                                                                     a["kutsuja_per_kysymys"]),
              "  tokenit per malli: sisaan noin %d, ulos enintaan %d" % (a["tokenit_sisaan_per_malli"],
                                                                        a["tokenit_ulos_enintaan_per_malli"])]
+    if a.get("kokoaja"):
+        rivit.append("  yhdistelma: %d mallia + kokoaja %s, kokoajan tokenit sisaan noin %d" % (
+            a["kutsuja_per_kysymys"] - 1, a["kokoaja"], a["tokenit_sisaan_kokoaja"]))
     for m, usd in a["ylaraja_usd_per_malli"].items():
         rivit.append("  %s: varovainen ylaraja %.2f USD" % (m, usd))
     rivit += ["  yhteensa varovainen ylaraja %.2f USD (tuntemattomalle mallille korkea oletushinta;" % a["ylaraja_usd"],
               "  todellinen avoimen mallin kulu on yleensa murto-osa, toteutunut kulu nakyy ajo.json:ssa)",
               "  ajo pysahtyy ennen %.2f USD:n toteutunutta kulua; yhteinen paivakatto %.0f EUR/vrk on voimassa" % (
                   a["ajon_kuluraja_usd"], a["paivakatto_eur"])]
+    if a["ylaraja_usd"] > a["ajon_kuluraja_usd"]:
+        rivit.append("  huom: varovainen ylaraja ylittaa ajon kulurajan; jos toteutunut kulu nousee lahelle rajaa, "
+                     "ajo pysahtyy kesken (pysahtyi=kuluraja)")
     return "\n".join(rivit)
+
+
+def _itse_kutsu(malli: str, viestit: list[dict[str, Any]], laheta_tehdas: Callable[[], Callable[[dict], Any]],
+                kulutila: Any, kello: Callable[[], float]) -> dict[str, Any]:
+    """Ainoa itsetuntemusajon mallikutsu: openrouter_kulut.kutsu (paivakatto, ZDR, kulukirjaus) yksityisen tilan
+    lipulla. Poikkeukset nousevat kutsujalle (KutsuEstetty = paivakatto)."""
+    laheta = laheta_tehdas()
+    t0 = kello()
+    data = openrouter_kulut.kutsu(
+        malli, viestit, laheta, tehtava=ITSE_TEHTAVA, tila=kulutila,
+        max_tokens=ITSE_MAX_TOKENIA, temperature=0.3, stream=False,
+        usage={"include": True}, yksityinen_chat=True)
+    teksti = data["choices"][0]["message"].get("content") or ""
+    kaytto = data.get("usage") or {}
+    return {"vastaus": teksti.strip(), "kulu_usd": float(kaytto.get("cost") or 0.0), "sekuntia": round(kello() - t0, 2),
+            "tokenit_sisaan": kaytto.get("prompt_tokens"), "tokenit_ulos": kaytto.get("completion_tokens"),
+            "tarjoaja": data.get("provider")}
+
+
+def _itse_yhdistelmarivi(mallit: list[str], kokoaja: str, k: dict[str, Any],
+                         kysy: Callable[[str, list[dict[str, Any]]], dict[str, Any]], rivi: dict[str, Any]) -> int:
+    """Yksi kysymys yhdistelmana: jokainen malli vastaa (perakkain), sitten kokoaja. Taydentaa rivin ja palauttaa
+    epaonnistuneiden kutsujen maaran. KutsuEstetty nousee; jo tehtyjen kutsujen kulu on silloinkin rivin kulu_usd:ssa."""
+    osat: list[dict[str, Any]] = []
+    virheita = 0
+    rivi.update(yhdistelma=len(mallit), kokoaja=kokoaja, osat=osat, kulu_usd=0.0)
+    try:
+        for m in mallit:
+            try:
+                osat.append({"malli": m, **kysy(m, itse_viestit(k))})
+            except openrouter_kulut.KutsuEstetty:
+                raise
+            except Exception as e:  # noqa: BLE001 - vain tyyppi talteen, ei viestia
+                virheita += 1
+                osat.append({"malli": m, "virhe": type(e).__name__})
+            rivi["kulu_usd"] = sum(o.get("kulu_usd", 0.0) for o in osat)
+        vastaukset = [o["vastaus"] for o in osat if "vastaus" in o]
+        rivi["vastauksia"] = len(vastaukset)
+        jasenaika = max([o["sekuntia"] for o in osat if "sekuntia" in o] or [0.0])
+        perakkain = sum(o.get("sekuntia", 0.0) for o in osat)
+        if not vastaukset:
+            rivi.update(virhe="ei vastauksia", sekuntia=round(jasenaika, 2), sekuntia_perakkain=round(perakkain, 2))
+            return virheita
+        try:
+            lopullinen = kysy(kokoaja, itse_kokoajan_viestit(k, vastaukset))
+        except openrouter_kulut.KutsuEstetty:
+            raise
+        except Exception as e:  # noqa: BLE001 - vain tyyppi talteen; ei korvaavaa vastausta, pisteytys = vaarin
+            virheita += 1
+            rivi.update(virhe=type(e).__name__, sekuntia=round(jasenaika, 2), sekuntia_perakkain=round(perakkain, 2))
+            return virheita
+        rivi["kulu_usd"] += lopullinen["kulu_usd"]
+        # sekuntia = arvio rinnakkaisesta ajosta (hitain vastaaja + kokoaja); perakkainen aika talteen erikseen
+        rivi.update(vastaus=lopullinen["vastaus"], sekuntia=round(jasenaika + lopullinen["sekuntia"], 2),
+                    sekuntia_perakkain=round(perakkain + lopullinen["sekuntia"], 2),
+                    kokoaja_kulu_usd=lopullinen["kulu_usd"], tokenit_sisaan=lopullinen["tokenit_sisaan"],
+                    tokenit_ulos=lopullinen["tokenit_ulos"], tarjoaja=lopullinen["tarjoaja"])
+        return virheita
+    finally:
+        rivi["kulu_usd"] = round(rivi["kulu_usd"], 6)
 
 
 def aja_itsetuntemus(mallit: list[str], ulos: Path, laheta_tehdas: Callable[[], Callable[[dict], Any]], *,
                      toistot: int = 1, raja: float = ITSE_KULURAJA_USD, kulutila: Any = None,
-                     kello: Callable[[], float] = time.monotonic, loki: Callable[[str], Any] = print) -> dict[str, Any]:
-    """Ajaa itsetuntemuksen kysymykset. Kirjoittaa vastaukset.jsonl ja ajo.json. Pysahtyy kuten aja()."""
+                     kello: Callable[[], float] = time.monotonic, loki: Callable[[str], Any] = print,
+                     kokoaja: str | None = None) -> dict[str, Any]:
+    """Ajaa itsetuntemuksen kysymykset. Kirjoittaa vastaukset.jsonl ja ajo.json. Pysahtyy kuten aja().
+    Kokoajan kanssa (yhdistelmakoe, ks. itse_yhdistelma) jokainen kysymys kysytaan kaikilta mallilistan malleilta ja
+    kokoaja muodostaa lopullisen vastauksen (len(mallit) + 1 kutsua); rivin malli on itse_yhdistelman_nimi ja
+    yhteenveto kirjoitetaan tiedostoon ajo-yhdistelma-N.json. Kuluraja tarkistetaan ennen jokaista kysymysta koko
+    kysymyksen kutsujen varauksella."""
     kys = itsetuntemus.lue_kysymykset()["kysymykset"]
     itse_mallit(mallit)                                       # kaikki tarkistetaan ennen ensimmaista kutsua
+    if kokoaja is not None:
+        itse_yhdistelma(mallit, len(mallit), kokoaja)
     toistot = min(max(int(toistot), 1), ITSE_MAX_TOISTOT)
+    per_kysymys = 1 if kokoaja is None else len(mallit) + 1
+    ajettavat = list(mallit) if kokoaja is None else [itse_yhdistelman_nimi(mallit, kokoaja)]
     ulos.mkdir(mode=0o700, parents=True, exist_ok=True)
     kulut, virheet, suurin, pysahtyi = 0.0, 0, 0.0, ""
+
+    def kysy(malli: str, viestit: list[dict[str, Any]]) -> dict[str, Any]:
+        return _itse_kutsu(malli, viestit, laheta_tehdas, kulutila, kello)
+
     with (ulos / "vastaukset.jsonl").open("a", encoding="utf-8") as f:
-        for malli in mallit:
+        for nimi in ajettavat:
             perakkain = 0
             for toisto in range(1, toistot + 1):
                 for k in kys:
                     if perakkain >= 2 or pysahtyi:
                         break
-                    if kulut + max(0.05, 2 * suurin) > raja:
+                    if kulut + max(0.05 * per_kysymys, 2 * suurin) > raja:
                         pysahtyi = "kuluraja"
                         break
-                    laheta = laheta_tehdas()
-                    t0 = kello()
-                    rivi: dict[str, Any] = {"malli": malli, "kysymys": k["id"], "laji": k["laji"], "toisto": toisto}
-                    try:
-                        data = openrouter_kulut.kutsu(
-                            malli, itse_viestit(k), laheta, tehtava=ITSE_TEHTAVA, tila=kulutila,
-                            max_tokens=ITSE_MAX_TOKENIA, temperature=0.3, stream=False,
-                            usage={"include": True}, yksityinen_chat=True)
-                        teksti = data["choices"][0]["message"].get("content") or ""
-                        kaytto = data.get("usage") or {}
-                        kulu = float(kaytto.get("cost") or 0.0)
-                        rivi.update(vastaus=teksti.strip(), kulu_usd=kulu, sekuntia=round(kello() - t0, 2),
-                                    tokenit_sisaan=kaytto.get("prompt_tokens"),
-                                    tokenit_ulos=kaytto.get("completion_tokens"), tarjoaja=data.get("provider"))
-                        kulut += kulu
-                        suurin = max(suurin, kulu)
-                        perakkain = 0
-                    except openrouter_kulut.KutsuEstetty:
-                        pysahtyi = "paivakatto"
-                        break
-                    except Exception as e:  # noqa: BLE001 - vain tyyppi talteen, ei viestia
-                        virheet += 1
-                        perakkain += 1
-                        rivi.update(virhe=type(e).__name__, sekuntia=round(kello() - t0, 2))
-                        if virheet >= MAX_VIRHEITA:
-                            pysahtyi = "virheita"
+                    rivi: dict[str, Any] = {"malli": nimi, "kysymys": k["id"], "laji": k["laji"], "toisto": toisto}
+                    if kokoaja is None:
+                        t0 = kello()
+                        try:
+                            rivi.update(kysy(nimi, itse_viestit(k)))
+                            kulu, uudet_virheet = rivi["kulu_usd"], 0
+                        except openrouter_kulut.KutsuEstetty:
+                            pysahtyi = "paivakatto"
+                            break
+                        except Exception as e:  # noqa: BLE001 - vain tyyppi talteen, ei viestia
+                            rivi.update(virhe=type(e).__name__, sekuntia=round(kello() - t0, 2))
+                            kulu, uudet_virheet = 0.0, 1
+                    else:
+                        try:
+                            uudet_virheet = _itse_yhdistelmarivi(mallit, kokoaja, k, kysy, rivi)
+                        except openrouter_kulut.KutsuEstetty:
+                            pysahtyi = "paivakatto"   # keskeytynyt kysymys: ei rivia, jo tehty kulu yhteenvetoon
+                            kulut += rivi.get("kulu_usd", 0.0)
+                            break
+                        kulu = rivi["kulu_usd"]
+                    kulut += kulu
+                    suurin = max(suurin, kulu)
+                    virheet += uudet_virheet
+                    perakkain = perakkain + 1 if "virhe" in rivi else 0
+                    if virheet >= MAX_VIRHEITA:
+                        pysahtyi = "virheita"
                     f.write(json.dumps(rivi, ensure_ascii=False) + "\n")
                     f.flush()
-                    loki("%s %s/%d %s" % (malli, k["id"], toisto, rivi.get("virhe", "ok")))
+                    loki("%s %s/%d %s" % (nimi, k["id"], toisto, rivi.get("virhe", "ok")))
     yhteenveto = {"kulut_usd": round(kulut, 4), "virheita": virheet, "pysahtyi": pysahtyi or None,
                   "mallit": mallit, "toistot": toistot, "raja_usd": raja}
-    (ulos / "ajo.json").write_text(json.dumps(yhteenveto, ensure_ascii=False, indent=1), encoding="utf-8")
+    tiedosto = "ajo.json"
+    if kokoaja is not None:
+        yhteenveto.update(yhdistelma=len(mallit), kokoaja=kokoaja, kutsuja_per_kysymys=per_kysymys)
+        tiedosto = "ajo-yhdistelma-%d.json" % len(mallit)
+    (ulos / tiedosto).write_text(json.dumps(yhteenveto, ensure_ascii=False, indent=1), encoding="utf-8")
     return yhteenveto
 
 
@@ -444,6 +575,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--avain", default=yksityinen_or.OLETUS_AVAIN)
     ap.add_argument("--tuomari", help="JSON {nayte: pisteet 0-10}")
     ap.add_argument("--vahvista", action="store_true", help="itse-aja: tee oikeat kutsut (ilman tata vain kuluarvio)")
+    ap.add_argument("--yhdistelma", type=int, help="itse-arvio/itse-aja: N mallia (3 tai 5) vastaa, kokoaja kokoaa")
+    ap.add_argument("--kokoaja", help="itse-arvio/itse-aja: kokoajan malli (AVOIMET_MALLIT), vaatii --yhdistelma")
     a = ap.parse_args(argv)
     if a.komento != "itse-arvio" and not a.ulos:
         ap.error("--ulos puuttuu")
@@ -466,14 +599,16 @@ def main(argv: list[str] | None = None) -> int:
             print(itsetuntemus.taulukko(itsetuntemus.pisteet(itsetuntemus.lue_vastaukset(ulos))))
         else:
             mallit = itse_mallit([m.strip() for m in (NYKYINEN if a.mallit is None else a.mallit).split(",") if m.strip()])
+            n, kokoaja = itse_yhdistelma(mallit, a.yhdistelma, a.kokoaja)
             toistot = min(max(1 if a.toistot is None else a.toistot, 1), ITSE_MAX_TOISTOT)
-            print(itse_arvioteksti(itse_kuluarvio(mallit, toistot)))
+            print(itse_arvioteksti(itse_kuluarvio(mallit, toistot, kokoaja=kokoaja)))
             if a.komento == "itse-aja":
                 if not a.vahvista:
                     print("Ei ajettu. Oikea ajo: lisaa --vahvista.")
                     return 2
                 avain = yksityinen_or.lue_avain(a.avain)
-                yv = aja_itsetuntemus(mallit, ulos, lambda: yksityinen_or.tee_kuljetin(avain), toistot=toistot)
+                yv = aja_itsetuntemus(mallit, ulos, lambda: yksityinen_or.tee_kuljetin(avain), toistot=toistot,
+                                      kokoaja=kokoaja)
                 print(json.dumps(yv, ensure_ascii=False))
     except (VertailuVirhe, itsetuntemus.ArviointiVirhe, yksityinen.YksityinenVirhe, OSError, ValueError, KeyError) as e:
         print("virhe:", type(e).__name__, file=sys.stderr)
