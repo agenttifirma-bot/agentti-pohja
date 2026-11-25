@@ -191,6 +191,8 @@ Työkalutilan keskustelut tiivistetään kirjastoon, jotta Aivo muistaa ne 40 vi
 
 Tiivistelmät tallentuvat kansioon `/var/lib/aivo/tiivistelmat` (0700, tiedostot 0600) ja luettelo tiedostoon `/var/lib/aivo/indeksi/indeksi.json`. Tonyn lainaukset on erotettu mallin tulkinnasta. Lainaus tarkistetaan sanasta sanaan Tonyn viestistä, ja virheellinen lainaus poistetaan. Uudet kohdat ovat aina tilassa `ehdotus`, ja vain Tonyn korjaus (`python3 -m aivo.tiivistelma`) vahvistaa ne. Chat liittää tiivistelmät työkalutilan kehotteeseen muun muistin rinnalle, enintään 60 kt, mutta vain kun Tony kytkee sen erikseen päälle: chatin käynnistysasetus `--tiivistelmat-kaytossa` (tai ympäristömuuttuja `AIVO_TIIVISTELMAT_KAYTOSSA=1`). Oletuksena kytkentä on pois, eikä kansion olemassaolo kytke sitä. Osuvimmat ja uusimmat tulevat ensin. Yksityinen tila ei saa niitä koskaan.
 
+Kun tiivistelmät ovat päällä, chat myös hakee Tonyn viestin sanoilla työkalualueen hakuindeksistä (`/var/lib/aivo/indeksi/tiivistelmat.sqlite`) ja liittää osumat kehotteen ensimmäiseksi muistiosaksi lähdeviitteineen. Tiivistysajo päivittää indeksin. Tarkemmin ja käyttöönotto: `docs/aivo-yksityinen.md`, kohta Muistihaku.
+
 Ota ensin snapshot kontista 122. Ajastin ei asennu itsestään: tämä on ohje, jonka Tony ajaa.
 
 1. **Yhteys.** Avaa isännällä (Proxmox) kontin pääte ja varmista, että olet kontissa 122:

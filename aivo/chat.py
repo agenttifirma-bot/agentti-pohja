@@ -1108,13 +1108,20 @@ def kulut_yhteenveto(kulutila, nyt, kerroin):
     return ulos
 
 
+def kirjaa_muistihaku(tilan_nimi, tiedostot):
+    """Journaliin vain osumien maara (ei tunnuksia eika sisaltoa), jotta kaytto voidaan todentaa."""
+    print("muistihaku %s: %d osumaa" % (tilan_nimi, len(tiedostot)), file=sys.stderr, flush=True)
+
+
 def yksityinen_muisti(tila, teksti, historia, ohjeet, malli, yh):
     """Yksityisen tilan muistiosio: agenttidata, kirjasto ja tiivistelmat. Palauttaa (muisti, tiedostot).
 
     Paikallinen taustapaa (malli None): kiintea yksityinen.MUISTI_YLARAJA (ennallaan). OpenRouter-taustapaa: raja
     mallin kontekstin mukaan (yksityinen_or.muistin_merkkiraja, A1106), ja historialle jaa aina vahintaan
-    kontekstiraja.HISTORIA_VAHIMMAISOSUUS. Tayttojarjestys: agenttidata (tuoreimmat paatokset ensin, enintaan puolet),
-    kirjasto (kysymykseen osuvat ensin, sitten tuoreimmat, sitten vanhemmat), tiivistelmat (60 kt raja, A983)."""
+    kontekstiraja.HISTORIA_VAHIMMAISOSUUS. Tayttojarjestys: hakuosumat (yksityisen alueen FTS5-indeksista Tonyn viestin
+    sanoilla, enintaan neljannes muistirajasta), agenttidata (tuoreimmat paatokset ensin, enintaan puolet), kirjasto
+    (kysymykseen osuvat ensin, sitten tuoreimmat, sitten vanhemmat), tiivistelmat (60 kt raja, A983, hakuosumat
+    mukaan luettuina). Hakuosumien tiivistelmia ei toisteta tiivistelmien osiossa."""
     if malli:
         raja = yksityinen_or.muistin_merkkiraja(
             yksityinen_or.yhdistelman_mallit(malli, tila.roolit if yh != yhdistelma.OLETUS else None), ohjeet, historia,
@@ -1123,18 +1130,31 @@ def yksityinen_muisti(tila, teksti, historia, ohjeet, malli, yh):
     else:
         raja = yksityinen.MUISTI_YLARAJA
         merkintoja, ad_tiedosto = agenttidata_kehote.MERKINTOJA, raja // 6
+    # Hakuosumat ensin (vain yksityisen alueen indeksi; tavuraja <= merkkiraja). Ne kuuluvat tiivistelmien 60 kt:hen.
+    haku, haku_tiedostot = ("", [])
+    if tila.yks_tiivistelmat:
+        haku, haku_tiedostot = tiivistelmat_kehote.hakuosio(
+            tila.yks_tiivistelmat, teksti, min(tiivistelmat_kehote.HAKU_YLARAJA_TAVUA, raja // 4))
+        kirjaa_muistihaku("yksityinen", haku_tiedostot)
+        if haku:
+            haku += RAJA + "\n"
+    haku_tavut = len(haku.encode("utf-8"))
     # OpenRouter: tiivistelmille varataan oma osuus ennen kirjastoa, jotta iso kirjasto ei syrjayta niita kokonaan
     tiiv_varaus = min(tiivistelmat_kehote.YLARAJA_TAVUA, raja // 10) if (malli and tila.yks_tiivistelmat) else 0
+    tiiv_varaus = max(0, tiiv_varaus - len(haku))
     ad, ad_tiedostot = agenttidata_kehote.muodosta(tila.agenttidata, RAJA, raja // 2, ad_tiedosto, merkintoja=merkintoja)
-    muisti, tiedostot = lue_muisti(tila.yks_muisti, max(0, raja - len(ad) - tiiv_varaus), raja // 4, teksti,
+    muisti, tiedostot = lue_muisti(tila.yks_muisti, max(0, raja - len(haku) - len(ad) - tiiv_varaus), raja // 4, teksti,
                                    tuoreet_ensin=bool(malli), laske_otsikot=bool(malli))
     if ad:         # agenttidata mahtuu samaan muistirajaan: kirjastolle jaa loput (A1015)
         muisti, tiedostot = ad + muisti, ad_tiedostot + tiedostot
+    if haku:       # ensimmainen muistiosa
+        muisti, tiedostot = haku + muisti, haku_tiedostot + tiedostot
     if tila.yks_tiivistelmat:     # yksityisen alueen tiivistelmat, sama mekanismi ja 60 kt raja kuin tyokalutilassa
-        tiiv_raja = tiivistelmat_kehote.YLARAJA_TAVUA
+        tiiv_raja = max(0, tiivistelmat_kehote.YLARAJA_TAVUA - haku_tavut)
         if malli:                 # OpenRouter: tiivistelmat mahtuvat samaan muistirajaan (tavuina, varovainen)
             tiiv_raja = max(0, min(tiiv_raja, raja - len(muisti) - len(RAJA) - 1))
-        tiiv, tiiv_tiedostot = (tiivistelmat_kehote.muodosta(tila.yks_tiivistelmat, teksti, tiiv_raja)
+        tiiv, tiiv_tiedostot = (tiivistelmat_kehote.muodosta(tila.yks_tiivistelmat, teksti, tiiv_raja,
+                                                             ohita=haku_tiedostot)
                                 if tiiv_raja else ("", []))
         if tiiv:
             muisti += tiiv + RAJA + "\n"
@@ -1585,7 +1605,15 @@ def tee_kasittelija(tila):
                 if ad:         # agenttidata mahtuu samaan muistirajaan: kirjastolle jaa loput
                     muisti, tiedostot = ad + muisti, ad_tiedostot + tiedostot
                 if tila.tiivistelmat:     # keskustelumuisti: tiivistelmat kirjaston rinnalle, enintaan 60 kt (A983 A3)
-                    tiiv, tiiv_tiedostot = tiivistelmat_kehote.muodosta(tila.tiivistelmat, teksti)
+                    # hakuosumat (vain tyokalualueen indeksi) ensimmaiseksi muistiosaksi; ne kuuluvat samaan 60 kt:hen
+                    haku, haku_tiedostot = tiivistelmat_kehote.hakuosio(tila.tiivistelmat, teksti)
+                    kirjaa_muistihaku("tyokalu", haku_tiedostot)
+                    if haku:
+                        haku += RAJA + "\n"
+                        muisti, tiedostot = haku + muisti, haku_tiedostot + tiedostot
+                    tiiv, tiiv_tiedostot = tiivistelmat_kehote.muodosta(
+                        tila.tiivistelmat, teksti, max(0, tiivistelmat_kehote.YLARAJA_TAVUA - len(haku.encode("utf-8"))),
+                        ohita=haku_tiedostot)
                     if tiiv:
                         muisti += tiiv + RAJA + "\n"
                         tiedostot = tiedostot + tiiv_tiedostot

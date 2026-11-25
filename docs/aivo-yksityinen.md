@@ -143,6 +143,76 @@ Chat liittää yksityisen alueen tiivistelmät yksityisen tilan kehotteeseen vai
 
 Käyttöönotto: lisää `aivo-chat.service`-tiedostoon rivi `Environment=AIVO_YKSITYISET_TIIVISTELMAT_KAYTOSSA=1` ja käynnistä palvelu uudelleen (`systemctl daemon-reload && systemctl restart aivo-chat`).
 
+### Muistihaku: kysymykseen liittyvät kohdat kehotteen alkuun
+
+Kun tiivistelmät on kytketty päälle (yllä), chat hakee jokaisella viestillä Tonyn viestin sanoilla alueen hakuindeksistä (`aivo/haku.py`, SQLite FTS5). Osumat tulevat kehotteeseen ensimmäiseksi muistiosaksi (otsikko `HAKUOSUMAT`). Jokaisen osuman otsikossa on lähdeviite muodossa `[lähde: tiivistelmat/<tunnus>.json]`, ja sama viite kelpaa vastauksen lähteeksi.
+
+- **Alueet eivät sekoitu.** Yksityinen tila hakee vain yksityisen alueen indeksistä (`/var/lib/aivo-yksityinen/indeksi/tiivistelmat.sqlite`) ja työkalutila vain työkalualueen indeksistä (`/var/lib/aivo/indeksi/tiivistelmat.sqlite`). Indeksin paikka johdetaan tiivistelmäkansiosta (sen sisarkansio `indeksi`). Jos kansion nimi ei ole `tiivistelmat`, hakua ei tehdä. Osuman teksti luetaan aina saman alueen tiivistelmäkansiosta, joten väärään paikkaan kopioitu indeksi ei voi tuoda toisen alueen sisältöä.
+- **Ei verkkoa eikä mallikutsuja.** Haku on paikallinen SQLite-kysely, joka avataan vain luku -tilassa.
+- **Koko.** Enintään 5 osumaa (yksi tiivistelmää kohti) ja enintään 24 000 tavua. Paikallisella mallilla raja on neljännes muistirajasta (4 000). Osuman kohdat järjestetään kysymykseen osuvimmasta alkaen, ja kohta, joka ei mahdu, jää pois. Osumat kuuluvat tiivistelmien 60 kt:n rajaan, eikä samaa tiivistelmää toisteta tiivistelmien osiossa. Paikallisella taustapäällä kirjaston osuus pienenee hakuosion verran, joten muistiraja (16 000 merkkiä) ei kasva.
+- **Virheet.** Tyhjä tai pelkistä välimerkeistä koostuva viesti, puuttuva tai rikkinäinen indeksi tai liian laajat oikeudet indeksikansiossa tarkoittavat, ettei osumia tule. Keskustelu jatkuu normaalisti.
+- **Indeksin päivitys.** Tiivistysajo (`python3 -m aivo.tiivista --alue yksityinen` tai `--alue tyokalu`) rakentaa indeksin uudelleen ajon lopussa, jos se tallensi tiivistelmiä, jos indeksiä ei vielä ole tai jos tiivistelmäkansio on muuttunut indeksin jälkeen (esimerkiksi `aivo.tiivistelma korjaa` tai `poista`). Journaliin tulee rivi `hakuindeksi: N tiivistelmaa, M palaa`.
+- **Journal.** Chat kirjaa jokaisesta viestistä rivin `muistihaku yksityinen: N osumaa` tai `muistihaku tyokalu: N osumaa`. Rivillä ei ole tunnuksia eikä sisältöä.
+
+Käyttöönotto kontissa 122 (Tony ajaa kontin päätteessä, `pct enter 122`; ota ensin snapshot). Jos jokin komento ei tulosta odotettua riviä, pysähdy.
+
+1. Palvelun käyttäjä ja kytkin:
+
+   ```
+   systemctl show -p User -p Environment aivo-chat
+   ```
+
+   Odotettu tulos: rivi `User=aivo` ja `Environment=`-rivillä `AIVO_YKSITYISET_TIIVISTELMAT_KAYTOSSA=1`. Jos käyttäjä on eri, käytä sitä nimeä alla. Jos kytkin puuttuu, tee ensin yllä oleva kohta Tiivistelmät yksityisen tilan kehotteeseen: ilman kytkintä hakua ei tehdä.
+
+2. FTS5 on käytettävissä:
+
+   ```
+   runuser -u aivo -- python3 -c "import sqlite3; sqlite3.connect(':memory:').execute('create virtual table t using fts5(x)'); print('fts5 ok')"
+   ```
+
+   Odotettu tulos: `fts5 ok`.
+
+3. Päivitä koodi `/opt/agentti-pohja`-kansioon samalla tavalla kuin edellisissä Aivon käyttöönotoissa ja tarkista, että muutos on mukana:
+
+   ```
+   grep -c hakuosio /opt/agentti-pohja/aivo/chat.py
+   ```
+
+   Odotettu tulos: luku 2 tai suurempi. Luku 0 tarkoittaa, että koodi on vanha.
+
+4. Rakenna indeksit kerran käsin (muuten ne syntyvät seuraavassa tiivistysajossa):
+
+   ```
+   runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -m aivo.haku rakenna --alue yksityinen
+   runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -m aivo.haku rakenna --alue tyokalu
+   ```
+
+   Odotettu tulos: kummastakin rivi `indeksi: N tiivistelmaa, M palaa`. Rivin `virhe: alue ei ole kayttokelpoinen (AlueVirhe)` syy on yleensä kansion omistaja tai oikeudet (`stat -c '%a %U' /var/lib/aivo-yksityinen/indeksi` → `700 aivo`). Jos N on 0, tiivistelmiä ei vielä ole, eikä haku voi löytää mitään.
+
+5. Koehaku sanalla, jonka tiedät esiintyvän jossain tiivistelmässä (tulostaa vain tunnukset, ei sisältöä):
+
+   ```
+   runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -m aivo.haku hae --alue yksityinen muutto
+   ```
+
+   Vaihda sana `muutto` omaan sanaasi. Odotettu tulos: vähintään yksi rivi `<tunnus>  pala N  pisteet …`. Tyhjä tuloste tarkoittaa, ettei sanaa löytynyt tai ettei indeksiä ole (kohta 4). Kokeile toista sanaa ennen kuin jatkat.
+
+6. Käynnistä chat uudelleen:
+
+   ```
+   systemctl restart aivo-chat && systemctl is-active aivo-chat
+   ```
+
+   Odotettu tulos: `active`.
+
+7. Lähetä selaimessa yksityisessä tilassa viesti, jossa on kohdan 5 sana. Aja sen jälkeen:
+
+   ```
+   journalctl -u aivo-chat --since "5 min ago" --no-pager | grep muistihaku
+   ```
+
+   Odotettu tulos: rivi `muistihaku yksityinen: 1 osumaa` (tai suurempi luku). Rivi `0 osumaa` tarkoittaa, että haku ajettiin mutta ei löytänyt mitään. Ei riviä lainkaan: kytkin puuttuu (kohta 1) tai koodi on vanha (kohta 3).
+
 ### Tiivistyksen ajastin (ohje, ei asennettu)
 
 Repossa ei ole tälle valmista yksikköä, eikä tämä muutos asenna mitään. Tony luo tiedostot itse, jos haluaa ajastuksen. Malli on sama kuin työkalutilan `aivo-tiivista.timer` (`docs/aivo-chat.md`). Alla on kaksi vaihtoehtoa: OpenRouter-taustapää (kontti, jossa chat käyttää OpenRouteria) ja paikallinen malli.
