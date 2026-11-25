@@ -317,12 +317,12 @@ pct push 123 /root/hakukontti/searxng.service /etc/systemd/system/searxng.servic
 ```
 Odotettu: ei tulostetta.
 
-Palvelut vaativat palomuurin (`Requires=nftables.service`). Tarkista ennen käynnistystä, että palomuuri latautuu myös kontin käynnistyessä.
+SearXNG vaatii palomuurin (`Requires=nftables.service`): jos sääntöjen lataus epäonnistuu, palvelu ei käynnisty, ja palomuurin pysäytys pysäyttää sen. Tarkista ennen käynnistystä, että palomuuri on myös itsenäisesti käytössä kontin käynnistyessä.
 
 ```bash
 pct exec 123 -- systemctl is-enabled nftables
 ```
-Odotettu: `enabled`. Jos tulos on muu, pysähdy: ilman palomuuria kontissa ei ole kill switchiä, eikä SearXNG käynnisty.
+Odotettu: `enabled`. Jos tulos on muu, pysähdy. `Requires=` käynnistää palomuurin palvelun mukana, mutta Tor ja muut palvelut eivät vaadi sitä, joten ilman `enabled`-tilaa kontti voi käynnistyä ilman kill switchiä. Huomaa myös: jos säännöt poistetaan käsin (`nft flush ruleset`), `nftables.service` pysyy aktiivisena, eikä systemd pysäytä palvelua. Sääntöjä ei siksi poisteta käsin palveluiden ollessa käynnissä.
 
 ```bash
 pct exec 123 -- systemctl enable --now searxng

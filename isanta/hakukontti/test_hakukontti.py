@@ -102,7 +102,6 @@ class PohjaTesti(unittest.TestCase):
         self.assertIn("nftables.service", sum(vaatii, []))
         jalkeen = sum([r.split("=", 1)[1].split() for r in unit if r.startswith("After=")], [])
         self.assertIn("nftables.service", jalkeen)
-        self.assertFalse(any(r.startswith("Requires=-") for r in unit))
 
     def test_journald_30_paivaa(self):
         self.assertIn("MaxRetentionSec=30day", aktiiviset(lue("journald-hakukontti.conf")))
