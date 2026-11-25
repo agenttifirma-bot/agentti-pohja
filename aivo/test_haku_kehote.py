@@ -160,7 +160,22 @@ class YksityinenMuistiTesti(_Alueet):
         kirjasto.mkdir(exist_ok=True)
         (kirjasto / "muistio.md").write_text("KIRJASTO-RIVI muuttokuorma", encoding="utf-8")
         return types.SimpleNamespace(agenttidata=None, yks_muisti=str(kirjasto),
-                                     yks_tiivistelmat=str(self.yks.polku("tiivistelmat")), roolit={})
+                                     yks_tiivistelmat=str(self.yks.polku("tiivistelmat")), roolit={},
+                                     korjaukset=chat.korjaukset.valmistele(str(self.r / "korjaukset")),
+                                     odottavat_ehdotustiedostot=lambda: [])
+
+    def test_osumat_ja_korjaukset_samassa_rajassa(self):
+        """#444:n korjaukset ja hakuosumat ovat molemmat mukana; hakuosumat ennen korjauksia."""
+        tila = self.tila()
+        chat.korjaukset.tallenna(tila.korjaukset, "k1", 1, "vanha vastaus", "vaarin",
+                                 next(iter(chat.korjaukset.LUOKAT)), "muuttokuorma lahtee perjantaina")
+        for malli in (None, OR_MALLI):
+            muisti, tiedostot = chat.yksityinen_muisti(tila, "muuttokuorma?", [{"rooli": "tony", "teksti": "x"}],
+                                                      "o", malli, yhdistelma.OLETUS)
+            self.assertTrue(muisti.startswith(tiivistelmat_kehote.HAKU_OTSIKKO), malli)
+            self.assertIn(chat.korjaukset.LAHDE_NIMI, tiedostot, malli)
+            self.assertLess(tiedostot.index("tiivistelmat/%s.json" % self.yks_t),
+                            tiedostot.index(chat.korjaukset.LAHDE_NIMI), malli)
 
     def test_osumat_ensin_ja_lahde_tiedostoissa(self):
         for malli in (None, OR_MALLI):

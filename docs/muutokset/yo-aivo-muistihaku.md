@@ -1,1 +1,2 @@
 - aivo: muistihaku kytketty chattiin: jokaisella viestillä FTS5-haku (aivo/haku.py) Tonyn viestin sanoilla oman alueen indeksistä, osumat kehotteen ensimmäiseksi muistiosaksi lähdeviitteineen (yksityinen ja työkalutila erikseen, ei verkkoa eikä mallikutsuja); tiivistysajo päivittää indeksin; osumat kuuluvat tiivistelmien 60 kt:n rajaan (RAJATTU)
+- aivo: muistihaku yhdistetty chat-pinoon (#446 de5a5bf, sisältää #448:n): hakuosumat ensin, sitten agenttidata, Tonyn korjaukset ja kirjasto samassa kontekstirajan mukaisessa muistirajassa (RAJATTU)

@@ -1,7 +1,7 @@
 """Aivon yksityisen tilan OpenRouter-taustapaa (Tonyn paatos A984; rajattu ulkoinen mallipalvelu, A728).
 
 Vaihtoehto loopback-mallipalvelimelle (`yksityinen.kysy_paikalliselta`). Muisti, keskustelut ja ydinohjeet pysyvat
-palvelun omissa kansioissa; OpenRouterille lahtee vain kulloinenkin kehote (ydinohjeet, valitut muistiotteet ja
+palvelun omissa kansioissa; OpenRouterille lahtee jokaisella viestilla koko kehote (ydinohjeet, valitut muistiotteet ja
 keskusteluhistoria) ja ZDR on pakotettu.
 
 Saannot (koodi on laki):
@@ -36,6 +36,10 @@ Saannot (koodi on laki):
     mallin tarkistus, sama `openrouter_kulut.kutsu` (ZDR, data_collection=deny, yhteinen 10 EUR/vrk katto ja kirjaus),
     lippu `yksityinen_chat=True` ja sama MAX_TOKENIA kuin chatissa. Vain yhden kutsun aikaraja on pidempi
     (TAUSTA_AIKARAJA_S), koska ajattelija saa vastata hitaasti. Tehtavan tunniste on oma (TAUSTA_TEHTAVA).
+  * Itsetarkistus (aivo/itsetarkistus.py, AIVO_YKSITYINEN_ITSETARKISTUS): tarkastajan ja korjauksen kutsut kulkevat
+    funktion `tarkista_vastaus` kautta `_kysy_viestit`-reittia (avoin_malli, ZDR, yhteinen 10 EUR/vrk katto ja kirjaus,
+    lippu `yksityinen_chat=True`). Tehtavan tunniste on oma (TARKISTUS_TEHTAVA), jotta osuus nakyy kulukirjanpidossa.
+    Paivakatto nayttaa vastauksen ilman tarkistusta; kutsuraja 4 per viesti koskee yhdistelman ja tarkistuksen summaa.
   * Vastauksen pituusraja (A1095): OpenRouter-taustapaan MAX_TOKENIA = 8 000 on erillaan paikallisen loopback-mallin
     rajasta (yksityinen.MAX_TOKENIA = 700, i5-8400 ei ehtisi 8 000 tokenia). Yhden mallin chat-kutsun aikaraja on
     CHAT_AIKARAJA_S. Jos vastaus katkeaa pituusrajaan (finish_reason == "length"), chat lisaa loppuun
@@ -59,7 +63,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from . import kontekstiraja, openrouter_kulut, yhdistelma, yksityinen
+from . import itsetarkistus, kontekstiraja, openrouter_kulut, yhdistelma, yksityinen
 from .yksityinen import YKSITYINEN_KEHOTE, YksityinenVirhe
 
 OLETUS_AVAIN = "/var/lib/aivo-yksityinen/openrouter-avain"
@@ -100,13 +104,16 @@ TIIVISTYS_TEHTAVA = "aivo-yksityinen-tiivistys"
 TIIVISTYS_MAX_TOKENIA = 1_500
 
 TAUSTA_TEHTAVA = "aivo-yksityinen-tausta"
+
+TARKISTUS_TEHTAVA = "aivo-yksityinen-tarkistus"
 # Taustaajossa yksi kutsu saa kestaa enintaan 10 min (ajattelija voi miettia minuutteja). Keskustelu ei odota sita.
 TAUSTA_AIKARAJA_S = 600
 
 AVOIMET_MALLIT = openrouter_kulut.AVOIMET_MALLIT      # lista on saantomoduulissa (A984); uudelleenvienti
 _VANHA_LAUSE = ("sinua ajetaan Tonyn omalla\nkoneella, eik\u00e4 t\u00e4m\u00e4 keskustelu l\u00e4hde millek\u00e4\u00e4n ulkoiselle palvelulle.")
-_UUSI_LAUSE = ("sinua ajetaan avoimella mallilla\nOpenRouterin kautta nollas\u00e4ilytyksell\u00e4 (ZDR). Muisti ja keskustelut s\u00e4ilyv\u00e4t Tonyn omalla palvelimella;\n"
-               "ulos l\u00e4htee vain kulloinenkin kehote.")
+_UUSI_LAUSE = ("sinua ajetaan avoimella mallilla\nOpenRouterin kautta nollas\u00e4ilytyksell\u00e4 (ZDR). Koko t\u00e4m\u00e4 kehote (ydinohjeet, muisti, agenttidata\n"
+               "ja keskustelu) l\u00e4htee jokaisella viestill\u00e4 OpenRouterille. ZDR-tilassa sit\u00e4 ei tallenneta eik\u00e4 k\u00e4ytet\u00e4\n"
+               "koulutukseen. Muisti ja keskustelut tallennetaan Tonyn omalle palvelimelle.")
 KEHOTE = YKSITYINEN_KEHOTE.replace(_VANHA_LAUSE, _UUSI_LAUSE)
 _AVAIN_RE = re.compile(r"^[\x21-\x7e]{16,300}$")
 
@@ -216,6 +223,7 @@ def _kysy_viestit(
     max_tokens: int | None = None,
     ylaraja_s: float = VASTAUS_AIKARAJA_S,
     huomauta_katkeamisesta: bool = False,
+    tehtava: str = TEHTAVA,
     **lisa: Any,
 ) -> str:
     """Yksi kutsu valmiilla viestilistalla. Ainoa reitti, jota kysy_openrouterilta ja yhdistelmat kayttavat.
@@ -229,7 +237,7 @@ def _kysy_viestit(
     loki_kehote(malli, viestit, tokenit)
     try:
         data = openrouter_kulut.kutsu(
-            malli, viestit, laheta, tehtava=TEHTAVA, nyt=nyt, tila=kulutila, ilmoita=ilmoita,
+            malli, viestit, laheta, tehtava=tehtava, nyt=nyt, tila=kulutila, ilmoita=ilmoita,
             max_tokens=tokenit, temperature=0.3, stream=False, usage={"include": True},
             **{**lisa, "yksityinen_chat": True})
     except openrouter_kulut.KutsuEstetty:
@@ -442,3 +450,34 @@ def kysy_taustatyo(
     if not isinstance(teksti, str) or not teksti.strip():
         raise YksityinenVirhe("OpenRouter antoi tyhjan vastauksen")
     return teksti.strip()
+
+
+def tarkista_vastaus(
+    muisti: str,
+    historia: list[dict[str, Any]],
+    ohjeet: str,
+    vastaus: str,
+    *,
+    vastaaja: str,
+    tarkastaja: str | None = None,
+    kaytetyt: int = 1,
+    avain_tiedosto: str = OLETUS_AVAIN,
+    kulutila: str | None = None,
+    avaa: Callable[..., Any] | None = None,
+    nyt: Callable[[], datetime] | None = None,
+) -> "itsetarkistus.Tulos":
+    """Itsetarkistus (itsetarkistus.aja) samalla kehotteella, jolla vastaus syntyi. `tarkastaja` puuttuu ->
+    vastaajan malli. Molemmat mallit tarkistetaan avoin_malli()-funktiolla ennen kutsua. Kutsun virheet eivat nouse:
+    ne nakyvat merkintana ja alkuperainen vastaus sailyy."""
+    tarkista_malli(vastaaja)
+    tarkastaja = tarkista_malli(tarkastaja or vastaaja)
+    # sama mallikohtainen historiaraja kuin vastauksessa (A1106): pienempi tarkastajamalli rajaa molempia
+    viestit = yksityinen.muodosta_viestit(muisti, historia, ohjeet, KEHOTE, HISTORIA_YLARAJA,
+                                         historian_merkkiraja([vastaaja, tarkastaja], muisti, ohjeet, historia))
+
+    def kysy(m: str, v: list[dict[str, Any]], max_tokens: int | None = None, aikaraja_s: float | None = None) -> str:
+        ylaraja = VASTAUS_AIKARAJA_S if max_tokens is not None else CHAT_AIKARAJA_S     # korjaus: kuten chat
+        return _kysy_viestit(m, v, avain_tiedosto=avain_tiedosto, kulutila=kulutila, avaa=avaa, nyt=nyt,
+                             max_tokens=max_tokens, ylaraja_s=ylaraja, aikaraja_s=aikaraja_s,
+                             tehtava=TARKISTUS_TEHTAVA)
+    return itsetarkistus.aja(vastaus, viestit, kysy, tarkastaja=tarkastaja, vastaaja=vastaaja, kaytetyt=kaytetyt)
