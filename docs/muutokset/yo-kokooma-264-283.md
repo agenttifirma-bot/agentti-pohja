@@ -1,0 +1,2 @@
+- ajuri: loppuraportti ei katoa taustatehtävän jälkiviestiin, vaan tulkinta valitsee pääagentin viimeisen loppuraportin virrasta (#264).
+- kulutus: lukukelvoton Claude-tuloste kirjataan kulutusriville kenttään `jasennysvirhe` (tyhja | ei_tulosta | liian_suuri) eikä lukuja nollata hiljaa; aamukooste näyttää puuttuvien lukujen määrän (#283). Kokooma ratkaisee #264:n ja #283:n ristiriidan.
