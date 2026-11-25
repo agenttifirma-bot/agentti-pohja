@@ -1,0 +1,29 @@
+## Hakukontin Tor-asetukset (pohja). Asennus: /etc/tor/torrc (root:root 0644). Ohje: docs/aivo-hakukontti.md.
+## Pelkka asiakas: ei valitys- eika ulostulosolmua, ei nimipalveluporttia, ei TCP-hallintaporttia.
+## Debianin tor@default lisaa oletuksina hallintasoketin /run/tor/control ja evastetunnistuksen
+## (CookieAuthentication 1, ryhma debian-tor), joten hallintaportti ei nay verkkoon lainkaan.
+
+## SOCKS vain silmukkaosoitteeseen. IsolateSOCKSAuth: eri SOCKS-kayttajanimi -> eri piiri
+## (hakuvalittaja kayttaa tata sivuhauissa, PR 2). IsolateDestAddr: eri kohdeosoite -> eri piiri.
+SocksPort 127.0.0.1:9050 IsolateSOCKSAuth IsolateDestAddr
+SocksPolicy accept 127.0.0.1
+SocksPolicy reject *
+
+## Ei muita kuuntelevia portteja.
+DNSPort 0
+TransPort 0
+ControlPort 0
+
+## Vain asiakas.
+ClientOnly 1
+ExitRelay 0
+ORPort 0
+
+## Piiri vaihdetaan viimeistaan minuutin kuluttua, jotta perakkaiset haut eivat jaa samaa piiria pitkaan.
+MaxCircuitDirtiness 60
+
+## Lokit: SafeLogging piilottaa osoitteet, taso notice journaldiin.
+SafeLogging 1
+Log notice syslog
+
+AvoidDiskWrites 1

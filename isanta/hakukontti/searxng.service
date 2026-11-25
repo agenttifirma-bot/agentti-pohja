@@ -1,0 +1,34 @@
+# SearXNG hakukontissa (pohja). Asennus: /etc/systemd/system/searxng.service. Ohje: docs/aivo-hakukontti.md.
+# Kuuntelee vain 127.0.0.1:8888. Granian ei kirjoita paasylokia oletuksena (ei hakulausekkeita journaldiin).
+[Unit]
+Description=SearXNG (hakukontti, vain silmukkaosoite, ulosmeno Torin kautta)
+After=network-online.target tor@default.service
+Wants=tor@default.service
+
+[Service]
+Type=simple
+User=searxng
+Group=searxng
+Environment=SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
+WorkingDirectory=/usr/local/searxng/searxng-src
+ExecStart=/usr/local/searxng/searx-pyenv/bin/granian --interface wsgi --host 127.0.0.1 --port 8888 --workers 1 searx.webapp:app
+Restart=on-failure
+RestartSec=10
+CacheDirectory=searxng
+MemoryMax=700M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

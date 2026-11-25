@@ -1,0 +1,1 @@
+- aivo-hakukontti: asennusohje docs/aivo-hakukontti.md ja pohjat isanta/hakukontti/ (SearXNG-asetukset, torrc, nftables-kill switch, Proxmox-palomuurisaannot ohjeessa, systemd-yksikko, journald 30 pv) seka moottorien mittausskripti; verkkohaun PR 1 (A1101), ei asenna mitaan (RAJATTU)
