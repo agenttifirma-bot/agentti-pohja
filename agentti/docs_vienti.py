@@ -13,10 +13,13 @@ Samaan tyoklooniin ajetaan yksi vienti kerrallaan (lukko <tyo>.lukko).
 Siivous: tulos- tai tehtavatiedosto, jossa on avaimen muotoinen merkkijono (sk-, ghp_, github_pat_, Telegram-token,
 yksityisen avaimen otsake), jatetaan kokonaan pois (kirjataan vain nimi). YKSITTAISET-tiedostosta (pohdinta-vastaukset.md)
 jatetaan pois vain se merkinta ("- **A..."-merkinta tai ensimmaista merkintaa edeltava alku), jossa avaimen muotoinen
-merkkijono on; tilalle tulee rivi "[merkinta poistettu: ...]" ja ohitettuihin kirjataan vain lukumaara, ei sisaltoa.
+merkkijono tai avaimen runko (perakkaisia base64-riveja ilman BEGIN/END-rivia) on; jos merkinnassa on BEGIN ilman
+END-rivia, poistetaan myos seuraava merkinta, ja jos END ilman BEGIN-rivia, myos edellinen; tilalle tulee rivi "[merkinta poistettu: ...]" ja ohitettuihin kirjataan vain lukumaara, ei sisaltoa.
 Kaikesta poistetaan lisaksi avain=arvo-parit seka IPv4-osoitteet ja *.ts.net-nimet.
 Koko: tulokset ja tehtavat yli MAX_TAVUA (200 kt) jatetaan pois. YKSITTAISET-tiedostosta yli YKSITTAISET_MAX_TAVUA (4 Mt)
 viedaan loppuosa merkinnan alusta alkaen, ja alkuun lisataan rivi "[alku jatetty pois: N tavua]" (lukija lukee vain lopun).
+Raja tarkistetaan korvausten ja siivouksen jalkeen; jos korvausrivit kasvattavat tekstin yli rajan, luetaan lyhyempi loppuosa.
+Lopputarkistus (avaimen muotoinen merkkijono tai runko) koskee koko vietavaa tekstia: osuma ohittaa koko tiedoston.
 Symbolisia linkkeja ei seurata. Jos mikaan ei muuttunut, committia ei tehda.
 
 Kaytto: python3 -m agentti.docs_vienti [--aivo] [--kuiva]
@@ -70,6 +73,13 @@ AVAIN_MUOTOISET = [
     re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{30,}\b"),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
 ]
+PEM_ALKU = AVAIN_MUOTOISET[-1]
+# Yksityisen avaimen runko ilman BEGIN/END-rivia (avain jakautuu merkintojen rajalle tai otsake katkeaa):
+# vahintaan RUNKO_MIN_RIVEJA perakkaista rivia, joissa on vain 40-80 base64-merkkia (+ enintaan kaksi =-merkkia).
+# Pelkat heksarivit (esim. git-tiivisteiden lista) eivat yksinaan riita: jaksossa pitaa olla ainakin yksi ei-heksarivi.
+RUNKO_RIVI = re.compile(r"[ \t>]*([A-Za-z0-9+/]{40,80}={0,2})[ \t]*\r?")
+HEKSA = re.compile(r"[0-9A-Fa-f]+")
+RUNKO_MIN_RIVEJA = 3
 # Pohdinta-vastausten merkinnan alku (sama kuin aivo/agenttidata_kehote.py:n MERKINTA_RE); tavuversio vaatii rivinvaihdon eteen.
 MERKINTA_RE = re.compile(r"(?m)^[ \t]*[-*][ \t]+\*\*A[0-9]{1,6}\b")
 MERKINTA_RE_B = re.compile(rb"\n([ \t]*[-*][ \t]+\*\*A[0-9]{1,6}\b)")
@@ -108,8 +118,23 @@ def osoite_sallittu(osoite, isanta):
             and (port is None or port > 0) and u.path == SALLITTU_POLKU and not u.query and not u.fragment)
 
 
+def avaimen_runko(teksti):
+    """Onko tekstissa yksityisen avaimen runko: RUNKO_MIN_RIVEJA perakkaista base64-rivia, joista ainakin yksi ei ole pelkkaa heksaa."""
+    jakso, kaikki_heksaa = 0, True
+    for rivi in teksti.split("\n"):
+        m = RUNKO_RIVI.fullmatch(rivi)
+        if not m:
+            jakso, kaikki_heksaa = 0, True
+            continue
+        jakso += 1
+        kaikki_heksaa = kaikki_heksaa and HEKSA.fullmatch(m.group(1)) is not None
+        if jakso >= RUNKO_MIN_RIVEJA and not kaikki_heksaa:
+            return True
+    return False
+
+
 def avainmuotoinen(teksti):
-    return any(p.search(teksti) for p in AVAIN_MUOTOISET)
+    return any(p.search(teksti) for p in AVAIN_MUOTOISET) or avaimen_runko(teksti)
 
 
 def lue_loppuosa(polku, raja):
@@ -133,16 +158,48 @@ def lue_loppuosa(polku, raja):
 
 
 def poista_avainmerkinnat(teksti):
-    """Korvaa jokaisen merkinnan (ja merkintoja edeltavan alun), jossa on avaimen muotoinen merkkijono,
-    rivilla MERKINTA_POIS. Palauttaa (teksti, poistettujen maara)."""
+    """Korvaa jokaisen merkinnan (ja merkintoja edeltavan alun), jossa on avaimen muotoinen merkkijono, avaimen runko
+    tai PEM-loppurivi, rivilla MERKINTA_POIS. Jos merkinnassa on BEGIN-rivi ilman sita seuraavaa END-rivia, poistetaan
+    myos seuraava merkinta; jos END-rivi ilman sita edeltavaa BEGIN-rivia, myos edellinen (avain jakautuu kahteen
+    merkintaan). Palauttaa (teksti, poistettujen maara)."""
     alut = [0] + [m.start() for m in MERKINTA_RE.finditer(teksti) if m.start() > 0]
-    osat, poistettu = [], 0
-    for a, b in zip(alut, alut[1:] + [len(teksti)]):
-        osa = teksti[a:b]
-        if avainmuotoinen(osa) or PEM_LOPPU.search(osa):
-            osa, poistettu = MERKINTA_POIS, poistettu + 1
-        osat.append(osa)
-    return "".join(osat), poistettu
+    osat = [teksti[a:b] for a, b in zip(alut, alut[1:] + [len(teksti)])]
+    pois = [False] * len(osat)
+    for i, osa in enumerate(osat):
+        if not (avainmuotoinen(osa) or PEM_LOPPU.search(osa)):
+            continue
+        pois[i] = True
+        alut_ = [m.end() for m in PEM_ALKU.finditer(osa)]
+        loput = [m.start() for m in PEM_LOPPU.finditer(osa)]
+        if alut_ and not any(l >= alut_[-1] for l in loput) and i + 1 < len(osat):
+            pois[i + 1] = True                       # BEGIN ilman END:ia: runko jatkuu seuraavaan merkintaan
+        if loput and not any(a <= loput[0] for a in alut_) and i > 0:
+            pois[i - 1] = True                       # END ilman BEGIN:ia: otsake on edellisessa merkinnassa
+    tulos = [MERKINTA_POIS if p else osa for osa, p in zip(osat, pois)]
+    return "".join(tulos), sum(pois)
+
+
+def lue_yksittainen(polku, raja, yrityksia=8):
+    """Lukee YKSITTAISET-tiedoston loppuosan, poistaa avainmerkinnat ja siivoaa. Raja tarkistetaan lopullisesta
+    tekstista (korvausrivit ja siivous voivat kasvattaa sita); jos se ylittyy, luetaan lyhyempi loppuosa.
+    Palauttaa (siivottu teksti tai None jos rajaan ei paasty, poistettujen merkintojen maara, vuoto). vuoto on tosi,
+    jos siivoamattomassa tekstissa on yha avaimen muotoinen merkkijono, runko tai PEM-loppurivi (siivous poistaisi
+    BEGIN-otsakkeen, joten tama tarkistetaan ennen sita)."""
+    luku = raja
+    for _ in range(yrityksia):
+        teksti, pois = lue_loppuosa(polku, luku)
+        teksti, poistettu = poista_avainmerkinnat(teksti)
+        if pois:
+            teksti = ALKU_POIS % pois + teksti
+        vuoto = avainmuotoinen(teksti) or PEM_LOPPU.search(teksti) is not None
+        teksti = siivoa(teksti)
+        koko = len(teksti.encode("utf-8"))
+        if koko <= raja:
+            return teksti, poistettu, vuoto
+        luku -= 2 * (koko - raja) + min(1024, luku // 10)   # varaa uusille korvausriveille
+        if luku <= 0:
+            break
+    return None, 0, False
 
 
 def siivoa(teksti):
@@ -193,7 +250,10 @@ def valmista(lahde, kohde, aivo=False):
         yksittainen = suht in YKSITTAISET
         try:
             if yksittainen:
-                teksti, pois = lue_loppuosa(p, YKSITTAISET_MAX_TAVUA)
+                teksti, poistettu, vuoto = lue_yksittainen(p, YKSITTAISET_MAX_TAVUA)
+                if teksti is None:
+                    ohitetut.append((suht, "yli %d tavua korvausten jalkeen" % YKSITTAISET_MAX_TAVUA))
+                    continue
             elif p.stat().st_size > MAX_TAVUA:
                 ohitetut.append((suht, "yli %d tavua" % MAX_TAVUA))
                 continue
@@ -202,18 +262,15 @@ def valmista(lahde, kohde, aivo=False):
         except OSError as virhe:
             ohitetut.append((suht, type(virhe).__name__))
             continue
-        if yksittainen:
-            teksti, poistettu = poista_avainmerkinnat(teksti)
-            if poistettu:
-                ohitetut.append((suht, "merkinta poistettu (%d)" % poistettu))
-            if pois:
-                teksti = ALKU_POIS % pois + teksti
-        if avainmuotoinen(teksti):                   # tulokset/tehtavat; YKSITTAISET vain varmistuksena
+        # Lopputarkistus koko vietavalle tekstille (YKSITTAISET: ennen ja jalkeen siivouksen): osuma ohittaa koko tiedoston.
+        if avainmuotoinen(teksti) or (yksittainen and vuoto):
             ohitetut.append((suht, "avaimen muotoinen merkkijono"))
             continue
+        if yksittainen and poistettu:
+            ohitetut.append((suht, "merkinta poistettu (%d)" % poistettu))
         ulos = kohde / suht
         ulos.parent.mkdir(parents=True, exist_ok=True)
-        ulos.write_text(siivoa(teksti), encoding="utf-8")
+        ulos.write_text(teksti if yksittainen else siivoa(teksti), encoding="utf-8")
         kopioitu += 1
     return kopioitu, ohitetut
 

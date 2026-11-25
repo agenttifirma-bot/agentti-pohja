@@ -1,3 +1,4 @@
+import base64
 import contextlib
 import io
 import ipaddress
@@ -16,6 +17,14 @@ IP = "192.0.2.118"
 # RFC 5737 -dokumentaatioalueet (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24): eivat ole oikeita osoitteita.
 GITEA = "192.0.2.50"
 MUU_SISA = "192.0.2.51"
+
+
+
+def testiavain(tavuja=1200, laji="RSA"):
+    """Testissa generoitu avaimen muotoinen PEM-lohko satunnaistavuista (ei oikea avain). Palauttaa (alku, runkorivit, loppu)."""
+    b64 = base64.b64encode(os.urandom(tavuja)).decode("ascii")
+    rungot = [b64[i:i + 64] for i in range(0, len(b64), 64)]
+    return "-----BEGIN %s PRIVATE KEY-----" % laji, rungot, "-----END %s PRIVATE KEY-----" % laji
 
 
 def ip(a, b, c, d):
@@ -290,6 +299,111 @@ class Siivous(Pohja):
         kopioitu, ohitetut = dv.valmista(self.lahde, self.tyo, False)
         self.assertEqual(kopioitu, 0)
         self.assertEqual(sorted(ohitetut), [("tehtavat/b.md", "avaimen muotoinen merkkijono"), ("tulokset/a.md", "avaimen muotoinen merkkijono")])
+
+    def pohdinta(self, teksti):
+        self.kirjoita("pohdinta-vastaukset.md", teksti)
+        kopioitu, ohitetut = dv.valmista(self.lahde, self.tyo, False)
+        polku = self.tyo / "pohdinta-vastaukset.md"
+        return kopioitu, ohitetut, (polku.read_text(encoding="utf-8") if polku.exists() else None)
+
+    def assertEiRunkoa(self, t, rungot):
+        for r in rungot:
+            self.assertNotIn(r[:30], t)
+        self.assertFalse(dv.avaimen_runko(t))
+
+    def test_avain_jaettuna_kahteen_merkintaan(self):
+        alku, rungot, loppu = testiavain()
+        puoli = len(rungot) // 2
+        teksti = ("- **A1** ok yksi\n- **A2** avain alkaa\n" + alku + "\n" + "\n".join(rungot[:puoli]) + "\n"
+                  "- **A3** jatkuu\n" + "\n".join(rungot[puoli:]) + "\n" + loppu + "\n- **A4** ok nelja\n")
+        kopioitu, ohitetut, t = self.pohdinta(teksti)
+        self.assertEqual((kopioitu, ohitetut), (1, [("pohdinta-vastaukset.md", "merkinta poistettu (2)")]))
+        self.assertEiRunkoa(t, rungot)
+        self.assertIn("- **A1** ok yksi", t)
+        self.assertIn("- **A4** ok nelja", t)
+
+    def test_begin_ilman_endia_poistaa_seuraavan_merkinnan(self):
+        # Seuraavassa merkinnassa vain kaksi runkorivia (ei riita runkotunnistukseen yksinaan) eika END-rivia.
+        alku, rungot, _ = testiavain()
+        teksti = ("- **A1** ok\n- **A2** " + alku + "\n" + rungot[0] + "\n- **A3** " + rungot[1] + "\n" + rungot[2]
+                  + "\n- **A4** ok\n")
+        kopioitu, ohitetut, t = self.pohdinta(teksti)
+        self.assertEqual(ohitetut, [("pohdinta-vastaukset.md", "merkinta poistettu (2)")])
+        for r in rungot[:3]:
+            self.assertNotIn(r, t)
+        self.assertIn("- **A1** ok", t)
+        self.assertIn("- **A4** ok", t)
+
+    def test_end_ilman_begini_poistaa_edellisen_merkinnan(self):
+        # BEGIN on katkennut pois: edellisessa merkinnassa vain kaksi runkorivia (ei riita yksinaan), END seuraavassa.
+        _, rungot, loppu = testiavain()
+        teksti = ("- **A1** ok\n- **A2** katkennut\n" + rungot[0] + "\n" + rungot[1] + "\n- **A3** " + rungot[2] + "\n" + loppu
+                  + "\n- **A4** ok\n")
+        _, ohitetut, t = self.pohdinta(teksti)
+        self.assertEqual(ohitetut, [("pohdinta-vastaukset.md", "merkinta poistettu (2)")])
+        for r in rungot[:3]:
+            self.assertNotIn(r, t)
+        self.assertIn("- **A1** ok", t)
+        self.assertIn("- **A4** ok", t)
+
+    def test_pelkka_runko_poistaa_merkinnan(self):
+        _, rungot, _ = testiavain()
+        kopioitu, ohitetut, t = self.pohdinta("- **A1** ok\n- **A2** katkennut\n" + "\n".join(rungot[2:8]) + "\n- **A3** ok\n")
+        self.assertEqual(ohitetut, [("pohdinta-vastaukset.md", "merkinta poistettu (1)")])
+        self.assertEiRunkoa(t, rungot)
+        self.assertIn("- **A3** ok", t)
+
+    def test_pelkka_runko_tuloksessa_ohittaa_tiedoston(self):
+        _, rungot, _ = testiavain()
+        self.kirjoita("tulokset/a.md", "raportti\n" + "\n".join(rungot[:3]) + "\n")
+        kopioitu, ohitetut = dv.valmista(self.lahde, self.tyo, False)
+        self.assertEqual((kopioitu, ohitetut), (0, [("tulokset/a.md", "avaimen muotoinen merkkijono")]))
+
+    def test_runkotunnistus_rajat(self):
+        _, rungot, _ = testiavain()
+        self.assertTrue(dv.avaimen_runko("\n".join(rungot[:3])))
+        self.assertTrue(dv.avaimen_runko("\r\n".join("    " + r for r in rungot[:3])))   # sisennys ja CRLF
+        self.assertFalse(dv.avaimen_runko("\n".join(rungot[:2])))                       # kaksi rivia ei riita
+        self.assertFalse(dv.avaimen_runko("\n".join(r[:39] for r in rungot[:5])))      # liian lyhyet
+        self.assertFalse(dv.avaimen_runko("\n".join(r + r[:20] for r in rungot[:5])))  # yli 80 merkkia
+        self.assertFalse(dv.avaimen_runko("\n".join(r[:30] + " " + r[30:] for r in rungot[:5])))
+        sha = ["%040x" % (i * 0x9E3779B97F4A7C15 + 12345) for i in range(1, 6)]
+        self.assertFalse(dv.avaimen_runko("\n".join(sha)))                              # git-tiivisteiden lista ei ole avain
+
+    def test_lopputarkistus_ohittaa_tiedoston_jos_runko_jaa(self):
+        _, rungot, _ = testiavain()
+        with mock.patch.object(dv, "poista_avainmerkinnat", lambda t: (t, 0)):
+            kopioitu, ohitetut, t = self.pohdinta("- **A1** ok\n" + "\n".join(rungot[:4]) + "\n")
+        self.assertEqual((kopioitu, ohitetut, t), (0, [("pohdinta-vastaukset.md", "avaimen muotoinen merkkijono")], None))
+
+    def test_lopputarkistus_huomaa_begin_vaikka_siivous_poistaisi_sen(self):
+        alku, _, _ = testiavain()
+        with mock.patch.object(dv, "poista_avainmerkinnat", lambda t: (t, 0)):
+            kopioitu, ohitetut, t = self.pohdinta("- **A1** " + alku + "\n")
+        self.assertEqual((kopioitu, t), (0, None))
+
+    def test_raja_tarkistetaan_korvausten_jalkeen(self):
+        # Lyhyet avainmerkinnat korvautuvat pidemmalla rivilla: ilman jalkitarkistusta tulos ylittaisi rajan.
+        teksti = "".join("- **A%d** %s\n" % (i, AVAIN_SK) if i % 2 else "- **A%d** ok\n" % i for i in range(200))
+        raja = len(teksti.encode()) - 10
+        self.kirjoita("pohdinta-vastaukset.md", teksti)
+        with mock.patch.object(dv, "YKSITTAISET_MAX_TAVUA", raja):
+            kopioitu, ohitetut = dv.valmista(self.lahde, self.tyo, False)
+        t = (self.tyo / "pohdinta-vastaukset.md").read_text(encoding="utf-8")
+        self.assertEqual(kopioitu, 1)
+        self.assertLessEqual(len(t.encode()), raja)
+        self.assertGreater(len(dv.MERKINTA_POIS), len("- **A199** " + AVAIN_SK + "\n"))
+        self.assertRegex(t.split("\n")[0], r"^\[alku j\u00e4tetty pois: \d+ tavua\]$")
+        self.assertTrue(t.endswith("- **A198** ok\n" + dv.MERKINTA_POIS))
+        self.assertNotIn(AVAIN_SK, t)
+
+    def test_raja_ei_tayty_ohitetaan(self):
+        # Lukija palauttaa aina liian pitkan tekstin: rajaan ei paasta, joten tiedosto ohitetaan eika sita kirjoiteta.
+        with mock.patch.object(dv, "YKSITTAISET_MAX_TAVUA", 1000), \
+                mock.patch.object(dv, "lue_loppuosa", lambda p, r: ("x" * 2000, 0)):
+            kopioitu, ohitetut, t = self.pohdinta("- **A1** ok\n")
+        self.assertEqual(ohitetut, [("pohdinta-vastaukset.md", "yli 1000 tavua korvausten jalkeen")])
+        self.assertIsNone(t)
 
     def test_sk_sanan_keskella_ei_ole_avain(self):
         self.kirjoita("tulokset/a.md", "risk-assessment-framework-document on hyva")
