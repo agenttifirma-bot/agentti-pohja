@@ -225,7 +225,7 @@ Yhden viestin raja on 16 000 merkkiä (`chat.VIESTI_YLARAJA`). Selain näyttää
 
 OpenRouter-taustapään pahin tapaus: historia 80 000 merkkiä (40 viestiä), muisti 16 000 merkkiä, ydinohjeet 20 000 merkkiä ja kehote noin 4 000 merkkiä. Yhteensä noin 120 000 merkkiä eli alle 60 000 tokenia, vaikka arvioitaisiin varovasti 2 merkkiä tokenia kohti. Suositusmallin `qwen/qwen3-235b-a22b-2507` konteksti on 262 144 tokenia, joten kehote mahtuu. Jos vaihdat mallin, tarkista, että sen konteksti on vähintään 100 000 tokenia.
 
-Kehotteen sääntö 2 kertoo mallille, että keskustelun aiemmat viestit ovat käytettävissä, ja sääntö 6 kieltää lupaamasta taustatyötä tai arvioimasta kestoa: yksityisessä tilassa ei ole työkaluja, verkkoa eikä taustaprosesseja.
+Kehotteen sääntö 2 kertoo mallille, että keskustelun aiemmat viestit ovat käytettävissä, ja sääntö 6 kieltää lupaamasta taustatyötä tai arvioimasta kestoa: Aivolla ei ole verkkoa, eikä se voi ajaa ohjelmia itse. Agenttitehtävää se voi ehdottaa säännön 8 mukaisesti. Säännöt 9–11 koskevat omaa rakennetta ja kuluja (9), `[[SYVENNA]]`-vihjettä (10) ja `tonyn-korjaukset`-tiedostoa (11). Testi `aivo/test_yksityinen_saantonumerot.py` varmistaa, että säännöt on numeroitu 1..N ilman aukkoja ja kaksoisnumeroita kummassakin taustapäässä.
 
 ## Mallin valinta (OpenRouter-taustapää)
 
