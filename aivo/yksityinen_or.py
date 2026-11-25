@@ -35,13 +35,18 @@ Saannot (koodi on laki):
   * Taustaajo (aivo/taustaajo.py) kayttaa OpenRouteria vain funktion `kysy_taustatyo` kautta: sama avain, sama avoimen
     mallin tarkistus, sama `openrouter_kulut.kutsu` (ZDR, data_collection=deny, yhteinen 10 EUR/vrk katto ja kirjaus),
     lippu `yksityinen_chat=True` ja sama MAX_TOKENIA kuin chatissa. Vain yhden kutsun aikaraja on pidempi
-    (TAUSTA_AIKARAJA_S), koska ajattelija saa vastata hitaasti. Tehtavan tunniste on oma (TAUSTA_TEHTAVA)."""
+    (TAUSTA_AIKARAJA_S), koska ajattelija saa vastata hitaasti. Tehtavan tunniste on oma (TAUSTA_TEHTAVA).
+  * Vastauksen pituusraja (A1095): OpenRouter-taustapaan MAX_TOKENIA = 8 000 on erillaan paikallisen loopback-mallin
+    rajasta (yksityinen.MAX_TOKENIA = 700, i5-8400 ei ehtisi 8 000 tokenia). Yhden mallin chat-kutsun aikaraja on
+    CHAT_AIKARAJA_S. Jos vastaus katkeaa pituusrajaan (finish_reason == "length"), chat lisaa loppuun
+    KATKENNUT_HUOMAUTUS ja kirjaa stderriin vain tiedon katkeamisesta (ei sisaltoa). Paivakatto ja varaus eivat muutu."""
 from __future__ import annotations
 
 import json
 import os
 import re
 import stat
+import sys
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -55,7 +60,17 @@ OLETUS_AVAIN = "/var/lib/aivo-yksityinen/openrouter-avain"
 TEHTAVA = "aivo-yksityinen"
 VASTAUS_AIKARAJA_S = 120
 MAX_VASTAUS_TAVUA = 2_000_000
-MAX_TOKENIA = yksityinen.MAX_TOKENIA
+# OpenRouter-taustapaan vastausraja (Tonyn paatos A1095): noin 20 000-24 000 merkkia suomea. Paikallisen
+# loopback-mallin raja on yksityinen.MAX_TOKENIA (700) eika muutu. Kulu: avoimella mallilla 8 000 tokenia ulos maksaa
+# ZDR-ylarajahinnalla (0,825 USD/Mtok) noin 0,007 USD, selvasti alle kiintean varauksen (openrouter_kulut.VARAUS_USD 0,50 USD).
+MAX_TOKENIA = 8_000
+# Yhden mallin chat-kutsun aikaraja. stream=False: palvelin ei laheta mitaan ennen kuin koko vastaus on valmis.
+# Hitaat avoimet mallit (esim. deepseek-r1) tuottavat OpenRouterissa noin 25-40 tokenia/s; 8 000 / 25 = 320 s ja
+# kehotteen kasittely noin 10-30 s, joten 360 s riittaa pahimmassakin tavallisessa tapauksessa. Selain (fetch ilman
+# AbortControlleria) ja ThreadingHTTPServer eivat katkaise odotusta. Yhdistelmat, tiivistys ja agentit kayttavat
+# edelleen VASTAUS_AIKARAJA_S:aa (120 s) tai omaa rajaansa.
+CHAT_AIKARAJA_S = 360
+KATKENNUT_HUOMAUTUS = "[vastaus katkesi pituusrajaan, kirjoita: jatka]"
 # Historia on taustapaakohtainen. Paikallinen malli (yksityinen.HISTORIA_YLARAJA = 12) kasittelee kehotteen hitaasti
 # 900 s aikarajan sisalla; OpenRouterin malli kasittelee pitkan kehotteen sekunneissa, joten raja on sama 40 kuin
 # tyokalutilassa (chat.HISTORIA_YLARAJA). Viestiraja on 16 000 merkkia, joten 40 viestin historia voisi olla
@@ -187,12 +202,16 @@ def _kysy_viestit(
     ilmoita: Callable[[str], Any] | None = None,
     aikaraja_s: float | None = None,
     max_tokens: int | None = None,
+    ylaraja_s: float = VASTAUS_AIKARAJA_S,
+    huomauta_katkeamisesta: bool = False,
     **lisa: Any,
 ) -> str:
-    """Yksi kutsu valmiilla viestilistalla. Ainoa reitti, jota kysy_openrouterilta ja yhdistelmat kayttavat."""
+    """Yksi kutsu valmiilla viestilistalla. Ainoa reitti, jota kysy_openrouterilta ja yhdistelmat kayttavat.
+    `huomauta_katkeamisesta`: vain yhden mallin chat (kysy_openrouterilta). Yhdistelman osakutsujen (reititin,
+    luokittelu) vastauksia jasennetaan, joten niihin ei lisata huomautusta."""
     tarkista_malli(malli)
     avain = lue_avain(avain_tiedosto)                     # ennen varausta: puuttuva avain ei jata varausta
-    laheta = tee_kuljetin(avain, avaa, aikaraja_s)
+    laheta = tee_kuljetin(avain, avaa, aikaraja_s, ylaraja_s=ylaraja_s)
     tokenit = MAX_TOKENIA if max_tokens is None else max(1, min(int(max_tokens), MAX_TOKENIA))
     try:
         data = openrouter_kulut.kutsu(
@@ -209,7 +228,18 @@ def _kysy_viestit(
         raise YksityinenVirhe("OpenRouterin vastauksessa ei ollut tekstia") from None
     if not isinstance(teksti, str) or not teksti.strip():
         raise YksityinenVirhe("OpenRouter antoi tyhjan vastauksen")
+    if huomauta_katkeamisesta and katkesi_pituusrajaan(data):
+        print("yksityinen_or: vastaus katkesi pituusrajaan (max_tokens=%d)" % tokenit, file=sys.stderr)
+        return teksti.strip() + "\n\n" + KATKENNUT_HUOMAUTUS
     return teksti.strip()
+
+
+def katkesi_pituusrajaan(data: Any) -> bool:
+    """True, jos OpenRouterin vastauksen ensimmainen valinta paattyi pituusrajaan (finish_reason == "length")."""
+    try:
+        return data["choices"][0].get("finish_reason") == "length"
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return False
 
 
 def kysy_openrouterilta(
@@ -230,7 +260,7 @@ def kysy_openrouterilta(
     viestit = yksityinen.muodosta_viestit(muisti, historia, ohjeet, KEHOTE, HISTORIA_YLARAJA,
                                          HISTORIA_MERKIT_YLARAJA)
     return _kysy_viestit(malli, viestit, avain_tiedosto=avain_tiedosto, kulutila=kulutila, avaa=avaa, nyt=nyt,
-                         ilmoita=ilmoita, **lisa)
+                         ilmoita=ilmoita, ylaraja_s=CHAT_AIKARAJA_S, huomauta_katkeamisesta=True, **lisa)
 
 
 def kysy_yhdistelmalla(

@@ -95,6 +95,11 @@ S\u00e4\u00e4nn\u00f6t:
    Jos niit\u00e4 ei ole, \u00e4l\u00e4 ehdota luovutusta ennen kuin Tony pyyt\u00e4\u00e4.
    Pilkotun ty\u00f6n voit ehdottaa yhten\u00e4 pakettina: [[LUOVUTUSPAKETTI nimi]] [[PALA 1]] teksti [[/PALA]]
    [[PALA 2]] teksti [[/PALA]] [[/LUOVUTUSPAKETTI]]. Tony n\u00e4kee kaikki palat ja hyv\u00e4ksyy paketin itse.
+8. Voit ehdottaa agenttiteht\u00e4v\u00e4\u00e4 vain t\u00e4ss\u00e4 muodossa: [[AGENTTI]] teht\u00e4v\u00e4nkuvaus [[/AGENTTI]]. Lohko on vain
+   ehdotus: Tony n\u00e4kee tekstin ja arvioidun kulun ja k\u00e4ynnist\u00e4\u00e4 teht\u00e4v\u00e4n itse painikkeella. Agentti saa vain
+   lohkon tekstin, ei muistia, t\u00e4t\u00e4 keskustelua eik\u00e4 ydinohjeita, joten kirjoita teht\u00e4v\u00e4 itsen\u00e4iseksi. Agentilla on
+   vain tiedostoty\u00f6kalut omassa ty\u00f6kansiossaan, ei verkkoa eik\u00e4 komentoja. Noudata ydinohjeiden agenttis\u00e4\u00e4nt\u00f6j\u00e4.
+   Jos niit\u00e4 ei ole, \u00e4l\u00e4 ehdota agenttiteht\u00e4v\u00e4\u00e4 ennen kuin Tony pyyt\u00e4\u00e4.
 """
 
 

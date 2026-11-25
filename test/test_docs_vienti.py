@@ -95,6 +95,14 @@ class SallitutPolut(Pohja):
         self.assertEqual(self.eteteksti("kompassi.md"), "kompassi")
         self.assertIn("(aivo)", git("--git-dir", str(self.ete), "log", "-1", "--format=%s", "main"))
 
+    def test_iso_raja_vain_pohdinnalle_aivo_tiedostot_perusrajassa(self):
+        # 4 Mt raja (YKSITTAISET_MAX_TAVUA) koskee vain pohdinta-vastaukset.md:ta; kompassi ja faktat pysyvat 200 000 tavussa.
+        self.assertEqual(dv.YKSITTAISET, ("pohdinta-vastaukset.md",))
+        self.kirjoita("kompassi.md", "a" * (dv.MAX_TAVUA + 1))
+        self.kirjoita("faktat.md", "a" * dv.MAX_TAVUA)
+        self.assertIn("pushattu: 1", self.vie(aivo=True))
+        self.assertEqual(self.etepolut(), ["faktat.md"])
+
     def test_perusajo_ja_aivo_eivat_poista_toistensa_tiedostoja(self):
         self.kirjoita("kompassi.md", "k1")
         self.kirjoita("faktat.md", "f1")
@@ -143,6 +151,17 @@ class SallitutPolut(Pohja):
         self.kirjoita("tulokset/ok.md", "a" * dv.MAX_TAVUA)
         self.vie()
         self.assertEqual(self.etepolut(), ["tulokset/ok.md"])
+
+    def test_pohdinta_saa_olla_yli_perusrajan(self):
+        self.kirjoita("pohdinta-vastaukset.md", "a" * (dv.MAX_TAVUA + 10))
+        kopioitu, ohitetut = dv.valmista(self.lahde, self.tyo, False)
+        self.assertEqual(ohitetut, [])
+        self.assertTrue((self.tyo / "pohdinta-vastaukset.md").exists())
+
+    def test_pohdinta_yli_oman_rajan_ohitetaan(self):
+        self.kirjoita("pohdinta-vastaukset.md", "a" * (dv.YKSITTAISET_MAX_TAVUA + 1))
+        kopioitu, ohitetut = dv.valmista(self.lahde, self.tyo, False)
+        self.assertEqual([n for n, _ in ohitetut], ["pohdinta-vastaukset.md"])
 
     def test_poistunut_lahde_poistuu_kopiosta(self):
         a = self.kirjoita("tulokset/a.md", "a")

@@ -38,6 +38,13 @@ Oletukset: yksi OpenRouter-kutsu per Tonyn viesti, keskustelu on 20 viestiä, ku
 
 Historiaraja on nyt 40 viestiä (`yksityinen_or.HISTORIA_YLARAJA`, 19.11.2026). Taulukon 20 viestin keskustelussa koko keskustelu kulkee silloin mukana, ja syöte kasvaa keskustelun loppua kohti. Pahin yksittäinen kutsu (40 täyttä viestiä, muisti ja ydinohjeet täynnä) on noin 55 000–80 000 tokenia sisään, Qwenillä ZDR-ylärajalla noin 0,01–0,02 € kutsulta. Päiväkatto ei muutu.
 
+### Vastauksen pituusraja ja aikaraja (A1095, 25.11.2026)
+
+- OpenRouter-taustapään vastausraja on 8 000 tokenia (`yksityinen_or.MAX_TOKENIA`), noin 20 000–24 000 merkkiä suomea. Paikallisen loopback-mallin raja (`yksityinen.MAX_TOKENIA`, 700) ei muutu, koska i5-8400 ei ehtisi tuottaa 8 000 tokenia aikarajassa. Taustatyö (`kysy_taustatyo`) käyttää samaa 8 000 tokenin rajaa. Mallivertailulla on oma vakio `mallivertailu.MAX_TOKENIA = 700`, jotta tulokset pysyvät vertailukelpoisina.
+- Yhden mallin chat-kutsun aikaraja on 360 s (`yksityinen_or.CHAT_AIKARAJA_S`). Pyyntö on `stream=False`, joten palvelin ei lähetä mitään ennen kuin vastaus on valmis. Hidas avoin malli tuottaa noin 25 tokenia sekunnissa: 8 000 tokenia vie noin 320 s, ja kehotteen käsittely vie lisäksi 10–30 s. Selain ei katkaise odotusta, eikä chat-palvelimessa ole omaa pyyntökohtaista aikarajaa. Yhdistelmät (kokonaisaikaraja 240 s), tiivistys ja agentit käyttävät edelleen omia rajojaan (`VASTAUS_AIKARAJA_S` 120 s).
+- Jos vastaus katkeaa pituusrajaan (`finish_reason` on `length`), vastauksen loppuun lisätään rivi `[vastaus katkesi pituusrajaan, kirjoita: jatka]`. Lokiin (stderr) kirjataan vain tieto katkeamisesta, ei vastauksen sisältöä.
+- Kulut: päiväkattoa varten tehtävä varaus on kiinteä `openrouter_kulut.VARAUS_USD` (0,50 $), eikä se riipu `max_tokens`-arvosta. 8 000 tokenia ulos maksaa taulukon malleilla enintään noin 0,01 $ (Llama 1,20 $ / miljoona tokenia), joten varaus kattaa sen. Päiväkatto (10 €/vrk) ei muutu.
+
 Päiväkatto 10 €/vrk on huomattavasti suurempi kuin yksityisen tilan odotettu kulu (alle 0,6 €/vrk raskaimmassakin laskelmassa). Virheellinen tai aikakatkaistu kutsu kirjataan varovaisesti 0,50 $:n kuluna, joten toistuvat virheet näkyvät kirjanpidossa.
 
 ## Käyttöönotto (Tony tekee kontissa 122)
