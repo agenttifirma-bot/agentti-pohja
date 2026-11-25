@@ -877,6 +877,26 @@ class Yksikkotiedosto(unittest.TestCase):
         self.assertEqual(alku[0].split()[:3], paa[0].split()[:3])
         self.assertEqual(paa[0].split()[:3], ["/usr/bin/python3", "-I", "/usr/local/lib/hakukontti/hakuvalittaja.py"])
 
+    def test_vaatii_palomuurin(self):
+        # Ilman kill switchia (nftables) palvelu ei saa kaynnistya.
+        unit = self.rivit[self.rivit.index("[Unit]") + 1:self.rivit.index("[Service]")]
+        def osat(avain):
+            return sum([r.split("=", 1)[1].split() for r in unit if r.split("=", 1)[0] == avain], [])
+        self.assertIn("nftables.service", osat("Requires") + osat("BindsTo"))
+        self.assertIn("nftables.service", osat("After"))
+        self.assertFalse(any(r.startswith("Requires=-") for r in unit))
+
+    def test_ohje_tarkistaa_palomuurin_ennen_kaynnistysta(self):
+        with open(os.path.join(JUURI, "docs", "aivo-hakuvalittaja.md"), encoding="utf-8") as f:
+            ohje = f.read()
+        lohkot = re.findall(r"```bash\n(.*?)```\n([^\n]*)", ohje, re.DOTALL)
+        komennot = [k.strip() for k, _ in lohkot]
+        tarkistus = komennot.index("pct exec 123 -- systemctl is-enabled nftables")
+        kaynnistys = [i for i, k in enumerate(komennot) if "enable --now aivo-haku" in k]
+        self.assertEqual(len(kaynnistys), 1)
+        self.assertLess(tarkistus, kaynnistys[0])
+        self.assertTrue(lohkot[tarkistus][1].startswith("Odotettu: `enabled`"))
+
     def test_ohje_mainitsee_tiedostot_ja_testit(self):
         with open(os.path.join(JUURI, "docs", "aivo-hakuvalittaja.md"), encoding="utf-8") as f:
             ohje = f.read()

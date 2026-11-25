@@ -126,6 +126,13 @@ pct exec 123 -- systemd-analyze verify /etc/systemd/system/aivo-haku.service; ec
 ```
 Odotettu: `paluuarvo 0`. Varoitukset muista yksiköistä voi ohittaa, mutta `aivo-haku.service`-alkuiset rivit kirjataan raporttiin.
 
+Hakuvälittäjä vaatii palomuurin (`Requires=nftables.service`). Tarkista ennen käynnistystä, että palomuuri latautuu myös kontin käynnistyessä.
+
+```bash
+pct exec 123 -- systemctl is-enabled nftables
+```
+Odotettu: `enabled`. Jos tulos on muu, pysähdy: ilman palomuuria kontissa ei ole kill switchiä, eikä hakuvälittäjä käynnisty.
+
 ```bash
 pct exec 123 -- systemctl daemon-reload && pct exec 123 -- systemctl enable --now aivo-haku && pct exec 123 -- systemctl is-active aivo-haku
 ```
