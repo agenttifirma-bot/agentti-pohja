@@ -113,6 +113,8 @@ Yksityisen tilan päätös kirjataan vain yksityiseen muistiin (tiedosto 0600) e
 
 ## Luovutus työkalutilaan
 
+Tony voi antaa jokaiselle yksityisen tilan vastaukselle palautteen (Hyvä tai Väärin ja korjaus). Korjaukset tallentuvat kansioon `/var/lib/aivo-yksityinen/korjaukset` (0700), tulevat seuraavan viestin kehotteeseen datana ja toistuessaan johtavat ydinohje-ehdotukseen, jonka Tony hyväksyy itse. Tarkemmin: `docs/aivo-chat.md`, kohta Palaute ja korjaukset yksityisessä tilassa.
+
 Yksityisessä tilassa sovitun tekstin voi luovuttaa työkalutilaan vain Tonyn hyväksynnällä. Aivo voi ehdottaa luovutusta lohkolla `[[LUOVUTUS]] … [[/LUOVUTUS]]`, ja Tony voi luovuttaa minkä tahansa viestin painikkeella. Ehdotukset ja loki luovutetuista teksteistä ovat kansiossa `/var/lib/aivo-yksityinen/luovutukset` (0700). Hyväksytty teksti kopioidaan kirjaston kansioon `saapuneet/`. Kehote käskee noudattamaan ydinohjeiden luovutussääntöjä; jos niitä ei ole, Aivo ei ehdota luovutusta ennen kuin Tony pyytää. Tarkemmin: `docs/aivo-chat.md`, kohta Luovutus yksityisestä tilasta työkalutilaan.
 
 ## Keskustelujen tiivistys (komento)
