@@ -1662,7 +1662,8 @@ def tee_kasittelija(tila):
                 paketit, lisapalat = [], []
 
                 def tallenna_paketti(nimi, palat):
-                    tunnus = luovutuspaketti.tallenna_paketti(tila.luovutukset, nimi, palat)
+                    tunnus = luovutuspaketti.tallenna_paketti(tila.luovutukset, nimi, palat,
+                                                             vartija_listat=tila.vartija_listat)
                     paketit.append(tunnus)
                     return tunnus
 
@@ -1670,7 +1671,8 @@ def tee_kasittelija(tila):
                     try:
                         with tila.luovutuslukko:      # automaattinen lahetys julkaisee kirjastoon
                             tunnus, lahti, yht = luovutuspaketti.tallenna_lisapalat(
-                                tila.luovutukset, tila.kirjasto, jatkaa, tekstit, tila.lisapalat)
+                                tila.luovutukset, tila.kirjasto, jatkaa, tekstit, tila.lisapalat,
+                                vartija_listat=tila.vartija_listat)
                     except ChatVirhe as e:
                         return "[lis\u00e4palaa ei tallennettu: %s]" % e
                     except OSError as e:
@@ -2059,7 +2061,8 @@ def tee_kasittelija(tila):
 
             def tee():
                 try:
-                    tulos = luovutuspaketti.hyvaksy_paketti(tila.luovutukset, t, vahvistus, tila.kirjasto, lisavahvistus=lisa)
+                    tulos = luovutuspaketti.hyvaksy_paketti(tila.luovutukset, t, vahvistus, tila.kirjasto, lisavahvistus=lisa,
+                                                             vartija_listat=tila.vartija_listat)
                 except luovutus.VartijaEsto as e:
                     return 409, {"virhe": str(e), "vartija": {"tulos": e.tulos, "syyt": e.syyt}}
                 return 200, {"tulos": tulos, "teksti": "Paketti: " + LUOVUTUS_TULOKSET.get(tulos, "L\u00e4hetetty (%s)." % tulos)}

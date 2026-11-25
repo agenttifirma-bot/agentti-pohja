@@ -24,9 +24,9 @@ class AineistoTesti(unittest.TestCase):
     def test_maarat_ja_sanamaarat(self):
         luokat = [t["luokka"] for t in AINEISTO]
         self.assertEqual(luokat.count(va.TURVALLINEN), 50)
-        self.assertEqual(luokat.count(va.ARKALUONTEINEN), 50)
+        self.assertEqual(luokat.count(va.ARKALUONTEINEN), 50 + va.ESTOTEKSTEJA)
         self.assertEqual(luokat.count(va.VAIKEA), 10)
-        self.assertEqual(len({t["tunnus"] for t in AINEISTO}), 110)
+        self.assertEqual(len({t["tunnus"] for t in AINEISTO}), 110 + va.ESTOTEKSTEJA)
         for t in AINEISTO:
             self.assertTrue(va.SANAT_MIN <= len(t["teksti"].split()) <= va.SANAT_MAX, t["tunnus"])
             self.assertEqual(t["sanoja"], len(t["teksti"].split()))
@@ -64,8 +64,17 @@ class AineistoTesti(unittest.TestCase):
                     osoite = k.replace(" piste ", ".").replace(" ", "")
                     ip = ipaddress.ip_address(osoite)
                     self.assertTrue(any(ip in v for v in sallitut_verkot), k)
+                if e["tyyppi"] == "yksityinen-ip":
+                    self.assertIn(vartija.ip_luokka(k), vartija.ESTO_IP_LUOKAT, k)
+                    ip = vartija._ip(k)
+                    ip4 = ip.ipv4_mapped if ip.version == 6 and ip.ipv4_mapped else ip
+                    if ip4.version == 4:          # tunnetut kotiverkon ja tailnetin aliverkot eivat ole aineistossa
+                        self.assertNotIn(str(ip4).rsplit(".", 1)[0], (".".join(["192", "168", "0"]), ".".join(["192", "168", "1"])), k)
+                        self.assertFalse(str(ip4).startswith(".".join(["100", "87", ""])), k)
+                if e["tyyppi"] == "tailnet":
+                    self.assertTrue(k.endswith(".".join(["", "example-tailnet", "ts", "net"])), k)
                 if e["tyyppi"] == "hetu":
-                    h = k.replace(" ", "")
+                    h = k.replace(" ", "").upper()
                     self.assertEqual(h[6], "+", k)          # 1800-luku
                     self.assertEqual(va.HETU_TARKISTE[int(h[:6] + h[7:10]) % 31], h[10])
                 if e["tyyppi"] in ("nimi", "paikka"):
@@ -76,7 +85,7 @@ class AineistoTesti(unittest.TestCase):
         for t in AINEISTO:
             for e in t["elementit"]:
                 if e["tyyppi"] == "iban":
-                    s = e["kohta"].replace(" ", "")
+                    s = e["kohta"].replace(" ", "").upper()
                     luku = "".join(str(int(c, 36)) for c in s[4:] + s[:4])
                     self.assertEqual(int(luku) % 97, 1, e["kohta"])
 
@@ -84,7 +93,7 @@ class AineistoTesti(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(va.main(["--ulos", d, "--siemen", "7"]), 0)
-            self.assertEqual(len([n for n in os.listdir(d) if n.endswith(".totuus.json")]), 110)
+            self.assertEqual(len([n for n in os.listdir(d) if n.endswith(".totuus.json")]), 110 + va.ESTOTEKSTEJA)
             with open(os.path.join(d, "a001.totuus.json"), encoding="utf-8") as f:
                 self.assertEqual(set(json.load(f)), {"tunnus", "luokka", "sanoja", "elementit"})
             self.assertEqual(va.lue(d), va.generoi(7))
@@ -101,7 +110,7 @@ class MittausTesti(unittest.TestCase):
         tulos = vm.mittaa([{"tunnus": "x1", "luokka": va.ARKALUONTEINEN, "teksti": teksti, "elementit": el}])
         r = tulos["rivit"]
         self.assertEqual((r["sahkoposti"]["osumat"], r["sahkoposti"]["ohitukset"]), (1, 0))
-        self.assertEqual((r["iban"]["osumat"], r["iban"]["ohitukset"]), (0, 1))
+        self.assertEqual((r["iban"]["osumat"], r["iban"]["ohitukset"]), (1, 0))     # kaikkien maiden IBAN
         self.assertEqual((r["ip"]["vaarat"], r["ip"]["vaarat_erilaiset"]), (1, 1))
         self.assertEqual(r["nimi"]["ohitukset"], 1)
         self.assertEqual(tulos["arkaluonteiset_kaikki_loytyi"], 0)
@@ -126,6 +135,21 @@ class MittausTesti(unittest.TestCase):
             self.assertEqual(tulos["muodot"][muoto]["ohitukset"], 0, muoto)
             self.assertGreater(tulos["muodot"][muoto]["osumat"], 0, muoto)
         for rivi in ("ssh-yksityisavain", "ssh-julkisavain", "api-avain", "avainsana-arvo"):
+            self.assertEqual(tulos["rivit"][rivi]["vaarat"], 0, rivi)
+
+    def test_kaikki_estotyypit_mitataan_eika_ohituksia(self):
+        tulos = vm.mittaa(AINEISTO)
+        muodot = {m.split(" / ")[0] for m in tulos["muodot"]}
+        self.assertLessEqual({"yksityinen-ip", "tailnet", "hetu", "iban", "ssh-yksityisavain", "yksityisavain",
+                              "ssh-julkisavain", "api-avain", "avainsana-arvo"}, muodot)
+        for muoto in ("yksityinen-ip / ipv4", "yksityinen-ip / ipv4-nollat", "yksityinen-ip / ipv6-lyhyt",
+                      "yksityinen-ip / ipv6-tailnet", "yksityinen-ip / ipv6-link-local", "yksityinen-ip / ipv6-upotettu",
+                      "tailnet / ts-net", "yksityisavain / otsikko", "iban / ulkomaa", "iban / pienet", "hetu / pienet",
+                      "ip / ipv6-lyhyt", "api-avain / tskey", "api-avain / google", "api-avain / stripe",
+                      "api-avain / gitlab", "api-avain / huggingface", "api-avain / jwt"):
+            self.assertGreater(tulos["muodot"][muoto]["osumat"], 0, muoto)
+            self.assertEqual(tulos["muodot"][muoto]["ohitukset"], 0, muoto)
+        for rivi in ("yksityinen-ip", "tailnet", "iban", "yksityisavain", "api-avain"):
             self.assertEqual(tulos["rivit"][rivi]["vaarat"], 0, rivi)
 
     def test_turvallisten_vaarat_halytykset_ovat_tunnetut(self):

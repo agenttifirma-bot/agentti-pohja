@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from aivo import chat, luovutus, luovutuspaketti as lp, yksityinen
 from aivo.test_luovutus import LuovutusPohja
@@ -248,6 +249,71 @@ class LisapalatTesti(PakettiPohja):
         with self.assertRaises(chat.ChatVirhe):
             chat.Tila(chat.tiivista_salasana("salasana-12345"), self.tila.kirjasto, str(Path(self.tmp.name) / "d2"), [],
                       lisapalat="kylla")
+
+
+class KoukkuJaListatTesti(PakettiPohja):
+    """vartija_koukku ei koskaan palauta sallittu=True: automaattinen lisapala ei lahde ilman injektoitua vartijaa,
+    eika mallin arvio voi paastaa sita (PR #413). Listat luetaan samasta asetuksesta kuin chat (AIVO_VARTIJA_LISTAT)."""
+
+    hyvaksytty = LisapalatTesti.hyvaksytty
+
+    def test_koukku_ei_koskaan_palauta_true(self):
+        from aivo import vartija_aineisto
+        tekstit = ["", "\n", "teksti", "Rakenna osa A.\n", "ok " * 1000] + [t["teksti"] for t in vartija_aineisto.generoi()]
+        with tempfile.TemporaryDirectory() as h:
+            for teksti in tekstit:
+                for hakemisto in (None, h):
+                    r = lp.vartija_koukku(teksti, hakemisto)
+                    self.assertIsNot(r["sallittu"], True, teksti[:40])
+                    self.assertIn(r["sallittu"], (None, False))
+            # vaikka vartijamallin tulos olisi "ei", koukku ei kayta sita
+            with mock.patch.object(lp.vuotovartija, "lue_tulos",
+                                   return_value={"tila": "tarkistettu", "arvio": "ei", "merkinnat": []}):
+                self.assertIsNot(lp.vartija_koukku("teksti")["sallittu"], True)
+            # vartijan virhe ei paasta lapi
+            with mock.patch.object(lp.vuotovartija, "tekstin_paatos", side_effect=RuntimeError("x")):
+                self.assertIs(lp.vartija_koukku("teksti")["sallittu"], False)
+
+    def test_automaattinen_lisapala_ei_lahde_oletuskoukulla(self):
+        kid, t = self.hyvaksytty()
+        ennen = self.saapuneet_tiedostot()
+        julkaisut = []
+        for teksti in ("Osa F.\n", "Puhdas tekninen teksti ilman mitaan.\n"):
+            tunnus, lahti, yht = lp.tallenna_lisapalat(self.tila.luovutukset, self.tila.kirjasto, t, [teksti],
+                                                       "automaattinen", julkaise=lambda *a, **k: julkaisut.append(a))
+            self.assertFalse(lahti)
+            self.assertIn("odottavat", yht)
+        self.assertEqual(julkaisut, [])
+        self.assertEqual(self.saapuneet_tiedostot(), ennen)
+
+    def test_listat_samasta_asetuksesta_kuin_chat(self):
+        with tempfile.TemporaryDirectory() as h:
+            Path(h, "nimet.txt").write_text("Esimerkkinen\n", encoding="utf-8")
+            self.assertEqual(lp.listat_hakemisto(self.tila.luovutukset, h), h)
+            with mock.patch.dict(os.environ, {"AIVO_VARTIJA_LISTAT": h}):
+                self.assertEqual(lp.listat_hakemisto(self.tila.luovutukset), h)
+            with mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("AIVO_VARTIJA_LISTAT", None)
+                self.assertEqual(lp.listat_hakemisto(self.tila.luovutukset),
+                                 str(Path(self.tila.luovutukset) / "vartija"))
+            # chatin polku kulkee koukulle ja hyvaksyntaan
+            self.tila.vartija_listat = h
+            kid, t, v = self.paketti(vastaus=PAKETTI.replace("osa B", "Esimerkkinen osa B"))
+            d = self.hae(kid, t)
+            self.assertIn("nimi nimilistalta", " ".join(d["palat"][1]["vartija"]["merkinnat"]))
+            self.assertNotIn("Esimerkkinen", " ".join(d["palat"][1]["vartija"]["merkinnat"]))
+            tunnus = lp.tallenna_paketti(self.tila.luovutukset, "N", [(1, "Esimerkkinen tekee.\n")], vartija_listat=h)
+            pd = lp.lue_paketti(self.tila.luovutukset, tunnus)
+            self.assertIn("nimi nimilistalta", " ".join(pd["palat"][0]["vartija"]["merkinnat"]))
+            tunnus = lp.tallenna_paketti(self.tila.luovutukset, "N", [(1, "Esimerkkinen tekee.\n")])
+            pd = lp.lue_paketti(self.tila.luovutukset, tunnus)
+            self.assertNotIn("nimi nimilistalta", " ".join(pd["palat"][0]["vartija"]["merkinnat"]))
+            # hyvaksynta laskee tyypit samoilla listoilla: injektoitu salliva vartija ei ohita kysy-tasoa
+            tunnus = lp.tallenna_paketti(self.tila.luovutukset, "N", [(1, "Esimerkkinen tekee.\n")], vartija=sallii)
+            pd = lp.lue_paketti(self.tila.luovutukset, tunnus)
+            with self.assertRaises(luovutus.VartijaEsto):
+                lp.hyvaksy_paketti(self.tila.luovutukset, tunnus, "kyll\u00e4 " + pd["sha"][:8], self.tila.kirjasto,
+                                   julkaise=lambda *a, **k: "ei-gitissa", vartija=sallii, vartija_listat=h)
 
 
 class PaluuTesti(PakettiPohja):

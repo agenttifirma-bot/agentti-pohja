@@ -106,12 +106,19 @@ def neutraloi_paluumerkinnat(teksti):
     return PALUU_MATKINTA_RE.sub(lambda m: PALUU_NEUTRALOITU, teksti)
 
 
-def vartija_koukku(teksti):
-    """Palan vuotovartija: mekaaninen tarkistus (aivo/vartija.py). Estotyyppi -> sallittu=False. Muuten sallittu=None:
-    vartijamalli ei tarkista paketin paloja, joten tulos on "kysy" (lisavahvistus, ei automaattista lisapalaa).
+def listat_hakemisto(luovutukset, vartija_listat=None):
+    """Vuotovartijan nimi- ja avainsanalistojen kansio samasta asetuksesta kuin chat: --vartija-listat
+    (chat valittaa sen parametrina vartija_listat), muuten AIVO_VARTIJA_LISTAT, muuten <luovutukset>/vartija."""
+    return vartija_listat or os.environ.get("AIVO_VARTIJA_LISTAT") or str(Path(luovutukset) / vuotovartija.KANSIO)
+
+
+def vartija_koukku(teksti, hakemisto=None):
+    """Palan vuotovartija: mekaaninen tarkistus (aivo/vartija.py) ja Tonyn listat hakemistosta (listat_hakemisto).
+    Estotyyppi -> sallittu=False. Muuten sallittu=None: vartijamalli ei tarkista paketin paloja, joten tulos on
+    "kysy" (lisavahvistus, ei automaattista lisapalaa). Koukku ei koskaan palauta sallittu=True.
     Merkinnat ovat tyyppeja, eivat tekstin sisaltoa."""
     try:
-        p = vuotovartija.tekstin_paatos(teksti)
+        p = vuotovartija.tekstin_paatos(teksti, hakemisto)
     except Exception as e:      # vartijan virhe ei saa paastaa palaa lapi
         return {"tila": "virhe", "sallittu": False, "merkinnat": ["Vuotovartija ep\u00e4onnistui (%s)." % type(e).__name__]}
     if p["tulos"] == vuotovartija.TULOS_ESTA:
@@ -120,6 +127,14 @@ def vartija_koukku(teksti):
     return {"tila": "kysy", "sallittu": None,
             "merkinnat": (["Kysy: " + ", ".join(syyt)] if syyt else [])
             + ["Vartijamalli ei tarkista paketin paloja: tarkista pala itse."]}
+
+
+def _sido_listat(vartija, luovutukset, vartija_listat):
+    """Oletuskoukku saa listojen kansion; injektoitu vartija kaytetaan sellaisenaan."""
+    if vartija is vartija_koukku:
+        hakemisto = listat_hakemisto(luovutukset, vartija_listat)
+        return lambda teksti: vartija_koukku(teksti, hakemisto)
+    return vartija
 
 
 def _vartioi(vartija, teksti):
@@ -154,9 +169,10 @@ def _tarkista_palat(palat):
     return sorted(ulos, key=lambda p: p["n"])
 
 
-def tallenna_paketti(luovutukset, nimi, palat, lahde="lohko", jatkaa=None, vartija=vartija_koukku):
+def tallenna_paketti(luovutukset, nimi, palat, lahde="lohko", jatkaa=None, vartija=vartija_koukku, vartija_listat=None):
     """Tallentaa pakettiehdotuksen. palat: [(n, teksti)]. jatkaa: hyvaksytyn paketin tunnus (lisapalat).
     Ei luovuta mitaan. Palauttaa tunnuksen."""
+    vartija = _sido_listat(vartija, luovutukset, vartija_listat)
     nimi = _nimi(nimi)
     if lahde not in ("lohko", "lisapala"):
         raise YksityinenVirhe("tuntematon paketin lahde")
@@ -255,7 +271,7 @@ def hyvaksytyt_palat(luovutukset):
 # --- Hyvaksynta ------------------------------------------------------------------------------------
 
 def hyvaksy_paketti(luovutukset, tunnus, vahvistus, kirjasto, julkaise=yksityinen.julkaise_kirjastoon,
-                    nyt=luovutus._nyt, vartija=vartija_koukku, lisavahvistus=None):
+                    nyt=luovutus._nyt, vartija=vartija_koukku, lisavahvistus=None, vartija_listat=None):
     """Vie jokaisen palan kirjaston kansioon saapuneet/ omana tiedostonaan vain, jos vahvistus on tasmalleen
     "kylla <sha8>" koko paketin sha:sta. Jarjestys: (1) sha-tarkistus, (2) vartija tarkistaa jokaisen palan uudelleen
     (esto -> VartijaEsto aina; "kysy" -> VartijaEsto, ellei lisavahvistus ole "tarkistin kohdat <sha8>"),
@@ -264,7 +280,8 @@ def hyvaksy_paketti(luovutukset, tunnus, vahvistus, kirjasto, julkaise=yksityine
     d = lue_paketti(luovutukset, tunnus)
     if not isinstance(vahvistus, str) or not luovutus.VAHVISTUS_RE.match(vahvistus) or vahvistus != "kyll\u00e4 " + d["sha"][:8]:
         raise YksityinenVirhe("vahvistus ei tasmaa; mitaan ei luovutettu")
-    listat = vuotovartija.lue_listat(Path(luovutukset) / vuotovartija.KANSIO)
+    listat = vuotovartija.lue_listat(listat_hakemisto(luovutukset, vartija_listat))
+    vartija = _sido_listat(vartija, luovutukset, vartija_listat)
     estetyt, kysy = [], []
     for p in d["palat"]:
         # mekaaninen esto aina tassa itse (injektoitu vartija ei voi loiventaa sita), sitten palan vartija
@@ -341,7 +358,7 @@ def _seuraavat_numerot(luovutukset, pt, maara):
 
 
 def tallenna_lisapalat(luovutukset, kirjasto, jatkaa, tekstit, tila=LISAPALAT_OLETUS, julkaise=yksityinen.julkaise_kirjastoon,
-                       vartija=vartija_koukku):
+                       vartija=vartija_koukku, vartija_listat=None):
     """Lisapalat hyvaksytylle paketille. Palauttaa (tunnus, lahti, yhteenveto).
     tila="kysy": vain ehdotus (oma hyvaksynta). tila="automaattinen": lahtee ilman painallusta vain, jos vartija on
     hyvaksynyt jokaisen palan (sallittu is True); muuten jaa odottamaan hyvaksyntaa."""
@@ -351,13 +368,14 @@ def tallenna_lisapalat(luovutukset, kirjasto, jatkaa, tekstit, tila=LISAPALAT_OL
     numerot = _seuraavat_numerot(luovutukset, pt, len(tekstit))
     if numerot and numerot[-1] > 99:
         raise YksityinenVirhe("paketissa on jo liikaa paloja")
-    tunnus = tallenna_paketti(luovutukset, nimi, list(zip(numerot, tekstit)), "lisapala", pt, vartija)
+    tunnus = tallenna_paketti(luovutukset, nimi, list(zip(numerot, tekstit)), "lisapala", pt, vartija, vartija_listat)
     if tila != "automaattinen":
         return tunnus, False, None
     d = lue_paketti(luovutukset, tunnus)
     if not all(p["vartija"]["sallittu"] is True for p in d["palat"]):
         return tunnus, False, "Lis\u00e4palat odottavat hyv\u00e4ksynt\u00e4\u00e4: vuotovartija ei hyv\u00e4ksynyt kaikkia."
-    tulos = hyvaksy_paketti(luovutukset, tunnus, "kyll\u00e4 " + d["sha"][:8], kirjasto, julkaise=julkaise, vartija=vartija)
+    tulos = hyvaksy_paketti(luovutukset, tunnus, "kyll\u00e4 " + d["sha"][:8], kirjasto, julkaise=julkaise, vartija=vartija,
+                            vartija_listat=vartija_listat)
     yhteenveto = ("Lis\u00e4palat %s l\u00e4htiv\u00e4t automaattisesti paketille %s (%s), vuotovartija hyv\u00e4ksyi. Tulos: %s."
                   % (", ".join(map(str, numerot)), nimi, pt, tulos))
     p = paketit_hakemisto(luovutukset) / AUTOMAATTISET

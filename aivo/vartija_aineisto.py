@@ -1,7 +1,9 @@
 """Synteettinen testiaineisto vuotovartijalle (aivo/vartija.py). Ei verkkoa, ei oikeita tietoja, toistettava siemenluvulla.
 
-Aineisto: 50 turvallista tekstia (ohjelmointi, teknologia), 50 tekstia keksityin arkaluonteisin elementein ja 10 vaikeaa
-tapausta (kiertoilmaukset, valilyonneilla pilkotut numerot, aakkoset). Jokainen teksti on 200-500 sanaa, ja jokaisella on
+Aineisto: 50 turvallista tekstia (ohjelmointi, teknologia), 50 tekstia keksityin arkaluonteisin elementein, 10 vaikeaa
+tapausta (kiertoilmaukset, valilyonneilla pilkotut numerot, aakkoset) ja 20 estotyyppien tekstia (yksityiset IP-osoitteet
+myos lyhennettyina, tailnet-nimet, uudet avainmuodot, ulkomaiset IBANit). Estotyyppien tekstit arvotaan omalla
+siemenellaan (siemen + ESTO_SIEMEN_LISA), joten 110 ensimmaista tekstia pysyvat ennallaan. Jokainen teksti on 200-500 sanaa, ja jokaisella on
 totuustieto: mitka tyypit ja missa kohdassa (alku, loppu merkkeina).
 
 Keksityt tiedot ovat varattuja tai mahdottomia:
@@ -9,7 +11,10 @@ Keksityt tiedot ovat varattuja tai mahdottomia:
   * IP-osoitteet vain dokumentaatioalueilta 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 ja 2001:db8::/32;
   * henkilotunnukset 1800-luvun syntymaajoilla (valimerkki +);
   * IBAN-muotoiset numerot ja avaimet arvotaan satunnaisesti (ei kenenkaan oikeita);
-  * henkilot ja paikat vain paikkamerkkeina [ETUNIMI], [SUKUNIMI], [KAUPUNKI].
+  * henkilot ja paikat vain paikkamerkkeina [ETUNIMI], [SUKUNIMI], [KAUPUNKI];
+  * yksityiset IP-osoitteet (tyyppi yksityinen-ip) arvotaan satunnaisesti yksityisilta alueilta, ja ne kootaan
+    oktettilukuina (test_repo hylkaa sisaverkon osoitteet kirjaimellisina). Tunnetut kotiverkon aliverkot jaavat pois;
+  * tailnet-nimet vain muodossa <kone>.example-tailnet + .ts.net (kootaan paloista, test_repo).
 Avainten etuliitteet kootaan paloista, jotta repossa ei ole avaimen nakoista merkkijonoa (test_repo).
 
 Kaytto: python3 -m aivo.vartija_aineisto --ulos HAKEMISTO [--siemen N]
@@ -24,6 +29,8 @@ import sys
 SIEMEN = 413
 TURVALLISIA = 50
 ARKALUONTEISIA = 50
+ESTOTEKSTEJA = 30
+ESTO_SIEMEN_LISA = 1
 SANAT_MIN, SANAT_MAX = 200, 500
 
 TURVALLINEN = "turvallinen"
@@ -31,8 +38,8 @@ ARKALUONTEINEN = "arkaluonteinen"
 VAIKEA = "vaikea"
 
 # Totuuden tyypit. Ryhma kertoo, mika vartijan syy vastaa tyyppia (aivo/vartija_mittaus.py).
-TYYPIT = ("sahkoposti", "ip", "hetu", "iban", "ssh-yksityisavain", "ssh-julkisavain", "api-avain",
-          "avainsana-arvo", "nimi", "paikka")
+TYYPIT = ("sahkoposti", "ip", "yksityinen-ip", "tailnet", "hetu", "iban", "ssh-yksityisavain", "yksityisavain",
+          "ssh-julkisavain", "api-avain", "avainsana-arvo", "nimi", "paikka")
 
 DOMAINIT = ("example.com", "example.org", "test.org")
 IP4_ALUEET = ("192.0.2.", "198.51.100.", "203.0.113.")
@@ -120,6 +127,42 @@ def ip6_lyhyt(rng):
     return "2001:db8:%x::%x" % (rng.randint(1, 0xffff), rng.randint(1, 0xffff))
 
 
+def yksityinen_ip4(rng):
+    """Keksitty osoite RFC 1918- tai CGNAT-alueelta. 192.168.0-1.x ja Tailscalen 100.87.x jaavat pois."""
+    laji = rng.randrange(4)
+    if laji == 0:
+        o = (10, rng.randint(0, 255), rng.randint(0, 255), rng.randint(1, 254))
+    elif laji == 1:
+        o = (172, rng.randint(16, 31), rng.randint(0, 255), rng.randint(1, 254))
+    elif laji == 2:
+        o = (192, 168, rng.randint(2, 254), rng.randint(1, 254))
+    else:
+        o = (100, rng.choice([n for n in range(64, 128) if n != 87]), rng.randint(0, 255), rng.randint(1, 254))
+    return "%d.%d.%d.%d" % o
+
+
+def yksityinen_ip(rng):
+    """(osoite, muoto): IPv4, nollilla taytetty IPv4, ULA, Tailscalen IPv6, link-local tai IPv4-upotettu IPv6."""
+    laji = rng.randrange(6)
+    if laji == 0:
+        return yksityinen_ip4(rng), "ipv4"
+    if laji == 1:
+        return ".".join("%03d" % int(o) for o in yksityinen_ip4(rng).split(".")), "ipv4-nollat"
+    if laji == 2:
+        return "fd%02x:%x:%x::%x" % (rng.randint(0, 255), rng.randint(1, 0xffff), rng.randint(1, 0xffff),
+                                     rng.randint(1, 0xffff)), "ipv6-lyhyt"
+    if laji == 3:
+        return "fd7a:115c:a1e0::%x:%x" % (rng.randint(1, 0xffff), rng.randint(1, 0xffff)), "ipv6-tailnet"
+    if laji == 4:
+        return "fe80::%x:%x:%x:%x" % tuple(rng.randint(1, 0xffff) for _ in range(4)), "ipv6-link-local"
+    return "::ffff:" + yksityinen_ip4(rng), "ipv6-upotettu"
+
+
+def tailnet_nimi(rng):
+    return _k(rng.choice(("kone", "palvelin", "nas", "rpi", "kannettava")), str(rng.randint(1, 99)),
+              ".example-tailnet", ".ts", ".net")
+
+
 def hetu(rng):
     """1800-luvulla syntyneen keksitty henkilotunnus (valimerkki +), tarkiste laskettu oikein."""
     pv, kk, vv = rng.randint(1, 28), rng.randint(1, 12), rng.randint(0, 99)
@@ -144,6 +187,42 @@ def iban_ulkomaa(rng):
     bban = _arvo(rng, string.digits, n)
     s = maa + _iban_tarkiste(maa, bban) + bban
     return " ".join(s[i:i + 4] for i in range(0, len(s), 4))
+
+
+def iban_maa(rng, maa, pituus):
+    bban = _arvo(rng, string.digits, pituus - 4)
+    return maa + _iban_tarkiste(maa, bban) + bban
+
+
+def yksityisavain(rng):
+    laji = rng.choice(("PGP ", "", "ENCRYPTED "))
+    loppu = " BLOCK" if laji == "PGP " else ""
+    rivit = [_arvo(rng, B64, 64) for _ in range(3)]
+    return "\n".join([_k("-----BEGIN ", laji, "PRIVATE", " KEY", loppu, "-----")] + rivit
+                     + [_k("-----END ", laji, "PRIVATE", " KEY", loppu, "-----")])
+
+
+UUSIA_AVAINMUOTOJA = 7
+
+
+def uusi_api_avain(rng, laji=None):
+    """(avain, muoto) uusista muodoista. Etuliitteet kootaan paloista (test_repo)."""
+    laji = rng.randrange(UUSIA_AVAINMUOTOJA) if laji is None else laji
+    if laji == 0:
+        return _k("ts", "key-auth-") + _arvo(rng, ALNUM, 12) + "-" + _arvo(rng, ALNUM, 28), "tskey"
+    if laji == 1:
+        return _k("AI", "za") + _arvo(rng, ALNUM + "_-", 35), "google"
+    if laji == 2:
+        return _k(rng.choice(("s", "r")), "k_live_") + _arvo(rng, ALNUM, 24), "stripe"
+    if laji == 3:
+        return _k("gl", "pat-") + _arvo(rng, ALNUM, 20), "gitlab"
+    if laji == 4:
+        return _k("h", "f_") + _arvo(rng, ALNUM, 34), "huggingface"
+    if laji == 5:
+        b64u = ALNUM + "_-"
+        return (_k("ey", "J") + _arvo(rng, b64u, 33) + "." + _k("ey", "J") + _arvo(rng, b64u, 60) + "."
+                + _arvo(rng, b64u, 43)), "jwt"
+    return _k("gh", "p_") + _arvo(rng, ALNUM, 36), "etuliite"
 
 
 def ssh_yksityisavain(rng):
@@ -250,6 +329,34 @@ def vaikeat(rng):
     ]
 
 
+def esto_lause(rng, laji=None, avainlaji=None):
+    """Yksi lause, jossa on yksi estotyyppien elementti (uudet muodot)."""
+    laji = rng.randrange(7) if laji is None else laji
+    if laji in (0, 1):
+        ip, muoto = yksityinen_ip(rng)
+        return [_p("Sis\u00e4verkon kone vastaa osoitteessa "), (ip, "yksityinen-ip", muoto), _p(".")]
+    if laji == 2:
+        return [_p("Yhdist\u00e4 tailnetin kautta koneeseen "), (tailnet_nimi(rng), "tailnet", "ts-net"), _p(".")]
+    if laji == 3:
+        avain, muoto = uusi_api_avain(rng, avainlaji)
+        return [_p("Asetuksissa oli tunnus "), (avain, "api-avain", muoto), _p(", joka pit\u00e4\u00e4 vaihtaa.")]
+    if laji == 4:
+        return [_p("Vahingossa liitetty avain:\n"), (yksityisavain(rng), "yksityisavain", "otsikko"), _p("\n")]
+    if laji == 5:
+        maa, n = rng.choice((("NO", 15), ("GB", 22), ("FR", 27), ("EE", 20), ("NL", 18)))
+        i = iban_maa(rng, maa, n)
+        if maa == "GB" or maa == "NL":         # pankkitunnus kirjaimin
+            i = i[:4] + "".join(rng.choice(string.ascii_uppercase) for _ in range(4)) + i[8:]
+            i = i[:2] + "00" + i[4:]
+            i = i[:2] + _iban_tarkiste(maa, i[4:]) + i[4:]
+        muoto = "ulkomaa"
+        if rng.random() < 0.3:
+            i, muoto = i.lower(), "pienet"
+        return [_p("Maksu tilille "), (i, "iban", muoto), _p(" er\u00e4p\u00e4iv\u00e4n\u00e4.")]
+    h = hetu(rng)
+    return [_p("Lomakkeen tunniste oli "), (h.lower(), "hetu", "pienet"), _p(".")]
+
+
 # --- Tekstin kokoaminen -----------------------------------------------------------------------------
 
 def _sanoja(palat):
@@ -302,6 +409,13 @@ def generoi(siemen=SIEMEN):
     for n, lause in enumerate(vaikeat(rng)):
         teksti, el = _kokoa(rng, [lause])
         ulos.append({"tunnus": "v%03d" % (n + 1), "luokka": VAIKEA, "teksti": teksti, "elementit": el})
+    rng = random.Random(siemen + ESTO_SIEMEN_LISA)
+    for n in range(ESTOTEKSTEJA):
+        lauseet = [esto_lause(rng) for _ in range(rng.randint(2, 4))]
+        if n < UUSIA_AVAINMUOTOJA:          # jokainen uusi avainmuoto vahintaan kerran
+            lauseet.append(esto_lause(rng, 3, n))
+        teksti, el = _kokoa(rng, lauseet)
+        ulos.append({"tunnus": "e%03d" % (n + 1), "luokka": ARKALUONTEINEN, "teksti": teksti, "elementit": el})
     for t in ulos:
         t["sanoja"] = len(t["teksti"].split())
     return ulos
