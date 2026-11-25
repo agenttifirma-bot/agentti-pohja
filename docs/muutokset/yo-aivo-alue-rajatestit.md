@@ -1,0 +1,1 @@
+- aivo/test_alue.py: suorat testit alue.py:n polkurajoille (alikansion nimi, polku, sisaltaa, symlinkit, oikeustarkistukset, erottelu); mutaatioluku 54/62 -> 62/62, koodia ei muutettu

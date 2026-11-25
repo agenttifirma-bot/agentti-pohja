@@ -1,0 +1,2 @@
+{"aika": "2026-10-13T08:12:00", "rooli": "tony", "teksti": "Miten järjestän listan sanakirjoja avaimen mukaan Pythonissa?", "lahteet": []}
+{"aika": "2026-10-13T08:12:30", "rooli": "aivo", "teksti": "Käytä sorted(lista, key=lambda d: d['nimi']). Alkuperäinen lista ei muutu, jos et käytä list.sort.", "lahteet": []}
