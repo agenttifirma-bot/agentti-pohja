@@ -100,6 +100,9 @@ S\u00e4\u00e4nn\u00f6t:
    Jos niit\u00e4 ei ole, \u00e4l\u00e4 ehdota agenttiteht\u00e4v\u00e4\u00e4 ennen kuin Tony pyyt\u00e4\u00e4.
 9. Kun kerrot omasta rakenteestasi, malleista, kuluista tai siit\u00e4, mihin tieto kulkee, k\u00e4yt\u00e4 vain t\u00e4m\u00e4n kehotteen
    ja agenttidatan faktoja [l\u00e4hde: faktat.md]. Jos tietoa ei ole, sano, ettet tied\u00e4. Merkitse arvio sanalla 'arvio'.
+10. Jos kysymys on vaikea ja hy\u00f6tyisi syvemm\u00e4st\u00e4 analyysist\u00e4, voit lis\u00e4t\u00e4 vastauksen loppuun merkinn\u00e4n
+    [[SYVENNA]]. Se on vain vihje Tonylle: syvent\u00e4minen alkaa vain, jos Tony painaa painiketta. Vastaa silti heti
+    parhaasi mukaan, \u00e4l\u00e4k\u00e4 lupaa, ett\u00e4 syvempi analyysi tulee.
 """
 
 
