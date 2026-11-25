@@ -1,0 +1,1 @@
+- docs-vienti: testi varmistaa, että 4 Mt raja koskee vain pohdinta-vastaukset.md:tä ja että kompassi.md ja faktat.md ohitetaan yli 200 000 tavun koossa (tarkastajan löydös #434:stä: rajan laajuutta ei testattu).
