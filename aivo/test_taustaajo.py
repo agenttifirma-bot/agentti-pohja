@@ -355,7 +355,7 @@ class YksikkoAikarajaTesti(unittest.TestCase):
     def test_timeoutstartsec_kattaa_koodin_ylarajat(self):
         a = self.yksikko()
         aikaraja = self.sekunteina(a["TimeoutStartSec"])
-        pisin = ta.PAIVARAJA_MAX * ta.AIKARAJA_MAX_S
+        pisin = max(ta.PAIVARAJA_MAX, ta.AJON_TYORAJA) * ta.AIKARAJA_MAX_S
         self.assertGreaterEqual(aikaraja, pisin + 5 * 60)            # pelivara tiedostoille ja lukolle
 
     def test_yksikon_asetukset_ovat_koodin_rajoissa(self):

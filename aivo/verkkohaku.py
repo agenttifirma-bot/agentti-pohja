@@ -12,7 +12,8 @@ Saannot (koodi on laki):
     kayteta, ja vastauksen koko on rajattu. Agenttien tyokalumoduulit eivat tuo verkkomoduuleja (rakennetesti).
   * Jokainen hakulauseke tarkistetaan ennen hakua. Lopputulos on vartija.paatos(): "esta" = ei hakua (salaisuustyypit,
     A1096; estoa ei voi ohittaa), "kysy" = ei hakua ilman Tonyn vahvistusta, "turvallinen" = haku. Mekaaninen
-    esto lasketaan uudelleen jokaisessa haussa, myos Tonyn vahvistaman lausekkeen kohdalla.
+    esto lasketaan uudelleen jokaisessa haussa, myos Tonyn vahvistaman lausekkeen kohdalla. Jos vartijamalli merkitsi
+    lausekkeesta kohtia, tulos on "kysy" myos arviolla "pieni".
   * Sivun saa hakea vain, jos sen osoite on saman istunnon hakutuloksissa (tasmalleen sama merkkijono). Mallin keksima
     tai muokkaama osoite (esim. kyselyosa) hylataan ennen verkkoa. Osoitteen mekaaniset estotyypit hylataan myos.
   * Ei tehtavakohtaisia haku- tai sivukiintioita (A1101). Rajoina ovat yhteinen paivakatto ja kutsujan silmukkasuojat.
@@ -51,6 +52,7 @@ POLUT = ("/haku", "/sivu")
 REITTI = "tor"
 
 ESTA, KYSY, TURVALLINEN = vartija.TULOS_ESTA, vartija.TULOS_KYSY, vartija.TULOS_TURVALLINEN
+MERKITTY_SYY = "vartijamalli merkitsi kohtia"   # hauissa merkinta -> aina "kysy"
 ESTETTY = "[estetty]"              # estetyn lausekkeen tai osoitteen paikalla tuloksessa ja kortissa
 
 HAKU_OHJE = (
@@ -204,7 +206,9 @@ def mekaaninen_esto(teksti, listat=None):
 def tarkista_lauseke(lauseke, listat=None, kysy=None):
     """Lausekkeen vartijatarkistus. Palauttaa {"tulos": esta|kysy|turvallinen, "syyt": [tyyppi], "sha": sha256}.
     Estotyypin osuessa mallia ei kysyta (lauseke ei lahde edes vartijamallille). Ilman mallia tulos on vahintaan
-    "kysy". Ei nosta poikkeusta mallin takia (vartija.tarkista_mallilla); virheellinen muoto -> HakuVirhe."""
+    "kysy", ja jos vartijamalli merkitsi kohtia, tulos on "kysy" myos arviolla "ei" tai "pieni" (vain hauissa;
+    luovutusten vartija.paatos ei muutu). Ei nosta poikkeusta mallin takia (vartija.tarkista_mallilla);
+    virheellinen muoto -> HakuVirhe."""
     s = puhdista_lauseke(lauseke)
     m = mekaaninen_esto(s, listat)
     sha = vartija.yksityinen.sha(s)
@@ -212,7 +216,12 @@ def tarkista_lauseke(lauseke, listat=None, kysy=None):
         return {"tulos": ESTA, "syyt": m["esto"], "sha": sha}
     malli = vartija.tarkista_mallilla(s, _haku_kysy(kysy))
     p = vartija.paatos(m["tyypit"], malli)
-    return {"tulos": p["tulos"], "syyt": p["syyt"], "sha": sha}
+    syyt = list(p["syyt"])
+    # Hauissa merkitty kohta riittaa kysymiseen myos arviolla "ei" tai "pieni": lauseke lahtee hakukoneelle sellaisenaan.
+    if malli.get("merkinnat") and p["tulos"] != ESTA:
+        syyt.append(MERKITTY_SYY)
+        return {"tulos": KYSY, "syyt": syyt, "sha": sha}
+    return {"tulos": p["tulos"], "syyt": syyt, "sha": sha}
 
 
 # --- Kehys ja lahteet -----------------------------------------------------------------------------------------------
