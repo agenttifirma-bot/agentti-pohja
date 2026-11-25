@@ -445,15 +445,34 @@ class YksikkoTesti(unittest.TestCase):
                      "UMask=0077", "MemoryMax=512M", "CPUQuota=50%", "TasksMax=32"):
             self.assertIn(rivi, self.rivit)
 
+    def arvot(self, avain):
+        return [r.split("=", 1)[1] for r in self.rivit if r.startswith(avain + "=")]
+
     def test_kirjoitus_vain_omiin_kansioihin_ja_kulutiedostoihin(self):
-        rw = " ".join(r.split("=", 1)[1] for r in self.rivit if r.startswith("ReadWritePaths=")).split()
         from aivo import openrouter_kulut as ok
-        # openrouter_kulut vaatii kirjoitusoikeuden kulukirjanpidon kansioon (ei pelkkiin tiedostoihin)
-        self.assertEqual(sorted(rw), sorted(["/var/lib/aivo-agentit", ok.OLETUS_TILA]))
+        rw = " ".join(self.arvot("ReadWritePaths")).split()
+        self.assertEqual(rw, ["/var/lib/aivo-agentit"])
+        # kulukansio korvataan palvelun omalla tmpfs:lla (openrouter_kulut vaatii kirjoitettavan kansion), ei ro
+        tfs = self.arvot("TemporaryFileSystem")
+        self.assertEqual(len(tfs), 1)
+        polku, _, valinnat = tfs[0].partition(":")
+        self.assertEqual(polku, ok.OLETUS_TILA)
+        self.assertNotIn("ro", valinnat.split(","))
+        # oikeasta kansiosta liitetaan vain kolme kulutiedostoa samaan paikkaan (ei kansioita, ei muita tiedostoja)
+        sidotut = " ".join(self.arvot("BindPaths")).split()
+        self.assertEqual(sorted(sidotut), sorted(os.path.join(ok.OLETUS_TILA, n)
+                                                 for n in (ok.KULUT, ok.TAPAHTUMAT, ok.LUKKO)))
+        self.assertEqual(self.arvot("BindReadOnlyPaths"), [])
         esto = [r for r in self.rivit if r.startswith("InaccessiblePaths=")][0]
         for polku in ("/var/lib/aivo-yksityinen", "/var/lib/aivo", "/var/lib/aivo-tyokalu"):
             self.assertIn("-" + polku, esto.split("=", 1)[1].split())
 
+    def test_ohjeen_ennakkotarkistus_kayttaa_samoja_liitoksia(self):
+        ohje = (JUURI / "docs" / "aivo-agentit.md").read_text(encoding="utf-8")
+        for avain in ("TemporaryFileSystem", "BindPaths"):
+            self.assertIn('-p "%s=%s"' % (avain, self.arvot(avain)[0]), ohje, avain)
+        self.assertNotIn("chmod g+rwx", ohje)
+        self.assertNotIn("sudo ", ohje)
 
 
 if __name__ == "__main__":

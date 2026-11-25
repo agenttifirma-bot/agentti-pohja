@@ -41,10 +41,14 @@ Kentät järjestyksessä: `versio`, `tunnus`, `keskustelu`, `tila` (`valmis`, `k
 | `kasitellyt/`, `tyo/` | `aivo-agentti:aivo-agentti` | 0700 | vain ajuri |
 | `tulokset/` | `aivo-agentti:aivo-agentit` | 2750 | ajuri kirjoittaa, ryhmä lukee |
 | `openrouter-avain` | `aivo-agentti:aivo-agentti` | 0600 | vain ajuri; chatin avainta ei hyväksytä |
-| `/var/lib/claude-jono` | nykyinen omistaja, ryhmä `aivo-kulut` | ryhmälle `rwx` ja sticky-bitti (`t`) | chat ja ajuri |
+| `/var/lib/claude-jono` | ennallaan | ennallaan | chat; ajuri ei näe kansiota (ks. alla) |
 | kulukirjanpidon kolme tiedostoa | chatin käyttäjä, ryhmä `aivo-kulut` | 0660 | chat ja ajuri |
 
-Kulukirjanpidon moduuli vaatii kirjoitusoikeuden koko kansioon `/var/lib/claude-jono`, ei vain tiedostoihin. Siksi yksikön `ReadWritePaths` sisältää kansion. Sticky-bitin ansiosta ajurin käyttäjä ei voi poistaa eikä nimetä uudelleen chatin omistamia kulutiedostoja. Ryhmän kirjoitusoikeus sallii kuitenkin tiedostojen sisällön muuttamisen, myös tyhjentämisen. Suoja perustuu siksi koodiin: ajuri kirjoittaa kirjanpitoon vain funktion `openrouter_kulut.kutsu` kautta (rivien lisäys), eikä agentilla ole työkalua oman työkansionsa ulkopuolelle. Tämä on käyttöönoton päätös. Tiukempi vaihtoehto vaatisi muutoksen kulukirjanpidon moduuliin, eikä sitä tehdä tässä.
+Kulukirjanpidon moduuli tarkistaa, että kirjanpidon kansioon voi kirjoittaa. Siksi yksikkö ei anna kirjoitusoikeutta oikeaan kansioon `/var/lib/claude-jono`. Sen sijaan palvelu näkee kansion paikalla oman tilapäisen kansion (`TemporaryFileSystem`), johon on liitetty vain kolme kulutiedostoa (`BindPaths`). Palvelu ei näe kansion muita tiedostoja eikä voi luoda, poistaa tai korvata tiedostoja oikeassa kansiossa. Tilapäiseen kansioon kirjoitettu katoaa, kun palvelu pysähtyy, eikä se näy muille. Kansion omistajaa ja oikeuksia ei muuteta, eikä chatin käyttäjää lisätä ryhmään `aivo-kulut`.
+
+Ryhmän kirjoitusoikeus kolmeen tiedostoon sallii edelleen tiedostojen sisällön muuttamisen, myös tyhjentämisen. Moduuli tarvitsee lukkotiedostoon luku- ja kirjoitusoikeuden ja kirjanpitoon lisäysoikeuden. Tältä osin suoja perustuu koodiin: ajuri kirjoittaa kirjanpitoon vain funktion `openrouter_kulut.kutsu` kautta (rivien lisäys), eikä agentilla ole työkalua oman työkansionsa ulkopuolelle.
+
+Liitos osoittaa siihen tiedostoon, joka oli paikallaan palvelun käynnistyessä. Kulutiedostoja ei siksi saa korvata uusilla (esimerkiksi siirtämällä uuden tiedoston vanhan päälle) palvelun ollessa käynnissä. Jos niin käy, käynnistä palvelu uudelleen. Kohta 7 tarkistaa, että palvelu ja chat käyttävät samoja tiedostoja.
 
 Ajuri tarkistaa käynnistyessään, että kulutiedostot eivät kuulu sen omalle käyttäjälle. Väärin tehty asennus, jossa ajuri omistaa kirjanpidon, pysäyttää palvelun.
 
@@ -99,24 +103,20 @@ Odotettu: `id` näyttää ryhmät `aivo-agentti`, `aivo-agentit` ja `aivo-kulut`
 
 ### 3. Kulukirjanpidon ryhmäoikeus
 
-Agentit ja chat käyttävät samaa kirjanpitoa ja samaa päiväkattoa. Kulumoduuli vaatii kirjoitusoikeuden kansioon, joten kansio annetaan ryhmälle `aivo-kulut` ja siihen lisätään sticky-bitti. Tiedostot luodaan valmiiksi chatin käyttäjän omistamina, jotta kumpikaan palvelu ei luo niitä omilla oikeuksillaan. `CHAT` on kohdan 1 käyttäjä.
+Agentit ja chat käyttävät samaa kirjanpitoa ja samaa päiväkattoa. Ajuri saa ryhmän `aivo-kulut` kautta luku- ja kirjoitusoikeuden vain kolmeen kulutiedostoon. Kansion `/var/lib/claude-jono` oikeuksia ei muuteta. Tiedostot luodaan valmiiksi chatin käyttäjän omistamina, jotta kumpikaan palvelu ei luo niitä omilla oikeuksillaan, ja yksikön liitokset löytävät ne. `CHAT` on kohdan 1 käyttäjä.
 
 ```
 CHAT=$(systemctl show -p User --value aivo-chat); [ -n "$CHAT" ] && echo "CHAT=$CHAT" || echo "CHAT PUUTTUU: pysähdy"
-usermod -aG aivo-kulut "$CHAT"
-chgrp aivo-kulut /var/lib/claude-jono
-chmod g+rwx,+t /var/lib/claude-jono
 cd /var/lib/claude-jono
 for f in openrouter-kulut.jsonl openrouter-katto.jsonl openrouter-kulut.lock; do
   [ -e "$f" ] || install -m 0660 -o "$CHAT" -g aivo-kulut /dev/null "$f"
   chgrp aivo-kulut "$f" && chmod 0660 "$f"
 done
 stat -c '%A %U:%G %n' /var/lib/claude-jono openrouter-kulut.jsonl openrouter-katto.jsonl openrouter-kulut.lock
-runuser -u aivo-agentti -- test -w /var/lib/claude-jono && runuser -u aivo-agentti -- test -w openrouter-kulut.jsonl && echo KIRJOITUS-OK
-systemctl restart aivo-chat
+runuser -u aivo-agentti -- test -w /var/lib/claude-jono && echo "KANSIO KIRJOITETTAVISSA: pysähdy" || echo KANSIO-SUOJATTU
 ```
 
-Odotettu: rivi `CHAT=<käyttäjä>`. Kansion oikeuksien lopussa on `t` (esim. `drwxrwx--T` tai `drwxrwx--t`), ja ryhmä on `aivo-kulut`. Kaikilla kolmella tiedostolla on `-rw-rw---- <chat-käyttäjä>:aivo-kulut`. Viimeinen tarkistusrivi on `KIRJOITUS-OK`. Chat käynnistetään uudelleen, jotta uusi ryhmä tulee voimaan, jos chat ei omista kansiota. Kokeile chatin yksityistä tilaa yhdellä viestillä: vastauksen pitää tulla kuten ennenkin.
+Odotettu: rivi `CHAT=<käyttäjä>`. Kansion rivi on sama kuin kohdassa 1. Kaikilla kolmella tiedostolla on `-rw-rw---- <chat-käyttäjä>:aivo-kulut`. Viimeinen rivi on `KANSIO-SUOJATTU`. Chat omistaa tiedostot, joten sen pääsy ei muutu eikä sitä tarvitse käynnistää uudelleen. Ajurin kirjoitusoikeus tarkistetaan kohdassa 5 samoilla liitoksilla kuin palvelussa.
 
 ### 4. Koodi ja avaintiedosto
 
@@ -140,9 +140,15 @@ Odotettu: `600 aivo-agentti` ja koko yli 0.
 
 ### 5. Ennakkotarkistus
 
+Tarkistus ajetaan kertaluonteisena palveluna samoilla kulukansion liitoksilla kuin yksikössä, koska ajurin käyttäjä ei pääse oikeaan kansioon `/var/lib/claude-jono`.
+
 ```
-cd /opt/agentti-pohja
-runuser -u aivo-agentti -- env PYTHONPATH=/opt/agentti-pohja /usr/bin/python3 -m aivo.agentti_ajuri tarkista --roolit qwen/qwen3-235b-a22b-2507
+systemd-run --wait --pipe --quiet -p User=aivo-agentti -p Group=aivo-agentti \
+  -p "SupplementaryGroups=aivo-agentit aivo-kulut" -p WorkingDirectory=/opt/agentti-pohja \
+  -p "Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/opt/agentti-pohja" \
+  -p "TemporaryFileSystem=/var/lib/claude-jono:mode=1777,size=1M" \
+  -p "BindPaths=/var/lib/claude-jono/openrouter-kulut.jsonl /var/lib/claude-jono/openrouter-katto.jsonl /var/lib/claude-jono/openrouter-kulut.lock" \
+  /usr/bin/python3 -m aivo.agentti_ajuri tarkista --roolit qwen/qwen3-235b-a22b-2507
 ```
 
 Odotettu: viimeinen rivi on `OK`. Tarkistus kattaa kansiot, kulukirjanpidon ja mallin. Jos riveillä on `VIRHE`, korjaa oikeudet kohdan 2 tai 3 mukaan. Palvelu tekee saman tarkistuksen käynnistyessään, ja virheen sattuessa se ei aja tehtäviä. Käytä samaa avointa mallia kuin chatissa; mallin pitää olla listalla `AVOIMET_MALLIT`.
@@ -165,7 +171,13 @@ Odotettu: `systemd-analyze verify` ei tulosta yhtään riviä, jossa mainitaan `
 ```
 systemctl is-active aivo-agentit
 journalctl -u aivo-agentit -n 20 --no-pager
-systemctl show -p User,SupplementaryGroups,InaccessiblePaths,ReadWritePaths aivo-agentit
+systemctl show -p User,SupplementaryGroups,InaccessiblePaths,ReadWritePaths,TemporaryFileSystem,BindPaths aivo-agentit
+PID=$(systemctl show -p MainPID --value aivo-agentit)
+nsenter -t "$PID" -m ls -A /var/lib/claude-jono
+cd /var/lib/claude-jono
+for f in openrouter-kulut.jsonl openrouter-katto.jsonl openrouter-kulut.lock; do
+  [ "$(stat -c %d:%i "$f")" = "$(nsenter -t "$PID" -m stat -c %d:%i "/var/lib/claude-jono/$f")" ] && echo "SAMA $f" || echo "ERI $f"
+done
 runuser -u aivo-agentti -- ls /var/lib/aivo-yksityinen/chat
 runuser -u aivo-tyokalu -- ls /var/lib/aivo-agentit/tyo
 systemd-analyze security aivo-agentit --no-pager | tail -n 1
@@ -174,7 +186,9 @@ systemd-analyze security aivo-agentit --no-pager | tail -n 1
 Odotettu:
 - `active`.
 - Lokissa ei ole rivejä `kansiovirhe`, `asetusvirhe` eikä `status=226/NAMESPACE`.
-- `User=aivo-agentti` ja `SupplementaryGroups=aivo-agentit aivo-kulut`.
+- `User=aivo-agentti` ja `SupplementaryGroups=aivo-agentit aivo-kulut`. `ReadWritePaths=/var/lib/aivo-agentit` (ei kansiota `/var/lib/claude-jono`), `TemporaryFileSystem=/var/lib/claude-jono:...` ja `BindPaths=` kolmella kulutiedostolla.
+- `nsenter`-listaus näyttää palvelun näkymästä vain tiedostot `openrouter-katto.jsonl`, `openrouter-kulut.jsonl` ja `openrouter-kulut.lock`.
+- Kolme riviä `SAMA <tiedosto>`. Rivi `ERI` tarkoittaa, että tiedosto on korvattu palvelun käynnistymisen jälkeen: käynnistä palvelu uudelleen ja tarkista uudelleen.
 - Kumpikin `ls` antaa `Permission denied`. Jos kansiota `/var/lib/aivo-yksityinen/chat` tai käyttäjää `aivo-tyokalu` ei ole, tulos on `No such file or directory` tai `unknown user`, mikä on myös hyväksyttävä.
 - `systemd-analyze security` antaa pisteet ja arvion. Kirjaa ne raporttiin. Pienempi on parempi; arvio `OK` tai `MEDIUM` on odotettu.
 
@@ -216,18 +230,13 @@ rm /etc/systemd/system/aivo-agentit.service
 systemctl daemon-reload
 ```
 
-Palauta kansion `/var/lib/claude-jono` ja kulutiedostojen ryhmä ja oikeudet kohdassa 1 kirjatuiksi (esim. `chgrp <vanha ryhmä> <polku>`, `chmod 0644 <tiedosto>` ja kansiolle kirjattu tila, esim. `chmod 0755 /var/lib/claude-jono`).
-
-Poista sen jälkeen chatin käyttäjä ryhmästä `aivo-kulut`, johon kohta 3 sen lisäsi, ja käynnistä chat uudelleen, jotta ryhmä poistuu myös käynnissä olevalta palvelulta:
+Palauta kulutiedostojen ryhmä ja oikeudet kohdassa 1 kirjatuiksi (esim. `chgrp <vanha ryhmä> <tiedosto>` ja `chmod 0644 <tiedosto>`). Kansioon `/var/lib/claude-jono` ja chatin käyttäjän ryhmiin ei ole koskettu, joten niitä ei palauteta.
 
 ```
-CHAT=$(systemctl show -p User --value aivo-chat); [ -n "$CHAT" ] && echo "CHAT=$CHAT" || echo "CHAT PUUTTUU: pysähdy"
-gpasswd -d "$CHAT" aivo-kulut
-id "$CHAT"
-systemctl restart aivo-chat
+stat -c '%A %U:%G %n' /var/lib/claude-jono /var/lib/claude-jono/openrouter-kulut.jsonl /var/lib/claude-jono/openrouter-katto.jsonl /var/lib/claude-jono/openrouter-kulut.lock
 ```
 
-Odotettu: rivi `CHAT=<käyttäjä>` on sama kuin kohdassa 1, ja `gpasswd` kertoo poistaneensa käyttäjän ryhmästä. Rivillä `id` ei ole ryhmää `aivo-kulut`. Jos `gpasswd` ilmoittaa, ettei käyttäjä ole ryhmässä, kohta 3 jäi tekemättä eikä poistettavaa ole. Kokeile chatin yksityistä tilaa yhdellä viestillä: vastauksen pitää tulla kuten ennenkin.
+Odotettu: rivit vastaavat kohdassa 1 kirjattuja. Kokeile chatin yksityistä tilaa yhdellä viestillä: vastauksen pitää tulla kuten ennenkin.
 
 Käyttäjä, ryhmät ja `/var/lib/aivo-agentit` jäävät paikalleen, koska niissä voi olla tuloksia. Niiden poisto on oma päätöksensä. Koko kontin voi palauttaa isännällä komennolla `pct rollback 122 ennen-aivo-agentit`, mutta se kumoaa myös kaikki muut snapshotin jälkeiset muutokset.
 

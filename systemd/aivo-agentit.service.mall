@@ -31,9 +31,13 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged
 CapabilityBoundingSet=
-# Kirjoitus vain omaan kansioon ja kulukirjanpitoon. Kulukirjanpito vaatii kirjoitusoikeuden kansioon; tiedostokohtainen
-# rajaus tehdaan oikeuksilla (ryhma aivo-kulut, kansiossa sticky-bitti: muiden tiedostoja ei voi poistaa eika korvata).
-ReadWritePaths=/var/lib/aivo-agentit /var/lib/claude-jono
+# Kirjoitus vain omaan kansioon ja kolmeen kulukirjanpidon tiedostoon. openrouter_kulut vaatii kirjoitettavan kansion,
+# joten palvelu nakee kulukansion paikalla oman tilapaisen tmpfs:n, johon on liitetty vain kolme kulutiedostoa.
+# Oikeaan kansioon /var/lib/claude-jono ja sen muihin tiedostoihin palvelu ei paase. Kulutiedostoja ei saa korvata
+# uusilla (rename) palvelun ollessa kaynnissa: liitos pysyy vanhassa tiedostossa (ohje kohta 7).
+ReadWritePaths=/var/lib/aivo-agentit
+TemporaryFileSystem=/var/lib/claude-jono:mode=1777,size=1M
+BindPaths=/var/lib/claude-jono/openrouter-kulut.jsonl /var/lib/claude-jono/openrouter-katto.jsonl /var/lib/claude-jono/openrouter-kulut.lock
 # Toinen lukko tiedosto-oikeuksien lisaksi: muisti, keskustelut, ydinohjeet ja tyokalutila eivat nay.
 InaccessiblePaths=-/var/lib/aivo-yksityinen -/var/lib/aivo -/var/lib/aivo-tyokalu
 MemoryMax=512M
