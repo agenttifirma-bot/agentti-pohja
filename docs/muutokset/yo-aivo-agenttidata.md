@@ -1,0 +1,1 @@
+- aivo: valinnainen AIVO_AGENTTIDATA liittaa agenttidata-kloonin kompassin, faktat ja pohdinta-vastausten lopun (60 viimeista A-merkintaa) molempien tilojen kehotteeseen vain lukien, kopion aika ja yli 24 h varoitus otsikossa; ennen Aivo luki vain kirjastoa eika nahnyt tuoreita paatoksia

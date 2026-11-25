@@ -1,6 +1,7 @@
 """Tavoitesidonta, kaistaosuudet, jalkimittari ja Aivon varjoarvio (A839-A841)."""
 import json
 import random
+import re
 import tempfile
 import unittest
 from collections import Counter
@@ -41,6 +42,33 @@ class Jasennys(unittest.TestCase):
         self.assertEqual(tavoite.luokittele(kirj(h, "2026-11-01-01-c.md", "ei rivi\u00e4")), ("yllapito", ""))
 
 
+class SuunnitteluKehote(unittest.TestCase):
+    """suunnittelu.md ei saa ohjata luomaan tehtavia, joiden Tavoite-arvon ajuri hylkaa (PR #376)."""
+    POHJA = "<portfolio | ansainta | Aivo | yllapito>"
+
+    def setUp(self):
+        self.teksti = ajuri.SUUNNITTELU.read_text(encoding="utf-8")
+
+    def test_ascii(self):
+        self.assertTrue(self.teksti.isascii())
+
+    def test_tavoite_arvot_sallittuja(self):
+        arvot = re.findall(r"Tavoite: *(<[^>]*>|[^\s`.,)]+)", self.teksti)
+        self.assertTrue(arvot)
+        for arvo in arvot:
+            if arvo.startswith("<"):
+                self.assertEqual(arvo, self.POHJA)
+            else:
+                self.assertIn(tavoite.normalisoi(arvo), tavoite.TAVOITTEET, arvo)
+
+    def test_ehdota_vain_luokat_sallittuja(self):
+        kohdat = re.findall(r"ehdota vain ([^.(]*?)tehtavia", self.teksti)
+        self.assertTrue(kohdat)
+        for kohta in kohdat:
+            for sana in re.findall(r"(\w+)-(?=[\s,]|$)", kohta) + re.findall(r"(\w+)$", kohta):
+                self.assertIsNotNone(tavoite.normalisoi(sana), sana)
+
+
 class Kaistat(unittest.TestCase):
     def setUp(self):
         self.h = tempfile.mkdtemp()
@@ -58,12 +86,61 @@ class Kaistat(unittest.TestCase):
     def test_kaista3_ottaa_yllapitoa_eika_muuta_ilman_aivoa(self):
         self.assertEqual(self.nimet(3, odottavat=[x for x in self.kaikki if "aivo" not in x[0].name]), ["yllapito"])
 
-    def test_kaistat_1_2_eivat_ota_aivoa_kolmen_kaistan_tilassa(self):
-        self.assertNotIn("aivo", self.nimet(1))
-        self.assertNotIn("aivo", self.nimet(2))
-        self.assertEqual(self.nimet(1)[0], "portfolio")
-        self.assertEqual(self.nimet(2)[0], "ansainta")
-        self.assertEqual(self.nimet(1)[1], "yllapito")
+    # --- A1061 (22.11.2026): kaistat 1-2 ottavat ensin Aivon, sitten yllapidon ---
+    def test_kaistan_jarjestys_kaikki_kaistat_2_3_4_kaistan_tilassa(self):
+        A, Y, P, N = tavoite.AIVO, tavoite.YLLAPITO, tavoite.PORTFOLIO, tavoite.ANSAINTA
+        odotettu = {
+            2: {1: (P, Y, N, A), 2: (N, Y, P, A), 3: (P, Y, N, A), 4: (P, Y, N, A)},
+            3: {1: (A, Y, P, N), 2: (A, Y, P, N), 3: (A,), 4: (P, Y, N)},
+            4: {1: (A, Y, P, N), 2: (A, Y, P, N), 3: (A,), 4: (A,)},
+        }
+        for kaistoja, kaistat in odotettu.items():
+            for kaista, jarj in kaistat.items():
+                self.assertEqual(tavoite.kaistan_jarjestys(kaista, kaistoja, True), jarj, (kaista, kaistoja))
+        # kaista 3 ilman Aivo-tehtavia: vain yllapito (ennallaan); kaista 4 nelikaistatilassa: vain Aivo
+        for kaistoja in (3, 4):
+            self.assertEqual(tavoite.kaistan_jarjestys(3, kaistoja, False), (Y,))
+        self.assertEqual(tavoite.kaistan_jarjestys(4, 4, False), (A,))
+
+    def test_kaistat_1_2_aivo_ensin_sitten_yllapito_kolmen_ja_neljan_kaistan_tilassa(self):
+        for kaistoja in (3, 4):
+            for k in (1, 2):
+                self.assertEqual(self.nimet(k, kaistoja=kaistoja), ["aivo", "yllapito", "portfolio", "ansainta"], (k, kaistoja))
+
+    def test_kaista1_ilman_aivoa_yllapito_ennen_portfoliota(self):
+        ilman = [x for x in self.kaikki if "aivo" not in x[0].name]
+        self.assertEqual(self.nimet(1, odottavat=ilman), ["yllapito", "portfolio", "ansainta"])
+
+    def test_kaista1_vanhin_aivo_ensin_useasta(self):
+        a2 = kirj(self.h, "2026-11-09-05-aivo.md", "Tavoite: Aivo\n")
+        odott = [(self.ts["portfolio"], None), (self.ts["aivo"], None), (a2, None), (self.ts["yllapito"], None)]
+        v = tavoite.valitse(odott, 1, 3)
+        self.assertEqual(v[:2], [self.ts["aivo"], a2])
+        self.assertEqual(v[2], self.ts["yllapito"])
+
+    # --- kaista 4 (A991): vain Aivo ---
+    def test_kaista4_ottaa_vain_aivoa(self):
+        self.assertEqual(self.nimet(4, kaistoja=4), ["aivo"])
+
+    def test_kaista4_tyhja_aivojono_ei_ota_mitaan(self):
+        ilman = [x for x in self.kaikki if "aivo" not in x[0].name]
+        self.assertEqual(self.nimet(4, kaistoja=4, odottavat=ilman), [])
+
+    def test_kaistat_1_3_ennallaan_nelja_kaistaa(self):
+        for k in (1, 2, 3):
+            self.assertEqual(self.nimet(k, kaistoja=4), self.nimet(k, kaistoja=3), k)
+        self.assertEqual(self.nimet(3, kaistoja=4), ["aivo"])
+        ilman = [x for x in self.kaikki if "aivo" not in x[0].name]
+        self.assertEqual(self.nimet(3, kaistoja=4, odottavat=ilman), ["yllapito"])
+
+    def test_kaista4_ei_otakiinnitettya_ei_aivoa_ja_muut_saavat_sen(self):
+        pin = [(self.ts["portfolio"], 4), (self.ts["aivo"], 4)]
+        self.assertEqual(self.nimet(4, kaistoja=4, odottavat=pin), ["aivo"])
+        self.assertEqual(self.nimet(1, kaistoja=4, odottavat=pin), ["portfolio"])   # kiinnitys puretaan: ei jaa ilman ottajaa
+
+    def test_alle_neljan_kaistan_tilassa_kaista4_ei_ole_aivokaista(self):
+        # kaistoja=3: kaistan 4 jarjestys on vanha oletus (kaytannossa ei ole kaistaa 4, tarkista_kaista hylkaa sen)
+        self.assertNotEqual(self.nimet(4, kaistoja=3), ["aivo"])
 
     def test_alle_kolme_kaistaa_ei_aivo_rajausta(self):
         self.assertIn("aivo", self.nimet(1, kaistoja=2))
@@ -73,6 +150,12 @@ class Kaistat(unittest.TestCase):
         pin = [(self.ts["portfolio"], 3)]
         self.assertEqual(self.nimet(3, odottavat=pin), ["portfolio"])
         self.assertEqual(self.nimet(1, odottavat=pin), [])
+
+    def test_kiinnitys_ohittaa_aivo_ensin_jarjestyksen(self):
+        odott = [(self.ts["portfolio"], 1), (self.ts["aivo"], None), (self.ts["ansainta"], 2), (self.ts["yllapito"], None)]
+        for kaistoja in (3, 4):
+            self.assertEqual(self.nimet(1, kaistoja=kaistoja, odottavat=odott), ["portfolio", "aivo", "yllapito"])
+            self.assertEqual(self.nimet(2, kaistoja=kaistoja, odottavat=odott), ["ansainta", "aivo", "yllapito"])
 
     def test_ilman_tavoitetta_ohitetaan_ja_kirjataan(self):
         p = kirj(self.h, "2026-11-09-09-ei-tavoitetta.md", "# T")
@@ -276,9 +359,9 @@ class AivoKytkenta(unittest.TestCase):
         self.assertTrue(aivo_arvio.arvioi_varjossa(tila, t, ok))
         self.assertEqual(aivo_arvio.arviot(tila)[t.name]["kylla"], False)
 
-    def test_systemd_malli_kolme_kaistaa(self):
+    def test_systemd_malli_nelja_kaistaa(self):
         teksti = (Path(__file__).parent / "systemd" / "claude-jono@.service.mall").read_text()
-        self.assertIn("Environment=CLAUDEJONO_KAISTOJA=3", teksti)
+        self.assertIn("Environment=CLAUDEJONO_KAISTOJA=4", teksti)
 
 
 if __name__ == "__main__":

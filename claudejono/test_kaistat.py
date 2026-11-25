@@ -28,9 +28,21 @@ class Asetus(unittest.TestCase):
         self.assertEqual(ajuri.kaistojen_maara({}), 1)
         self.assertEqual(ajuri.kaistojen_maara({"CLAUDEJONO_KAISTOJA": "2"}), 2)
         self.assertEqual(ajuri.kaistojen_maara({"CLAUDEJONO_KAISTOJA": "3"}), 3)
+        self.assertEqual(ajuri.kaistojen_maara({"CLAUDEJONO_KAISTOJA": "4"}), 4)
+        self.assertEqual(ajuri.KAISTOJA_MAX, 4)
+        self.assertEqual(ajuri.kaistojen_maara({"CLAUDEJONO_KAISTOJA": "5"}), 4)
         self.assertEqual(ajuri.kaistojen_maara({"CLAUDEJONO_KAISTOJA": "9"}), ajuri.KAISTOJA_MAX)
         self.assertEqual(ajuri.kaistojen_maara({"CLAUDEJONO_KAISTOJA": "0"}), 1)
         self.assertEqual(ajuri.kaistojen_maara({"CLAUDEJONO_KAISTOJA": "x"}), 1)
+
+    def test_kaista4_vain_kun_asetus_on_4(self):
+        self.assertEqual(ajuri.tarkista_kaista(4, {"CLAUDEJONO_KAISTOJA": "4"}), 4)
+        with self.assertRaises(ajuri.JonoVirhe):
+            ajuri.tarkista_kaista(4, {"CLAUDEJONO_KAISTOJA": "3"})
+        with self.assertRaises(ajuri.JonoVirhe):
+            ajuri.tarkista_kaista(5, {"CLAUDEJONO_KAISTOJA": "4"})
+        self.assertEqual(ajuri.kaistan_tyohak("/opt/agentscope", 4), Path("/opt/agentscope/tyo/k4"))
+        self.assertIn("/opt/agentscope/tyo/k4/<repo>", ajuri.kaistahuomautus(4))
 
     def test_kaista_ulkopuolella_hylataan(self):
         env = {"CLAUDEJONO_KAISTOJA": "2"}

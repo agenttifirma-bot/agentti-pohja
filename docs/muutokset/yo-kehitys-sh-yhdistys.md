@@ -1,0 +1,4 @@
+- kehitys.sh: testirivin lukumäärä luetaan myös npm-lokeista (node:test, vitest) ja värikoodit poistetaan lokista (#248)
+- kehitys.sh: agentti ajetaan ilman PYTHONPATH- ja PYTHONHOME-muuttujia, ja kehote neuvoo `discover -s test`, jottei ajurin test-paketti peitä repon testejä (#272)
+- kehitys.sh: punaisen ajon raporttiin tulevat kaatuneet testit ja talletettu muutoskooste (patch) salaisuustarkistuksella (#313)
+- kehitys.sh: testirivin selite poimitaan unittest-riveistä ja koko testiloki tallennetaan raportin viereen (#316)

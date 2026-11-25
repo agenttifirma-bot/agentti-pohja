@@ -1,0 +1,1 @@
+- testit: test_julkaise ohittaa julkaise.sh:n lopputoimien 0,2 s odotuksen testiympäristön sleep-korvikkeella (ulostulo luetaan EOF:iin asti, joten odotus on turha); tuotantoskripti ennallaan, moduuli noin 115 s -> 68 s

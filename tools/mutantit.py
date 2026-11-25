@@ -10,6 +10,7 @@ repoa, jossa vain se yksi muutos on tehty, moduulin omilla testeilla. Testit kaa
 Kayto:
     python tools/mutantit.py agentti/kulu.py agentti/rajat.py
     python tools/mutantit.py --kaikki                 # kaikki moduulit, joilla on testitiedosto
+    python tools/mutantit.py --kaikki --hakemistot aivo --rajaa aivo/openrouter_   # aivo/ nimella, rajattuna
     python tools/mutantit.py agentti/kulu.py --rinnakkain 4 --json tulos.json
 
 Poistumiskoodi 0 = kaikki kaatuivat (tai selvisivat vain sallitut, tai --ala-kaadu), 1 = selviytyjia,
@@ -34,7 +35,9 @@ import time
 
 JUURI = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SALLITUT_OLETUS = os.path.join(JUURI, "tools", "mutantit.sallitut.txt")
-MODUULI_NIMI = re.compile(r"^(agentti|yojono|tools)/[a-z][a-z0-9_]*\.py$")
+HAKEMISTOT_OLETUS = ("agentti", "yojono", "tools")
+HAKEMISTOT_KAIKKI = HAKEMISTOT_OLETUS + ("aivo",)
+MODUULI_NIMI = re.compile(r"^(agentti|yojono|tools|aivo)/[a-z][a-z0-9_]*\.py$")
 HYLATYT_HAKEMISTOT = {".git", "__pycache__", "tila", ".venv", "node_modules"}
 
 _VERTAILU = {
@@ -197,6 +200,9 @@ LISATESTIT = {
     "agentti/skeema.py": ["test/test_skeema_tulos.py"],
     "agentti/tulos.py": ["test/test_skeema_tulos.py"],
     "agentti/snapshot_kutsu.py": ["test/test_snapshot.py"],
+    "aivo/drive.py": ["aivo/test_drive_virheet.py"],
+    "aivo/yksityinen.py": ["aivo/test_yksityinen_rajat.py"],
+    "aivo/yksityinen_or.py": ["aivo/test_yksityinen_rajat.py"],
 }
 
 
@@ -209,9 +215,10 @@ def testimoduulit(moduuli, juuri=JUURI):
     return [p[:-3].replace(os.sep, ".") for p in ehdokkaat if os.path.exists(os.path.join(juuri, p))]
 
 
-def kaikki_moduulit(juuri=JUURI):
+def kaikki_moduulit(juuri=JUURI, hakemistot=HAKEMISTOT_OLETUS, rajaus=""):
+    """Moduulit, joilla on testitiedosto. `rajaus`: polun alku, esim. "aivo/openrouter_" (tyhja = ei rajausta)."""
     tulos = []
-    for hak in ("agentti", "yojono", "tools"):
+    for hak in hakemistot:
         polku = os.path.join(juuri, hak)
         if not os.path.isdir(polku):
             continue
@@ -219,7 +226,7 @@ def kaikki_moduulit(juuri=JUURI):
             if not nimi.endswith(".py") or nimi.startswith(("test_", "__")) or nimi == "mutantit.py":
                 continue
             moduuli = hak + "/" + nimi
-            if testimoduulit(moduuli, juuri):
+            if moduuli.startswith(rajaus) and testimoduulit(moduuli, juuri):
                 tulos.append(moduuli)
     return tulos
 
@@ -339,6 +346,10 @@ def lue_argumentit(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("moduulit", nargs="*", help="esim. agentti/kulu.py")
     p.add_argument("--kaikki", action="store_true", help="kaikki moduulit, joilla on testitiedosto")
+    p.add_argument("--hakemistot", default=",".join(HAKEMISTOT_OLETUS),
+                   help="--kaikki: pilkulla erotetut hakemistot (oletus {}; aivo vain nimella)".format(
+                       ",".join(HAKEMISTOT_OLETUS)))
+    p.add_argument("--rajaa", default="", help="--kaikki: vain moduulit, joiden polku alkaa tasta (esim. aivo/openrouter_)")
     p.add_argument("--rinnakkain", type=int, default=1, help="rinnakkaisia ajoja (jokaisella oma repokopio)")
     p.add_argument("--otos", type=int, default=0, help="aja vain N satunnaista mutanttia moduulia kohden")
     p.add_argument("--siemen", type=int, default=1, help="otoksen satunnaissiemen")
@@ -355,7 +366,11 @@ def lue_argumentit(argv=None):
 
 def paa(argv=None, juuri=JUURI):
     args = lue_argumentit(argv)
-    moduulit = kaikki_moduulit(juuri) if args.kaikki else args.moduulit
+    hakemistot = tuple(h.strip() for h in args.hakemistot.split(",") if h.strip())
+    if any(h not in HAKEMISTOT_KAIKKI for h in hakemistot):
+        print("VIRHE: tuntematon hakemisto: {!r}".format(args.hakemistot), file=sys.stderr)
+        return 2
+    moduulit = kaikki_moduulit(juuri, hakemistot, args.rajaa) if args.kaikki else args.moduulit
     if not moduulit:
         print("anna moduuleja tai --kaikki", file=sys.stderr)
         return 2

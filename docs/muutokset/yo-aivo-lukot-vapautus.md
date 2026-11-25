@@ -1,0 +1,1 @@
+- aivo/chat: ehdotuksen hyväksyntä ja hylkäys (409/500-polut) lähettävät vastauksen vasta lukon vapautuksen jälkeen; pakotettu kilpatesti kaikille Aivon lukoille

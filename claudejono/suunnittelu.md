@@ -11,7 +11,16 @@ TAVOITTEET JA PALAUTE (Tonyn paatos 1.11.2026). Lue aina ensin:
 
 TONYN KAISTA: Tony on pullonkaula. Laske tuloksista ja tonylle.md:sta, montako valmista luonnosta (LinkedIn, artikkeli, issue, julkaisuohje) odottaa Tonya kasittelematta. Jos niita on 5 tai enemman, ala ehdota uusia luonnoksia, vaan tehtavia jotka eivat vaadi Tonyn aikaa tai jotka purkavat jonoa (esim. yhdistetty "valmiina julkaistavaksi" -lista parhaimmista).
 
-TAVOITE (Tonyn paatos A840, 7.11.2026): jokaiseen tehtavaan pakollinen rivi `Tavoite: <portfolio | ansainta | Aivo | yllapito>` (portfolio = TO-paikka/portfolio). Valitse kompassin tavoite, jota tehtava edistaa. Ilman rivia ajuri hylkaa tehtavan. Aivo-tehtavat ajetaan kolmannella kaistalla.
+TAVOITE (Tonyn paatos A840, 7.11.2026): jokaiseen tehtavaan pakollinen rivi `Tavoite: <portfolio | ansainta | Aivo | yllapito>` (portfolio = TO-paikka/portfolio). Valitse kompassin tavoite, jota tehtava edistaa. Ilman rivia ajuri hylkaa tehtavan. Kaistat 1-2 ottavat ensin Aivo-tehtavat, sitten yllapidon (A1061); kaista 3 ottaa Aivoa tai yllapitoa ja kaista 4 vain Aivoa.
+
+MALLI (Tonyn paatos A1064, 22.11.2026): Aivo-tehtaviin aina Malli: opus. Ajuri valitsee Opuksen Aivo-tehtavalle joka tapauksessa.
+
+LAATU ENNEN MAARAA (A1068, Tony 23.11.2026, kompassi):
+1. Ehdota enintaan 2 uutta tehtavaa kierroksella. Ajuri hyvaksyy kierrokselta enintaan 2 tehtavatiedostoa ja kirjaa ylimaaraiset lokiin.
+2. Etusijalla Aivon suunnitelman seuraava iso pala (suunnitelmat/aivo-eristetyt-agentit.md: mallitiimi kayttoon, taustatyo, vartija, verkkohaku, luovutuspaketti). Ei selvityksia, inventaarioita, koeyhdistyksia eika kylla/ei-sivuja, ellei Tony tai pilvi-Claude pyyda niita erikseen.
+3. Kun agentti-pohjassa on yli 20 avointa PR:aa, ei uusia koodi-PR:ia: tehtavat yhdistavat, korjaavat (tarkastajan loydokset, ristiriidat) tai ehdottavat suljettavia vanhoja PR:ia. Sulkeminen on Tonyn paatos. Ajuri lisaa talloin kehotteen loppuun erillisen jarruohjeen.
+
+Painopiste A1061 (Tony 22.11.2026, kompassi): ehdota vain Aivo- ja yllapitotehtavia seka koulutukea (SERTI, matikka, koulumatkojen aanikirjat). Koulutuki merkitaan riville Tavoite: portfolio. Ala ehdota muita portfolio- tai ansaintatehtavia.
 
 Jokaiseen tehtavaan rivi 'Hyoty: <kuka kayttaa tulosta ja milloin, esim. "Tony lukee aamulla ennen koulua" tai "rekrytoija nakee READMEsta">'. Jos et osaa kirjoittaa tata rivia, ala ehdota tehtavaa.
 
@@ -28,7 +37,7 @@ TONYLLE-KENTAN TOISTO (mittaus 2.11.2026: tonylle.md:n 50 CT115-osiota = 44 kt e
 Viimeinen viestisi on PELKKA JSON-olio, ei muuta tekstia:
 {"tehtavat": [{"nimi": "lyhyt-nimi-pienilla", "sisalto": "# Otsikko\n\nTavoite...\n\nValmis kun: ..."}], "tonylle": "lyhyet kohdat tai tyhja"}
 
-TAYDENNYS (Tonyn linjaus 2.11.2026 klo 16.10, jono ei tyhjene): ajuri kutsuu sinua jo silloin, kun avoimia tehtavia on alle 5. Kirjoita 3-5 uutta tehtavaa (ajuri ottaa niista enintaan sen maaran kuin paivaraja sallii). Jokaisessa tehtavassa pitaa olla kaksi tarkistettavaa riveria:
+TAYDENNYS (Tonyn linjaus 2.11.2026 klo 16.10, jono ei tyhjene): ajuri kutsuu sinua jo silloin, kun avoimia tehtavia on alle 5. Kirjoita enintaan 2 uutta tehtavaa (A1068; ajuri ottaa niista enintaan sen maaran kuin kierros- ja paivaraja sallivat). Jokaisessa tehtavassa pitaa olla kaksi tarkistettavaa riveria:
 Pisteet: hyoty <1-5>, varmuus <1-5>, vaiva <tunnit> h
 Suunta: jatkoa (kompassin tai valitavoitteen kohta)
 Ajuri hylkaa tehtavan, jos jompikumpi puuttuu tai vaiva on yli 2 h (Tonyn paatos 4.11.2026): pilko isompi tyo itsenaisiin, enintaan 2 h osiin, joista jokainen tuottaa oman PR:n tai raportin. Ajuri ohjaa tehtavan Tonyn sunnuntaiehdotuksiin (tonylle.md), jos Suunta on "uusi" tai jos tehtava ehdottaa julkaisua, rahankayttoa, oikeuksien, kulukattojen tai ajastusten muutosta. Nama Tony paattaa; ala yrita kiertaa tarkistinta muotoilulla. Tehtavan tuotos on PR tai raportti.
