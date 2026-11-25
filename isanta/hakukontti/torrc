@@ -17,7 +17,13 @@ ControlPort 0
 ## Vain asiakas.
 ClientOnly 1
 ExitRelay 0
+ExitPolicy reject *:*
 ORPort 0
+
+## Ei yhteyksia yksityisiin tai sisaisiin osoitteisiin SOCKS-pyynnoista (myos jos nimi ratkeaa sellaiseen).
+## Oletusarvot asetetaan nakyviin, jotta muutos huomataan testissa. Palomuuri estaa lisaksi debian-torin lahiverkot.
+ClientRejectInternalAddresses 1
+ClientDNSRejectInternalAddresses 1
 
 ## Piiri vaihdetaan viimeistaan minuutin kuluttua, jotta perakkaiset haut eivat jaa samaa piiria pitkaan.
 MaxCircuitDirtiness 60

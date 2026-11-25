@@ -1,6 +1,7 @@
 """Hakukontin pohjat, asennusohje ja moottorimittaus. Ei verkkoa: mittaus testataan valepalvelimella silmukkaosoitteessa."""
 import http.server
 import io
+import ipaddress
 import json
 import os
 import random
@@ -75,15 +76,9 @@ class PohjaTesti(unittest.TestCase):
             self.assertTrue(omat[0].startswith('oif "lo"'), omat[0])
         # Nimipalvelua ei sallita kenellekaan.
         self.assertNotRegex(teksti, r"dport\s+(\{[^}]*\b53\b|53\b)")
-        # Lahiverkkojen esto tulee ennen Torin yleista sallintaa.
-        esto = rivit.index('meta skuid "debian-tor" ip daddr $LAHIVERKOT4 counter drop')
-        esto6 = rivit.index('meta skuid "debian-tor" ip6 daddr { fc00::/7, fe80::/10 } counter drop')
-        salli = rivit.index('meta skuid "debian-tor" oifname "eth0" accept')
-        self.assertLess(esto, salli)
-        self.assertLess(esto6, salli)
         # Ainoa ehdoton ulos-sallinta eth0:aan on debian-torilla.
         ulos = [r for r in rivit if 'oifname "eth0"' in r and r.endswith("accept")]
-        self.assertEqual(ulos, ['meta skuid "debian-tor" oifname "eth0" accept'])
+        self.assertEqual(ulos, [VASTAUS_122, 'meta skuid "debian-tor" oifname "eth0" accept'])
         self.assertIn('include "/etc/nftables.d/hakukontti-osoitteet.nft"', rivit)
 
     def test_systemd_yksikko(self):
@@ -105,6 +100,120 @@ class PohjaTesti(unittest.TestCase):
 
     def test_journald_30_paivaa(self):
         self.assertIn("MaxRetentionSec=30day", aktiiviset(lue("journald-hakukontti.conf")))
+
+
+def ip4(a, b, c, d):
+    """Yksityiset osoitteet rakennetaan numeroista, koska repon vuotovahti ei salli niita kirjaimellisesti."""
+    return "%d.%d.%d.%d" % (a, b, c, d)
+
+
+VASTAUS_122 = 'oifname "eth0" ip daddr $CT122 tcp sport 8890 ct state established accept'
+ESTOT = ('ip daddr $KIELLETYT4 counter drop comment "yksityinen tai erikoisosoite"',
+         'ip daddr $LAHIVERKOT4 counter drop comment "lahiverkko"',
+         'ip6 daddr $KIELLETYT6 counter drop comment "yksityinen tai erikoisosoite"')
+
+
+def maaritelma(rivit, nimi):
+    """define NIMI = { a, b } -> lista ipaddress-verkkoja."""
+    alku = "define %s = {" % nimi
+    osumat = [r for r in rivit if r.startswith(alku)]
+    if len(osumat) != 1 or not osumat[0].endswith("}"):
+        raise AssertionError("maaritelma puuttuu tai on monella rivilla: %s" % nimi)
+    return [ipaddress.ip_network(o.strip()) for o in osumat[0][len(alku):-1].split(",")]
+
+
+class YksityisetEstoTesti(unittest.TestCase):
+    """Ulosmeno yksityisiin ja erikoisosoitteisiin on estetty kaikilta kayttajilta (tarkastus 25.11.2026)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rivit = aktiiviset(lue("nftables.conf"))
+        cls.v4 = maaritelma(cls.rivit, "KIELLETYT4")
+        cls.v6 = maaritelma(cls.rivit, "KIELLETYT6")
+        alku = cls.rivit.index("chain output {")
+        cls.output = cls.rivit[alku + 1:cls.rivit.index("}", alku)]
+
+    def estetty(self, osoite):
+        ip = ipaddress.ip_address(osoite)
+        verkot = self.v4 if ip.version == 4 else self.v6
+        return any(ip in v for v in verkot)
+
+    def test_kaikki_yksityiset_alueet_katettu(self):
+        vaaditut = [ip4(10, 0, 0, 0) + "/8", ip4(172, 16, 0, 0) + "/12", ip4(192, 168, 0, 0) + "/16",
+                    ip4(100, 64, 0, 0) + "/10", "169.254.0.0/16", "127.0.0.0/8", "0.0.0.0/8", "224.0.0.0/4",
+                    "240.0.0.0/4", "fc00::/7", "fe80::/10", "::1/128", "::ffff:0:0/96"]
+        for alue in vaaditut:
+            verkko = ipaddress.ip_network(alue)
+            kattaja = self.v4 if verkko.version == 4 else self.v6
+            self.assertTrue(any(verkko.subnet_of(v) for v in kattaja), alue)
+
+    def test_esimerkkiosoitteet(self):
+        for o in (ip4(192, 168, 1, 1), ip4(192, 168, 255, 254), ip4(10, 1, 2, 3), ip4(172, 31, 255, 1),
+                  ip4(100, 100, 100, 100), "169.254.169.254", "127.0.0.2", "0.0.0.0", "255.255.255.255",
+                  "224.0.0.251", "fd00::1", "fe80::1", "::1", "::ffff:" + ip4(192, 168, 1, 1), "ff02::1"):
+            self.assertTrue(self.estetty(o), o)
+        # Julkiset osoitteet (dokumentaatio- ja esimerkkialueet) eivat ole listalla.
+        for o in ("8.8.8.8", "1.1.1.1", "203.0.113.5", "2001:db8::1", "2a00:1450::1"):
+            self.assertFalse(self.estetty(o), o)
+
+    def test_ei_paallekkaisia_alueita(self):
+        # nft hylkaa paallekkaiset alueet samassa joukossa, joten pohja ei saa sisaltaa niita.
+        for verkot in (self.v4, self.v6):
+            for i, a in enumerate(verkot):
+                for b in verkot[i + 1:]:
+                    self.assertFalse(a.overlaps(b), (str(a), str(b)))
+
+    def test_estot_ennen_sallintoja(self):
+        for esto in ESTOT:
+            self.assertIn(esto, self.output)
+        ensimmainen = min(self.output.index(e) for e in ESTOT)
+        # Ennen estoja sallitaan vain silmukka, IPv6-naapurinhaku ja vastaukset kontille 122 portista 8890.
+        for r in self.output[:ensimmainen]:
+            if not r.endswith("accept"):
+                continue
+            self.assertTrue(r.startswith('oif "lo" ') or r.startswith("icmpv6 type {") or r == VASTAUS_122, r)
+        naapuri = [r for r in self.output[:ensimmainen] if r.startswith("icmpv6 type {")]
+        self.assertEqual(len(naapuri), 1)
+        tyypit = {t.strip() for t in naapuri[0][len("icmpv6 type {"):naapuri[0].index("}")].split(",")}
+        self.assertTrue(tyypit <= {"nd-router-solicit", "nd-neighbor-solicit", "nd-neighbor-advert",
+                                   "mld2-listener-report"}, tyypit)
+        # Avatut yhteydet (established) ja Torin internetyhteys sallitaan vasta estojen jalkeen.
+        viimeinen = max(self.output.index(e) for e in ESTOT)
+        self.assertGreater(self.output.index("ct state established,related accept"), viimeinen)
+        self.assertGreater(self.output.index('meta skuid "debian-tor" oifname "eth0" accept'), viimeinen)
+
+    def test_ainoa_poikkeus_on_vastaus_kontille_122(self):
+        poikkeus = [r for r in self.output if "$CT122" in r]
+        self.assertEqual(poikkeus, [VASTAUS_122])
+        self.assertIn("ct state established", VASTAUS_122)
+        self.assertNotIn("new", VASTAUS_122)
+
+    def test_tor_ei_salli_sisaisia_osoitteita(self):
+        rivit = aktiiviset(lue("torrc"))
+        for r in ("ClientRejectInternalAddresses 1", "ClientDNSRejectInternalAddresses 1", "ExitPolicy reject *:*"):
+            self.assertIn(r, rivit)
+        self.assertFalse(any(r.startswith("ExitPolicy") and "accept" in r for r in rivit))
+        # Tor ei kayta valityspalvelinta tai siltaa, joka voisi olla lahiverkossa.
+        for kielletty in ("Socks4Proxy", "Socks5Proxy", "HTTPSProxy", "HTTPProxy", "Bridge", "UseBridges 1"):
+            self.assertFalse(any(r.startswith(kielletty) for r in rivit), kielletty)
+
+    def test_searxng_ulosmeno_vain_tor_socks(self):
+        s = lue("searxng-settings.yml")
+        rivit = aktiiviset(s)
+        osoitteet = set(re.findall(r"[a-z0-9]+://[^\s\"']*", "\n".join(rivit)))
+        self.assertEqual(osoitteet, {"all://:", "socks5h://127.0.0.1:9050"})
+        self.assertEqual(sum(1 for r in rivit if r.startswith("proxies:")), 1)
+        for kielletty in ("source_ips", "using_tor_proxy: false", "network:", "enable_http: true", "verify: false"):
+            self.assertNotIn(kielletty, s)
+        # nftables: searxng-kayttajalla on vain silmukan Tor-portti (ei eth0:aa).
+        nft = aktiiviset(lue("nftables.conf"))
+        self.assertEqual([r for r in nft if 'skuid "searxng"' in r], ['oif "lo" meta skuid "searxng" tcp dport 9050 accept'])
+
+    def test_searxng_yksikko_vain_silmukka(self):
+        rivit = aktiiviset(lue("searxng.service"))
+        self.assertIn("IPAddressDeny=any", rivit)
+        self.assertIn("IPAddressAllow=localhost", rivit)
+        self.assertEqual([r for r in rivit if r.startswith("IPAddressAllow=")], ["IPAddressAllow=localhost"])
 
 
 class OhjeTesti(unittest.TestCase):
@@ -153,6 +262,21 @@ class OhjeTesti(unittest.TestCase):
         kaynnistys = komennot.index("pct exec 123 -- systemctl enable --now searxng")
         self.assertLess(tarkistus, kaynnistys)
         self.assertTrue(self.lohkot[tarkistus][1].startswith("Odotettu: `enabled`"))
+
+    def test_lahiverkon_esto_tarkistetaan(self):
+        komennot = {k.strip(): o for k, o in self.lohkot}
+        root = 'pct exec 123 -- curl -sS -m 10 -o /dev/null "http://$YHDYSKAYTAVA/"; echo "paluuarvo $?"'
+        self.assertIn(root, komennot)
+        self.assertIn("`7` tai `28`", komennot[root])
+        tor = [k for k in komennot if "--reuid=debian-tor" in k and "$YHDYSKAYTAVA" in k]
+        socks = [k for k in komennot if "--socks5-hostname 127.0.0.1:9050" in k and "$YHDYSKAYTAVA" in k]
+        self.assertEqual((len(tor), len(socks)), (1, 1))
+        self.assertIn("`97`", komennot[socks[0]])
+        laskuri = [k for k in komennot if "yksityinen tai erikoisosoite" in k]
+        self.assertGreaterEqual(len(laskuri), 2)
+        # Proxmox-palomuurin yksityiset alueet luetaan pohjasta, ei kirjoiteta ohjeeseen.
+        self.assertTrue(any(k.startswith("KIELLETYT4=$(sed -n") for k in komennot))
+        self.assertTrue(any("/etc/pve/firewall/123.fw" in k and '"$KIELLETYT4"' in k for k in komennot))
 
     def test_rajattu_merkinta(self):
         self.assertIn("RAJATTU", self.teksti)

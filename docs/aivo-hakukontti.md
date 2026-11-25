@@ -23,7 +23,10 @@ Osoitteita ei ole repossa. Ohje selvittää ne komennoilla ja kirjoittaa ne tied
 
 ## Periaatteet
 
-- **Kill switch:** jos Tor ei ole ylhäällä, haku epäonnistuu. Käyttäjät `searxng`, `aivo-haku` ja `_apt` pääsevät vain silmukkaosoitteen Tor-porttiin. Vain `debian-tor` saa ottaa yhteyden internetiin, mutta ei lähiverkkoihin eikä tailnetiin. Nimipalvelua (portti 53) ei sallita kenellekään.
+- **Kill switch:** jos Tor ei ole ylhäällä, haku epäonnistuu. Käyttäjät `searxng`, `aivo-haku` ja `_apt` pääsevät vain silmukkaosoitteen Tor-porttiin. Vain `debian-tor` saa ottaa yhteyden internetiin. Nimipalvelua (portti 53) ei sallita kenellekään.
+- **Ei yksityisiin osoitteisiin:** ulosmeno kaikkiin yksityisiin ja erikoisosoitteisiin on estetty kaikilta käyttäjiltä, myös rootilta ja `debian-tor`ilta. Alueet ovat `nftables.conf`:n määrittelyissä `KIELLETYT4` (RFC 1918 -alueet, CGNAT/tailnet, linkkipaikallinen, silmukka muualle kuin `lo`-liitäntään, `0.0.0.0/8`, monilähetys ja varatut) ja `KIELLETYT6` (ULA, linkkipaikallinen, silmukka, IPv4-mapatut, NAT64 ja monilähetys). Ne kattavat myös reitittimen takana olevat yksityiset verkot. Lisäksi estetään asennuksessa lasketut `LAHIVERKOT4`. Ainoa poikkeus on vastausliikenne kontille 122 hakuvälittäjän portista 8890, ja vain jo avatussa yhteydessä. IPv6-naapurinhaun ICMPv6-viestit sallitaan, koska IPv6 ei toimi ilman niitä.
+- **Tor ei avaa sisäisiä osoitteita:** `torrc`:ssä `ClientRejectInternalAddresses 1` ja `ClientDNSRejectInternalAddresses 1`. SOCKS-pyyntö yksityiseen osoitteeseen tai nimeen, joka ratkeaa yksityiseksi, hylätään jo Torissa.
+- **SearXNG vain Torin kautta:** kaikki ulosmeno kulkee `socks5h://127.0.0.1:9050`:n kautta. Palomuuri sallii käyttäjälle `searxng` vain silmukan Tor-portin, ja yksikön `IPAddressDeny=any` + `IPAddressAllow=localhost` on toinen kerros.
 - **Ei suoraa ulosmenoa:** alkuasennuksen jälkeen myös pakettipäivitykset kulkevat Torin kautta (`apt-transport-tor`, lähteet `tor+https://`). Vain `tor`, `apt-transport-tor` ja `nftables` asennetaan suoraan, ennen kuin kontissa on mitään hakuihin liittyvää.
 - **Sisään vain kontista 122:** sekä kontin oma nftables että Proxmox-palomuuri sallivat vain kontin 122 hakuvälittäjän porttiin 8890.
 - **Ei sisältöä lokeihin:** SearXNG:n palvelin (Granian) ei kirjoita pääsylokia, Torissa on `SafeLogging 1`, ja journald säilyttää lokit 30 päivää.
@@ -159,7 +162,7 @@ Odotettu: `ON` tai latauksen lopussa `download of ... finished`.
 ```bash
 pct config 122 | grep '^features' || echo "ei features-riviä"
 ```
-Odotettu: tieto, onko kontilla 122 `nesting=1`. Hakukonttiin tulee `nesting=1`, koska Torin ja SearXNG:n systemd-kovennukset (esim. `ProtectSystem`, `PrivateTmp`) tarvitsevat nimiavaruuksia. Kontti on silti unprivileged, eikä siinä ajeta Dockeria.
+Odotettu: tieto, onko kontilla 122 `nesting=1`. Hakukonttiin tulee `nesting=1`, koska Torin ja SearXNG:n systemd-kovennukset (esim. `ProtectSystem`, `PrivateTmp`, `PrivateDevices`) luovat palvelulle oman mount-nimiavaruuden. Ilman `nesting=1`:tä unprivileged-kontissa ne kaatuvat virheeseen `226/NAMESPACE`, eikä Debianin `tor@default` käynnisty. Vaihtoehto olisi poistaa kovennukset, mikä heikentäisi eristystä enemmän kuin `nesting=1`. Kontti on silti unprivileged (käyttäjänimiavaruus rajaa rootin), siinä ei ajeta Dockeria, eikä siihen anneta `keyctl`- tai `fuse`-ominaisuuksia.
 
 ```bash
 pct create 123 "local:vztmpl/$POHJA" --hostname hakukontti --unprivileged 1 --features nesting=1 --cores 1 --memory 1024 --swap 512 --rootfs "$TALLENNUS:8" --net0 "name=eth0,bridge=$SILTA,ip=$IP123/$ETULIITE,gw=$YHDYSKAYTAVA,firewall=1" --onboot 1 --description "Aivon hakukontti: SearXNG ja Tor, ei yksityista dataa"
@@ -195,7 +198,7 @@ Odotettu: ei tulostetta.
 ```bash
 pct exec 123 -- useradd --system --no-create-home --shell /usr/sbin/nologin --groups debian-tor aivo-haku
 ```
-Odotettu: ei tulostetta. Ryhmä `debian-tor` antaa hakuvälittäjälle (PR 2) luvan lukea Torin hallintasoketin evästeen reitin tarkistusta varten.
+Odotettu: ei tulostetta. Ryhmä `debian-tor` antaa hakuvälittäjälle (PR 2) luvan käyttää Torin hallintasokettia `/run/tor/control` ja lukea sen evästeen: välittäjä tarkistaa ennen jokaista pyyntöä, että Tor-piiri on ylhäällä, ja pyytää haulle uuden piirin. Ryhmä ei anna `debian-tor`-käyttäjän verkkooikeuksia, koska palomuuri tunnistaa käyttäjän (`skuid`), ei ryhmää. Riski: hallintasoketin kautta voi muuttaa Torin asetuksia. Palomuuri rajaa silti Torin ulosmenon internetiin ja sisääntulon porttiin 8890.
 
 ```bash
 pct push 123 /root/hakukontti/torrc /etc/tor/torrc --perms 0644
@@ -243,6 +246,11 @@ Odotettu: viesti symbolisen linkin luonnista, ei virhettä.
 pct exec 123 -- nft list chain inet hakukontti output
 ```
 Odotettu: ketju, jonka `policy drop` ja säännöt vastaavat tiedostoa `nftables.conf`.
+
+```bash
+pct exec 123 -- sh -c 'nft list chain inet hakukontti output | grep -c "yksityinen tai erikoisosoite"'
+```
+Odotettu: `2` (IPv4- ja IPv6-esto ladattu).
 
 ```bash
 pct exec 123 -- apt-get -o Acquire::http::Timeout=10 update
@@ -355,17 +363,22 @@ pct exec 123 -- sh -c 'install -d -m 0750 -o root -g aivo-haku /etc/aivo-haku &&
 ```
 Odotettu: `640 root:aivo-haku 44` (koko tavuina, ei sisältöä).
 
-Proxmox-palomuuri hakukontille: sisään vain kontista 122 porttiin 8890, ulos ei lähiverkkoihin eikä tailnetiin. Tiedosto kirjoitetaan muuttujista.
+Proxmox-palomuuri hakukontille: sisään vain kontista 122 porttiin 8890, ulos ei lähiverkkoihin, tailnetiin eikä muihin yksityisiin osoitteisiin. Yksityiset IPv4-alueet luetaan pohjan `nftables.conf`:sta, joten lista on yhdessä paikassa.
 
 ```bash
-test -e /etc/pve/firewall/123.fw && echo "ON JO" || printf '[OPTIONS]\nenable: 1\npolicy_in: DROP\npolicy_out: ACCEPT\nipfilter: 1\nlog_level_in: nolog\nlog_level_out: nolog\n\n[RULES]\nIN ACCEPT -source %s -p tcp -dport 8890 # hakuvalittaja vain kontille 122\nOUT DROP -dest %s # ei lahiverkkoihin eika tailnetiin\nOUT DROP -dest fc00::/7 # ei paikallisia IPv6-osoitteita\n' "$IP122" "$LAHIVERKOT" > /etc/pve/firewall/123.fw
+KIELLETYT4=$(sed -n 's/^define KIELLETYT4 = { \(.*\) }$/\1/p' /root/hakukontti/nftables.conf | tr -d ' '); echo "$KIELLETYT4"
+```
+Odotettu: pilkuin eroteltu lista, jossa on 9 aluetta ja ensimmäisenä `0.0.0.0/8`. Tyhjä tuloste: pysähdy.
+
+```bash
+test -e /etc/pve/firewall/123.fw && echo "ON JO" || printf '[OPTIONS]\nenable: 1\npolicy_in: DROP\npolicy_out: ACCEPT\nipfilter: 1\nlog_level_in: nolog\nlog_level_out: nolog\n\n[RULES]\nIN ACCEPT -source %s -p tcp -dport 8890 # hakuvalittaja vain kontille 122\nOUT DROP -dest %s # ei lahiverkkoihin eika tailnetiin\nOUT DROP -dest %s # ei yksityisiin eika erikoisosoitteisiin\nOUT DROP -dest fc00::/7 # ei paikallisia IPv6-osoitteita\n' "$IP122" "$LAHIVERKOT" "$KIELLETYT4" > /etc/pve/firewall/123.fw
 ```
 Odotettu: ei tulostetta. Jos tuloste on `ON JO`, pysähdy ja tarkista tiedoston sisältö.
 
 ```bash
 cat /etc/pve/firewall/123.fw
 ```
-Odotettu: `[OPTIONS]`- ja `[RULES]`-osiot, kontin 122 osoite IN-säännössä ja lähiverkot OUT-säännössä.
+Odotettu: `[OPTIONS]`- ja `[RULES]`-osiot, kontin 122 osoite IN-säännössä sekä lähiverkot ja yksityiset alueet OUT-säännöissä. Proxmox-palomuuri on tilallinen, joten vastaukset kontille 122 kulkevat avatussa yhteydessä.
 
 ```bash
 pve-firewall compile 2>&1 >/dev/null | grep -i -e error -e warn || echo KAANNOS_OK
@@ -395,12 +408,32 @@ pct exec 123 -- setpriv --reuid=aivo-haku --regid=aivo-haku --init-groups curl -
 ```
 Odotettu: kuten testissä 2.
 
-Testi 4. Tor ei pääse lähiverkkoon (yhdyskäytävän hallintasivu).
+Testi 4. Kontista ei pääse lähiverkkoon (esim. kotireitittimen hallintasivu yhdyskäytävän osoitteessa). Tarkistus tehdään Tor-käyttäjänä, rootina ja Torin SOCKS-portin kautta.
 
 ```bash
 pct exec 123 -- setpriv --reuid=debian-tor --regid=debian-tor --init-groups curl -sS -m 10 -o /dev/null "http://$YHDYSKAYTAVA/"; echo "paluuarvo $?"
 ```
 Odotettu: paluuarvo `7` tai `28` (yhteys estetty tai aikakatkaisu).
+
+```bash
+pct exec 123 -- curl -sS -m 10 -o /dev/null "http://$YHDYSKAYTAVA/"; echo "paluuarvo $?"
+```
+Odotettu: paluuarvo `7` tai `28`. Myös root on estetty.
+
+```bash
+pct exec 123 -- setpriv --reuid=debian-tor --regid=debian-tor --init-groups curl -sS -m 10 -o /dev/null "http://$IP122/"; echo "paluuarvo $?"
+```
+Odotettu: paluuarvo `7` tai `28`. Kontti 122 on sallittu vain vastauksille hakuvälittäjän portista, ei uusille yhteyksille.
+
+```bash
+pct exec 123 -- setpriv --reuid=searxng --regid=searxng --init-groups curl -sS -m 30 -o /dev/null --socks5-hostname 127.0.0.1:9050 "http://$YHDYSKAYTAVA/"; echo "paluuarvo $?"
+```
+Odotettu: SOCKS-virhe ja paluuarvo `97` (vanhemmassa curlissa `7`). Tor hylkää sisäisen osoitteen (`ClientRejectInternalAddresses`). Paluuarvo `0` tarkoittaa, että pyyntö meni läpi: pysähdy.
+
+```bash
+pct exec 123 -- sh -c 'nft list chain inet hakukontti output | grep "yksityinen tai erikoisosoite"'
+```
+Odotettu: kaksi riviä. IPv4-rivin `counter packets` on suurempi kuin `0` (edelliset kolme testiä).
 
 Testi 5. Haku toimii SearXNG:n kautta.
 
@@ -507,7 +540,7 @@ SearXNG päivitetään käyttäjänä `searxng` `torsocks git pull` -komennolla 
 
 - **Piirien eristys hauissa:** SearXNG ei lähetä SOCKS-tunnusta, joten saman minuutin aikana tehdyt haut voivat kulkea samaa piiriä samaan hakukoneeseen (`IsolateDestAddr` erottaa eri kohteet, `MaxCircuitDirtiness 60` vaihtaa piirin minuutin välein). Hakukohtainen piiri tehdään PR 2:ssa: hakuvälittäjä pyytää ennen hakua uuden piirin hallintasoketin kautta (`SIGNAL NEWNYM`). Sivuhaut (`/sivu`) käyttävät `IsolateSOCKSAuth`-eristystä tehtävätunnuksella.
 - **Proxmox-palomuuri** vaikuttaa vain, jos se on päällä datacenter-tasolla. Ilman sitä suojana on kontin oma nftables. Kontin root voisi muuttaa sitä, mutta sovelluskäyttäjät eivät.
-- **Lähiverkkolista** muodostetaan isännän suorista aliverkoista, Tailscalen alueesta ja linkkipaikallisesta alueesta. Yksityiset aliverkot, jotka ovat vain reitittimen takana (eivät isännän suoria verkkoja), eivät ole listalla. Repon vuotovahti ei salli yksityisiä osoitealueita repoon kirjaimellisesti, joten laajempi lista lisätään tarvittaessa käsin isännällä. Jos isäntään lisätään uusi silta, aja kohdan 1 komennot ja päivitä `hakukontti-osoitteet.nft` ja `123.fw`.
+- **Lähiverkkolista:** kaikki yksityiset alueet ovat pohjassa (`KIELLETYT4`, `KIELLETYT6`), joten myös reitittimen takana olevat yksityiset verkot on estetty. Asennuksessa laskettu `LAHIVERKOT4` estää lisäksi isännän suorat verkot, jos jokin niistä olisi julkinen. Jos isäntään lisätään uusi silta, aja kohdan 1 komennot ja päivitä `hakukontti-osoitteet.nft` ja `123.fw`.
 - **Hakuvälittäjä** (portti 8890) tulee PR 2:ssa. Siihen asti portissa ei kuuntele mikään, ja testi 9 mittaa vain palomuurin.
 
 ## Peruminen

@@ -31,6 +31,10 @@ RestrictSUIDSGID=true
 LockPersonality=true
 CapabilityBoundingSet=
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Toinen kerros palomuurin rinnalle: IP-liikenne vain silmukkaan (Tor SOCKS 127.0.0.1:9050 ja oma 127.0.0.1:8888).
+# Jos kontin ydin ei salli cgroup-BPF:aa, systemd kirjaa varoituksen ja jatkaa ilman tata; nftables on silti raja.
+IPAddressDeny=any
+IPAddressAllow=localhost
 
 [Install]
 WantedBy=multi-user.target
