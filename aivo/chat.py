@@ -61,6 +61,7 @@ from aivo.yksityinen import YksityinenVirhe as ChatVirhe, julkaise_kirjastoon   
 from aivo import agenttidata_kehote   # agenttidata-kopion kompassi, faktat ja paatokset (vain luku)
 from aivo import yhdistelma        # usean mallin yhdistelmat (oma rivi: ei ristiriitaa rinnakkaisten tuontimuutosten kanssa)
 from aivo import agenttitehtava    # agenttitehtavan ehdotus, Tonyn kaynnistys ja tulos (oma rivi)
+from aivo import kontekstiraja     # OpenRouter-taustapaan kehoteraja mallin kontekstin mukaan (A1106, oma rivi)
 
 OLETUS_SALASANA = "/etc/aivo/chat-salasana"
 OLETUS_KIRJASTO = "/var/lib/aivo/kirjasto"
@@ -285,6 +286,11 @@ async function erittely(){await kulut();const d=document.createElement('div');d.
  d.appendChild(s);
  d.appendChild(kulutaulu('K\u00e4ytt\u00f6tarkoitus','tarkoitukset',{chat:'chat',tiivistys:'tiivistys',muu:'muu'}));
  d.appendChild(kulutaulu('Malli','mallit',{}));
+ const kt=document.createElement('div');kt.className='pieni';
+ kt.textContent='Chatin kehote: '+['tanaan','paivat_7','paivat_30'].map(k=>{const q=(j[k]||{}).kehote||{};return ({tanaan:'t\u00e4n\u00e4\u00e4n',paivat_7:'7 vrk',paivat_30:'30 vrk'})[k]+' '+(q.kutsuja||0)+' kutsua, keskim. '+luku(q.tokenit_in_ka||0,0)+' / enint. '+luku(q.tokenit_in_max||0,0)+' tokenia, '+luku((q.per_kutsu||{}).usd,4)+' $/kutsu';}).join(' \u00b7 ');
+ d.appendChild(kt);
+ const kr=j.kehoterajat||{};Object.keys(kr).forEach(m=>{const r=kr[m];const e=document.createElement('div');e.className='pieni';
+  e.textContent=m+': konteksti '+luku(r.konteksti,0)+' tokenia, kehote enint. '+luku(r.kehote_tokenit_max,0)+' tokenia, t\u00e4ysi kehote arviolta enint. '+luku((r.taysi_kehote||{}).usd,4)+' $';d.appendChild(e);});
  const h=document.createElement('div');h.className='pieni';
  h.textContent='Kirjanpito on dollareina. \u20ac-luvut ovat arvioita kertoimella '+luku(j.kerroin_usd_eur,2)+' (1 $ = '+luku(j.kerroin_usd_eur,2)+' \u20ac). P\u00e4iv\u00e4katon tila lasketaan katkaisimen omalla kertoimella. Vuorokausi vaihtuu Suomen aikaa.';
  d.appendChild(h);V.appendChild(d);alas();}
@@ -600,9 +606,17 @@ def _alkuosumat(alut, teksti):
     return sum(1 for a in alut if a in sanat)
 
 
-def lue_muisti(kirjasto, ylaraja=None, tiedosto_raja=None, kysymys=None):
+def _muutosaika(juuri, nimi):
+    try:
+        return (juuri / nimi).stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def lue_muisti(kirjasto, ylaraja=None, tiedosto_raja=None, kysymys=None, tuoreet_ensin=False):
     """Palauttaa (teksti, tiedostolista). Lukee vain .md/.txt-tiedostot kirjaston sisalta (ei .git, ei linkkeja
-    kirjaston ulkopuolelle). Ylarajan ylittyessa loput jaavat pois ja puute mainitaan."""
+    kirjaston ulkopuolelle). Ylarajan ylittyessa loput jaavat pois ja puute mainitaan.
+    `tuoreet_ensin` (OpenRouter-taustapaa, A1106): kysymykseen osuvat ensin, sitten uusin muutosaika ensin."""
     ylaraja = MUISTI_YLARAJA if ylaraja is None else ylaraja
     tiedosto_raja = TIEDOSTO_YLARAJA if tiedosto_raja is None else tiedosto_raja
     juuri = Path(kirjasto).resolve()
@@ -630,7 +644,10 @@ def lue_muisti(kirjasto, ylaraja=None, tiedosto_raja=None, kysymys=None):
                 return 0
             osumat = sum(1 for w in sanat if w in alku)
             return -(osumat + _alkuosumat(alut, alku))
-        tiedostot.sort(key=lambda n: (osuma(n), _jarjestys(n)))
+        if tuoreet_ensin:
+            tiedostot.sort(key=lambda n: (osuma(n), -_muutosaika(juuri, n), n))
+        else:
+            tiedostot.sort(key=lambda n: (osuma(n), _jarjestys(n)))
     else:
         tiedostot.sort(key=_jarjestys)
     osat, mukana, yht = [], [], 0
@@ -1015,6 +1032,28 @@ def _summa_olio(usd, kerroin):
     return {"usd": _pyorista(usd, 4), "eur": _pyorista(usd * kerroin, 2)}
 
 
+def _kehotetilasto(rivit, kerroin):
+    """Chat-kutsujen kehotteen koko (OpenRouterin ilmoittamat prompt_tokens) ja keskimaarainen kulu kutsua kohti."""
+    if not rivit:
+        return {"kutsuja": 0, "tokenit_in_ka": 0, "tokenit_in_max": 0, "per_kutsu": _summa_olio(Decimal(0), kerroin)}
+    return {"kutsuja": len(rivit), "tokenit_in_ka": int(round(sum(t for t, _ in rivit) / len(rivit))),
+            "tokenit_in_max": max(t for t, _ in rivit),
+            "per_kutsu": _summa_olio(sum((u for _, u in rivit), Decimal(0)) / len(rivit), kerroin)}
+
+
+def kehoterajat(mallit, kerroin):
+    """OpenRouter-mallien kehoterajat nayttoon (A1106): konteksti, kehotteen enimmaiskoko tokeneina ja taydenkehotteen
+    arvioitu ylin hinta. Vain vakioista laskettuja lukuja; ei kirjanpitoa eika sisaltoa."""
+    ulos = {}
+    for m in mallit or ():
+        syote = kontekstiraja.syote_tokenit(m, yksityinen_or.MAX_TOKENIA, yksityinen_or.VARAUS_USD_ARVIO)
+        vastaus = kontekstiraja.vastausvaraus(m, yksityinen_or.MAX_TOKENIA)
+        usd = Decimal(str(kontekstiraja.arvioi_usd(m, syote, vastaus)))
+        ulos[m] = {"konteksti": kontekstiraja.konteksti(m), "kehote_tokenit_max": syote, "vastaus_tokenit_max": vastaus,
+                   "taysi_kehote": _summa_olio(usd, kerroin)}
+    return ulos
+
+
 def kulut_yhteenveto(kulutila, nyt, kerroin):
     """OpenRouter-kulujen summat (vain luku): tama paiva, 7 ja 30 viimeista vuorokautta (Europe/Helsinki, tama paiva
     mukaan lukien) seka jakauma malleittain ja kayttotarkoituksittain. Puuttuva tai tyhja kirjanpito = nollat.
@@ -1024,6 +1063,7 @@ def kulut_yhteenveto(kulutila, nyt, kerroin):
     paiva = nyt.astimezone(tz).date()
     jaksot = {nimi: (paiva - timedelta(days=n - 1), {"usd": Decimal(0), "mallit": {}, "tarkoitukset": {}})
               for nimi, n in KULUT_JAKSOT}
+    kehote = {nimi: [] for nimi, _ in KULUT_JAKSOT}      # chat-kutsujen (tokenit_in, usd) kehotteen koon nayttoon
     luettavissa = True
     try:
         rivit = openrouter_kulut._voimassa(openrouter_kulut._lue_rivit(Path(kulutila or openrouter_kulut.OLETUS_TILA),
@@ -1037,9 +1077,15 @@ def kulut_yhteenveto(kulutila, nyt, kerroin):
                     summa["usd"] += usd
                     summa["mallit"][malli] = summa["mallit"].get(malli, Decimal(0)) + usd
                     summa["tarkoitukset"][tarkoitus] = summa["tarkoitukset"].get(tarkoitus, Decimal(0)) + usd
+            t_in = r.get("tokenit_in")
+            if tarkoitus == "chat" and isinstance(t_in, int) and not isinstance(t_in, bool) and t_in >= 0:
+                for nimi, (alku, _) in jaksot.items():
+                    if alku <= r["_paiva"] <= paiva:
+                        kehote[nimi].append((t_in, usd))
     except Exception:  # noqa: BLE001 - nakyma ei saa kaatua; virheen sisaltoa ei palauteta
         luettavissa = False
         jaksot = {nimi: (alku, {"usd": Decimal(0), "mallit": {}, "tarkoitukset": {}}) for nimi, (alku, _) in jaksot.items()}
+        kehote = {nimi: [] for nimi in kehote}
     ulos = {"luettavissa": luettavissa, "paivakatto_eur": float(openrouter_kulut.PAIVAKATTO_EUR),
             "kerroin_usd_eur": float(kerroin), "eur_on_arvio": True}
     for nimi, (_, summa) in jaksot.items():
@@ -1049,13 +1095,45 @@ def kulut_yhteenveto(kulutila, nyt, kerroin):
             mallit = mallit[:KULUT_MALLEJA] + [("muut", muut)]
         ulos[nimi] = dict(_summa_olio(summa["usd"], kerroin),
                           mallit={m: _summa_olio(v, kerroin) for m, v in mallit},
-                          tarkoitukset={t: _summa_olio(v, kerroin) for t, v in sorted(summa["tarkoitukset"].items())})
+                          tarkoitukset={t: _summa_olio(v, kerroin) for t, v in sorted(summa["tarkoitukset"].items())},
+                          kehote=_kehotetilasto(kehote[nimi], kerroin))
     katkaisimen_eur = jaksot["tanaan"][1]["usd"] * openrouter_kulut.USD_EUR
     osuus = katkaisimen_eur / openrouter_kulut.PAIVAKATTO_EUR
     ulos["katosta_kaytetty"] = _pyorista(osuus, 4)
     ulos["varoitus"] = (not luettavissa) or osuus >= KULUT_VAROITUS_OSUUS
     ulos["katto_taynna"] = luettavissa and katkaisimen_eur >= openrouter_kulut.PAIVAKATTO_EUR
     return ulos
+
+
+def yksityinen_muisti(tila, teksti, historia, ohjeet, malli, yh):
+    """Yksityisen tilan muistiosio: agenttidata, kirjasto ja tiivistelmat. Palauttaa (muisti, tiedostot).
+
+    Paikallinen taustapaa (malli None): kiintea yksityinen.MUISTI_YLARAJA (ennallaan). OpenRouter-taustapaa: raja
+    mallin kontekstin mukaan (yksityinen_or.muistin_merkkiraja, A1106), ja historialle jaa aina vahintaan
+    kontekstiraja.HISTORIA_VAHIMMAISOSUUS. Tayttojarjestys: agenttidata (tuoreimmat paatokset ensin, enintaan puolet),
+    kirjasto (kysymykseen osuvat ensin, sitten tuoreimmat, sitten vanhemmat), tiivistelmat (60 kt raja, A983)."""
+    if malli:
+        raja = yksityinen_or.muistin_merkkiraja(
+            yksityinen_or.yhdistelman_mallit(malli, tila.roolit if yh != yhdistelma.OLETUS else None), ohjeet, historia,
+            yksityinen_or.yhdistelman_lisavaraus(yh))
+        merkintoja, ad_tiedosto = agenttidata_kehote.MERKINTOJA_MAKSIMI, raja // 4   # paatoksille enemman tilaa
+    else:
+        raja = yksityinen.MUISTI_YLARAJA
+        merkintoja, ad_tiedosto = agenttidata_kehote.MERKINTOJA, raja // 6
+    ad, ad_tiedostot = agenttidata_kehote.muodosta(tila.agenttidata, RAJA, raja // 2, ad_tiedosto, merkintoja=merkintoja)
+    muisti, tiedostot = lue_muisti(tila.yks_muisti, raja - len(ad), raja // 4, teksti, tuoreet_ensin=bool(malli))
+    if ad:         # agenttidata mahtuu samaan muistirajaan: kirjastolle jaa loput (A1015)
+        muisti, tiedostot = ad + muisti, ad_tiedostot + tiedostot
+    if tila.yks_tiivistelmat:     # yksityisen alueen tiivistelmat, sama mekanismi ja 60 kt raja kuin tyokalutilassa
+        tiiv_raja = tiivistelmat_kehote.YLARAJA_TAVUA
+        if malli:                 # OpenRouter: tiivistelmat mahtuvat samaan muistirajaan (tavuina, varovainen)
+            tiiv_raja = max(0, min(tiiv_raja, raja - len(muisti)))
+        tiiv, tiiv_tiedostot = (tiivistelmat_kehote.muodosta(tila.yks_tiivistelmat, teksti, tiiv_raja)
+                                if tiiv_raja else ("", []))
+        if tiiv:
+            muisti += tiiv + RAJA + "\n"
+            tiedostot = tiedostot + tiiv_tiedostot
+    return muisti, tiedostot
 
 
 class Tila:
@@ -1259,8 +1337,9 @@ def tee_kasittelija(tila):
                 kysely = {k: v[0] for k, v in urllib.parse.parse_qs(osat.query).items()}
                 try:
                     if osat.path == "/api/kulut":
-                        return self._json(200, kulut_yhteenveto(tila.kulutila, datetime.now(openrouter_kulut.TZ),
-                                                                tila.kulut_kerroin))
+                        yht = kulut_yhteenveto(tila.kulutila, datetime.now(openrouter_kulut.TZ), tila.kulut_kerroin)
+                        yht["kehoterajat"] = kehoterajat(tila.or_mallit, tila.kulut_kerroin)
+                        return self._json(200, yht)
                     if osat.path == "/api/ehdotukset":
                         return self._ehdotukset(kysely)
                     if osat.path == "/api/ehdotus":
@@ -1399,19 +1478,13 @@ def tee_kasittelija(tila):
                 tila.yks.lisaa(kid, "tony", teksti.strip())
                 historia = tila.yks.lue(kid)
                 oma_idx = len(historia) - 1          # palvelin kertoo Tonyn viestin paikan; selain ei arvaa
-                ad, ad_tiedostot = agenttidata_kehote.muodosta(tila.agenttidata, RAJA, yksityinen.MUISTI_YLARAJA // 2,
-                                                               yksityinen.MUISTI_YLARAJA // 6)
-                muisti, tiedostot = lue_muisti(tila.yks_muisti, yksityinen.MUISTI_YLARAJA - len(ad),
-                                               yksityinen.MUISTI_YLARAJA // 4, teksti)
-                if ad:         # agenttidata mahtuu samaan muistirajaan: kirjastolle jaa loput (A1015)
-                    muisti, tiedostot = ad + muisti, ad_tiedostot + tiedostot
-                if tila.yks_tiivistelmat:     # yksityisen alueen tiivistelmat, sama mekanismi ja 60 kt raja kuin tyokalutilassa
-                    tiiv, tiiv_tiedostot = tiivistelmat_kehote.muodosta(tila.yks_tiivistelmat, teksti)
-                    if tiiv:
-                        muisti += tiiv + RAJA + "\n"
-                        tiedostot = tiedostot + tiiv_tiedostot
                 try:
                     ohjeet = yksityinen.lue_ydinohjeet(tila.ydinohjeet)
+                except ChatVirhe as e:
+                    tulos = (502, {"virhe": str(e), "indeksi": oma_idx})
+                    return
+                muisti, tiedostot = yksityinen_muisti(tila, teksti, historia, ohjeet, malli, yh)
+                try:
                     yhd = None
                     if malli and yh != yhdistelma.OLETUS and tila.kysy_yhd:
                         yhd = tila.kysy_yhd(muisti, historia, ohjeet, malli, yh)

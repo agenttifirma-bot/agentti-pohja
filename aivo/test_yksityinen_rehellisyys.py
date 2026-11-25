@@ -98,11 +98,12 @@ class Saanto2Testi(Taustapaat):
 
 
 class HistoriarajaTesti(Taustapaat):
-    def test_openrouter_vie_40_viestia(self):
-        v = self.openrouter(historia(60))
-        self.assertEqual(len(v), 1 + 40)
+    def test_openrouter_vie_historiarajan_verran_viesteja(self):
+        n = yo.HISTORIA_YLARAJA + 20
+        v = self.openrouter(historia(n))
+        self.assertEqual(len(v), 1 + yo.HISTORIA_YLARAJA)
         self.assertEqual(v[1]["content"], "viesti 20")
-        self.assertEqual(v[-1]["content"], "viesti 59")
+        self.assertEqual(v[-1]["content"], "viesti %d" % (n - 1))
 
     def test_paikallinen_vie_12_viestia(self):
         v = self.paikallinen(historia(60))
@@ -111,7 +112,7 @@ class HistoriarajaTesti(Taustapaat):
 
     def test_vakiot(self):
         self.assertEqual(yksityinen.HISTORIA_YLARAJA, 12)
-        self.assertEqual(yo.HISTORIA_YLARAJA, 40)
+        self.assertEqual(yo.HISTORIA_YLARAJA, 200)      # A1106; varsinainen raja on mallin konteksti
 
     def test_ensimmainen_viesti_mukana_openrouterissa_20_vaihdon_jalkeen(self):
         """Tehtava annettiin keskustelun alussa: se on yha mallin nakyvissa 20 vaihdon (40 viestin) jalkeen."""

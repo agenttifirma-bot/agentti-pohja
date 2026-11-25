@@ -38,7 +38,9 @@ class KulutTesti(unittest.TestCase):
         y = self.yv()
         self.assertTrue(y["luettavissa"])
         for k in ("tanaan", "paivat_7", "paivat_30"):
-            self.assertEqual(y[k], {"usd": 0.0, "eur": 0.0, "mallit": {}, "tarkoitukset": {}})
+            self.assertEqual(y[k], {"usd": 0.0, "eur": 0.0, "mallit": {}, "tarkoitukset": {},
+                                    "kehote": {"kutsuja": 0, "tokenit_in_ka": 0, "tokenit_in_max": 0,
+                                               "per_kutsu": {"usd": 0.0, "eur": 0.0}}})
         self.assertEqual((y["katosta_kaytetty"], y["varoitus"], y["katto_taynna"]), (0.0, False, False))
 
     # yksi ja useampi paiva

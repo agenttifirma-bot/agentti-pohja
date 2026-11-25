@@ -217,11 +217,22 @@ Yksityisen tilan kutsuun liitetään keskustelun viimeiset viestit. Raja riippuu
 | Taustapää | Viestejä enintään | Vakio | Peruste |
 |---|---|---|---|
 | Paikallinen malli (loopback) | 12 | `yksityinen.HISTORIA_YLARAJA` | i5-8400 käsittelee pitkän kehotteen hitaasti, ja vastauksen aikaraja on 900 s. Pidempi historia ylittäisi aikarajan. |
-| OpenRouter | 40 | `yksityinen_or.HISTORIA_YLARAJA` | Etämalli käsittelee pitkän kehotteen sekunneissa. Raja on sama kuin työkalutilassa (`chat.HISTORIA_YLARAJA`). |
+| OpenRouter | 200 | `yksityinen_or.HISTORIA_YLARAJA` | Etämalli käsittelee pitkän kehotteen sekunneissa. Varsinainen raja on mallin konteksti (ks. alla). |
 
-Yhden viestin raja on 16 000 merkkiä (`chat.VIESTI_YLARAJA`). Selain näyttää merkkilaskurin ja estää liian pitkän viestin lähettämisen. Se ei katkaise tekstiä, ja palvelin hylkää liian pitkän viestin virheellä. Historian viestien yhteenlaskettu pituus on rajattu: OpenRouter-taustapäässä ja työkalutilassa 80 000 merkkiä, paikallisessa taustapäässä 24 000 merkkiä. Uusin viesti säilyy aina kokonaan. Vanhemmista viesteistä säilyy alku, ja loppuun tulee merkintä lyhennyksestä (`yksityinen.lyhenna_historia`).
+Yhden viestin raja on 16 000 merkkiä (`chat.VIESTI_YLARAJA`). Selain näyttää merkkilaskurin ja estää liian pitkän viestin lähettämisen. Se ei katkaise tekstiä, ja palvelin hylkää liian pitkän viestin virheellä. Historian viestien yhteenlaskettu pituus on rajattu: paikallisessa taustapäässä 24 000 merkkiä ja työkalutilassa 80 000 merkkiä. Uusin viesti säilyy aina kokonaan. Vanhemmista viesteistä säilyy alku, ja loppuun tulee merkintä lyhennyksestä (`yksityinen.lyhenna_historia`).
 
-OpenRouter-taustapään pahin tapaus: historia 80 000 merkkiä (40 viestiä), muisti 16 000 merkkiä, ydinohjeet 20 000 merkkiä ja kehote noin 4 000 merkkiä. Yhteensä noin 120 000 merkkiä eli alle 60 000 tokenia, vaikka arvioitaisiin varovasti 2 merkkiä tokenia kohti. Suositusmallin `qwen/qwen3-235b-a22b-2507` konteksti on 262 144 tokenia, joten kehote mahtuu. Jos vaihdat mallin, tarkista, että sen konteksti on vähintään 100 000 tokenia.
+### Kehotteen koko OpenRouter-taustapäällä (A1106)
+
+OpenRouter-taustapäällä muisti, agenttidata ja keskusteluhistoria täyttävät kehotteen mallin kontekstiin asti (`aivo/kontekstiraja.py`). Paikallisen taustapään rajat (muisti 16 000 merkkiä, historia 12 viestiä ja 24 000 merkkiä, vastaus 700 tokenia) eivät muutu.
+
+- **Konteksti** on mallikohtainen vakio taulukossa `kontekstiraja.KONTEKSTIT`. Lähde on OpenRouterin julkiset rajapinnat `/api/v1/models` ja `/api/v1/endpoints/zdr` (haettu 25.11.2026). Arvo on konteksti, jota vähintään puolet mallin ZDR-endpointeista tukee, enintään 262 144 tokenia. Tuntematon malli saa varovaisen oletuksen 32 768 tokenia.
+- **Varaukset**: vastaukselle varataan `yksityinen_or.MAX_TOKENIA` (8 000) tokenia, pienellä mallilla enintään neljännes kontekstista. Lisäksi varataan 10 %:n turvamarginaali. Yhdistelmässä raja lasketaan pienimmän mukana olevan mallin mukaan, ja roolisyötteelle (luonnokset) varataan noin 25 000 merkkiä.
+- **Merkit ja tokenit**: arvio on 2,5 merkkiä tokenia kohti. Suomen teksti on noin 3 merkkiä tokenia kohti, mutta koodi ja luettelot pilkkoutuvat tiheämmin. Arvio on tarkoituksella alakanttiin, koska kontekstin ylitys kaataisi koko vastauksen.
+- **Hinta**: kehotteen arvioitu ylin hinta pidetään enintään kulukatkaisimen kiinteän varauksen (0,50 USD) suuruisena. Päiväkatto (10 €/vrk) ja varaus eivät muutu.
+- **Täyttöjärjestys**: ensin agenttidata (tuoreimmat päätökset ensin, enintään puolet muistin tilasta), sitten kirjasto (kysymykseen osuvat tiedostot ensin, sitten uusin muutosaika ensin) ja lopuksi tiivistelmät (enintään 60 kt). Historialle jää aina vähintään 25 % jäljellä olevasta tilasta, joten muisti ei syrjäytä keskustelua kokonaan.
+- **Näkyvyys**: jokaisesta kutsusta kirjataan journaliin rivi `yksityinen_or: kehote N merkkia, arvio T tokenia …, arvioitu hinta enintaan X USD` ja vastauksen jälkeen `yksityinen_or: toteutunut prompt_tokens=…`. Riveillä ei ole sisältöä. Kulunäkymä (`GET /api/kulut`) näyttää chatin kehotteen keskimääräisen ja suurimman koon tokeneina, keskimääräisen kulun kutsua kohti ja mallien kehoterajat.
+
+Esimerkki: mallilla `qwen/qwen3-235b-a22b-2507` kehotteeseen mahtuu noin 228 000 tokenia eli noin 570 000 merkkiä. Täysi kehote maksaa arviolta enintään noin 0,04 USD.
 
 Kehotteen sääntö 2 kertoo mallille, että keskustelun aiemmat viestit ovat käytettävissä, ja sääntö 6 kieltää lupaamasta taustatyötä tai arvioimasta kestoa: yksityisessä tilassa ei ole työkaluja, verkkoa eikä taustaprosesseja.
 

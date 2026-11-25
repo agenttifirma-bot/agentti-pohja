@@ -39,7 +39,13 @@ Saannot (koodi on laki):
   * Vastauksen pituusraja (A1095): OpenRouter-taustapaan MAX_TOKENIA = 8 000 on erillaan paikallisen loopback-mallin
     rajasta (yksityinen.MAX_TOKENIA = 700, i5-8400 ei ehtisi 8 000 tokenia). Yhden mallin chat-kutsun aikaraja on
     CHAT_AIKARAJA_S. Jos vastaus katkeaa pituusrajaan (finish_reason == "length"), chat lisaa loppuun
-    KATKENNUT_HUOMAUTUS ja kirjaa stderriin vain tiedon katkeamisesta (ei sisaltoa). Paivakatto ja varaus eivat muutu."""
+    KATKENNUT_HUOMAUTUS ja kirjaa stderriin vain tiedon katkeamisesta (ei sisaltoa). Paivakatto ja varaus eivat muutu.
+  * Kehotteen koko (A1106, aivo/kontekstiraja.py): muisti ja historia tayttavat mallin kontekstin, josta varataan
+    vastaukselle MAX_TOKENIA (pienella mallilla enintaan neljannes) ja 10 % marginaali. Yhdistelmassa raja on
+    pienimman mukana olevan mallin konteksti, ja roolisyotteelle varataan YHDISTELMA_LISAVARAUS. Kehotteen arvioitu
+    ylin hinta pidetaan enintaan kiintean varauksen (openrouter_kulut.VARAUS_USD) suuruisena. Jokaisesta kutsusta
+    stderriin (journal) kehotteen koko merkkeina ja tokeneina, arvioitu hinta ja toteutuneet tokenit (ei sisaltoa).
+    Paikallisen taustapaan rajat (yksityinen.MUISTI_YLARAJA ym.) eivat muutu."""
 from __future__ import annotations
 
 import json
@@ -53,7 +59,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from . import openrouter_kulut, yhdistelma, yksityinen
+from . import kontekstiraja, openrouter_kulut, yhdistelma, yksityinen
 from .yksityinen import YKSITYINEN_KEHOTE, YksityinenVirhe
 
 OLETUS_AVAIN = "/var/lib/aivo-yksityinen/openrouter-avain"
@@ -72,15 +78,21 @@ MAX_TOKENIA = 8_000
 CHAT_AIKARAJA_S = 360
 KATKENNUT_HUOMAUTUS = "[vastaus katkesi pituusrajaan, kirjoita: jatka]"
 # Historia on taustapaakohtainen. Paikallinen malli (yksityinen.HISTORIA_YLARAJA = 12) kasittelee kehotteen hitaasti
-# 900 s aikarajan sisalla; OpenRouterin malli kasittelee pitkan kehotteen sekunneissa, joten raja on sama 40 kuin
-# tyokalutilassa (chat.HISTORIA_YLARAJA). Viestiraja on 16 000 merkkia, joten 40 viestin historia voisi olla
-# yli 320 000 merkkia. Siksi historian viestien yhteismerkit rajataan (HISTORIA_MERKIT_YLARAJA = 80 000, sama kuin
-# vanha pahin tapaus 20 x 4 000): uusin viesti sailyy aina kokonaan ja vanhemmat lyhennetaan
-# (yksityinen.lyhenna_historia). Pahin tapaus: historia 80 000, muisti 16 000, ydinohjeet 20 000 ja kehote noin
-# 4 000 merkkia = noin 120 000 merkkia, alle 60 000 tokenia varovaisellakin 2 merkkia/token-arviolla.
-# Suositusmallin qwen3-235b-a22b-2507 konteksti on 262 144 tokenia.
-HISTORIA_YLARAJA = 40
+# 900 s aikarajan sisalla; OpenRouterin malli kasittelee pitkan kehotteen sekunneissa. Kehotteen koko seuraa mallin
+# kontekstia (Tonyn paatos A1106, aivo/kontekstiraja.py): muisti ja historia tayttavat kontekstin, josta on varattu
+# vastaus (MAX_TOKENIA) ja 10 % marginaali. Viestimaara HISTORIA_YLARAJA on vain ylaraja; varsinainen raja on
+# historian merkkimaara (kontekstiraja.historiaraja). Uusin Tonyn viesti sailyy aina kokonaan, vanhemmat lyhennetaan
+# (yksityinen.lyhenna_historia).
+# HISTORIA_MERKIT_YLARAJA (80 000) on kiintea raja tyokalutilalle (chat.HISTORIA_MERKIT_YLARAJA) ja mallivertailulle;
+# yksityisen tilan OpenRouter-kutsut kayttavat mallikohtaista rajaa.
+HISTORIA_YLARAJA = 200
 HISTORIA_MERKIT_YLARAJA = 80_000
+# Yhdistelman roolisyote (luonnos, tai rinnakkaisen kaksi vastausta, yhdistelma.VASTAUS_MAX_MERKKIA kukin) lisataan
+# perusviestien peraan, joten sille varataan tila kehotteesta. Roolin ohjeet ovat alle 500 merkkia.
+YHDISTELMA_LISAVARAUS = 2 * yhdistelma.VASTAUS_MAX_MERKKIA + 1_000
+# Kehotteen arvioitu ylin hinta enintaan kulukatkaisimen kiintea varaus (luetaan, ei muuteta).
+VARAUS_USD_ARVIO = float(openrouter_kulut.VARAUS_USD)
+_VARAUS_USD = VARAUS_USD_ARVIO
 
 TIIVISTYS_TEHTAVA = "aivo-yksityinen-tiivistys"
 # Tiivistys palauttaa JSON:n (enintaan tiivistelma.MAX_KOHDAT kohtaa, tulkinta enintaan 300 merkkia). 700 tokenia
@@ -213,6 +225,8 @@ def _kysy_viestit(
     avain = lue_avain(avain_tiedosto)                     # ennen varausta: puuttuva avain ei jata varausta
     laheta = tee_kuljetin(avain, avaa, aikaraja_s, ylaraja_s=ylaraja_s)
     tokenit = MAX_TOKENIA if max_tokens is None else max(1, min(int(max_tokens), MAX_TOKENIA))
+    tokenit = min(tokenit, kontekstiraja.vastausvaraus(malli, MAX_TOKENIA))   # pieni konteksti: vastaus ei vie kaikkea
+    loki_kehote(malli, viestit, tokenit)
     try:
         data = openrouter_kulut.kutsu(
             malli, viestit, laheta, tehtava=TEHTAVA, nyt=nyt, tila=kulutila, ilmoita=ilmoita,
@@ -222,6 +236,7 @@ def _kysy_viestit(
         raise yhdistelma.Katkaisu("OpenRouterin p\u00e4iv\u00e4katto on t\u00e4ynn\u00e4 tai kulukirjanpito ei kelpaa; kutsua ei tehty") from None
     except openrouter_kulut.ZdrVirhe:
         raise YksityinenVirhe("ZDR-s\u00e4\u00e4nt\u00f6 est\u00e4\u00e4 pyynn\u00f6n; kutsua ei tehty") from None
+    loki_toteutunut(malli, data)
     try:
         teksti = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
@@ -232,6 +247,63 @@ def _kysy_viestit(
         print("yksityinen_or: vastaus katkesi pituusrajaan (max_tokens=%d)" % tokenit, file=sys.stderr)
         return teksti.strip() + "\n\n" + KATKENNUT_HUOMAUTUS
     return teksti.strip()
+
+
+def loki_kehote(malli: str, viestit: list[dict[str, Any]], max_tokens: int) -> dict[str, Any]:
+    """Kirjaa stderriin (journal) kehotteen koon ja arvioidun hinnan ennen kutsua. Ei sisaltoa: vain luvut ja malli."""
+    merkit = kontekstiraja.viestien_merkit(viestit)
+    tiedot = {"merkit": merkit, "tokenit_arvio": kontekstiraja.arvioi_tokenit(merkit),
+              "syoteraja_tokenit": kontekstiraja.syote_tokenit(malli, MAX_TOKENIA, _VARAUS_USD),
+              "konteksti": kontekstiraja.konteksti(malli), "max_tokens": int(max_tokens)}
+    tiedot["usd_arvio"] = kontekstiraja.arvioi_usd(malli, tiedot["tokenit_arvio"], tiedot["max_tokens"])
+    print("yksityinen_or: kehote %(merkit)d merkkia, arvio %(tokenit_arvio)d tokenia (syoteraja %(syoteraja_tokenit)d, "
+          "konteksti %(konteksti)d, vastaus enintaan %(max_tokens)d), arvioitu hinta enintaan %(usd_arvio).4f USD"
+          % tiedot + ", malli " + str(malli)[:100], file=sys.stderr)
+    return tiedot
+
+
+def loki_toteutunut(malli: str, data: Any) -> None:
+    """Kirjaa OpenRouterin ilmoittamat toteutuneet prompt- ja completion-tokenit ja kulun (ei sisaltoa)."""
+    u = data.get("usage") if isinstance(data, Mapping) else None
+    if not isinstance(u, Mapping):
+        return
+    osat = []
+    for avain in ("prompt_tokens", "completion_tokens"):
+        if isinstance(u.get(avain), int) and not isinstance(u.get(avain), bool):
+            osat.append("%s=%d" % (avain, u[avain]))
+    if isinstance(u.get("cost"), (int, float)) and not isinstance(u.get("cost"), bool):
+        osat.append("cost=%.4f USD" % u["cost"])
+    if osat:
+        print("yksityinen_or: toteutunut " + ", ".join(osat) + ", malli " + str(malli)[:100], file=sys.stderr)
+
+
+def historian_merkkiraja(mallit: Any, muisti: str, ohjeet: str, historia: list[dict[str, Any]],
+                         lisavaraus_merkit: int = 0) -> int:
+    """Historian merkkiraja OpenRouter-kutsulle: mallin konteksti - jarjestelmaviesti (kehote, ydinohjeet, muisti)
+    - viestien rakenne - yhdistelman lisavaraus. Uusin Tonyn viesti sailyy lyhenna_historia-funktiossa aina."""
+    jarjestelma = len(KEHOTE) + len(ohjeet or "(ei ydinohjeita)\n") + len(muisti or "") + kontekstiraja.JARJESTELMA_LISA
+    viesteja = min(len(historia), HISTORIA_YLARAJA)
+    # jokaiseen viestiin voi tulla rakenne ja lyhennysmerkinta ("[... vanha viesti lyhennetty: n merkkia pois]")
+    per_viesti = kontekstiraja.VIESTI_LISA + len(yksityinen.LYHENNETTY % 10 ** 7)
+    return max(0, kontekstiraja.historiaraja(mallit, MAX_TOKENIA, jarjestelma, lisavaraus_merkit, _VARAUS_USD)
+               - viesteja * per_viesti)
+
+
+def muistin_merkkiraja(mallit: Any, ohjeet: str, historia: list[dict[str, Any]], lisavaraus_merkit: int = 0) -> int:
+    """Muistiosion merkkiraja (kirjasto, agenttidata ja tiivistelmat yhteensa) OpenRouter-taustapaalla. Historialle
+    jaa aina vahintaan kontekstiraja.HISTORIA_VAHIMMAISOSUUS jaljella olevasta tilasta."""
+    viimeiset = historia[-HISTORIA_YLARAJA:]
+    tarve = sum(len(str(v.get("teksti", ""))) + kontekstiraja.VIESTI_LISA for v in viimeiset)
+    kiintea = len(KEHOTE) + len(ohjeet or "(ei ydinohjeita)\n")
+    return kontekstiraja.muistiraja(mallit, MAX_TOKENIA, kiintea, tarve, lisavaraus_merkit, _VARAUS_USD)
+
+
+def yhdistelman_mallit(malli: str, roolit: Mapping[str, str] | None) -> list[str]:
+    return [malli] + [m for m in (roolit or {}).values() if m != malli]
+
+
+def yhdistelman_lisavaraus(yhdistelma_nimi: str) -> int:
+    return 0 if yhdistelma_nimi == yhdistelma.OLETUS else YHDISTELMA_LISAVARAUS
 
 
 def katkesi_pituusrajaan(data: Any) -> bool:
@@ -258,7 +330,7 @@ def kysy_openrouterilta(
     """Yksityisen tilan vastaus OpenRouterin avoimelta mallilta. Nostaa aina YksityinenVirhe (turvallinen viesti)."""
     tarkista_malli(malli)
     viestit = yksityinen.muodosta_viestit(muisti, historia, ohjeet, KEHOTE, HISTORIA_YLARAJA,
-                                         HISTORIA_MERKIT_YLARAJA)
+                                         historian_merkkiraja(malli, muisti, ohjeet, historia))
     return _kysy_viestit(malli, viestit, avain_tiedosto=avain_tiedosto, kulutila=kulutila, avaa=avaa, nyt=nyt,
                          ilmoita=ilmoita, ylaraja_s=CHAT_AIKARAJA_S, huomauta_katkeamisesta=True, **lisa)
 
@@ -279,8 +351,9 @@ def kysy_yhdistelmalla(
     tarkista_malli(malli)
     for m in (roolit or {}).values():
         tarkista_malli(m)
-    viestit = yksityinen.muodosta_viestit(muisti, historia, ohjeet, KEHOTE, HISTORIA_YLARAJA,
-                                         HISTORIA_MERKIT_YLARAJA)
+    raja = historian_merkkiraja(yhdistelman_mallit(malli, roolit), muisti, ohjeet, historia,
+                                yhdistelman_lisavaraus(yhdistelma_nimi))
+    viestit = yksityinen.muodosta_viestit(muisti, historia, ohjeet, KEHOTE, HISTORIA_YLARAJA, raja)
 
     def kysy(m: str, v: list[dict[str, Any]], aikaraja_s: float | None = None, max_tokens: int | None = None) -> str:
         return _kysy_viestit(m, v, aikaraja_s=aikaraja_s, max_tokens=max_tokens, **kw)

@@ -23,6 +23,9 @@ TIEDOSTOT = ("kompassi.md", "faktat.md", "pohdinta-vastaukset.md")   # kehotteen
 POHDINTA = "pohdinta-vastaukset.md"
 ETULIITE = "agenttidata/"           # nimi kehotteessa ja [lahde: ...]-tarkistuksessa
 MERKINTOJA = 60                     # pohdinta-vastauksista viimeiset A-merkinnat
+# OpenRouter-taustapaa (A1106): merkintojen maaraa ei rajata erikseen, vaan kokoraja (ylaraja // 2) ratkaisee.
+# Tuoreimmat merkinnat tulevat ensin, koska viimeiset_merkinnat leikkaa alusta.
+MERKINTOJA_MAKSIMI = 100_000
 LUKU_YLARAJA = 4_000_000            # tavua: tata suuremmasta tiedostosta luetaan vain loppu (pohdinta) tai alku
 VANHA_RAJA = timedelta(hours=24)
 PIENIN_OSA = 500                    # merkkia: tata pienempaa jaljella olevaa budjettia ei kayteta katkelmaan
@@ -134,16 +137,16 @@ def kopion_aika(juuri, polut):
     return datetime.fromtimestamp(max(ajat), timezone.utc), "tiedostot muuttuneet"
 
 
-def muodosta(kansio, raja_merkki, ylaraja, tiedosto_raja, nyt=None):
+def muodosta(kansio, raja_merkki, ylaraja, tiedosto_raja, nyt=None, merkintoja=MERKINTOJA):
     """Kuten _muodosta, mutta odottamaton virhe ei kaada keskustelua: osio jaa pois, lokiin vain tyyppi."""
     try:
-        return _muodosta(kansio, raja_merkki, ylaraja, tiedosto_raja, nyt)
+        return _muodosta(kansio, raja_merkki, ylaraja, tiedosto_raja, nyt, merkintoja)
     except Exception as e:      # noqa: BLE001 - kehoteosio on valinnainen
         loki.warning("agenttidata-osio puuttuu (%s)", type(e).__name__)
         return "", []
 
 
-def _muodosta(kansio, raja_merkki, ylaraja, tiedosto_raja, nyt=None):
+def _muodosta(kansio, raja_merkki, ylaraja, tiedosto_raja, nyt=None, merkintoja=MERKINTOJA):
     """Palauttaa (teksti, tiedostot). Tyhja kansio-asetus => ('', []). Puuttuva kopio => lyhyt huomautus,
     jotta Aivo osaa kertoa sen Tonylle. Teksti on enintaan noin `ylaraja` merkkia (otsikko mukaan lukien)."""
     if not kansio:
@@ -176,7 +179,7 @@ def _muodosta(kansio, raja_merkki, ylaraja, tiedosto_raja, nyt=None):
             continue
         data = data.replace(raja_merkki, "").replace("\x00", "")
         if nimi == POHDINTA:
-            data = viimeiset_merkinnat(data, MERKINTOJA, raja)
+            data = viimeiset_merkinnat(data, merkintoja, raja)
         elif len(data) > raja:
             data = data[:raja] + "\n[... katkaistu kokorajan vuoksi]"
         if not data.strip():
