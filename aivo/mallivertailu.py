@@ -10,6 +10,8 @@ Itsetuntemuksen ja rehellisyyden sarja (aivo/itsetuntemus.py, ks. docs/aivo-itse
   ... -m aivo.mallivertailu itse-aja --ulos <kansio> --mallit m1,m2,m3 --yhdistelma 3 --kokoaja m1 --vahvista
                                                    # koeajo: N mallia vastaa, kokoaja muodostaa lopullisen vastauksen
   ... -m aivo.mallivertailu itse-taulukko --ulos <kansio>
+  ... -m aivo.mallivertailu itse-viikko --ulos <kansio> --tiivistelma <kansio>   # viikkoajo (systemd), tuotannon
+                                                   # mallit asetuksista, raja enintaan 1 USD, tiivistelmassa vain luvut
 Tyokalua ei ole kytketty palveluun.
 
 Saannot:
@@ -32,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import re
 import statistics
@@ -447,7 +450,11 @@ def _itse_kutsu(malli: str, viestit: list[dict[str, Any]], laheta_tehdas: Callab
         usage={"include": True}, yksityinen_chat=True)
     teksti = data["choices"][0]["message"].get("content") or ""
     kaytto = data.get("usage") or {}
-    return {"vastaus": teksti.strip(), "kulu_usd": float(kaytto.get("cost") or 0.0), "sekuntia": round(kello() - t0, 2),
+    kulu = kaytto.get("cost")
+    if not isinstance(kulu, (int, float)) or isinstance(kulu, bool) or kulu < 0:
+        # Kulu puuttuu vastauksesta: ajon oma raja laskee kulukirjanpidon varovaisen arvion, ei nollaa.
+        kulu = openrouter_kulut.arvioi_usd(malli, kaytto.get("prompt_tokens"), kaytto.get("completion_tokens"))
+    return {"vastaus": teksti.strip(), "kulu_usd": float(kulu), "sekuntia": round(kello() - t0, 2),
             "tokenit_sisaan": kaytto.get("prompt_tokens"), "tokenit_ulos": kaytto.get("completion_tokens"),
             "tarjoaja": data.get("provider")}
 
@@ -566,9 +573,129 @@ def aja_itsetuntemus(mallit: list[str], ulos: Path, laheta_tehdas: Callable[[], 
     return yhteenveto
 
 
-def main(argv: list[str] | None = None) -> int:
+# --- Viikoittainen ajo tuotannon malleilla (systemd/aivo-itsetuntemus.*.mall, docs/aivo-itsetuntemus.md) ---------
+# Mallit luetaan samoista asetuksista kuin palvelussa: AIVO_OPENROUTER_MALLIT (ensimmainen = paamalli) ja
+# AIVO_YKSITYINEN_ROOLIT (rooli tarkastaja; puuttuessa paamalli). Tiivistelmassa on vain luvut, ei vastauksia.
+ITSE_VIIKKO_RAJA_USD = 1.0
+ITSE_VIIKKO_HISTORIA = "historia.jsonl"
+ITSE_VIIKKO_HISTORIA_MAX = 260                # noin viisi vuotta viikkoajoja; vanhimmat rivit pois
+ITSE_VIIKKO_TIIVISTELMA = "viimeisin.md"
+ITSE_VIIKKO_JSON = "viimeisin.json"
+
+
+def itse_tuotannon_mallit(env: Any) -> dict[str, str]:
+    """{"paamalli": m, "tarkastaja": m} palvelun asetuksista. Virheellinen asetus -> YksityinenVirhe."""
+    mallit = yksityinen_or.tarkista_mallit(env.get("AIVO_OPENROUTER_MALLIT") or env.get("AIVO_OPENROUTER_MALLI"))
+    roolit = yhdistelma.jasenna_roolit(env.get("AIVO_YKSITYINEN_ROOLIT"), mallit)
+    return {"paamalli": mallit[0], "tarkastaja": roolit.get("tarkastaja") or mallit[0]}
+
+
+def _itse_viikko_rivi(aika: str, roolit: dict[str, str], yv: dict[str, Any], tulos: dict[str, dict[str, Any]],
+                      kysymyksia: int) -> dict[str, Any]:
+    mallit = {}
+    for m, t in tulos.items():
+        mallit[m] = {"yhteensa": t["yhteensa"], "lajit": dict(t["lajit"]), "luokat": dict(t["luokat"]),
+                     "vastattu": sum(t["luokat"].values()), "kulu_usd": t["kulu"], "mediaani_s": t["mediaani_s"]}
+    for m in yv["mallit"]:
+        mallit.setdefault(m, {"yhteensa": None, "lajit": {}, "luokat": {}, "vastattu": 0, "kulu_usd": 0.0,
+                              "mediaani_s": None})
+    kesken = bool(yv.get("pysahtyi")) or any(v["vastattu"] < kysymyksia for v in mallit.values())
+    return {"aika": aika, "roolit": dict(roolit), "kysymyksia": kysymyksia, "kulut_usd": yv["kulut_usd"],
+            "raja_usd": yv["raja_usd"], "pysahtyi": yv.get("pysahtyi"), "virheita": yv["virheita"],
+            "kesken": kesken, "mallit": mallit}
+
+
+def _lue_historia(polku: Path) -> list[dict[str, Any]]:
+    if not polku.exists():
+        return []
+    rivit = []
+    for r in polku.read_text(encoding="utf-8").splitlines():
+        try:
+            d = json.loads(r)
+        except ValueError:
+            continue                                       # rikkinainen rivi ei kaada ajoa
+        if isinstance(d, dict) and isinstance(d.get("mallit"), dict):
+            rivit.append(d)
+    return rivit
+
+
+def _edellinen(historia: list[dict[str, Any]], malli: str) -> dict[str, Any] | None:
+    """Uusin aiempi taysi (ei kesken) ajo, jossa malli oli mukana."""
+    for r in reversed(historia):
+        if not r.get("kesken") and isinstance(r["mallit"].get(malli), dict):
+            return r["mallit"][malli]
+    return None
+
+
+def _muutos(nyt: Any, ennen: Any) -> str:
+    if not isinstance(nyt, (int, float)):
+        return "-"
+    if not isinstance(ennen, (int, float)):
+        return "%.2f (uusi)" % nyt
+    return "%.2f (%+.2f)" % (nyt, nyt - ennen)
+
+
+def itse_viikko_teksti(rivi: dict[str, Any], historia: list[dict[str, Any]]) -> str:
+    """Tiivistelma Markdownina: pisteet luokittain ja muutos edelliseen tayteen ajoon. Ei vastauksia."""
+    roolit = rivi["roolit"]
+    osat = ["# Aivon itsetuntemus: viikkoajo %s" % rivi["aika"], "",
+            "Paamalli %s, tarkastaja %s. Kysymyksia %d. Kulut %.4f USD (raja %.2f USD)." % (
+                roolit["paamalli"], roolit["tarkastaja"], rivi["kysymyksia"], rivi["kulut_usd"], rivi["raja_usd"])]
+    if rivi["kesken"]:
+        osat.append("HUOM: ajo jai kesken (pysahtyi: %s, virheita %d). Pisteet eivat ole vertailukelpoisia." % (
+            rivi.get("pysahtyi") or "osa vastauksista puuttuu", rivi["virheita"]))
+    osat += ["", "Suluissa muutos edelliseen tayteen ajoon. Pisteet 0-1; mekaaninen pisteytys on suuntaa antava.", "",
+             "| malli | yhteensa | " + " | ".join(itsetuntemus.LAJIT) + " | vastattu | arvaus faktana |",
+             "|---|---|" + "---|" * len(itsetuntemus.LAJIT) + "---|---|"]
+    for m, t in rivi["mallit"].items():
+        e = _edellinen(historia, m) or {}
+        lajit = [_muutos(t["lajit"].get(l), (e.get("lajit") or {}).get(l)) for l in itsetuntemus.LAJIT]
+        osat.append("| %s | %s | %s | %d/%d | %d |" % (m, _muutos(t["yhteensa"], e.get("yhteensa")), " | ".join(lajit),
+                                                     t["vastattu"], rivi["kysymyksia"],
+                                                     (t.get("luokat") or {}).get("arvaus_faktana", 0)))
+    return "\n".join(osat) + "\n"
+
+
+def _kirjoita_atomisesti(polku: Path, teksti: str) -> None:
+    tmp = polku.with_name("." + polku.name + ".tmp")
+    tmp.write_text(teksti, encoding="utf-8")
+    tmp.replace(polku)
+
+
+def itse_viikko(env: Any, ulos: Path, tiivistelma: Path, laheta_tehdas: Callable[[], Callable[[dict], Any]], *,
+                raja: float = ITSE_VIIKKO_RAJA_USD, nyt: Any = None, kulutila: Any = None,
+                loki: Callable[[str], Any] = print) -> dict[str, Any]:
+    """Viikkoajo: tuotannon mallit (paamalli ja tarkastaja, sama malli kerran), oma ajokansio ulos/<aika>,
+    ajon raja enintaan ITSE_VIIKKO_RAJA_USD. Tiivistelma: tiivistelma/viimeisin.md ja .json seka historia.jsonl."""
+    import datetime as _dt
+    if not isinstance(raja, (int, float)) or isinstance(raja, bool) or not 0 < raja <= ITSE_VIIKKO_RAJA_USD:
+        raise VertailuVirhe("viikkoajon raja pitaa olla 0-%.2f USD" % ITSE_VIIKKO_RAJA_USD)
+    roolit = itse_tuotannon_mallit(env)
+    mallit = itse_mallit(list(dict.fromkeys(roolit.values())))
+    nyt = nyt or _dt.datetime.now(_dt.timezone.utc)
+    leima = nyt.strftime("%Y-%m-%dT%H%M%SZ")
+    ajo = ulos / leima
+    if ajo.exists():
+        raise VertailuVirhe("ajokansio on jo olemassa")
+    ulos.mkdir(mode=0o700, parents=True, exist_ok=True)
+    tiivistelma.mkdir(mode=0o700, parents=True, exist_ok=True)
+    yv = aja_itsetuntemus(mallit, ajo, laheta_tehdas, raja=float(raja), kulutila=kulutila, loki=loki)
+    kysymyksia = len(itsetuntemus.lue_kysymykset()["kysymykset"])
+    tulos = itsetuntemus.pisteet(itsetuntemus.lue_vastaukset(ajo))
+    rivi = _itse_viikko_rivi(nyt.isoformat(timespec="seconds"), roolit, yv, tulos, kysymyksia)
+    hpolku = tiivistelma / ITSE_VIIKKO_HISTORIA
+    historia = _lue_historia(hpolku)
+    _kirjoita_atomisesti(tiivistelma / ITSE_VIIKKO_TIIVISTELMA, itse_viikko_teksti(rivi, historia))
+    _kirjoita_atomisesti(tiivistelma / ITSE_VIIKKO_JSON, json.dumps(rivi, ensure_ascii=False, indent=1) + "\n")
+    uusi = (historia + [rivi])[-ITSE_VIIKKO_HISTORIA_MAX:]
+    _kirjoita_atomisesti(hpolku, "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in uusi))
+    return rivi
+
+
+def main(argv: list[str] | None = None, env: Any = None) -> int:
     ap = argparse.ArgumentParser(prog="aivo.mallivertailu")
-    ap.add_argument("komento", choices=("aja", "paketti", "taulukko", "itse-arvio", "itse-aja", "itse-taulukko"))
+    ap.add_argument("komento", choices=("aja", "paketti", "taulukko", "itse-arvio", "itse-aja", "itse-taulukko",
+                                        "itse-viikko"))
     ap.add_argument("--ulos")
     ap.add_argument("--mallit")
     ap.add_argument("--toistot", type=int)
@@ -577,6 +704,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--vahvista", action="store_true", help="itse-aja: tee oikeat kutsut (ilman tata vain kuluarvio)")
     ap.add_argument("--yhdistelma", type=int, help="itse-arvio/itse-aja: N mallia (3 tai 5) vastaa, kokoaja kokoaa")
     ap.add_argument("--kokoaja", help="itse-arvio/itse-aja: kokoajan malli (AVOIMET_MALLIT), vaatii --yhdistelma")
+    ap.add_argument("--tiivistelma", help="itse-viikko: tiivistelman kansio (vain luvut)")
+    ap.add_argument("--raja", type=float, default=ITSE_VIIKKO_RAJA_USD,
+                    help="itse-viikko: ajon kuluraja USD, enintaan %.2f" % ITSE_VIIKKO_RAJA_USD)
     a = ap.parse_args(argv)
     if a.komento != "itse-arvio" and not a.ulos:
         ap.error("--ulos puuttuu")
@@ -595,6 +725,16 @@ def main(argv: list[str] | None = None) -> int:
             tuomari = json.loads(Path(a.tuomari).read_text(encoding="utf-8")) if a.tuomari else None
             tulos = pisteet(ulos, tuomari)
             print(taulukko(tulos) + "\n\n" + sokkonaytteet(ulos, tulos))
+        elif a.komento == "itse-viikko":
+            if not a.tiivistelma or a.mallit or a.yhdistelma or a.kokoaja or a.toistot:
+                ap.error("itse-viikko: anna --ulos ja --tiivistelma; mallit tulevat palvelun asetuksista")
+            avain = yksityinen_or.lue_avain(a.avain)
+            rivi = itse_viikko(os.environ if env is None else env, ulos, Path(a.tiivistelma),
+                               lambda: yksityinen_or.tee_kuljetin(avain), raja=a.raja)
+            print(json.dumps({k: rivi[k] for k in ("aika", "roolit", "kulut_usd", "pysahtyi", "virheita", "kesken")},
+                             ensure_ascii=False))
+            print(json.dumps({m: t["yhteensa"] for m, t in rivi["mallit"].items()}, ensure_ascii=False))
+            return 1 if rivi["kesken"] else 0
         elif a.komento == "itse-taulukko":
             print(itsetuntemus.taulukko(itsetuntemus.pisteet(itsetuntemus.lue_vastaukset(ulos))))
         else:
