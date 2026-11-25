@@ -107,6 +107,7 @@ runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -B -m aivo.malliver
 
 Ajastin ajaa sarjan kerran viikossa sunnuntaiyönä tuotannon malleilla. Näin kehote-, malli- tai muistimuutoksen vaikutus näkyy luvuista viikon sisällä.
 
+- Komento `itse-viikko` käyttää samaa kuljetinta kuin `aja` ja `itse-aja` (`mallivertailu.kuljetin_tehdas`, aikaraja 360 s).
 - Komento `itse-viikko` lukee mallit samoista asetuksista kuin palvelu: päämalli on `AIVO_OPENROUTER_MALLIT`-listan ensimmäinen ja tarkastaja asetuksen `AIVO_YKSITYINEN_ROOLIT` rooli `tarkastaja`. Ilman roolia tarkastaja on päämalli, ja sama malli ajetaan vain kerran. Valitsimia `--mallit`, `--toistot`, `--yhdistelma` ja `--kokoaja` ei hyväksytä.
 - Ajon kuluraja on 1 USD toteutunutta kulua (`ITSE_VIIKKO_RAJA_USD`), ja raja koskee kaikkia ajon malleja yhteensä. Suurempi `--raja` hylätään ennen ensimmäistä kutsua. Jokainen kutsu kulkee `openrouter_kulut.kutsu`n kautta, joten yhteinen 10 €:n päiväkatto ja kulukirjaus (tehtävä `aivo-itsetuntemus`) ovat voimassa.
 - Jos OpenRouterin vastauksesta puuttuu kulu, ajon raja laskee kulukirjanpidon varovaisen arvion (tuntemattomalle mallille korkea hinta), ei nollaa. Silloin ajo voi pysähtyä rajaan kesken.
@@ -115,7 +116,7 @@ Ajastin ajaa sarjan kerran viikossa sunnuntaiyönä tuotannon malleilla. Näin k
   - `viimeisin.json`: samat luvut koneluettavina,
   - `historia.jsonl`: rivi per ajo (enintään 260 riviä).
 - Tiivistelmässä on vain luvut, mallien nimet ja kulut, ei vastausten tekstiä. Kysymykset ovat synteettisiä, eikä malli saa muistia eikä ydinohjeita.
-- Jos ajo jää kesken (kuluraja, päiväkatto, yksikin epäonnistunut kutsu tai puuttuvia vastauksia), tiivistelmässä on rivi `HUOM: ajo jai kesken`, palvelun paluuarvo on 1, eikä keskeneräistä ajoa käytetä seuraavan viikon vertailukohtana.
+- Jos ajo jää kesken (kuluraja, päiväkatto, yksikin epäonnistunut kutsu tai puuttuvia vastauksia; tyhjä vastaus ja aikakatkaisu ovat puuttuvia vastauksia), tiivistelmässä on rivi `HUOM: ajo jai kesken`, palvelun paluuarvo on 1, eikä keskeneräistä ajoa käytetä seuraavan viikon vertailukohtana.
 - Palvelu ajetaan käyttäjänä `aivo`. Se saa kirjoittaa vain kansioon `/var/lib/aivo-itsetuntemus` ja kulukirjanpitoon `/var/lib/claude-jono` (sama kansio kuin `aivo-chat.service`lla, ei tmpfs-liitoksia). Aivon kirjasto (`/var/lib/aivo`), työkalutila ja agenttien kansio eivät näy palvelulle.
 
 Agenttidata-vienti toimii kontissa 115 eikä näe kontin 122 tiedostoja, joten tiivistelmää ei vielä viedä automaattisesti. Tony lukee sen isännältä: `pct exec 122 -- cat /var/lib/aivo-itsetuntemus/tiivistelma/viimeisin.md`.

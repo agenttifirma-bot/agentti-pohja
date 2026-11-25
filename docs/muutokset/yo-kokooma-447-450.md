@@ -1,0 +1,1 @@
+- aivo-itsetuntemus: kokooma #447 + #450; itse-viikko käyttää vertailun kuljetinta (kuljetin_tehdas, 360 s), ja viikkoajon vastattu-laskenta ohittaa tyhjät vastaukset ja aikakatkaisut, jotta ajatteleva malli ei näytä täydeltä ajolta ilman vastauksia
