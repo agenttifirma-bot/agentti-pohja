@@ -38,7 +38,10 @@ Turvarajat (koodi on laki):
     kulkee kuten ennen. Jos vartijamalli ei vastaa, tulos on "kysy" ja kortti nayttaa "Vartija ei tarkistanut".
   * Agenttitehtava (aivo/agenttitehtava.py, valinnainen --agentit): mallin [[AGENTTI]]-lohko luo vain ehdotuksen
     yksityiseen kansioon. Tehtava menee ajurin jonoon vasta POST /api/agentti/kaynnista -kutsulla (vahvistus
-    "kylla <sha8>"), ja agentille menee vain kortissa nakyva teksti. Tulos naytetaan vain aloittaneessa keskustelussa."""
+    "kylla <sha8>"), ja agentille menee vain kortissa nakyva teksti. Tulos naytetaan vain aloittaneessa keskustelussa.
+  * Verkkohaku (aivo/hakukytkenta.py, valinnainen --haku-jono): mallin [[HAKU: lauseke]] tarkistetaan vartijalla.
+    esta = ei hakua, kysy = valinnat "Hae silti (<sha8>)" / "Ala hae", turvallinen = haku taustaajon jonoon.
+    Chat ei itse avaa yhteytta hakuvalittajaan."""
 import argparse
 import getpass
 import hashlib
@@ -66,6 +69,7 @@ from aivo.yksityinen import YksityinenVirhe as ChatVirhe, julkaise_kirjastoon   
 from aivo import agenttidata_kehote   # agenttidata-kopion kompassi, faktat ja paatokset (vain luku)
 from aivo import yhdistelma        # usean mallin yhdistelmat (oma rivi: ei ristiriitaa rinnakkaisten tuontimuutosten kanssa)
 from aivo import agenttitehtava    # agenttitehtavan ehdotus, Tonyn kaynnistys ja tulos (oma rivi)
+from aivo import hakukytkenta      # verkkohaun [[HAKU]]-merkinta ja Tonyn vahvistus (oma rivi)
 
 OLETUS_SALASANA = "/etc/aivo/chat-salasana"
 OLETUS_KIRJASTO = "/var/lib/aivo/kirjasto"
@@ -435,6 +439,9 @@ function agenttiTulos(d,t,tu){const o=document.createElement('div');
  o.textContent='Tila: '+(ATILAT[tu.tila]||'?')+(tu.syy?' ('+tu.syy+')':'')+(tu.arvio?' \u00b7 tarkastus: '+tu.arvio:'')+' \u00b7 kulu '+(tu.kulu_eur===null?'?':luku(tu.kulu_eur,4)+' \u20ac')+(tu.kulu_tuntematon?' (arvio)':'')+' \u00b7 kutsuja '+(tu.kutsuja===null?'?':tu.kutsuja);
  const p=document.createElement('pre');p.textContent=tu.raportti||'(ei raporttia)';d.append(o,p);
  if(tu.perustelu){const pp=document.createElement('div');pp.className='pieni';pp.textContent='Tarkastajan perustelu: '+tu.perustelu;d.appendChild(pp);}
+ const vk=tu.verkko&&typeof tu.verkko==='object'?tu.verkko:{};const vh=Array.isArray(vk.haut)?vk.haut:[];const vs=Array.isArray(vk.sivut)?vk.sivut:[];
+ if(vh.length||vs.length){const pv=document.createElement('pre');pv.className='pieni';
+  pv.textContent='Verkkohaut ('+vh.length+'):\\n'+vh.map(h=>'- \\u201d'+h.lauseke+'\\u201d: '+h.tulos+', '+h.tila).join('\\n')+'\\nHaetut sivut ('+vs.length+'):\\n'+vs.map(s=>'- '+s.url+': '+s.tila).join('\\n');d.appendChild(pv);}
  (Array.isArray(tu.tiedostot)?tu.tiedostot:[]).forEach(f=>{if(!f||typeof f.polku!=='string')return;const b=document.createElement('button');
   b.textContent='N\u00e4yt\u00e4 '+f.polku+' ('+f.koko+' t)';const pre=document.createElement('pre');pre.hidden=true;
   b.onclick=async()=>{if(!pre.hidden){pre.hidden=true;return;}const x=await haeJson('/api/agentti/tiedosto?keskustelu='+q(kid)+'&tunnus='+q(t)+'&polku='+q(f.polku));if(!x)return;
@@ -1162,7 +1169,7 @@ class Tila:
                  or_kulutila=None, tiivistelmat=None, kalenteri_lahde=None, yks_tiivistelmat=None,   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
                  yhdistelma_oletus=None, roolit=None, kysy_yhd=None, ajattelija_aika=None, agenttidata=None,
                  vartija_kysy=None, vartija_listat=None, tulos_repo=None,
-                 agentit=None, agenttitehtavat=None,
+                 agentit=None, agenttitehtavat=None, haku_jono=None, haku_odottavat=None,
                  lisapalat=luovutuspaketti.LISAPALAT_OLETUS):
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
@@ -1238,6 +1245,13 @@ class Tila:
             self.agentit = str(agentit)
             self.agenttitehtavat = str(yksityinen.tarkista_yksityinen_hakemisto(
                 agenttitehtavat or str(Path(yks_data).parent / agenttitehtava.KANSIO)))
+        self.haku = None                          # hakukytkenta.Hakukytkenta tai None (verkkohaku pois kaytosta)
+        if haku_jono:
+            if not yks_data:
+                raise ChatVirhe("verkkohaku vaatii yksityisen tilan")
+            self.haku = hakukytkenta.Hakukytkenta(
+                haku_jono, haku_odottavat or str(Path(yks_data).parent / hakukytkenta.KANSIO),
+                listat=self.vartija_listat, kysy=self.vartija_kysy)
         if not yks_data and (self.yhdistelma_oletus != yhdistelma.OLETUS or roolit):
             raise ChatVirhe("usean mallin yhdistelm\u00e4 vaatii yksityisen tilan ja OpenRouter-taustap\u00e4\u00e4n")
         self.kysy_yhd = kysy_yhd
@@ -1597,6 +1611,13 @@ def tee_kasittelija(tila):
                 tila.yks.lisaa(kid, "tony", teksti.strip())
                 historia = tila.yks.lue(kid)
                 oma_idx = len(historia) - 1          # palvelin kertoo Tonyn viestin paikan; selain ei arvaa
+                if tila.haku is not None and tila.haku.on_vahvistus(teksti):
+                    # Tonyn oma "Hae silti (<sha8>)": ei mallikutsua; palvelin jonottaa odottavan haun (esto tarkistetaan)
+                    vastaus = tila.haku.vahvista(kid, teksti)
+                    tila.yks.lisaa(kid, "aivo", vastaus, [])
+                    tulos = (200, {"vastaus": vastaus, "tuntemattomia_lahteita": 0, "tila": "yksityinen",
+                                   "indeksi": oma_idx, "vastaus_indeksi": oma_idx + 1})
+                    return
                 ad, ad_tiedostot = agenttidata_kehote.muodosta(tila.agenttidata, RAJA, yksityinen.MUISTI_YLARAJA // 2,
                                                                yksityinen.MUISTI_YLARAJA // 6)
                 muisti, tiedostot = lue_muisti(tila.yks_muisti, yksityinen.MUISTI_YLARAJA - len(ad),
@@ -1610,6 +1631,8 @@ def tee_kasittelija(tila):
                         tiedostot = tiedostot + tiiv_tiedostot
                 try:
                     ohjeet = yksityinen.lue_ydinohjeet(tila.ydinohjeet)
+                    if tila.haku is not None:
+                        ohjeet = ohjeet + hakukytkenta.SAANTO
                     yhd = None
                     if malli and yh != yhdistelma.OLETUS and tila.kysy_yhd:
                         yhd = tila.kysy_yhd(muisti, historia, ohjeet, malli, yh)
@@ -1669,10 +1692,15 @@ def tee_kasittelija(tila):
                     return tunnus
                 vastaus = agenttitehtava.irrota_lohkot(vastaus, tallenna_agentti if tila.agentit else None)
                 vastaus, valinnat = erota_valinnat(vastaus)
+                haku = None
+                if tila.haku is not None:            # [[HAKU: ..]] vain mallin vastauksesta; vartija ennen jonoa
+                    vastaus, haku_valinnat, haku = tila.haku.kasittele(kid, vastaus)
+                    valinnat = haku_valinnat or valinnat
                 vastaus, ehdotus = erota_paatosehdotus(vastaus, historia)
                 vastaus, tunn = tarkista_lahteet(vastaus, tiedostot)
                 vastaus = tyhjan_paikka(vastaus, bool(valinnat) or ehdotus is not None or bool(tallennetut)
-                                        or bool(luovutukset) or bool(paketit) or bool(lisapalat) or bool(agentit))
+                                        or bool(luovutukset) or bool(paketit) or bool(lisapalat) or bool(agentit)
+                                        or haku is not None)
                 lisatiedot = None
                 if yhd is not None:
                     lisatiedot = {"yhdistelma": yhd.yhdistelma, "mallit": yhd.mallit, "kutsuja": yhd.kutsuja}
@@ -1696,6 +1724,8 @@ def tee_kasittelija(tila):
                     tulos[1]["lisapalat"] = lisapalat
                 if agentit:                    # vain ehdotuksia; mitaan ei ole kaynnistetty
                     tulos[1]["agentit"] = agentit
+                if haku is not None:           # vartijan tulos ja lauseke (sama teksti nakyy vastauksessa)
+                    tulos[1]["haku"] = haku
                 if tallennetut:                # vain palvelimen itse tallentamat tunnukset; selain hakee ne erikseen
                     tulos[1]["ehdotukset"] = tallennetut
                 if ehdotus is not None:
@@ -2278,6 +2308,9 @@ def main(argv=None):
     ap.add_argument("--agentit", default=os.environ.get("AIVO_AGENTIT", ""),
                     help="eristettyjen agenttien peruskansio (esim. /var/lib/aivo-agentit); ottaa agenttitehtavat "
                          "kayttoon yksityisessa tilassa. Oletus tyhja = pois kaytosta")
+    ap.add_argument("--haku-jono", default=os.environ.get("AIVO_HAKU_JONO", ""),
+                    help="verkkohaku: taustaajon jono (esim. /var/lib/aivo-yksityinen/tyot); ottaa [[HAKU]]-merkinnan "
+                         "kayttoon yksityisessa tilassa. Oletus tyhja = pois kaytosta")
     a = ap.parse_args(argv)
     try:
         if a.komento == "aseta-salasana":
@@ -2299,7 +2332,7 @@ def main(argv=None):
                     if a.yksityiset_tiivistelmat_kaytossa and a.yksityinen_data else None,
                     kalenteri_lahde=kalenteri.IcalLahde(a.kalenteri_osoitetiedosto, a.kalenteri_data)
                     if a.kalenteri_kaytossa else None,
-                    agenttidata=a.agenttidata or None, agentit=a.agentit or None)
+                    agenttidata=a.agenttidata or None, agentit=a.agentit or None, haku_jono=a.haku_jono or None)
         tila.kulut_kerroin = lue_kulukerroin(a.kulut_kerroin)
         palvelin = kaynnista(a.osoite, a.portti, tila)
     except ChatVirhe as e:

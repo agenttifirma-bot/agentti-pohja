@@ -57,7 +57,9 @@ Ajuri tarkistaa käynnistyessään, että kulutiedostot eivät kuulu sen omalle 
 
 ### Verkko
 
-`IPAddressAllow` ei sovellu, koska OpenRouterin osoitteet vaihtuvat (CDN). Verkkoa rajaavat nyt kaksi kerrosta: agentilla ei ole verkkotyökalua (rakennetesti), ja ainoa ulospäin menevä kutsu on `openrouter_kulut.kutsu`, jossa ZDR on pakotettu. Nimipohjainen välityspalvelin kolmanneksi kerrokseksi on oma päätöksensä, eikä sitä tehdä tässä.
+`IPAddressAllow` ei sovellu, koska OpenRouterin osoitteet vaihtuvat (CDN). Verkkoa rajaavat kaksi kerrosta: agentin työkalumoduulit eivät tuo verkkomoduuleja (rakennetesti), ja ulospäin menevät kutsut ovat vain `openrouter_kulut.kutsu` (ZDR pakotettu) ja, jos hakuosoite on asetettu, hakuvälittäjä moduulin `aivo/verkkohaku.py` kautta.
+
+Verkkohaku (A1101, valinnainen): asetuksella `AIVO_HAKU_OSOITE` tekijä saa työkalut `hae` ja `sivu`. Jokainen lauseke tarkistetaan vartijalla, ja sivuja voi hakea vain saman tehtävän hakutuloksista. Lausekkeet ja osoitteet näkyvät tuloksen kentässä `verkko` ja kortissa. Ohje: `docs/aivo-verkkohaku.md`. Nimipohjainen välityspalvelin kolmanneksi kerrokseksi on oma päätöksensä, eikä sitä tehdä tässä.
 
 ## Käyttöönotto
 

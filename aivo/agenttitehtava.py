@@ -335,7 +335,20 @@ def nayttotulos(tulos):
             "arvio": p(str(tark.get("arvio") or "")), "perustelu": p(str(tark.get("perustelu") or "")),
             "tiedostot": tiedostot, "kulu_eur": luku(tulos.get("kulu_eur")),
             "kulu_tuntematon": bool(tulos.get("kulu_tuntematon")), "kutsuja": luku(tulos.get("kutsuja")),
-            "kesto_s": luku(tulos.get("kesto_s")), "valmistui": p(str(tulos.get("valmistui") or ""))}
+            "kesto_s": luku(tulos.get("kesto_s")), "valmistui": p(str(tulos.get("valmistui") or "")),
+            "verkko": _verkko_naytolle(tulos.get("verkko"))}
+
+
+def _verkko_naytolle(v):
+    """Agentin hakulausekkeet ja haetut osoitteet tiloineen (A1101: nakyvat kortissa). Ei sivujen sisaltoa."""
+    p = yksityinen.puhdista_naytolle
+    v = v if isinstance(v, dict) else {}
+    haut = [{"lauseke": p(str(h.get("lauseke") or ""))[:300], "tulos": p(str(h.get("tulos") or ""))[:20],
+             "tila": p(str(h.get("tila") or ""))[:40]}
+            for h in (v.get("haut") if isinstance(v.get("haut"), list) else [])[:200] if isinstance(h, dict)]
+    sivut = [{"url": p(str(s.get("url") or ""))[:2000], "tila": p(str(s.get("tila") or ""))[:40]}
+             for s in (v.get("sivut") if isinstance(v.get("sivut"), list) else [])[:200] if isinstance(s, dict)]
+    return {"haut": haut, "sivut": sivut}
 
 
 def tulos_merkinta(tunnus, tila_):

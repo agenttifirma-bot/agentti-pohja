@@ -2,6 +2,10 @@
 
 Ei verkkoa, ei aliprosesseja, ei koodin ajoa. Rakennetesti varmistaa, ettei tama moduuli tuo
 urllib-, socket-, http- eika subprocess-moduuleja. Poistotyokalua ei ole.
+
+Verkkotyokalut hae ja sivu (A1101) eivat avaa yhteytta itse: ne kutsuvat vain parametrina annettua hakuistuntoa
+(`verkko`, aivo.verkkohaku.Hakuistunto), joka kulkee vartijan ja hakuvalittajan kautta. Ilman istuntoa ne
+palauttavat virheen.
 Kaikki virheet palautetaan Tulos-oliona; mikaan mallin antama arvo ei nosta poikkeusta ulos.
 """
 import os
@@ -171,10 +175,64 @@ def valmis(juuri, arg):
 
 
 TYOKALUT = {"lue": lue, "kirjoita": kirjoita, "listaa": listaa, "valmis": valmis}
+RAJA_SIVU_MALLILLE = 30_000  # merkkia; sama kuin hakuvalittajan tekstiraja
 
 
-def suorita(juuri, nimi, arg):
-    """Ajaa yhden tyokalun tyokansiossa `juuri`. Ei nosta poikkeusta: virhe tulee Tulos(ok=False)-oliona."""
+def hae(verkko, arg):
+    _tarkista_avaimet(arg, ("lauseke",))
+    lauseke = arg.get("lauseke")
+    if not isinstance(lauseke, str) or not lauseke.strip():
+        raise TyokaluVirhe("lauseke puuttuu")
+    tulokset = verkko.hae(lauseke)
+    if not tulokset:
+        return Tulos(True, "(ei tuloksia)")
+    rivit = ["%d. %s\n   %s\n   %s" % (r["n"], puhdista(r["otsikko"]), puhdista(r["url"]), puhdista(r["ote"]))
+             for r in tulokset]
+    return Tulos(True, "\n".join(rivit) + "\n[sivu-tyokalulle kelpaavat vain nama osoitteet sellaisinaan]")
+
+
+def sivu(verkko, arg):
+    _tarkista_avaimet(arg, ("url",))
+    url = arg.get("url")
+    if not isinstance(url, str) or not url:
+        raise TyokaluVirhe("url puuttuu")
+    s = verkko.sivu(url)
+    teksti = puhdista(s["teksti"])[:RAJA_SIVU_MALLILLE]
+    return Tulos(True, "lahde [%d] %s\n%s%s" % (s["n"], puhdista(s["url"]), teksti,
+                                              "\n[katkaistu]" if s.get("katkaistu") else ""))
+
+
+VERKKOTYOKALUT = {"hae": hae, "sivu": sivu}
+
+
+def _verkko(nimi, arg, verkko):
+    if verkko is None:
+        return Tulos(False, "verkkohaku ei ole kaytossa tassa tehtavassa")
+    if not isinstance(arg, dict):
+        return Tulos(False, "arg pitaa olla JSON-olio")
+    try:
+        return VERKKOTYOKALUT[nimi](verkko, arg)
+    except TyokaluVirhe as e:
+        return Tulos(False, str(e))
+    except Exception as e:  # HakuVirhe: viesti on lyhyt koodi (esim. vartija_kysy); muut: vain tyypin nimi
+        if type(e).__name__ == "HakuVirhe":
+            return Tulos(False, "haku: " + str(e)[:80] + _VIHJE.get(str(e), ""))
+        return Tulos(False, "sisainen virhe (" + type(e).__name__ + ")")
+
+
+_VIHJE = {
+    "vartija_kysy": " (vartija merkitsi lausekkeen; muotoile yleisempi lauseke ilman nimia, paikkoja tai tunnisteita)",
+    "vartija_esta": " (lausekkeessa on estetty tietotyyppi; tata ei voi ohittaa)",
+    "url_ei_tuloksissa": " (hae ensin; vain taman tehtavan hakutulosten osoitteet kelpaavat sellaisinaan)",
+    "askelraja_lahella": " (mallikutsuja on jaljella vain tarkastukselle; kirjoita raportti ja kutsu valmis)",
+}
+
+
+def suorita(juuri, nimi, arg, verkko=None):
+    """Ajaa yhden tyokalun tyokansiossa `juuri`. Ei nosta poikkeusta: virhe tulee Tulos(ok=False)-oliona.
+    `verkko` = hakuistunto tai None (hae ja sivu eivat ole kaytossa)."""
+    if nimi in VERKKOTYOKALUT:
+        return _verkko(nimi, arg, verkko)
     toiminto = TYOKALUT.get(nimi)
     if toiminto is None:
         return Tulos(False, "tuntematon tyokalu")

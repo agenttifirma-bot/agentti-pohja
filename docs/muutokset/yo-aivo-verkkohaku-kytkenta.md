@@ -1,0 +1,1 @@
+- aivo-verkkohaku: kytkentä yksityiseen chattiin ([[HAKU]]-merkintä, vartijan esto/kysy/turvallinen, Tonyn vahvistus), taustaajon työtyyppi haku (lähteet, DATA-kehys, URL-sallintalista) ja agenttien työkalut hae ja sivu; hakuloki ilman sisältöä 30 päivää (RAJATTU, A1101)
