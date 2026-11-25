@@ -10,9 +10,14 @@ Kohde (tyoklooni): tulokset/, tehtavat/, pohdinta-vastaukset.md, kompassi.md, fa
 Kumpikin ajo hallitsee vain omia polkujaan: perusajo ei koske kompassiin eika faktoihin, --aivo ei koske tuloksiin.
 Samaan tyoklooniin ajetaan yksi vienti kerrallaan (lukko <tyo>.lukko).
 
-Siivous: tiedosto, jossa on avaimen muotoinen merkkijono (sk-, ghp_, github_pat_, Telegram-token, yksityisen avaimen otsake),
-jatetaan kokonaan pois (kirjataan vain nimi). Muuten poistetaan avain=arvo-parit sekka IPv4-osoitteet ja *.ts.net-nimet.
-Tiedostot yli 200 kt jatetaan pois. Symbolisia linkkeja ei seurata. Jos mikaan ei muuttunut, committia ei tehda.
+Siivous: tulos- tai tehtavatiedosto, jossa on avaimen muotoinen merkkijono (sk-, ghp_, github_pat_, Telegram-token,
+yksityisen avaimen otsake), jatetaan kokonaan pois (kirjataan vain nimi). YKSITTAISET-tiedostosta (pohdinta-vastaukset.md)
+jatetaan pois vain se merkinta ("- **A..."-merkinta tai ensimmaista merkintaa edeltava alku), jossa avaimen muotoinen
+merkkijono on; tilalle tulee rivi "[merkinta poistettu: ...]" ja ohitettuihin kirjataan vain lukumaara, ei sisaltoa.
+Kaikesta poistetaan lisaksi avain=arvo-parit seka IPv4-osoitteet ja *.ts.net-nimet.
+Koko: tulokset ja tehtavat yli MAX_TAVUA (200 kt) jatetaan pois. YKSITTAISET-tiedostosta yli YKSITTAISET_MAX_TAVUA (4 Mt)
+viedaan loppuosa merkinnan alusta alkaen, ja alkuun lisataan rivi "[alku jatetty pois: N tavua]" (lukija lukee vain lopun).
+Symbolisia linkkeja ei seurata. Jos mikaan ei muuttunut, committia ei tehda.
 
 Kaytto: python3 -m agentti.docs_vienti [--aivo] [--kuiva]
 Ymparisto: DOCS_VIENTI_LAHDE (/opt/agenttifirma-docs), DOCS_VIENTI_TYO (/var/lib/docs-vienti/agenttidata),
@@ -65,6 +70,13 @@ AVAIN_MUOTOISET = [
     re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{30,}\b"),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
 ]
+# Pohdinta-vastausten merkinnan alku (sama kuin aivo/agenttidata_kehote.py:n MERKINTA_RE); tavuversio vaatii rivinvaihdon eteen.
+MERKINTA_RE = re.compile(r"(?m)^[ \t]*[-*][ \t]+\*\*A[0-9]{1,6}\b")
+MERKINTA_RE_B = re.compile(rb"\n([ \t]*[-*][ \t]+\*\*A[0-9]{1,6}\b)")
+# Merkintakohtaisessa poistossa myos yksityisen avaimen loppurivi (jos otsake jaisi eri osaan).
+PEM_LOPPU = re.compile(r"-----END [A-Z ]*PRIVATE KEY-----")
+ALKU_POIS = "[alku j\u00e4tetty pois: %d tavua]\n"
+MERKINTA_POIS = "[merkint\u00e4 poistettu: avaimen muotoinen merkkijono]\n"
 IPV4 = re.compile(r"(?<![0-9.])(?:\d{1,3}\.){3}\d{1,3}(?![0-9])")
 TAILNET = re.compile(r"(?i)\b(?:[a-z0-9-]+\.)+ts\.net\b")
 
@@ -98,6 +110,39 @@ def osoite_sallittu(osoite, isanta):
 
 def avainmuotoinen(teksti):
     return any(p.search(teksti) for p in AVAIN_MUOTOISET)
+
+
+def lue_loppuosa(polku, raja):
+    """Palauttaa (teksti, pois_tavua). Jos tiedosto on yli `raja` tavua, luetaan loppu niin, etta tulos
+    alkuriveineen on enintaan `raja` tavua, ja se alkaa ensimmaisen kokonaisen merkinnan alusta (ilman merkintoja
+    ensimmaisen kokonaisen rivin alusta). Puolikasta rivia ei koskaan palauteta."""
+    with open(polku, "rb") as f:
+        koko = os.fstat(f.fileno()).st_size
+        if koko <= raja:
+            return f.read(raja + 1).decode("utf-8", "replace"), 0
+        luku = max(raja - len((ALKU_POIS % koko).encode("utf-8")), 0)
+        f.seek(koko - luku - 1)                      # yksi tavu lisaa: nahdaan, alkaako luettu osa rivin alusta
+        data = f.read(luku + 1)
+    m = MERKINTA_RE_B.search(data)
+    if m:
+        alku = m.start(1)
+    else:
+        rv = data.find(b"\n")
+        alku = rv + 1 if rv >= 0 else len(data)
+    return data[alku:].decode("utf-8", "replace"), koko - (len(data) - alku)
+
+
+def poista_avainmerkinnat(teksti):
+    """Korvaa jokaisen merkinnan (ja merkintoja edeltavan alun), jossa on avaimen muotoinen merkkijono,
+    rivilla MERKINTA_POIS. Palauttaa (teksti, poistettujen maara)."""
+    alut = [0] + [m.start() for m in MERKINTA_RE.finditer(teksti) if m.start() > 0]
+    osat, poistettu = [], 0
+    for a, b in zip(alut, alut[1:] + [len(teksti)]):
+        osa = teksti[a:b]
+        if avainmuotoinen(osa) or PEM_LOPPU.search(osa):
+            osa, poistettu = MERKINTA_POIS, poistettu + 1
+        osat.append(osa)
+    return "".join(osat), poistettu
 
 
 def siivoa(teksti):
@@ -145,16 +190,25 @@ def valmista(lahde, kohde, aivo=False):
         (kohde / nimi).unlink(missing_ok=True)
     kopioitu, ohitetut = 0, []
     for suht, p in _lahteet(lahde, aivo):
+        yksittainen = suht in YKSITTAISET
         try:
-            raja = YKSITTAISET_MAX_TAVUA if suht in YKSITTAISET else MAX_TAVUA
-            if p.stat().st_size > raja:
-                ohitetut.append((suht, "yli %d tavua" % raja))
+            if yksittainen:
+                teksti, pois = lue_loppuosa(p, YKSITTAISET_MAX_TAVUA)
+            elif p.stat().st_size > MAX_TAVUA:
+                ohitetut.append((suht, "yli %d tavua" % MAX_TAVUA))
                 continue
-            teksti = p.read_text(encoding="utf-8", errors="replace")
+            else:
+                teksti = p.read_text(encoding="utf-8", errors="replace")
         except OSError as virhe:
             ohitetut.append((suht, type(virhe).__name__))
             continue
-        if avainmuotoinen(teksti):
+        if yksittainen:
+            teksti, poistettu = poista_avainmerkinnat(teksti)
+            if poistettu:
+                ohitetut.append((suht, "merkinta poistettu (%d)" % poistettu))
+            if pois:
+                teksti = ALKU_POIS % pois + teksti
+        if avainmuotoinen(teksti):                   # tulokset/tehtavat; YKSITTAISET vain varmistuksena
             ohitetut.append((suht, "avaimen muotoinen merkkijono"))
             continue
         ulos = kohde / suht

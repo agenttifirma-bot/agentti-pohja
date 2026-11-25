@@ -174,7 +174,9 @@ class VaarennysTesti(AgenttiPohja):
         kid = self.uusi()
         t = self.ehdota(kid)
         sha8 = yksityinen.sha(TEHTAVA)[:8]
-        for vaara in ("../" + t, t.upper(), t + "0", "0" * 12, "", None, 5):
+        # t.upper() vain, jos tunnuksessa on kirjain (pelkista numeroista koostuva tunnus on sama isoilla kirjaimilla).
+        isot = (t.upper(),) if t.upper() != t else ()
+        for vaara in ("../" + t, t + "0", "0" * 12, "", None, 5) + isot:
             s, _ = self.kaynnista(kid, vaara, "kyll\u00e4 " + sha8)
             self.assertIn(s, (400, 409), vaara)
             s, _ = self.pyynto("GET", "/api/agentti?keskustelu=%s&tunnus=%s" % (kid, vaara))

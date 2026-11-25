@@ -1,0 +1,1 @@
+- docs-vienti: yli 4 Mt:n pohdinta-vastaukset.md viedään loppuosana merkinnän alusta ("[alku jätetty pois: N tavua]"), ja avaimen muotoinen merkkijono poistaa siitä vain kyseisen merkinnän eikä koko tiedostoa; tulokset ja tehtävät ennallaan. Lisäksi korjattu satunnaisesti kaatunut testi test_vaarennetty_tai_vieras_tunnus_hylataan (pelkistä numeroista koostuva tunnus).

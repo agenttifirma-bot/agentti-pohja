@@ -150,10 +150,53 @@ class SallitutPolut(Pohja):
         self.assertEqual(ohitetut, [])
         self.assertTrue((self.tyo / "pohdinta-vastaukset.md").exists())
 
-    def test_pohdinta_yli_oman_rajan_ohitetaan(self):
-        self.kirjoita("pohdinta-vastaukset.md", "a" * (dv.YKSITTAISET_MAX_TAVUA + 1))
-        kopioitu, ohitetut = dv.valmista(self.lahde, self.tyo, False)
-        self.assertEqual([n for n, _ in ohitetut], ["pohdinta-vastaukset.md"])
+    def test_pohdinta_yli_oman_rajan_viedaan_loppuosa(self):
+        merk = "".join("- **A%d** vastaus %d\nlisarivi\n" % (i, i) for i in range(400))
+        self.kirjoita("pohdinta-vastaukset.md", "# Pohdinta\n" + merk)
+        koko = len(("# Pohdinta\n" + merk).encode())
+        with mock.patch.object(dv, "YKSITTAISET_MAX_TAVUA", 2000):
+            kopioitu, ohitetut = dv.valmista(self.lahde, self.tyo, False)
+        self.assertEqual((kopioitu, ohitetut), (1, []))
+        t = (self.tyo / "pohdinta-vastaukset.md").read_text(encoding="utf-8")
+        self.assertLessEqual(len(t.encode()), 2000)
+        rivit = t.split("\n")
+        self.assertRegex(rivit[0], r"^\[alku j\u00e4tetty pois: \d+ tavua\]$")
+        self.assertTrue(rivit[1].startswith("- **A"), rivit[1])
+        self.assertTrue(t.endswith("- **A399** vastaus 399\nlisarivi\n"))
+        pois = int(rivit[0].split(": ")[1].split()[0])
+        self.assertEqual(pois + len("\n".join(rivit[1:]).encode()), koko)   # tavumaara tasmaa
+        self.assertNotIn("# Pohdinta", t)
+
+    def test_pohdinta_loppuosa_ilman_merkintoja_alkaa_rivin_alusta(self):
+        self.kirjoita("pohdinta-vastaukset.md", "".join("rivi %04d\n" % i for i in range(1000)))
+        with mock.patch.object(dv, "YKSITTAISET_MAX_TAVUA", 500):
+            dv.valmista(self.lahde, self.tyo, False)
+        rivit = (self.tyo / "pohdinta-vastaukset.md").read_text(encoding="utf-8").split("\n")
+        self.assertTrue(rivit[0].startswith("[alku j\u00e4tetty pois: "))
+        self.assertRegex(rivit[1], r"^rivi \d{4}$")
+        self.assertEqual(rivit[-2], "rivi 0999")
+
+    def test_pohdinta_loppuosa_siivotaan(self):
+        teksti = "- **A1** vanha\n" + "x\n" * 3000 + "- **A2** token: abcdefgh12345678 kone %s %s\n" % (IP, TS_NIMI)
+        self.kirjoita("pohdinta-vastaukset.md", teksti)
+        with mock.patch.object(dv, "YKSITTAISET_MAX_TAVUA", 1000):
+            self.vie()
+        t = self.eteteksti("pohdinta-vastaukset.md")
+        for kielletty in ("abcdefgh12345678", IP, "ts.net", "tail1234"):
+            self.assertNotIn(kielletty, t)
+        self.assertIn("- **A2**", t)
+        self.assertNotIn("- **A1**", t)
+
+    def test_pohdinta_katkaisu_ei_jata_avaimen_loppua(self):
+        # Katkaisu osuu keskelle avainta: puolikas (ei enaa avainmuotoinen) ei saa paatya kopioon.
+        teksti = "- **A1** " + AVAIN_GH + "\n- **A2** puhdas\n"
+        self.kirjoita("pohdinta-vastaukset.md", teksti)
+        raja = len("- **A2** puhdas\n") + 20 + len(dv.ALKU_POIS % len(teksti))
+        with mock.patch.object(dv, "YKSITTAISET_MAX_TAVUA", raja):
+            dv.valmista(self.lahde, self.tyo, False)
+        t = (self.tyo / "pohdinta-vastaukset.md").read_text(encoding="utf-8")
+        self.assertNotIn("x" * 5, t)
+        self.assertTrue(t.endswith("- **A2** puhdas\n"))
 
     def test_poistunut_lahde_poistuu_kopiosta(self):
         a = self.kirjoita("tulokset/a.md", "a")
@@ -211,6 +254,42 @@ class Siivous(Pohja):
         self.kirjoita("tulokset/ok.md", "puhdas")
         self.assertIn("ohitettu 3", self.vie())
         self.assertEqual(self.etepolut(), ["tulokset/ok.md"])
+
+    def test_pohdinta_avainmuotoinen_merkinta_pois_muut_jaavat(self):
+        self.kirjoita("pohdinta-vastaukset.md", "# Pohdinta\n- **A1** ok yksi\n- **A2** vuoti %s\n  jatkorivi\n- **A3** ok kolme\n"
+                      "* **A4** -----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n- **A5** viimeinen\n" % AVAIN_SK)
+        kopioitu, ohitetut = dv.valmista(self.lahde, self.tyo, False)
+        self.assertEqual(kopioitu, 1)
+        self.assertEqual(ohitetut, [("pohdinta-vastaukset.md", "merkinta poistettu (2)")])
+        t = (self.tyo / "pohdinta-vastaukset.md").read_text(encoding="utf-8")
+        for jaa in ("# Pohdinta", "- **A1** ok yksi", "- **A3** ok kolme", "- **A5** viimeinen"):
+            self.assertIn(jaa, t)
+        for pois in (AVAIN_SK, "vuoti", "jatkorivi", "PRIVATE KEY", "abc", "**A2**", "**A4**"):
+            self.assertNotIn(pois, t)
+        self.assertEqual(t.count("[merkint\u00e4 poistettu: avaimen muotoinen merkkijono]"), 2)
+
+    def test_pohdinta_avain_alussa_ennen_merkintoja(self):
+        self.kirjoita("pohdinta-vastaukset.md", "# Otsikko %s\n- **A1** ok\n" % AVAIN_GH)
+        tulos = self.vie()
+        self.assertIn("ohitettu 1", tulos)
+        t = self.eteteksti("pohdinta-vastaukset.md")
+        self.assertNotIn(AVAIN_GH, t)
+        self.assertNotIn("Otsikko", t)
+        self.assertIn("- **A1** ok", t)
+
+    def test_pohdinta_pem_loppurivi_yksin_poistaa_merkinnan(self):
+        self.kirjoita("pohdinta-vastaukset.md", "- **A1** abc\n-----END RSA PRIVATE KEY-----\n- **A2** ok\n")
+        dv.valmista(self.lahde, self.tyo, False)
+        t = (self.tyo / "pohdinta-vastaukset.md").read_text(encoding="utf-8")
+        self.assertNotIn("abc", t)
+        self.assertIn("- **A2** ok", t)
+
+    def test_tulos_avainmuotoinen_yha_kokonaan_pois(self):
+        self.kirjoita("tulokset/a.md", "- **A1** ok\n- **A2** %s\n" % AVAIN_SK)
+        self.kirjoita("tehtavat/b.md", "- **A1** %s\n" % AVAIN_GH)
+        kopioitu, ohitetut = dv.valmista(self.lahde, self.tyo, False)
+        self.assertEqual(kopioitu, 0)
+        self.assertEqual(sorted(ohitetut), [("tehtavat/b.md", "avaimen muotoinen merkkijono"), ("tulokset/a.md", "avaimen muotoinen merkkijono")])
 
     def test_sk_sanan_keskella_ei_ole_avain(self):
         self.kirjoita("tulokset/a.md", "risk-assessment-framework-document on hyva")
