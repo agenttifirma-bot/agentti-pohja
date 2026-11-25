@@ -1,0 +1,64 @@
+# Hakukontin SearXNG-asetukset (pohja). Asennus: /etc/searxng/settings.yml (root:searxng 0640).
+# Ohje: docs/aivo-hakukontti.md. @SALAINEN_AVAIN@ korvataan asennuksessa satunnaisella arvolla (ohje ei tulosta sita).
+# Periaatteet: kuuntelee vain silmukkaosoitetta, kaikki ulosmeno Torin SOCKS-portin kautta (socks5h: myos DNS Torin kautta),
+# ei automaattitaydennysta, ei kuvavalitysta, ei rajoitinta (yksityinen kaytto), vain JSON-vastaukset.
+use_default_settings:
+  engines:
+    # Aloitusjoukko (suunnitelma kohta 2). Lopullinen joukko valitaan moottorimittauksella (mittaa_moottorit.py).
+    keep_only:
+      - duckduckgo
+      - brave
+      - mojeek
+      - wikipedia
+      - wikidata
+      - bing
+
+general:
+  debug: false
+  instance_name: "hakukontti"
+  enable_metrics: false
+
+server:
+  bind_address: "127.0.0.1"
+  port: 8888
+  secret_key: "@SALAINEN_AVAIN@"
+  limiter: false
+  public_instance: false
+  image_proxy: false
+  method: "GET"
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "en"
+  formats:
+    - json
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 30.0
+  # Tor lisaa viivetta: tama lisataan jokaisen moottorin aikarajaan.
+  extra_proxy_timeout: 10
+  using_tor_proxy: true
+  proxies:
+    all://:
+      - socks5h://127.0.0.1:9050
+
+valkey:
+  url: false
+
+engines:
+  # keep_only vain rajaa joukon eika kytke moottoreita paalle. Osa (esim. mojeek, bing) on oletuksissa pois paalta,
+  # joten kaikki aloitusjoukon moottorit kytketaan tassa paalle, jotta mittaus ei luokittele niita virheellisesti tyhjiksi.
+  - name: duckduckgo
+    disabled: false
+  - name: brave
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: wikipedia
+    disabled: false
+  - name: wikidata
+    disabled: false
+  - name: bing
+    disabled: false
