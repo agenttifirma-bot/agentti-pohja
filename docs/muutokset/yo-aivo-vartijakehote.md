@@ -1,0 +1,1 @@
+- aivo: paikallisen vartijamallin few-shot-kehote ja JSON-skeema (aivo/vartija_kehote.py) sekä arviointiajuri (aivo/vartija_arvio.py), joka kutsuu vain käynnissä olevaa loopback-mallia ja laskee osuvuuden. Kelvoton vastaus, tuntematon riski tai liian pitkä syy antaa tilan ei-tarkistanut. Vuotovartijan kulku ei muutu.
