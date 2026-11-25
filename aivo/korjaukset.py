@@ -15,6 +15,7 @@ import json
 import os
 import re
 import stat
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,7 +44,7 @@ LUKU_YLARAJA = 1_000_000                  # tavua tiedoston lopusta; vanhemmat r
 HAUN_ALKU = 5                             # sama sananalkuhaku kuin chat.lue_muisti
 _NORMALISOI = str.maketrans({"\u00e4": "a", "\u00f6": "o", "\u00e5": "a"})
 EHDOTUS_NIMI_RE = re.compile(r"korjaukset-([a-z]+)\.md")
-_MATKITTU_TOISTO_RE = re.compile(r"toistuva\s+korjaus", re.I)
+_MATKITTU_TOISTO_RE = re.compile(r"t[o0]istuva[\W_]*k[o0]rjaus", re.I)
 
 
 class KorjausVirhe(yksityinen.YksityinenVirhe):
@@ -97,7 +98,8 @@ def valmistele(kansio):
 
 
 def _kirjoita(kansio, tietue):
-    rivi = (json.dumps(tietue, ensure_ascii=False) + "\n").encode("utf-8")
+    # ensure_ascii: U+2028/U+0085 yms. eivat paase riville raakana (lue() jakaa vain \n:lla, mutta varmuuden vuoksi)
+    rivi = (json.dumps(tietue, ensure_ascii=True) + "\n").encode("ascii")
     fd = _avaa_lisays(kansio)
     try:
         os.write(fd, rivi)
@@ -148,17 +150,25 @@ def lue(kansio):
     (LUKU_YLARAJA tavua) luetaan."""
     p = Path(kansio) / TIEDOSTO
     try:
-        fd = os.open(p, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = os.open(p, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))   # FIFO ei jumita
     except FileNotFoundError:
         return []
     except OSError as e:
         raise KorjausVirhe("korjauksia ei voi lukea (%s)" % type(e).__name__)
+    try:
+        st = os.fstat(fd)
+    except OSError as e:
+        os.close(fd)
+        raise KorjausVirhe("korjauksia ei voi lukea (%s)" % type(e).__name__)
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid():
+        os.close(fd)
+        raise KorjausVirhe("korjaustiedosto ei ole palvelun oma tavallinen tiedosto")
     with os.fdopen(fd, "rb") as f:
         koko = os.fstat(f.fileno()).st_size
         alku = max(0, koko - LUKU_YLARAJA)
         f.seek(alku)
         data = f.read(LUKU_YLARAJA)
-    rivit = data.decode("utf-8", "replace").splitlines()
+    rivit = data.decode("utf-8", "replace").split("\n")      # ei splitlines: se katkaisee myos U+2028/U+0085
     if alku and rivit:
         rivit = rivit[1:]                       # ensimmainen rivi voi olla katkennut
     tulos = []
@@ -209,7 +219,10 @@ def _osumat(alut, teksti):
 
 def _siisti(teksti, raja, raja_merkki):
     """Tonyn teksti kehotteeseen datana: ei palvelimen merkintojen matkintaa, ei lohkomerkintoja, ei muistin rajaa."""
-    t = teksti.replace(raja_merkki, "").replace("\x00", "").replace("[[", "[ [").replace("]]", "] ]")
+    t = unicodedata.normalize("NFKC", teksti)        # leveat sulkeet ja hajotetut aakkoset yhtenaisiksi
+    t = "".join(c for c in t if unicodedata.category(c) not in ("Cc", "Cf") or c in "\n\t")
+    while raja_merkki in t:                             # sisakkainen merkki ei palaa yhden kierroksen jalkeen
+        t = t.replace(raja_merkki, "").replace("[[", "[ [").replace("]]", "] ]")
     t = yksityinen.neutraloi_merkinnat(t)
     t = _MATKITTU_TOISTO_RE.sub("toistuva-korjaus (Tonyn teksti)", t)
     t = " ".join(t.split())

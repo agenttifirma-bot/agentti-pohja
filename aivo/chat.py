@@ -331,7 +331,8 @@ function palaute(d,idx){const g=document.createElement('div');g.className='palau
  const ti=document.createElement('span');ti.className='pieni';
  async function tallenna(b){const r=await fetch('/api/palaute',{method:'POST',headers:H,body:JSON.stringify(Object.assign({keskustelu:kid,indeksi:idx},b))});
   if(r.status===401){location.href='/kirjaudu';return null;}let j={};try{j=await r.json();}catch(z){}return {r:r,j:j};}
- hy.onclick=async()=>{hy.disabled=va.disabled=true;const a=await tallenna({arvio:'hyva'});if(!a)return;
+ async function turva(b){try{return await tallenna(b);}catch(x){return {r:{ok:false,status:'yhteysvirhe'},j:{}};}}
+ hy.onclick=async()=>{hy.disabled=va.disabled=true;const a=await turva({arvio:'hyva'});if(!a)return;
   ti.textContent=a.r.ok?(a.j.teksti||'Tallennettu.'):('Ei tallennettu: '+(a.j.virhe||a.r.status));if(!a.r.ok)hy.disabled=va.disabled=false;};
  va.onclick=()=>{hy.disabled=va.disabled=true;const k=document.createElement('div');k.className='korjaus';
   const sl=document.createElement('select');Object.keys(KLUOKAT).forEach(x=>{const o=document.createElement('option');o.value=x;o.textContent=KLUOKAT[x];sl.appendChild(o);});
@@ -340,7 +341,7 @@ function palaute(d,idx){const g=document.createElement('div');g.className='palau
   pe.onclick=()=>{k.remove();hy.disabled=va.disabled=false;};
   ok.onclick=async()=>{const s=ta.value.trim();if(!s){ti.textContent='Kirjoita korjaus.';return;}
    if(pituus(s)>KRAJA){ti.textContent='Korjaus on '+tuhat(pituus(s))+' merkki\u00e4, raja '+tuhat(KRAJA)+'.';return;}
-   ok.disabled=pe.disabled=true;const a=await tallenna({arvio:'vaarin',luokka:sl.value,korjaus:s});if(!a)return;
+   ok.disabled=pe.disabled=true;const a=await turva({arvio:'vaarin',luokka:sl.value,korjaus:s});if(!a)return;
    ti.textContent=a.r.ok?(a.j.teksti||'Tallennettu.'):('Ei tallennettu: '+(a.j.virhe||a.r.status));
    if(a.r.ok){ta.readOnly=true;sl.disabled=true;ok.remove();pe.remove();}else{ok.disabled=pe.disabled=false;}};
   k.append(sl,ta,ok,pe);g.insertBefore(k,ti);alas();};
@@ -893,7 +894,7 @@ class Keskustelut:
         p = self._polku(kid)
         if not p.exists():
             raise ChatVirhe("keskustelua ei ole")
-        return [json.loads(r) for r in p.read_text(encoding="utf-8").splitlines() if r.strip()]
+        return [json.loads(r) for r in p.read_text(encoding="utf-8").split("\n") if r.strip()]   # ei splitlines: U+2028/U+0085 viestissa
 
 
 # Ydinohjeen hyvaksynta chat-sivulta: vahvistus tasmalleen "kylla <sha8>" (a-kirjaimella, pienin kirjaimin), sitten
