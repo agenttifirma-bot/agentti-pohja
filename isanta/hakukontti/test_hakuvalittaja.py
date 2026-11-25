@@ -1060,6 +1060,7 @@ class Yksikkotiedosto(unittest.TestCase):
         self.assertEqual(komennot[kontista_122[0]], "Odotettu: `401`.")
         sisalta = 'pct exec 123 -- curl -sS -m 10 -o /dev/null -X POST "http://$IP123:8890/haku"; echo "paluuarvo $?"'
         self.assertIn("`52`", komennot[sisalta])
+        self.assertIn("`56`", komennot[sisalta])
         self.assertTrue(any("hylatty_osoite" in k for k in komennot))
         # Avainta ei tulosteta: ohjeessa ei ole cat-komentoa avaintiedostolle.
         self.assertNotRegex(ohje, r"cat\s+/etc/aivo-haku/avain")

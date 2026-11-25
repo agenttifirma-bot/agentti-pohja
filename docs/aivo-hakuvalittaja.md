@@ -235,7 +235,7 @@ Testi 6. Hakuvälittäjä ei vastaa muualta kuin kontista 122, ei edes kontin om
 ```bash
 pct exec 123 -- curl -sS -m 10 -o /dev/null -X POST "http://$IP123:8890/haku"; echo "paluuarvo $?"
 ```
-Odotettu: `Empty reply from server` ja paluuarvo `52`. Paluuarvo `0` tai HTTP-vastaus tarkoittaa, että rajaus ei toimi: pysähdy.
+Odotettu: `Empty reply from server` ja paluuarvo `52` tai `Connection reset by peer` ja paluuarvo `56`. Kumpikin tarkoittaa, että välittäjä sulki yhteyden vastaamatta. Paluuarvo `0` tai HTTP-vastaus tarkoittaa, että rajaus ei toimi: pysähdy.
 
 Testi 7. Kontista 115 yhteys porttiin 8890 estyy palomuurissa.
 
