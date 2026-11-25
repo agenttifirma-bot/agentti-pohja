@@ -800,12 +800,15 @@ class Asiakasrajaus(Pohja):
         self.assertNotIn("127.0.0.1", self.loki.getvalue())  # asiakkaan osoitetta ei kirjata
 
     def test_sallittu_osoite_palvellaan(self):
-        p = self.uusi_palvelin({ip4(127, 0, 0, 2)})
+        koe = socket.socket()
         try:
-            tila = self.yhteys(p, lahde=ip4(127, 0, 0, 2))
-        except OSError as e:  # jarjestelma ei salli lahdeosoitetta 127.0.0.2
+            koe.bind((ip4(127, 0, 0, 2), 0))
+        except OSError as e:  # jarjestelma (esim. macOS) ei salli lahdeosoitetta 127.0.0.2
             self.skipTest(type(e).__name__)
-        self.assertEqual(tila, 200)
+        finally:
+            koe.close()
+        p = self.uusi_palvelin({ip4(127, 0, 0, 2)})
+        self.assertEqual(self.yhteys(p, lahde=ip4(127, 0, 0, 2)), 200)
 
     def test_jokeri_ja_nimi_hylataan(self):
         kasittelija = hv.tee_kasittelija(self.valittaja)
