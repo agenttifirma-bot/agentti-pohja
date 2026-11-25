@@ -19,8 +19,8 @@ Rajat (koodi on laki):
   * Enintaan PAIVARAJA ajattelijatyota (tyyppi "analyysi") vuorokaudessa (Europe/Helsinki). Asetus voi vain laskea
     rajaa, ei nostaa PAIVARAJA_MAX:n yli. Tyo varataan laskuriin ennen ensimmaista kutsua. Hakutyot (tyyppi "haku")
     eivat kuluta tata rajaa, eika niilla ole omaa maararajaa (A1101): niita rajaa yhteinen paivakatto.
-  * Yksi ajo aloittaa enintaan AJON_TYORAJA tyota (myos haut); loput jaavat jonoon seuraavaan ajoon. Tama rajaa vain
-    yhden ajon keston (systemd TimeoutStartSec), ei tehtavien maaraa vuorokaudessa.
+  * Yksi ajo aloittaa enintaan paivaraja-asetuksen verran toita (myos haut, kuten ennenkin); loput jaavat jonoon
+    seuraavaan ajoon. Tama rajaa vain yhden ajon keston (systemd TimeoutStartSec), ei hakujen maaraa vuorokaudessa.
   * Tyon kokonaisaikaraja (AIKARAJA_S, asetus enintaan AIKARAJA_MAX_S). Jokainen kutsu saa aikarajaksi enintaan
     jaljella olevan ajan; kun aika on lopussa, uutta kutsua ei aloiteta.
   * Enintaan 2 mallikutsua per tyo (ajattelija ja keskustelija).
@@ -64,7 +64,6 @@ OLETUS_VARTIJA_LISTAT = "/var/lib/aivo-yksityinen/luovutukset/vartija"
 TZ = ZoneInfo("Europe/Helsinki")
 PAIVARAJA = 5                     # oletus: tyota vuorokaudessa
 PAIVARAJA_MAX = 20                # asetus ei voi nostaa tata korkeammaksi
-AJON_TYORAJA = PAIVARAJA_MAX      # yhden ajon tyot (myos haut): kesto enintaan 20 x AIKARAJA_MAX_S (TimeoutStartSec)
 AIKARAJA_S = 600                  # oletus: tyon kokonaisaika
 AIKARAJA_MAX_S = 900              # asetus ei voi nostaa tata korkeammaksi
 MAX_KUTSUT_TYO = 2
@@ -546,9 +545,9 @@ def aja(jono, chat, kysy, roolit, nyt=None, paivaraja=PAIVARAJA, aikaraja_s=AIKA
 
     Yksi ajo aloittaa enintaan `paivaraja` ajattelijatyota; loput jaavat jonoon seuraavaan ajoon. Ilman tata ajo, joka
     alkaa illalla ja jatkuu yli puolenyon, voisi ajaa kahden paivan kiintion perakkain. Hakutyot eivat kuluta
-    paivarajaa (A1101). Kaikkia toita (myos hakuja) aloitetaan yhdessa ajossa enintaan AJON_TYORAJA, joten yhden ajon
-    kesto on enintaan AJON_TYORAJA x aikaraja (koodin ylarajoilla 20 x 15 min), ja systemd-yksikon TimeoutStartSec
-    kattaa sen.
+    paivarajaa (A1101), mutta kaikkia toita (myos hakuja) aloitetaan yhdessa ajossa enintaan `paivaraja`, kuten ennen.
+    Ylimaaraiset haut jaavat jonoon seuraavaan ajoon (ajastin minuutin valein). Nain yhden ajon kesto on enintaan
+    paivaraja x aikaraja (koodin ylarajoilla 20 x 15 min), ja systemd-yksikon TimeoutStartSec kattaa sen.
 
     `haku(tunnus) -> verkkohaku.Hakuistunto` tai None (hakutyot epaonnistuvat ilman verkkoa)."""
     paivaraja = min(int(paivaraja), PAIVARAJA_MAX)
@@ -579,7 +578,6 @@ def aja(jono, chat, kysy, roolit, nyt=None, paivaraja=PAIVARAJA, aikaraja_s=AIKA
                                            _tyyppi_tiedostosta(p))
                 tulos["epaonnistui"] += 1
         tila = lue_tila(jono, nyt)
-        aloitettu = 0                                               # tassa ajossa aloitetut (varatut) ajattelijatyot
         aloitettu_kaikki = 0                                        # kaikki tassa ajossa aloitetut tyot (myos haut)
         for i, polku in enumerate(lista):
             tunnus = polku.stem
@@ -596,14 +594,11 @@ def aja(jono, chat, kysy, roolit, nyt=None, paivaraja=PAIVARAJA, aikaraja_s=AIKA
             kid = tyo["keskustelu"]
             tyyppi = tyo.get("tyyppi", "analyysi")
             hakutyo = tyyppi == "haku"                              # A1101: haku ei kuluta ajattelijan paivarajaa
-            if aloitettu_kaikki >= AJON_TYORAJA:                    # ajon kesto: TimeoutStartSec kattaa taman
-                kirjaa(jono, nyt, "ajon tyoraja taynna, %d tyota jaa jonoon" % (len(lista) - i), tulosta)
-                break
             if not hakutyo and tila["ajettu"] >= paivaraja:
                 _merkitse_epaonnistuneeksi(jono, chat, polku, kid, tunnus, "paivaraja", nyt, tulosta, tyyppi)
                 tulos["epaonnistui"] += 1
                 continue
-            if not hakutyo and aloitettu >= paivaraja:              # vain kun paiva vaihtui kesken ajon
+            if aloitettu_kaikki >= paivaraja:                       # ajon kesto (ennallaan): TimeoutStartSec kattaa
                 kirjaa(jono, nyt, "ajon tyoraja taynna, %d tyota jaa jonoon" % (len(lista) - i), tulosta)
                 break
             # Ensin siirto kesken/:iin, sitten paivapaikan varaus. Jos siirto ei onnistu, tyota ei ajeta eika paikkaa
@@ -617,7 +612,6 @@ def aja(jono, chat, kysy, roolit, nyt=None, paivaraja=PAIVARAJA, aikaraja_s=AIKA
             polku = uusi
             aloitettu_kaikki += 1
             if not hakutyo:
-                aloitettu += 1
                 tila["ajettu"] += 1
                 kirjoita_tila(jono, tila)                           # varaus ennen kutsua
             try:

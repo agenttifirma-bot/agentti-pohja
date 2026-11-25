@@ -195,6 +195,17 @@ def _haku_kysy(kysy):
     return k
 
 
+def _raaka_merkintoja(vastaukset):
+    """True, jos vartijamallin JSON-vastauksen merkinnat-lista ei ole tyhja (muodosta riippumatta)."""
+    for v in vastaukset:
+        try:
+            if isinstance(v, str) and vartija._json_olio(v)["merkinnat"]:
+                return True
+        except (ValueError, TypeError):
+            pass
+    return False
+
+
 def mekaaninen_esto(teksti, listat=None):
     """Mekaanisten osumien tyypit ja esto ilman mallikutsua: {"tulos": "esta"|None, "tyypit": [...]}"""
     nimet, sanat = vartija.lue_listat(listat)
@@ -214,11 +225,15 @@ def tarkista_lauseke(lauseke, listat=None, kysy=None):
     sha = vartija.yksityinen.sha(s)
     if m["tulos"] == ESTA:
         return {"tulos": ESTA, "syyt": m["esto"], "sha": sha}
-    malli = vartija.tarkista_mallilla(s, _haku_kysy(kysy))
+    raaka = []                                     # vartijamallin vastaus ennen jasennysta (jasenna suodattaa)
+    hk = _haku_kysy(kysy)
+    malli = vartija.tarkista_mallilla(s, None if hk is None else (lambda v: raaka.append(hk(v)) or raaka[-1]))
     p = vartija.paatos(m["tyypit"], malli)
     syyt = list(p["syyt"])
     # Hauissa merkitty kohta riittaa kysymiseen myos arviolla "ei" tai "pieni": lauseke lahtee hakukoneelle sellaisenaan.
-    if malli.get("merkinnat") and p["tulos"] != ESTA:
+    # Ratkaisee mallin raaka merkintalista: myos vaaranmuotoinen merkinta (esim. pelkka merkkijono tai tyhja kohta),
+    # jonka vartija.jasenna pudottaa, tarkoittaa etta malli merkitsi jotain.
+    if (malli.get("merkinnat") or _raaka_merkintoja(raaka)) and p["tulos"] != ESTA:
         syyt.append(MERKITTY_SYY)
         return {"tulos": KYSY, "syyt": syyt, "sha": sha}
     return {"tulos": p["tulos"], "syyt": syyt, "sha": sha}

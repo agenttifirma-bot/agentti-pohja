@@ -22,7 +22,7 @@ Mikään ei muutu ennen käyttöönottoa: ilman asetuksia `AIVO_HAKU_JONO` ja `A
 - Sivun saa hakea vain, jos sen osoite on saman tehtävän hakutuloksissa täsmälleen samassa muodossa. Mallin keksimä tai muokkaama osoite hylätään ennen verkkoa (`url_ei_tuloksissa`).
 - Hakuvälittäjälle lähtee satunnainen istuntotunnus, ei tehtävän tunnusta eikä tekstiä.
 - Haettu teksti on dataa: `[[`, `]]`, `<<<` ja `>>>` rikotaan, ja teksti kehystetään satunnaisella tunnuksella.
-- Ei tehtäväkohtaisia haku- tai sivukiintiöitä (A1101). Hakutyöt eivät kuluta taustaajon ajattelijatöiden päivärajaa (`PAIVARAJA`, oletus 5/vrk), eikä niillä ole omaa määrärajaa. Rajoina ovat yhteinen 10 €/vrk päiväkatto, agentin silmukkasuojat (30 kutsua, 20 min), työn aikaraja ja enintään kaksi mallikutsua työtä kohden. Yksi taustaajon ajo aloittaa enintään 20 työtä (`AJON_TYORAJA`); loput jäävät jonoon seuraavaan ajoon minuutin päästä. Raja koskee vain yhden ajon kestoa (systemd `TimeoutStartSec`), ei töiden määrää vuorokaudessa. Ajattelijatöiden päiväraja, päiväkatto ja silmukkasuojat eivät muuttuneet.
+- Ei tehtäväkohtaisia haku- tai sivukiintiöitä (A1101). Hakutyöt eivät kuluta taustaajon ajattelijatöiden päivärajaa (`PAIVARAJA`, oletus 5/vrk), eikä niillä ole omaa määrärajaa. Rajoina ovat yhteinen 10 €/vrk päiväkatto, agentin silmukkasuojat (30 kutsua, 20 min), työn aikaraja ja enintään kaksi mallikutsua työtä kohden. Yksi taustaajon ajo aloittaa edelleen enintään `AIVO_TAUSTA_PAIVARAJA`-asetuksen verran töitä (myös haut); loput jäävät jonoon seuraavaan ajoon minuutin päästä eivätkä epäonnistu. Raja koskee vain yhden ajon kestoa (systemd `TimeoutStartSec`), ei hakujen määrää vuorokaudessa. Ajattelijatöiden päiväraja, päiväkatto ja silmukkasuojat eivät muuttuneet.
 - Valmis hakuvastaus tallennetaan keskusteluhistoriaan DATA-kehyksessä (satunnainen tunnus, `[[`, `]]`, `<<<` ja `>>>` rikottu). Merkintä `[Verkkohaku valmis]` on kehyksen ulkopuolella. Seuraavan vuoron malli näkee vastauksen datana eikä ohjeina.
 - `Hae silti (<sha8>)`: odottava haku varataan atomisesti (tiedoston uudelleennimeäminen) ennen jonotusta. Kaksi samanaikaista vahvistusta jonottaa haun vain kerran; toinen saa vastauksen ”jo vahvistettu tai käsitelty”. Jos jonotus epäonnistuu, odottava haku palautetaan, ja Tony voi vahvistaa sen uudelleen.
 - **Hakuloki:** päiväkohtainen JSONL yksityisessä kansiossa (0700, tiedostot 0600). Rivillä on vain `aika`, `tunnus`, `toiminto` ja `tila`. Lausekkeita, osoitteita eikä sisältöä ei kirjata. Yli 30 päivää vanhat lokitiedostot poistetaan automaattisesti (A1101). Yksityinen tila kirjoittaa kansioon `/var/lib/aivo-yksityinen/haku`, agentit kansioon `/var/lib/aivo-agentit/hakuloki`.
@@ -84,14 +84,19 @@ Odotettu: `YHTEYS OK`.
 Avaimen omistajan pitää olla sama käyttäjä, joka ajaa palvelun. Tarkista käyttäjät ennen avaimen siirtoa.
 
 ```bash
-pct exec 122 -- systemctl show -p User aivo-chat
+CHATKAYTTAJA=$(pct exec 122 -- systemctl show -p User --value aivo-chat); echo "$CHATKAYTTAJA"
 ```
-Odotettu: `User=aivo` tai `User=aivo-yksityinen` (yksityisen tilan ohje).
+Odotettu: `aivo` tai `aivo-yksityinen` (yksityisen tilan ohje).
 
 ```bash
 TAUSTA=$(pct exec 122 -- systemctl show -p User --value aivo-taustaajo); echo "$TAUSTA"
 ```
-Odotettu: sama nimi kuin edellisen komennon `User=`-arvo. Chat kirjoittaa hakutyöt taustaajon jonoon (0700), joten käyttäjien pitää olla samat. Jos ne eroavat tai tulos on tyhjä, pysähdy.
+Odotettu: sama nimi kuin edellisellä rivillä. Chat kirjoittaa hakutyöt taustaajon jonoon (0700), joten käyttäjien pitää olla samat. Jos ne eroavat tai tulos on tyhjä, pysähdy.
+
+```bash
+[ -n "$TAUSTA" ] && [ "$TAUSTA" = "$CHATKAYTTAJA" ] && echo SAMA || echo ERI
+```
+Odotettu: `SAMA`.
 
 ```bash
 TAUSTARYHMA=$(pct exec 122 -- id -gn "$TAUSTA"); echo "$TAUSTARYHMA"
@@ -130,7 +135,7 @@ Odotettu: ei tulostetta.
 ```bash
 pct exec 122 -- stat -c '%a %U %s' /var/lib/aivo-yksityinen/haku-avain /var/lib/aivo-agentit/haku-avain
 ```
-Odotettu: kaksi riviä, `600 <TAUSTA-käyttäjä> 44` ja `600 aivo-agentti 44` (koko tavuina, ei sisältöä).
+Odotettu: kaksi riviä. Ensimmäisellä on `600`, kohdan 3 `echo "$TAUSTA"` -komennon tulostama nimi ja `44`, toisella `600 aivo-agentti 44` (koko tavuina, ei sisältöä).
 
 ### 5. Asetukset drop-in-tiedostoilla
 
@@ -148,14 +153,14 @@ Taustaajo:
 ```bash
 pct exec 122 -- sh -c 'mkdir -p /etc/systemd/system/aivo-taustaajo.service.d && printf "[Service]\nEnvironment=AIVO_HAKU_OSOITE=http://%s:8890\n" "$1" > /etc/systemd/system/aivo-taustaajo.service.d/verkkohaku.conf && cat /etc/systemd/system/aivo-taustaajo.service.d/verkkohaku.conf' sh "$IP123"
 ```
-Odotettu: kaksi riviä, `[Service]` ja `Environment=AIVO_HAKU_OSOITE=http://<kohdan 2 osoite>:8890`.
+Odotettu: kaksi riviä, `[Service]` ja `Environment=AIVO_HAKU_OSOITE=http://` + kohdan 2 `echo "$IP123"` -komennon tulostama osoite + `:8890`.
 
 Agentit:
 
 ```bash
 pct exec 122 -- sh -c 'mkdir -p /etc/systemd/system/aivo-agentit.service.d && printf "[Service]\nEnvironment=AIVO_HAKU_OSOITE=http://%s:8890\n" "$1" > /etc/systemd/system/aivo-agentit.service.d/verkkohaku.conf && cat /etc/systemd/system/aivo-agentit.service.d/verkkohaku.conf' sh "$IP123"
 ```
-Odotettu: kaksi riviä, `[Service]` ja `Environment=AIVO_HAKU_OSOITE=http://<kohdan 2 osoite>:8890`.
+Odotettu: kaksi riviä, `[Service]` ja `Environment=AIVO_HAKU_OSOITE=http://` + kohdan 2 `echo "$IP123"` -komennon tulostama osoite + `:8890`.
 
 ```bash
 pct exec 122 -- systemctl daemon-reload
@@ -195,10 +200,12 @@ Odotettu: `active`.
 
 ### 6. Vartijamallin tarkistus
 
+Asetus voi olla yksikön `Environment`-rivillä, drop-in-tiedostossa tai `ExecStart`-valitsimena (`--yksityinen-taustapaa`). Siksi tarkistetaan koko yksikkö drop-in-tiedostoineen.
+
 ```bash
-pct exec 122 -- sh -c 'systemctl show -p Environment aivo-chat | tr " " "\n" | grep -E "^(Environment=)?AIVO_(YKSITYINEN_TAUSTAPAA|YKSITYINEN_ROOLIT|OPENROUTER_MALLIT)="'
+pct exec 122 -- sh -c 'systemctl cat aivo-chat | grep -E -i "taustapaa|YKSITYINEN_ROOLIT|OPENROUTER_MALLIT|EnvironmentFile"'
 ```
-Odotettu: `AIVO_YKSITYINEN_TAUSTAPAA=openrouter` ja mallirivit. Jos `AIVO_YKSITYINEN_TAUSTAPAA` puuttuu tai on `loopback`, vartijamallia ei ole, ja jokainen haku menee "kysy"-tilaan (katso kohta Vartijamalli ja "kysy"-tila).
+Odotettu: rivi, jossa on `AIVO_YKSITYINEN_TAUSTAPAA=openrouter` tai `--yksityinen-taustapaa openrouter`, sekä rivi `AIVO_OPENROUTER_MALLIT=...` (ja mahdollinen `AIVO_YKSITYINEN_ROOLIT=...vartija:...`). Jos taustapää puuttuu tai on `loopback`, vartijamallia ei ole, ja jokainen haku menee "kysy"-tilaan (katso kohta Vartijamalli ja "kysy"-tila). Jos tulosteessa on `EnvironmentFile=`, asetus voi olla siinä tiedostossa: avaa se itse, sillä se voi sisältää muitakin asetuksia.
 
 ### 7. Käytöstesti
 
