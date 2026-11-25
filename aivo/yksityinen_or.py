@@ -72,7 +72,8 @@ MAX_TOKENIA = 8_000
 # Hitaat avoimet mallit (esim. deepseek-r1) tuottavat OpenRouterissa noin 25-40 tokenia/s; 8 000 / 25 = 320 s ja
 # kehotteen kasittely noin 10-30 s, joten 360 s riittaa pahimmassakin tavallisessa tapauksessa. Selain (fetch ilman
 # AbortControlleria) ja ThreadingHTTPServer eivat katkaise odotusta. Yhdistelmat, tiivistys ja agentit kayttavat
-# edelleen VASTAUS_AIKARAJA_S:aa (120 s) tai omaa rajaansa.
+# edelleen VASTAUS_AIKARAJA_S:aa (120 s) tai omaa rajaansa. Mallivertailu kayttaa samaa rajaa kuin chat
+# (mallivertailu.VERTAILU_AIKARAJA_S), koska sen ajattelevat mallit saavat saman 8 000 tokenin vastausrajan.
 CHAT_AIKARAJA_S = 360
 KATKENNUT_HUOMAUTUS = "[vastaus katkesi pituusrajaan, kirjoita: jatka]"
 TAUSTA_KATKENNUT_HUOMAUTUS = "[vastaus katkesi pituusrajaan]"
@@ -111,6 +112,12 @@ avoin_malli = openrouter_kulut.avoin_malli
 
 class VastausKatkesi(YksityinenVirhe):
     """Vastaus katkesi pituusrajaan ennen yhtaan vastaustekstia (finish_reason "length", tyhja content)."""
+
+
+class Aikakatkaisu(YksityinenVirhe):
+    """Mallipalvelu ei vastannut kuljettimen aikarajassa (TimeoutError, myos URLError(reason=TimeoutError) yhteyden
+    avauksessa). Aliluokka, jotta mallivertailu erottaa aikakatkaisun muista virheista; muut kutsujat nakevat sen
+    YksityinenVirheena kuten ennen (sama viesti)."""
 
 
 def vastauksen_teksti(data: Any) -> str:
@@ -212,6 +219,8 @@ def tee_kuljetin(avain: str, avaa: Callable[..., Any] | None = None,
             e.close()                               # vapauttaa virhevastauksen socketin
             raise YksityinenVirhe("mallipalvelu hylkasi pyynnon (HTTP %s)" % e.code) from None
         except (OSError, ValueError) as e:
+            if isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError):
+                raise Aikakatkaisu("mallipalvelu ei vastannut (%s)" % type(e).__name__) from None
             raise YksityinenVirhe("mallipalvelu ei vastannut (%s)" % type(e).__name__) from None
         if not isinstance(data, Mapping):
             raise YksityinenVirhe("OpenRouter antoi odottamattoman vastauksen")

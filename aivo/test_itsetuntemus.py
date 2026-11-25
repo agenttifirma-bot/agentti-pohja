@@ -162,7 +162,7 @@ class LuokitteluTesti(unittest.TestCase):
                  {"malli": "a/b", "kysymys": "XX", "vastaus": "ohitetaan"}]
         t = it.pisteet(rivit, sarja)["a/b"]
         self.assertEqual(t["luokat"], {"oikein": 0, "vaarin": 1, "en_tieda_oikein": 1, "arvaus_faktana": 1,
-                                       "en_tieda": 1, "ei_vastausta": 0})
+                                       "en_tieda": 1, "ei_vastausta": 0, "aikaraja": 0})
         self.assertEqual(t["lajit"], {"rakenne": round(0.5 / 3, 2), "en_tieda": 1.0})
         self.assertEqual(t["yhteensa"], round(1.5 / 4, 2))
         self.assertEqual(t["kulu"], 0.02)
@@ -278,7 +278,7 @@ class KomentoriviTesti(Tilapainen):
     def test_vahvistettu_ajo_ja_taulukko(self):
         rungot = []
         with mock.patch.object(yksityinen_or, "lue_avain", return_value="x" * 20), \
-                mock.patch.object(yksityinen_or, "tee_kuljetin", lambda avain: feikkitehdas(rungot=rungot)()):
+                mock.patch.object(yksityinen_or, "tee_kuljetin", lambda avain, **kw: feikkitehdas(rungot=rungot)()):
             rc, out, _ = self.aja_main(["itse-aja", "--ulos", str(self.ulos), "--vahvista"])
         self.assertEqual(rc, 0)
         self.assertTrue(out.index("Kuluarvio") < out.index("kulut_usd"))   # arvio ennen ajoa
@@ -483,7 +483,8 @@ class YhdistelmaTesti(Tilapainen):
         self.assertIn("TimeoutError", teksti)
         self.assertNotIn("salainen", teksti)
 
-    def test_kokoajan_virhe_on_vaarin(self):
+    def test_kokoajan_aikakatkaisu_on_aikaraja(self):
+        # kokoajan TimeoutError: rivi saa aikaraja=True ja luokan "aikaraja" (ei "vaarin"); pysahtymissaanto ennallaan
         rungot = []
         yv = mv.aja_itsetuntemus(JASENET3, self.ulos, yhdistelmatehdas(rungot, kokoaja_virhe=True), kokoaja=KOKOAJA,
                                  kulutila=str(self.kulut), loki=lambda s: None)
@@ -491,8 +492,10 @@ class YhdistelmaTesti(Tilapainen):
         self.assertEqual(len(rivit), 2)                        # kaksi perakkaista epaonnistunutta kysymysta
         self.assertTrue(all(r["virhe"] == "TimeoutError" and "vastaus" not in r for r in rivit))
         self.assertEqual(yv["virheita"], 2)
+        self.assertTrue(all(r.get("aikaraja") is True for r in rivit))
+        self.assertEqual(yv["aikaraja"], 2)
         tulos = it.pisteet(rivit)[mv.itse_yhdistelman_nimi(JASENET3, KOKOAJA)]
-        self.assertEqual(tulos["luokat"]["vaarin"], 2)
+        self.assertEqual((tulos["luokat"]["vaarin"], tulos["luokat"]["aikaraja"], tulos["yhteensa"]), (0, 2, None))
 
     def test_paivakatto_kesken_kysymyksen(self):
         tehdyt = []
@@ -562,7 +565,7 @@ class YhdistelmaKomentoriviTesti(KomentoriviTesti):
     def test_vahvistettu_yhdistelma_ja_taulukko(self):
         rungot = []
         with mock.patch.object(yksityinen_or, "lue_avain", return_value="x" * 20), \
-                mock.patch.object(yksityinen_or, "tee_kuljetin", lambda avain: yhdistelmatehdas(rungot)()):
+                mock.patch.object(yksityinen_or, "tee_kuljetin", lambda avain, **kw: yhdistelmatehdas(rungot)()):
             rc, out, _ = self.aja_main(["itse-aja", "--ulos", str(self.ulos), "--vahvista"])
             rc2, out2, _ = self.aja_main(["itse-aja", "--ulos", str(self.ulos), "--mallit", ",".join(JASENET3),
                                           "--yhdistelma", "3", "--kokoaja", KOKOAJA, "--vahvista"])
