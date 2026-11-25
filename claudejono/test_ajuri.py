@@ -261,7 +261,7 @@ class TulkintaVirta(unittest.TestCase):
         odotus = {"tokenit_in": 3, "usd": 0.5}
         self.assertEqual(kulutus.claude_luvut(_virta(_viesti("x"), loppu).encode()), odotus)
         self.assertEqual(kulutus.claude_luvut(json.dumps(loppu).encode()), odotus)
-        self.assertEqual(kulutus.claude_luvut(b"\xff\xfe"), {})
+        self.assertEqual(kulutus.claude_luvut(b"\xff\xfe"), {"jasennysvirhe": "ei_tulosta"})   # #283: virhe nakyviin, ei hiljaa tyhja
 
 
 class Komento(unittest.TestCase):
