@@ -204,7 +204,42 @@ class AjoTesti(Kansiot):
         self.assertEqual((t["kutsuja"], t["kulu_eur"], t["rajat"]), (4, 0.0012, am.RAJAT))
         self.assertTrue(t["valmistui"].endswith("+00:00"))
         self.assertIsInstance(t["kesto_s"], float)
-        self.assertEqual(os.listdir(self.p(aj.TULOKSET)), [T1 + ".json"])     # ei valiaikaistiedostoja
+        # ei valiaikaistiedostoja; tiedostokopio chatin nakymaa varten (osa 4)
+        self.assertEqual(sorted(os.listdir(self.p(aj.TULOKSET))), [T1, T1 + ".json"])
+
+    def test_tiedostokopio_ryhmalle_luettava_ja_tyokansio_ennallaan(self):
+        self.jonoon(T1, {"versio": 1, "teksti": "abcd",
+                         "liitteet": [{"nimi": "aineisto/a.md", "sisalto": "rivi\n"}, {"nimi": "b.txt", "sisalto": "x"}]})
+        self.assertEqual(self.aja()["tila"], am.VALMIS)
+        k = self.p(aj.TULOKSET, T1)
+        self.assertEqual(stat.S_IMODE(os.lstat(k).st_mode), 0o2750)
+        self.assertEqual(stat.S_IMODE(os.lstat(os.path.join(k, "aineisto")).st_mode), 0o2750)
+        for osa, sisalto in (("aineisto/a.md", "rivi\n"), ("b.txt", "x")):
+            p = os.path.join(k, osa)
+            self.assertEqual(stat.S_IMODE(os.lstat(p).st_mode), 0o640)
+            with open(p, encoding="utf-8") as f:
+                self.assertEqual(f.read(), sisalto)
+        self.assertEqual(stat.S_IMODE(os.lstat(self.p(aj.TYO, T1)).st_mode), 0o700)
+
+    def test_tiedostokopio_ei_seuraa_linkkeja(self):
+        juuri = self.p(aj.TYO, T1)
+        os.mkdir(juuri, 0o700)
+        salainen = os.path.join(self._t.name, "salainen.md")
+        with open(salainen, "w") as f:
+            f.write("SALAINEN")
+        os.symlink(salainen, os.path.join(juuri, "linkki.md"))
+        with open(os.path.join(juuri, "oikea.md"), "w") as f:
+            f.write("ok")
+        kopioidut = aj.kopioi_tiedostot(self.perus, T1, juuri, [{"polku": "linkki.md", "koko": 8},
+                                                                 {"polku": "oikea.md", "koko": 2}])
+        self.assertEqual(kopioidut, ["oikea.md"])
+        self.assertEqual(os.listdir(self.p(aj.TULOKSET, T1)), ["oikea.md"])
+
+    def test_tulos_kirjoitetaan_vaikka_kopio_epaonnistuu(self):
+        self.jonoon(T1)
+        with mock.patch.object(aj, "kopioi_tiedostot", side_effect=PermissionError("x")):
+            self.assertEqual(self.aja()["tila"], am.VALMIS)
+        self.assertEqual(self.tulos(T1)["tila"], am.VALMIS)
 
     def test_pyynto_siirretaan_kasiteltyihin_ja_tyokansio_luodaan(self):
         self.jonoon(T1)

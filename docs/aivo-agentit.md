@@ -2,7 +2,7 @@
 
 Ajuri ajaa yksityisen tilan agenttitehtävät omana käyttäjänään `aivo-agentti`. Agentti ei näe muistia, keskusteluja eikä ydinohjeita: se saa vain tehtävän tekstin ja pyynnön mukana tulevat liitteet. Agenttiydin ja mallikytkentä ovat paketissa `aivo/agentti/`. Ajuri on moduuli `aivo/agentti_ajuri.py`, ja yksikkömalli on tiedostossa `systemd/aivo-agentit.service.mall`.
 
-Tämä ohje asentaa vain ajurin. Chat ei vielä kirjoita jonoon eikä näytä tuloksia; se tulee myöhemmässä muutoksessa. Siihen asti tehtävän voi lisätä jonoon käsin (kohta 8).
+Kohdat 1–9 asentavat ajurin. Kohta 10 kytkee chatin: Aivo voi ehdottaa agenttitehtävää yksityisessä tilassa, ja tehtävä käynnistyy vain Tonyn painalluksella. Ilman kohtaa 10 tehtävän voi lisätä jonoon käsin (kohta 8).
 
 ## Miten ajuri toimii
 
@@ -10,6 +10,7 @@ Tämä ohje asentaa vain ajurin. Chat ei vielä kirjoita jonoon eikä näytä tu
 - Ajuri siirtää pyynnön kansioon `kasitellyt/`, luo työkansion `tyo/<tunnus>/` (0700) ja kopioi liitteet sinne samoilla polku-, pääte- ja kokosäännöillä kuin agentin `kirjoita`-työkalu.
 - Tehtävä ajetaan aliprosessina (`python3 -m aivo.agentti_ajuri lapsi`). Ajuri lopettaa aliprosessin, jos se kestää yli 21 minuuttia: agenttiytimen 20 minuutin aikaraja ja minuutin vara. Tulos on silloin `keskeytetty`.
 - Tulos kirjoitetaan tiedostoon `tulokset/<tunnus>.json` (0640, ryhmä `aivo-agentit`).
+- Ennen tulosta ajuri kopioi työkansion tiedostot kansioon `tulokset/<tunnus>/` (kansiot 2750, tiedostot 0640), jotta chat voi näyttää ne vain luettavina. Työkansio pysyy 0700:na. Linkkejä ei seurata, eikä yli 200 kt:n tiedostoja kopioida.
 - Ajuri ei poista mitään. Pyynnöt, työkansiot ja tulokset jäävät talteen, ja niiden siivous on oma päätöksensä.
 - Jos ajuri pysähtyy kesken tehtävän, se kirjoittaa seuraavalla käynnistyksellä tulokseksi `keskeytetty` ja syyksi `ajuri pysahtyi kesken tehtavan`.
 - Lokiin (journald) tulee vain tunnus, tila, luvut ja virheen tyyppi, ei tehtävän sisältöä.
@@ -240,6 +241,60 @@ Odotettu: rivit vastaavat kohdassa 1 kirjattuja. Kokeile chatin yksityistä tila
 
 Käyttäjä, ryhmät ja `/var/lib/aivo-agentit` jäävät paikalleen, koska niissä voi olla tuloksia. Niiden poisto on oma päätöksensä. Koko kontin voi palauttaa isännällä komennolla `pct rollback 122 ennen-aivo-agentit`, mutta se kumoaa myös kaikki muut snapshotin jälkeiset muutokset.
 
+### 10. Chat-kytkentä: agenttitehtävä yksityisestä chatista (RAJATTU)
+
+Tämä kohta on uusi datavirta yksityisestä chatista agentille. Se otetaan käyttöön vasta Tonyn sha-sidotulla hyväksynnällä. Ota ensin snapshot isännällä: `pct snapshot 122 ennen-aivo-agentit-chat`.
+
+Miten se toimii:
+- Yksityisen tilan vastauksessa voi olla lohko `[[AGENTTI]] tehtävänkuvaus [[/AGENTTI]]`. Chat poistaa lohkon tekstistä ja tallentaa ehdotuksen kansioon `/var/lib/aivo-yksityinen/agenttitehtavat/` (0700). Mitään ei käynnisty.
+- Kortti näyttää tehtävän tekstin, arvioidun kulun (aiempien ajojen mediaani tai "ei arviota"), päiväkatosta jäljellä olevan summan sekä askel- ja aikarajan. Tekstiä voi muokata. Muokkaus antaa uuden sha:n.
+- Käynnistä-painike lähettää vahvistuksen `kyllä <sha8>`. Chat kirjoittaa jonoon vain kortin tekstin ja keskustelun tunnisteen. Muistia, keskustelua, ydinohjeita tai liitteitä ei lähetetä. Jos päiväkatto on täynnä tai kirjanpitoa ei voi lukea, painike on pois käytöstä ja palvelin hylkää käynnistyksen.
+- Tila päivittyy kortissa 10 sekunnin välein: jonossa, käynnissä ja lopuksi tulos. Raportti ja tiedostot näytetään tekstinä (`textContent`), vain siinä keskustelussa, jossa tehtävä syntyi. Raportti ei mene Aivon keskusteluhistoriaan. Historiaan tulee vain järjestelmämerkintä käynnistyksestä ja lopputilasta.
+- Loki `agenttitehtavat/agenttiloki.jsonl` sisältää vain ajan, tunnuksen ja tilan (käynnistetty, hylätty, lopputila).
+- Kulurajoja ei muuteta. Agentti käyttää samaa päiväkattoa ja samoja ajurin rajoja kuin ennen.
+
+Asennus (Tony, kontti 122). Kirjoita ensin nykyiset arvot muistiin peruutusta varten:
+
+```
+systemctl cat aivo-chat | grep -E '^(User|SupplementaryGroups|ReadWritePaths|ExecStart|Environment)='
+```
+
+Lisää chatille ryhmä, kirjoitusoikeus vain jonoon ja asetus `AIVO_AGENTIT` täydennystiedostolla:
+
+```
+systemctl edit aivo-chat
+```
+
+Lisää muokkaukseen palveluosion alle:
+
+```
+[Service]
+SupplementaryGroups=aivo-agentit
+ReadWritePaths=/var/lib/aivo-agentit/jono
+Environment=AIVO_AGENTIT=/var/lib/aivo-agentit
+```
+
+`SupplementaryGroups` lisää ryhmän aiempien rinnalle (esim. `aivo-tyokalu-socket` säilyy). Käynnistä uudelleen ja tarkista:
+
+```
+systemctl restart aivo-chat
+systemctl show aivo-chat -p SupplementaryGroups -p ReadWritePaths --no-pager
+systemctl is-active aivo-chat
+PID=$(systemctl show -p MainPID --value aivo-chat)
+grep -E '^Groups:' /proc/$PID/status
+getent group aivo-agentit
+```
+
+Odotettu: `SupplementaryGroups` sisältää `aivo-agentit`, `ReadWritePaths` sisältää `/var/lib/aivo-agentit/jono`, ja palvelu on `active`. `Groups:`-rivillä on ryhmän `aivo-agentit` numero (sama kuin `getent`-rivillä). Chatin käyttäjä ei saa kirjoitusoikeutta työkansioihin eikä tuloksiin: `tyo/` ja `kasitellyt/` ovat 0700, ja `tulokset/` on ryhmälle vain luettava.
+
+Käytöstesti selaimessa (yksityinen tila):
+1. Kirjoita: "Ehdota agenttitehtävä, joka kirjoittaa tiedoston tervehdys.md, jossa on yksi rivi: hei." Vastauksen alle tulee kortti, jossa näkyvät teksti, arvioitu kulu ja päiväkatosta jäljellä oleva summa.
+2. Tarkista, että jono on yhä tyhjä: `ls -A /var/lib/aivo-agentit/jono` ei tulosta mitään.
+3. Paina Käynnistä ja vahvista. Kortti näyttää tilan `jonossa` ja sitten `käynnissä`. Noin minuutin päästä näkyy raportti ja painike `Näytä tervehdys.md`.
+4. Tarkista loki: `cat /var/lib/aivo-yksityinen/agenttitehtavat/agenttiloki.jsonl`. Odotettu: kaksi riviä, joissa on vain `aika`, `tunnus` ja `tila` (`käynnistetty` ja `valmis` tai `kesken`).
+
+Peruutus: `systemctl revert aivo-chat` ja `systemctl restart aivo-chat`. Ehdotukset ja loki jäävät kansioon `/var/lib/aivo-yksityinen/agenttitehtavat/`. Niiden poisto on oma päätöksensä.
+
 ## Testit
 
-`python3 -m unittest aivo.test_agentti_ajuri` (kansioiden oikeudet ja polut, jonosta luku, yksi tehtävä kerrallaan, aikaraja, tulostiedoston muoto, yksikkömalli ja rakennetesti). Testit eivät käytä verkkoa.
+`python3 -m unittest aivo.test_agentti_ajuri` (kansioiden oikeudet ja polut, jonosta luku, yksi tehtävä kerrallaan, aikaraja, tulostiedoston muoto, tiedostokopio, yksikkömalli ja rakennetesti) ja `python3 -m unittest aivo.test_agenttitehtava` (ehdotus ei käynnisty ilman painallusta, väärennetty lohko tai tunnus hylätään, katon täyttyminen näkyy kortissa, tulos näytetään turvallisesti ja vain aloittaneessa keskustelussa). Testit eivät käytä verkkoa.

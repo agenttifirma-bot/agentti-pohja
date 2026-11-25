@@ -14,6 +14,8 @@ Kansiot (perus = /var/lib/aivo-agentit; asennusohje docs/aivo-agentit.md):
   kasitellyt/<tunnus>.json  ajuri siirtaa pyynnon tanne ennen ajoa (0700). Mitaan ei poisteta automaattisesti.
   tyo/<tunnus>/             tehtavan tyokansio (0700), liitteet kopioidaan tanne.
   tulokset/<tunnus>.json    tulos (tiedosto 0640, kansio 2750, ryhma aivo-agentit).
+  tulokset/<tunnus>/        kopio tyokansion tiedostoista chatin vain luettavaa nakymaa varten (kansiot 2750,
+                            tiedostot 0640). Kopio tehdaan ennen tulosta, joten valmis tulos tarkoittaa valmista kopiota.
 
 Pyynnon muoto (JSON-olio, muut kentat hylataan):
   {"versio": 1, "teksti": "...", "liitteet": [{"nimi": "a.md", "sisalto": "..."}], "keskustelu": "abc"}
@@ -265,6 +267,41 @@ def tiedostolista(juuri):
     return ulos[:polut.RAJA_TIEDOSTOT]
 
 
+def kopioi_tiedostot(perus, tunnus, juuri, lista):
+    """Kopioi tiedostolistan tiedostot kansioon tulokset/<tunnus>/ (kansiot 2750, tiedostot 0640), jotta ryhma
+    aivo-agentit (chat) voi lukea ne. Tyokansio (0700) ei muutu. Linkkeja ei seurata. Palauttaa kopioidut polut."""
+    if not TUNNUS_RE.fullmatch(tunnus):
+        raise ValueError("tunnus")
+    kohde = os.path.join(perus, TULOKSET, tunnus)
+    os.mkdir(kohde, 0o750)
+    os.chmod(kohde, 0o2750)             # UMask=0077 ei saa kaventaa ryhman oikeuksia; setgid pitaa ryhman
+    kopioidut = []
+    for t in lista:
+        osat = t["polku"].split("/")
+        hak = kohde
+        for osa in osat[:-1]:
+            hak = os.path.join(hak, osa)
+            if not os.path.lexists(hak):
+                os.mkdir(hak, 0o750)
+                os.chmod(hak, 0o2750)
+        try:
+            lfd = os.open(os.path.join(juuri, *osat), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except OSError:
+            continue
+        with os.fdopen(lfd, "rb") as lf:
+            if not stat.S_ISREG(os.fstat(lf.fileno()).st_mode):
+                continue
+            data = lf.read(polut.RAJA_TIEDOSTO + 1)
+        if len(data) > polut.RAJA_TIEDOSTO:
+            continue
+        kfd = os.open(os.path.join(hak, osat[-1]), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o640)
+        with os.fdopen(kfd, "wb") as kf:
+            os.fchmod(kf.fileno(), 0o640)
+            kf.write(data)
+        kopioidut.append(t["polku"])
+    return kopioidut
+
+
 def perustulos(tunnus, keskustelu, tila, syy, mallit, kutsuja=0, kulu_tuntematon=False):
     """Tulos ilman agentin ajoa (pyynto hylatty, aikaraja tai keskeytys)."""
     return {"versio": VERSIO, "tunnus": tunnus, "keskustelu": keskustelu, "tila": tila, "syy": syy,
@@ -360,7 +397,8 @@ def aja_seuraava(perus, roolit, komento=None, aikaraja_s=PROSESSIN_AIKARAJA_S, k
     lahde = os.path.join(perus, JONO, nimi)
     kohde = os.path.join(perus, KASITELLYT, nimi)
     juuri = os.path.join(perus, TYO, tunnus)
-    if any(os.path.lexists(p) for p in (kohde, juuri, os.path.join(perus, TULOKSET, nimi))):
+    if any(os.path.lexists(p) for p in (kohde, juuri, os.path.join(perus, TULOKSET, nimi),
+                                        os.path.join(perus, TULOKSET, tunnus))):
         os.rename(lahde, os.path.join(perus, KASITELLYT, "%s.toisto-%d" % (tunnus, time.time_ns())))
         loki("tunnus=%s tila=%s syy=tunnus-jo-kaytetty" % (tunnus, malli.VIRHE))
         return {"tunnus": tunnus, "tila": malli.VIRHE, "syy": "tunnus on jo kaytetty", "kirjoitettu": False}
@@ -392,6 +430,10 @@ def aja_seuraava(perus, roolit, komento=None, aikaraja_s=PROSESSIN_AIKARAJA_S, k
             tulos.update({k: d[k] for k in KENTAT if k in d and k not in ("versio", "tunnus", "keskustelu",
                                                                          "tiedostot", "valmistui")})
         tulos["tiedostot"] = tiedostolista(juuri) if os.path.isdir(juuri) else []
+        try:
+            kopioi_tiedostot(perus, tunnus, juuri, tulos["tiedostot"])
+        except OSError as e:            # tulos kirjoitetaan silti; tiedostonakyma kertoo, ettei tiedostoa voi nayttaa
+            loki("tunnus=%s tiedostojen kopio epaonnistui (%s)" % (tunnus, type(e).__name__))
     tulos["kesto_s"] = round(kello() - alku, 1)
     try:
         kirjoita_tulos(perus, tunnus, tulos)
