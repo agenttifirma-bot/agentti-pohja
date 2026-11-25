@@ -213,7 +213,7 @@ class ViikkoKomentoriviTesti(Pohja):
     def test_ajo_komentorivilta(self):
         rungot = []
         with mock.patch.object(yksityinen_or, "lue_avain", return_value="x" * 20), \
-                mock.patch.object(yksityinen_or, "tee_kuljetin", lambda avain: tehdas(rungot=rungot)()):
+                mock.patch.object(yksityinen_or, "tee_kuljetin", lambda avain, **kw: tehdas(rungot=rungot)()):
             rc, out, err = self.main(self.argv(), {"AIVO_OPENROUTER_MALLIT": PAA})
         self.assertEqual((rc, err), (0, ""))
         self.assertEqual(len(rungot), N)
@@ -237,7 +237,7 @@ class ViikkoKomentoriviTesti(Pohja):
 
     def test_kesken_paluuarvo_1(self):
         with mock.patch.object(yksityinen_or, "lue_avain", return_value="x" * 20), \
-                mock.patch.object(yksityinen_or, "tee_kuljetin", lambda avain: tehdas(kulu=0.4)()):
+                mock.patch.object(yksityinen_or, "tee_kuljetin", lambda avain, **kw: tehdas(kulu=0.4)()):
             rc, _, _ = self.main(self.argv(), {"AIVO_OPENROUTER_MALLIT": PAA})
         self.assertEqual(rc, 1)
 

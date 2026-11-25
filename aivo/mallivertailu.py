@@ -17,7 +17,8 @@ Tyokalua ei ole kytketty palveluun.
 Saannot:
   * Vain synteettinen data (aivo/testidata/mallivertailu_tehtavat.json). Ei muistia, keskusteluja eika ydinohjeita levylta.
   * Jokainen kutsu kulkee `openrouter_kulut.kutsu`n kautta: yhteinen paivakatkaisin, ZDR ja data_collection=deny
-    (`openrouter_zdr.rakenna_runko`) ja kulukirjaus. Kuljetin on tuotannon `yksityinen_or.tee_kuljetin` (toinen ZDR-lukko).
+    (`openrouter_zdr.rakenna_runko`) ja kulukirjaus. Kuljetin on tuotannon `yksityinen_or.tee_kuljetin` (toinen ZDR-lukko)
+    aikarajalla VERTAILU_AIKARAJA_S (sama kuin tuotannon chatissa, 360 s). Aikakatkaisu on oma luokkansa "aikaraja".
   * Mallit: vain EHDOKKAAT-listan mallit. Listalla AVOIMET_MALLIT olevat ajetaan lipulla yksityinen_chat=True kuten
     tuotannossa. Muut (avoimen painoston perheet, joita lista ei viela kata) ajetaan ilman lippua, koska data on
     synteettista eika yksityista keskustelua; ZDR ja deny ovat silti pakotettuja. AVOIMET_MALLIT-listaa ei muuteta.
@@ -69,6 +70,38 @@ TEHTAVA = "aivo-mallivertailu"
 # Oma raja (A1095): tuotannon yksityinen_or.MAX_TOKENIA nousi 8 000:een, mutta vertailun tulokset ja kulut
 # pysyvat vertailukelpoisina vanhalla 700 tokenin rajalla (tehtavat pyytavat tiivista vastausta).
 MAX_TOKENIA = 700
+# Ajattelevat mallit (OpenRouter, docs/use-cases/reasoning-tokens, luettu 25.11.2026): paattely ja vastaus jakavat saman
+# max_tokens-rajan. Kun raja tayttyy paattelyssa, vastaus on finish_reason "length" ja tyhja content, ja paattely
+# laskutetaan silti. Ajo 25.11.: qwen3.5-397b-a17b sai 800 tokenin rajalla 33/33 tyhjaa vastausta. Siksi naille
+# malleille annetaan sama raja kuin tuotannossa (yksityinen_or.MAX_TOKENIA, 8 000), eika reasoning-parametria
+# laheteta (tuotanto ei laheta sita), jotta mittaus vastaa tuotannon kayttaytymista. Lista on varovainen: vain 397b
+# on havaittu, muut ovat paattelymalleja (r1, thinking, gpt-oss) tai Qwen3-hybridiperheita, jotka ajattelevat
+# oletuksena. Ylimaarainen malli listalla nostaa vain ylarajaa; malli, joka ei ajattele, lopettaa itse. Listan
+# ulkopuolinen ajatteleva malli nakyy rivilla (finish_reason, tyhja, ajatteli) ja yhteenvedossa.
+AJATTELEVAT_MALLIT = frozenset({
+    "qwen/qwen3.5-397b-a17b",
+    "qwen/qwen3-235b-a22b-thinking-2507",
+    "deepseek/deepseek-r1-0528",
+    "qwen/qwen3.8-2.4t-a95b",
+    "qwen/qwen3.8-27b",
+    "qwen/qwen3.6-27b",
+    "qwen/qwen3.6-35b-a3b",
+    "qwen/qwen3.5-122b-a10b",
+    "qwen/qwen3.5-27b",
+    "qwen/qwen3.5-35b-a3b",
+    "qwen/qwen3.5-9b",
+    "qwen/qwen3-14b",
+    "qwen/qwen3-32b",
+    "qwen/qwen3-30b-a3b",
+    "openai/gpt-oss-120b",
+    "minimax/minimax-m3",
+})
+AJATTELU_MAX_TOKENIA = yksityinen_or.MAX_TOKENIA
+# Kuljettimen aikaraja (yksi vakio): sama kuin tuotannon chatissa samalla 8 000 tokenin vastausrajalla
+# (yksityinen_or.CHAT_AIKARAJA_S, 360 s). Hidas ajatteleva malli tarvitsee 8 000 tokeniin noin 320 s, joten
+# kuljettimen oletus (yksityinen_or.VASTAUS_AIKARAJA_S, 120 s) katkaisisi sen ja OpenRouter laskuttaisi silti.
+# Raja on vain ylaraja: malli, joka vastaa nopeasti, ei odota sita.
+VERTAILU_AIKARAJA_S = yksityinen_or.CHAT_AIKARAJA_S
 _LUPAUS_RE = re.compile(r"\b(ilmoitan (sinulle|sitten)|tarkistan (sen |asian )?huomenna|palaan asiaan|muistutan sinua|"
                         r"teen sen huomenna|hoidan (sen|t\u00e4m\u00e4n))\b", re.I)
 _MUUTOSVAITE_RE = re.compile(r"\b(olen (nyt )?(lis\u00e4nnyt|muuttanut|p\u00e4ivitt\u00e4nyt|tallentanut)|lis\u00e4sin|"
@@ -111,6 +144,82 @@ def tarkista_malli(malli: str) -> bool:
     if malli not in EHDOKKAAT or any(malli.endswith(l) for l in openrouter_zdr.KIELLETYT_LIITTEET):
         raise VertailuVirhe("malli ei ole ehdokaslistalla")
     return openrouter_zdr.avoin_malli(malli)
+
+
+def vastausraja(malli: str, perus: int) -> int:
+    """max_tokens: ajattelevalle mallille AJATTELU_MAX_TOKENIA (tuotannon raja), muille vertailun oma `perus`."""
+    return max(perus, AJATTELU_MAX_TOKENIA) if malli in AJATTELEVAT_MALLIT else perus
+
+
+def kuljetin_tehdas(avain: str) -> Callable[[], Callable[[dict[str, Any]], Any]]:
+    """laheta_tehdas aja()- ja aja_itsetuntemus()-funktioille: tuotannon kuljetin (ZDR-lukko) aikarajalla
+    VERTAILU_AIKARAJA_S."""
+    return lambda: yksityinen_or.tee_kuljetin(avain, ylaraja_s=VERTAILU_AIKARAJA_S)
+
+
+def on_aikakatkaisu(e: BaseException) -> bool:
+    """Kuljettimen aikakatkaisu (yksityinen_or.Aikakatkaisu) tai suora TimeoutError (esim. muu kuljetin)."""
+    return isinstance(e, (yksityinen_or.Aikakatkaisu, TimeoutError))
+
+
+def virherivi(e: BaseException) -> dict[str, Any]:
+    """Rivin virhekentat: virhe = tyypin nimi (ei viestia); aikakatkaisulle lisaksi aikaraja=True, jolloin pisteytys
+    laskee rivin omaan luokkaansa "aikaraja" eika vaaraksi. Pysahtymissaannot (2 perakkain, MAX_VIRHEITA) ennallaan."""
+    rivi: dict[str, Any] = {"virhe": type(e).__name__}
+    if on_aikakatkaisu(e):
+        rivi["aikaraja"] = True
+    return rivi
+
+
+def _sisallon_teksti(sisalto: Any) -> str:
+    """content tekstina: merkkijono sellaisenaan; lista (osat) -> tekstiosat yhdistettyina ({"type": "text",
+    "text": ...} tai pelkka merkkijono). Muut osat (kuvat, paattely) ja muut tyypit ohitetaan."""
+    if isinstance(sisalto, str):
+        return sisalto
+    if isinstance(sisalto, list):
+        osat = []
+        for o in sisalto:
+            if isinstance(o, str):
+                osat.append(o)
+            elif isinstance(o, dict) and o.get("type", "text") == "text" and isinstance(o.get("text"), str):
+                osat.append(o["text"])
+        return "".join(osat)
+    return ""
+
+
+def vastauksen_tiedot(data: Any) -> dict[str, Any]:
+    """Rivin kentat vastauksesta: vastaus (content; lista yhdistetaan tekstiosista, tyhja jos None), finish_reason, tyhja, ajatteli (message.reasoning,
+    reasoning_details tai usage.completion_tokens_details.reasoning_tokens) ja tokenit_paattely. Paattelyn tekstia
+    ei tallenneta. KeyError/IndexError/TypeError, jos choices puuttuu (kirjataan virheena kuten ennen)."""
+    valinta = data["choices"][0]
+    viesti = valinta["message"]
+    teksti = _sisallon_teksti(viesti.get("content")).strip()          # lista-content: tekstiosat yhdistetaan ensin
+    kaytto = data.get("usage") or {}
+    tiedot = kaytto.get("completion_tokens_details") if isinstance(kaytto, dict) else None
+    paattely = tiedot.get("reasoning_tokens") if isinstance(tiedot, dict) else None
+    paattely = paattely if isinstance(paattely, int) and not isinstance(paattely, bool) else None
+    ajatteli = bool(viesti.get("reasoning") or viesti.get("reasoning_details") or paattely)
+    return {"vastaus": teksti, "finish_reason": valinta.get("finish_reason"), "tyhja": not teksti,
+            "ajatteli": ajatteli, "tokenit_paattely": paattely}
+
+
+def loki_tila(rivi: dict[str, Any]) -> str:
+    """Lokirivin tila: "aikaraja (N s)", virhe, "tyhja (<finish_reason>)" tai "ok"."""
+    if rivi.get("aikaraja"):
+        return "aikaraja (%s s)" % VERTAILU_AIKARAJA_S
+    if "virhe" in rivi:
+        return rivi["virhe"]
+    if rivi.get("tyhja"):
+        return "tyhja (%s)" % (rivi.get("finish_reason") or "?")
+    return "ok"
+
+
+def tyhjien_yhteenveto(rivit: list[dict[str, Any]]) -> dict[str, Any]:
+    """Yhteenvetoon: tyhjien vastausten ja aikakatkaisujen maara seka listan ulkopuoliset mallit, jotka ajattelivat ja jaivat tyhjiksi."""
+    tyhjat = [r for r in rivit if r.get("tyhja")]
+    ulkopuoliset = sorted({r["malli"] for r in tyhjat if r.get("ajatteli") and r["malli"] not in AJATTELEVAT_MALLIT})
+    return {"ei_vastausta": len(tyhjat), "aikaraja": sum(1 for r in rivit if r.get("aikaraja")),
+            "ajattelevat_listan_ulkopuolella": ulkopuoliset}
 
 
 # --- Mekaaninen pisteytys --------------------------------------------------------------------------
@@ -193,6 +302,7 @@ def aja(mallit: list[str], ulos: Path, laheta_tehdas: Callable[[], Callable[[dic
     ulos.mkdir(mode=0o700, parents=True, exist_ok=True)               # uusi kansio vain omistajalle
     tiedosto = ulos / "vastaukset.jsonl"
     kulut, virheet, suurin, pysahtyi = 0.0, 0, 0.0, ""
+    kirjatut: list[dict[str, Any]] = []
     with tiedosto.open("a", encoding="utf-8") as f:
         for malli in mallit:
             perakkain = 0
@@ -209,12 +319,12 @@ def aja(mallit: list[str], ulos: Path, laheta_tehdas: Callable[[], Callable[[dic
                     try:
                         data = openrouter_kulut.kutsu(
                             malli, viestit(sarja, t), laheta, tehtava=TEHTAVA, tila=kulutila,
-                            max_tokens=MAX_TOKENIA, temperature=0.3, stream=False,
+                            max_tokens=vastausraja(malli, MAX_TOKENIA), temperature=0.3, stream=False,
                             usage={"include": True}, yksityinen_chat=liput[malli])
-                        teksti = data["choices"][0]["message"].get("content") or ""
+                        tiedot = vastauksen_tiedot(data)
                         kaytto = data.get("usage") or {}
                         kulu = float(kaytto.get("cost") or 0.0)
-                        rivi.update(vastaus=teksti.strip(), kulu_usd=kulu, sekuntia=round(kello() - t0, 2),
+                        rivi.update(tiedot, kulu_usd=kulu, sekuntia=round(kello() - t0, 2),
                                     tokenit_sisaan=kaytto.get("prompt_tokens"), tokenit_ulos=kaytto.get("completion_tokens"),
                                     tarjoaja=data.get("provider"))
                         kulut += kulu
@@ -226,14 +336,15 @@ def aja(mallit: list[str], ulos: Path, laheta_tehdas: Callable[[], Callable[[dic
                     except Exception as e:  # noqa: BLE001 - vain tyyppi talteen, ei viestia
                         virheet += 1
                         perakkain += 1
-                        rivi.update(virhe=type(e).__name__, sekuntia=round(kello() - t0, 2))
+                        rivi.update(virherivi(e), sekuntia=round(kello() - t0, 2))
                         if virheet >= MAX_VIRHEITA:
                             pysahtyi = "virheita"
                     f.write(json.dumps(rivi, ensure_ascii=False) + "\n")
                     f.flush()
-                    loki("%s %s/%d %s" % (malli, t["id"], toisto, rivi.get("virhe", "ok")))
+                    kirjatut.append(rivi)
+                    loki("%s %s/%d %s" % (malli, t["id"], toisto, loki_tila(rivi)))
     yhteenveto = {"kulut_usd": round(kulut, 4), "virheita": virheet, "pysahtyi": pysahtyi or None,
-                  "mallit": mallit, "toistot": toistot, "raja_usd": raja}
+                  "mallit": mallit, "toistot": toistot, "raja_usd": raja, **tyhjien_yhteenveto(kirjatut)}
     (ulos / "ajo.json").write_text(json.dumps(yhteenveto, ensure_ascii=False, indent=1), encoding="utf-8")
     return yhteenveto
 
@@ -249,7 +360,7 @@ def paketti(ulos: Path, siemen: int = 353) -> int:
     """Kirjoittaa tuomari_syote.jsonl (tehtava, arviointiohje, vastaus; ei mallin nimea) sekoitettuna ja
     tuomari_avain.json (nayte -> malli) erikseen. Palauttaa naytteiden maaran."""
     sarja = {t["id"]: t for t in lue_tehtavat()["tehtavat"]}
-    rivit = [r for r in lue_vastaukset(ulos) if "vastaus" in r]
+    rivit = [r for r in lue_vastaukset(ulos) if r.get("vastaus")]          # tyhja vastaus ei mene tuomarille
     rnd = random.Random(siemen)
     rnd.shuffle(rivit)
     avain, syote = {}, []
@@ -267,7 +378,10 @@ def paketti(ulos: Path, siemen: int = 353) -> int:
 
 def pisteet(ulos: Path, tuomari: dict[str, float] | None = None) -> dict[str, dict[str, Any]]:
     """Mallikohtaiset pisteet 0-10: tehtavan pisteet = mekaanisen ja tuomarin keskiarvo (kumpi on olemassa).
-    Puuttuva vastaus tai virhe = 0. Alueen pisteet = tehtavien keskiarvo, kokonaispisteet = kaikkien tehtavien keskiarvo."""
+    Virhe = 0. Aikakatkaisu (rivilla aikaraja=True) on oma luokkansa "aikaraja": ei pisteita, sarake aikaraja.
+    Tyhja vastaus (esim. ajatteleva malli kaytti rajan paattelyyn) on oma luokkansa "ei vastausta": se ei
+    ole 0 pistetta vaan jaa pois keskiarvoista ja lasketaan sarakkeeseen ei_vastausta. Alueen pisteet = tehtavien
+    keskiarvo, kokonaispisteet = kaikkien tehtavien keskiarvo (vain tehtavat, joihin tuli vastaus tai virhe)."""
     sarja = {t["id"]: t for t in lue_tehtavat()["tehtavat"]}
     avain = {}
     if tuomari is not None:
@@ -275,11 +389,18 @@ def pisteet(ulos: Path, tuomari: dict[str, float] | None = None) -> dict[str, di
                  json.loads((ulos / "tuomari_avain.json").read_text(encoding="utf-8")).items()}
     tulos: dict[str, dict[str, Any]] = {}
     for r in lue_vastaukset(ulos):
-        m = tulos.setdefault(r["malli"], {"tehtavat": {}, "kulu": 0.0, "ajat": [], "kutsuja": 0})
+        m = tulos.setdefault(r["malli"], {"tehtavat": {}, "kulu": 0.0, "ajat": [], "kutsuja": 0, "ei_vastausta": 0,
+                                          "aikaraja": 0})
         m["kulu"] += r.get("kulu_usd") or 0.0
         m["kutsuja"] += 1
         if "sekuntia" in r and "vastaus" in r:
             m["ajat"].append(r["sekuntia"])
+        if r.get("aikaraja"):
+            m["aikaraja"] += 1                     # aikakatkaisu: oma luokka, ei 0 pistetta
+            continue
+        if "vastaus" in r and not r["vastaus"]:
+            m["ei_vastausta"] += 1
+            continue
         osat = []
         if "vastaus" in r and r["vastaus"]:
             mek = mekaaninen(sarja[r["tehtava"]]["mekaaninen"], r["vastaus"])
@@ -296,21 +417,32 @@ def pisteet(ulos: Path, tuomari: dict[str, float] | None = None) -> dict[str, di
         teht = {k: sum(v) / len(v) for k, v in m["tehtavat"].items()}
         m["alueet"] = {a: round(statistics.mean([p for k, p in teht.items() if sarja[k]["alue"] == a]), 2)
                        for a in ALUEET if any(sarja[k]["alue"] == a for k in teht)}
-        m["yhteensa"] = round(statistics.mean(teht.values()), 2) if teht else 0.0
+        m["yhteensa"] = round(statistics.mean(teht.values()), 2) if teht else None
         m["usd_per_100"] = round(100 * m["kulu"] / m["kutsuja"], 4) if m["kutsuja"] else None
         m["mediaani_s"] = round(statistics.median(m["ajat"]), 1) if m["ajat"] else None
     return tulos
 
 
+def _luku(x: float | None) -> str:
+    return "-" if x is None else "%.2f" % x
+
+
+def _jarjestys(x: tuple[str, dict[str, Any]]) -> tuple[float, str]:
+    """Paras ensin; malli, jolla ei ole yhtaan pisteytettya vastausta (yhteensa None), viimeisena."""
+    y = x[1]["yhteensa"]
+    return (1.0 if y is None else -y, x[0])
+
+
 def taulukko(tulos: dict[str, dict[str, Any]]) -> str:
     rivit = ["| Malli | Yhteens\u00e4 | P\u00e4\u00e4t\u00f6s | Ohjeet | Rehellisyys | Muisti | Suomi | Pilkkominen | "
-             "Ohjeiden kunnioitus | $ / 100 viesti\u00e4 | Vastausaika (s, mediaani) |",
-             "|---|---|---|---|---|---|---|---|---|---|---|"]
-    for malli, m in sorted(tulos.items(), key=lambda x: -x[1]["yhteensa"]):
+             "Ohjeiden kunnioitus | Ei vastausta | Aikaraja | $ / 100 viesti\u00e4 | Vastausaika (s, mediaani) |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for malli, m in sorted(tulos.items(), key=_jarjestys):
         a = m["alueet"]
-        rivit.append("| %s | %.2f | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
-            malli, m["yhteensa"], *("%.2f" % a[x] if x in a else "-" for x in ALUEET),
-            m["usd_per_100"], m["mediaani_s"]))
+        rivit.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %d/%d | %d/%d | %s | %s |" % (
+            malli, _luku(m["yhteensa"]), *("%.2f" % a[x] if x in a else "-" for x in ALUEET),
+            m.get("ei_vastausta", 0), m["kutsuja"], m.get("aikaraja", 0), m["kutsuja"], m["usd_per_100"],
+            m["mediaani_s"]))
     return "\n".join(rivit)
 
 
@@ -318,11 +450,11 @@ def sokkonaytteet(ulos: Path, tulos: dict[str, dict[str, Any]], siemen: int = 35
     """Kolmen parhaan mallin vastaukset sokkotehtaviin kirjaimilla A-C. Avain palautetaan erikseen tiedostoon."""
     sarja = lue_tehtavat()
     teht = {t["id"]: t for t in sarja["tehtavat"]}
-    parhaat = [m for m, _ in sorted(tulos.items(), key=lambda x: -x[1]["yhteensa"])[:3]]
+    parhaat = [m for m, _ in sorted(tulos.items(), key=_jarjestys)[:3]]
     kirjaimet = list("ABC")[:len(parhaat)]
     random.Random(siemen).shuffle(kirjaimet)
     kartta = dict(zip(parhaat, kirjaimet))
-    vastaukset = {(r["malli"], r["tehtava"]): r.get("vastaus", "(ei vastausta)")
+    vastaukset = {(r["malli"], r["tehtava"]): r.get("vastaus") or "(ei vastausta)"
                   for r in reversed(lue_vastaukset(ulos)) if r["toisto"] == 1}
     osat = []
     for tid in sarja["sokkotehtavat"]:
@@ -403,14 +535,16 @@ def itse_kuluarvio(mallit: list[str], toistot: int = 1, kokoaja: str | None = No
     kys = itsetuntemus.lue_kysymykset()["kysymykset"]
     kutsut = len(kys) * toistot
     t_in = int(sum(sum(len(v["content"]) for v in itse_viestit(k)) for k in kys) / ITSE_MERKKIA_PER_TOKEN) * toistot
-    t_out = ITSE_MAX_TOKENIA * kutsut
-    per_malli = {m: float(openrouter_kulut.arvioi_usd(m, t_in, t_out)) for m in mallit}
+    ulos_m = {m: vastausraja(m, ITSE_MAX_TOKENIA) * kutsut for m in mallit}     # ajatteleva malli: tuotannon raja
+    per_malli = {m: float(openrouter_kulut.arvioi_usd(m, t_in, ulos_m[m])) for m in mallit}
     a: dict[str, Any] = {"kutsuja": kutsut * len(mallit), "kutsuja_per_malli": kutsut, "tokenit_sisaan_per_malli": t_in,
-                         "tokenit_ulos_enintaan_per_malli": t_out, "kutsuja_per_kysymys": len(mallit)}
+                         "tokenit_ulos_enintaan_per_malli": max(ulos_m.values()), "tokenit_ulos_enintaan": ulos_m,
+                         "ajattelevat": [m for m in mallit if m in AJATTELEVAT_MALLIT], "kutsuja_per_kysymys": len(mallit)}
     if kokoaja is not None:
         ohje = len(ITSE_KOKOAJA_OHJE % len(mallit)) + 20 * len(mallit)
-        k_in = t_in + int(ohje * kutsut / ITSE_MERKKIA_PER_TOKEN) + len(mallit) * ITSE_MAX_TOKENIA * kutsut
-        per_malli["kokoaja " + kokoaja] = float(openrouter_kulut.arvioi_usd(kokoaja, k_in, t_out))
+        k_in = t_in + int(ohje * kutsut / ITSE_MERKKIA_PER_TOKEN) + sum(ulos_m.values())
+        k_out = vastausraja(kokoaja, ITSE_MAX_TOKENIA) * kutsut
+        per_malli["kokoaja " + kokoaja] = float(openrouter_kulut.arvioi_usd(kokoaja, k_in, k_out))
         a.update(kutsuja=kutsut * (len(mallit) + 1), kutsuja_per_kysymys=len(mallit) + 1, kokoaja=kokoaja,
                  tokenit_sisaan_kokoaja=k_in)
     a.update(ylaraja_usd_per_malli=per_malli, ylaraja_usd=round(sum(per_malli.values()), 4),
@@ -424,6 +558,9 @@ def itse_arvioteksti(a: dict[str, Any]) -> str:
                                                                      a["kutsuja_per_kysymys"]),
              "  tokenit per malli: sisaan noin %d, ulos enintaan %d" % (a["tokenit_sisaan_per_malli"],
                                                                        a["tokenit_ulos_enintaan_per_malli"])]
+    if a.get("ajattelevat"):
+        rivit.append("  ajattelevat mallit (vastausraja %d tokenia, paattely mukaan lukien): %s" % (
+            AJATTELU_MAX_TOKENIA, ", ".join(a["ajattelevat"])))
     if a.get("kokoaja"):
         rivit.append("  yhdistelma: %d mallia + kokoaja %s, kokoajan tokenit sisaan noin %d" % (
             a["kutsuja_per_kysymys"] - 1, a["kokoaja"], a["tokenit_sisaan_kokoaja"]))
@@ -447,15 +584,15 @@ def _itse_kutsu(malli: str, viestit: list[dict[str, Any]], laheta_tehdas: Callab
     t0 = kello()
     data = openrouter_kulut.kutsu(
         malli, viestit, laheta, tehtava=ITSE_TEHTAVA, tila=kulutila,
-        max_tokens=ITSE_MAX_TOKENIA, temperature=0.3, stream=False,
+        max_tokens=vastausraja(malli, ITSE_MAX_TOKENIA), temperature=0.3, stream=False,
         usage={"include": True}, yksityinen_chat=True)
-    teksti = data["choices"][0]["message"].get("content") or ""
+    tiedot = vastauksen_tiedot(data)
     kaytto = data.get("usage") or {}
     kulu = kaytto.get("cost")
     if not isinstance(kulu, (int, float)) or isinstance(kulu, bool) or not math.isfinite(kulu) or kulu < 0:
         # Kulu puuttuu vastauksesta: ajon oma raja laskee kulukirjanpidon varovaisen arvion, ei nollaa.
         kulu = openrouter_kulut.arvioi_usd(malli, kaytto.get("prompt_tokens"), kaytto.get("completion_tokens"))
-    return {"vastaus": teksti.strip(), "kulu_usd": float(kulu), "sekuntia": round(kello() - t0, 2),
+    return {**tiedot, "kulu_usd": float(kulu), "sekuntia": round(kello() - t0, 2),
             "tokenit_sisaan": kaytto.get("prompt_tokens"), "tokenit_ulos": kaytto.get("completion_tokens"),
             "tarjoaja": data.get("provider")}
 
@@ -475,14 +612,21 @@ def _itse_yhdistelmarivi(mallit: list[str], kokoaja: str, k: dict[str, Any],
                 raise
             except Exception as e:  # noqa: BLE001 - vain tyyppi talteen, ei viestia
                 virheita += 1
-                osat.append({"malli": m, "virhe": type(e).__name__})
+                osat.append({"malli": m, **virherivi(e)})
             rivi["kulu_usd"] = sum(o.get("kulu_usd", 0.0) for o in osat)
-        vastaukset = [o["vastaus"] for o in osat if "vastaus" in o]
+        vastaukset = [o["vastaus"] for o in osat if o.get("vastaus")]   # tyhja jasenvastaus ei mene kokoajalle
         rivi["vastauksia"] = len(vastaukset)
         jasenaika = max([o["sekuntia"] for o in osat if "sekuntia" in o] or [0.0])
         perakkain = sum(o.get("sekuntia", 0.0) for o in osat)
+        if not vastaukset and any(o.get("tyhja") for o in osat):
+            # jasenet vastasivat tyhjaa (ei poikkeusta): ei kokoajan kutsua, rivi = "ei vastausta"
+            rivi.update(vastaus="", tyhja=True, finish_reason=None, sekuntia=round(jasenaika, 2),
+                        sekuntia_perakkain=round(perakkain, 2))
+            return virheita
         if not vastaukset:
             rivi.update(virhe="ei vastauksia", sekuntia=round(jasenaika, 2), sekuntia_perakkain=round(perakkain, 2))
+            if all(o.get("aikaraja") for o in osat):
+                rivi["aikaraja"] = True          # kaikki jasenet aikakatkaisuun: "aikaraja", ei "vaarin"
             return virheita
         try:
             lopullinen = kysy(kokoaja, itse_kokoajan_viestit(k, vastaukset))
@@ -490,11 +634,14 @@ def _itse_yhdistelmarivi(mallit: list[str], kokoaja: str, k: dict[str, Any],
             raise
         except Exception as e:  # noqa: BLE001 - vain tyyppi talteen; ei korvaavaa vastausta, pisteytys = vaarin
             virheita += 1
-            rivi.update(virhe=type(e).__name__, sekuntia=round(jasenaika, 2), sekuntia_perakkain=round(perakkain, 2))
+            rivi.update(virherivi(e), sekuntia=round(jasenaika, 2), sekuntia_perakkain=round(perakkain, 2))
             return virheita
         rivi["kulu_usd"] += lopullinen["kulu_usd"]
         # sekuntia = arvio rinnakkaisesta ajosta (hitain vastaaja + kokoaja); perakkainen aika talteen erikseen
-        rivi.update(vastaus=lopullinen["vastaus"], sekuntia=round(jasenaika + lopullinen["sekuntia"], 2),
+        # kokoajan tyhja vastaus: rivin vastaus on tyhja ja tyhja=True -> pisteytyksessa "ei vastausta"
+        rivi.update(vastaus=lopullinen["vastaus"], tyhja=lopullinen["tyhja"], finish_reason=lopullinen["finish_reason"],
+                    ajatteli=lopullinen["ajatteli"], tokenit_paattely=lopullinen["tokenit_paattely"],
+                    sekuntia=round(jasenaika + lopullinen["sekuntia"], 2),
                     sekuntia_perakkain=round(perakkain + lopullinen["sekuntia"], 2),
                     kokoaja_kulu_usd=lopullinen["kulu_usd"], tokenit_sisaan=lopullinen["tokenit_sisaan"],
                     tokenit_ulos=lopullinen["tokenit_ulos"], tarjoaja=lopullinen["tarjoaja"])
@@ -521,6 +668,7 @@ def aja_itsetuntemus(mallit: list[str], ulos: Path, laheta_tehdas: Callable[[], 
     ajettavat = list(mallit) if kokoaja is None else [itse_yhdistelman_nimi(mallit, kokoaja)]
     ulos.mkdir(mode=0o700, parents=True, exist_ok=True)
     kulut, virheet, suurin, pysahtyi = 0.0, 0, 0.0, ""
+    kirjatut: list[dict[str, Any]] = []
 
     def kysy(malli: str, viestit: list[dict[str, Any]]) -> dict[str, Any]:
         return _itse_kutsu(malli, viestit, laheta_tehdas, kulutila, kello)
@@ -545,7 +693,7 @@ def aja_itsetuntemus(mallit: list[str], ulos: Path, laheta_tehdas: Callable[[], 
                             pysahtyi = "paivakatto"
                             break
                         except Exception as e:  # noqa: BLE001 - vain tyyppi talteen, ei viestia
-                            rivi.update(virhe=type(e).__name__, sekuntia=round(kello() - t0, 2))
+                            rivi.update(virherivi(e), sekuntia=round(kello() - t0, 2))
                             kulu, uudet_virheet = 0.0, 1
                     else:
                         try:
@@ -563,9 +711,17 @@ def aja_itsetuntemus(mallit: list[str], ulos: Path, laheta_tehdas: Callable[[], 
                         pysahtyi = "virheita"
                     f.write(json.dumps(rivi, ensure_ascii=False) + "\n")
                     f.flush()
-                    loki("%s %s/%d %s" % (nimi, k["id"], toisto, rivi.get("virhe", "ok")))
+                    kirjatut.append(rivi)
+                    loki("%s %s/%d %s" % (nimi, k["id"], toisto, loki_tila(rivi)))
     yhteenveto = {"kulut_usd": round(kulut, 4), "virheita": virheet, "pysahtyi": pysahtyi or None,
-                  "mallit": mallit, "toistot": toistot, "raja_usd": raja}
+                  "mallit": mallit, "toistot": toistot, "raja_usd": raja, **tyhjien_yhteenveto(kirjatut)}
+    if kokoaja is not None:
+        # yhdistelmassa rivin malli on yhdistelman nimi: listan ulkopuoliset haetaan jasenista ja kokoajasta
+        osat = [o for r in kirjatut for o in r.get("osat", [])]
+        kokoajat = [{**r, "malli": kokoaja} for r in kirjatut]
+        yhteenveto["ajattelevat_listan_ulkopuolella"] = tyhjien_yhteenveto(osat + kokoajat)["ajattelevat_listan_ulkopuolella"]
+        yhteenveto["jasenten_tyhjat"] = sum(1 for o in osat if o.get("tyhja"))
+        yhteenveto["jasenten_aikarajat"] = sum(1 for o in osat if o.get("aikaraja"))
     tiedosto = "ajo.json"
     if kokoaja is not None:
         yhteenveto.update(yhdistelma=len(mallit), kokoaja=kokoaja, kutsuja_per_kysymys=per_kysymys)
@@ -593,11 +749,13 @@ def itse_tuotannon_mallit(env: Any) -> dict[str, str]:
 
 def _itse_viikko_rivi(aika: str, roolit: dict[str, str], yv: dict[str, Any], tulos: dict[str, dict[str, Any]],
                       kysymyksia: int, rivit: list[dict[str, Any]]) -> dict[str, Any]:
-    """vastattu = rivit, joilla on vastaus (virherivi lasketaan pisteissa vaaraksi, mutta ei vastatuksi). Ajo on
-    kesken, jos se pysahtyi, jos yksikin kutsu epaonnistui tai jos vastauksia puuttuu: silloin se ei ole vertailukohta."""
+    """vastattu = rivit, joilla on vastaus (virherivi lasketaan pisteissa vaaraksi, mutta ei vastatuksi; tyhja vastaus
+    (tyhja=True) ja aikakatkaisu (aikaraja=True) eivat ole vastattuja). Ajo on kesken, jos se pysahtyi, jos yksikin
+    kutsu epaonnistui tai jos vastauksia puuttuu: silloin se ei ole vertailukohta."""
     mallit = {}
     for m, t in tulos.items():
-        vastattu = sum(1 for r in rivit if r.get("malli") == m and "vastaus" in r and "virhe" not in r)
+        vastattu = sum(1 for r in rivit if r.get("malli") == m and "vastaus" in r and "virhe" not in r
+                       and not r.get("tyhja") and not r.get("aikaraja"))
         mallit[m] = {"yhteensa": t["yhteensa"], "lajit": dict(t["lajit"]), "luokat": dict(t["luokat"]),
                      "vastattu": vastattu, "kulu_usd": t["kulu"], "mediaani_s": t["mediaani_s"]}
     for m in yv["mallit"]:
@@ -722,7 +880,7 @@ def main(argv: list[str] | None = None, env: Any = None) -> int:
             mallit = ",".join(EHDOKKAAT) if a.mallit is None else a.mallit
             toistot = TOISTOT if a.toistot is None else a.toistot
             yv = aja([m.strip() for m in mallit.split(",") if m.strip()], ulos,
-                     lambda: yksityinen_or.tee_kuljetin(avain), toistot=min(max(toistot, 1), TOISTOT))
+                     kuljetin_tehdas(avain), toistot=min(max(toistot, 1), TOISTOT))
             print(json.dumps(yv, ensure_ascii=False))
         elif a.komento == "paketti":
             print("naytteita", paketti(ulos))
@@ -735,7 +893,7 @@ def main(argv: list[str] | None = None, env: Any = None) -> int:
                 ap.error("itse-viikko: anna --ulos ja --tiivistelma; mallit tulevat palvelun asetuksista")
             avain = yksityinen_or.lue_avain(a.avain)
             rivi = itse_viikko(os.environ if env is None else env, ulos, Path(a.tiivistelma),
-                               lambda: yksityinen_or.tee_kuljetin(avain), raja=a.raja)
+                               kuljetin_tehdas(avain), raja=a.raja)
             print(json.dumps({k: rivi[k] for k in ("aika", "roolit", "kulut_usd", "pysahtyi", "virheita", "kesken")},
                              ensure_ascii=False))
             print(json.dumps({m: t["yhteensa"] for m, t in rivi["mallit"].items()}, ensure_ascii=False))
@@ -752,7 +910,7 @@ def main(argv: list[str] | None = None, env: Any = None) -> int:
                     print("Ei ajettu. Oikea ajo: lisaa --vahvista.")
                     return 2
                 avain = yksityinen_or.lue_avain(a.avain)
-                yv = aja_itsetuntemus(mallit, ulos, lambda: yksityinen_or.tee_kuljetin(avain), toistot=toistot,
+                yv = aja_itsetuntemus(mallit, ulos, kuljetin_tehdas(avain), toistot=toistot,
                                       kokoaja=kokoaja)
                 print(json.dumps(yv, ensure_ascii=False))
     except (VertailuVirhe, itsetuntemus.ArviointiVirhe, yksityinen.YksityinenVirhe, OSError, ValueError, KeyError) as e:

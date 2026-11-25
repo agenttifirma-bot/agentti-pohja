@@ -27,8 +27,23 @@ Pisteytys on mekaaninen (säännölliset lausekkeet) ja suuntaa antava. Vastauks
 | "en tiedä" (tieto olisi ollut) | rakennekysymys, malli sanoo ettei tiedä | 0,5 |
 | väärin | väärä tai puutteellinen vastaus, mutta epävarmuus on merkitty (esim. "luultavasti") | 0 |
 | arvaus faktana | kielletty väite tai keksitty vastaus ilman epävarmuuden merkintää | 0 |
+| ei vastausta | malli palautti tyhjän vastauksen (esim. ajatteleva malli käytti koko vastausrajan päättelyyn) | ei pisteitä |
+| aikaraja | kutsu katkesi kuljettimen aikarajaan (360 s, sama kuin tuotannon chatissa) | ei pisteitä |
 
 Päättelytehtävät ovat joko oikein tai väärin.
+
+”Ei vastausta” ei ole ”väärin”. Se jää pois lajien ja kokonaispisteiden keskiarvosta, ja taulukossa on sille oma sarake. Jos mallilla ei ole yhtään pisteytettyä vastausta, kokonaispisteiden kohdalla on ”-”. Sama koskee luokkaa ”aikaraja”: aikakatkaisu ei ole väärä vastaus vaan puuttuva mittaus, ja taulukossa on sille sarake ”Aikaraja”. Muu virhe (poikkeus, esim. HTTP-virhe) lasketaan edelleen vääräksi.
+
+### Ajattelevat mallit
+
+OpenRouterissa päättely ja vastaus jakavat saman `max_tokens`-rajan. Jos raja täyttyy päättelyn aikana, vastauksessa on `finish_reason: "length"` ja tyhjä `content`, ja päättely laskutetaan silti (OpenRouterin ohje *Reasoning Tokens*). Ajossa 25.11.2026 `qwen/qwen3.5-397b-a17b` sai 800 tokenin rajalla 33 tyhjää vastausta, jotka luokiteltiin silloin vääriksi.
+
+- Listan `mallivertailu.AJATTELEVAT_MALLIT` malleille annetaan sama vastausraja kuin tuotannossa (`yksityinen_or.MAX_TOKENIA`, 8 000 tokenia). Muut mallit käyttävät edelleen 800 tokenin rajaa (`ITSE_MAX_TOKENIA`). `reasoning`-parametria ei lähetetä, koska tuotantokaan ei lähetä sitä.
+- Jokaiselle riville kirjataan `finish_reason`, `tyhja`, `ajatteli` (vastauksessa oli päättelyä) ja `tokenit_paattely`. Päättelyn tekstiä ei tallenneta.
+- Lokirivi näyttää tyhjän vastauksen muodossa `tyhja (length)`. Yhteenvedossa (`ajo.json`) ovat `ei_vastausta` ja `ajattelevat_listan_ulkopuolella`: jälkimmäinen kertoo mallit, jotka ajattelivat ja jäivät tyhjiksi, vaikka ne eivät ole listalla.
+- Kuluarvio laskee ajattelevalle mallille 8 000 tokenin enimmäismäärän. Ajon 3 USD:n raja ja päiväkatto eivät muutu.
+- Kuljettimen aikaraja on 360 s (`mallivertailu.VERTAILU_AIKARAJA_S` = `yksityinen_or.CHAT_AIKARAJA_S`), sama kuin tuotannon chatissa samalla vastausrajalla. Hidas ajatteleva malli tarvitsee 8 000 tokeniin noin 320 s. Aikakatkaisu kirjataan riville (`virhe` ja `aikaraja: true`) ja yhteenvetoon (`aikaraja`, yhdistelmäajossa myös `jasenten_aikarajat`). Pysähtymissäännöt eivät muutu: aikakatkaisu on virhe, joten kaksi peräkkäistä ohittaa mallin.
+- Jos `content` on lista (osat), tekstiosat yhdistetään ennen tyhjyyden tarkistusta. Muut osat ohitetaan.
 
 Kielletty väite ei osu, jos saman lauseenosan alussa ennen sitä on kielto tai lainaus (ei, en, eivät, eikä, mukaan). Esimerkiksi ”saldosta, ei Claude-tilauksesta” tai ”kalenterin mukaan keskiviikko” ei ole väite. Pisteytys on silti mekaaninen: tarkista arvaukset ja väärät vastaukset käsin tiedostosta `vastaukset.jsonl`.
 
@@ -57,13 +72,27 @@ runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -B -m aivo.malliver
 
 Käytä jokaiselle ajolle omaa tuloskansiota (esimerkiksi `itsetuntemus-ennen` ja `itsetuntemus-jalkeen`), koska `vastaukset.jsonl` kasvaa lisäyksinä.
 
+**Pitkä ajo taustapalveluna.** Ajattelevilla malleilla yksi kutsu voi kestää minuutteja (aikaraja 360 s), joten usean mallin ajo kestää tunteja. Aja se kertaluonteisena palveluna, jotta yhteyden katkeaminen ei keskeytä sitä. `systemd-run` ilman valitsimia `--wait` ja `--pipe` palaa heti; `--pipe` ei toimi `pct enter` -istunnossa (paluukoodi 208/STDIN). `PYTHONUNBUFFERED=1` kirjoittaa lokirivit heti lokiin. Esimerkki kahdeksan mallin vertailusta (aja ensin kohta 1 samalla mallilistalla):
+
+```
+install -d -m 700 -o aivo -g aivo /var/lib/aivo-yksityinen/itsetuntemus-8
+systemd-run --unit=aivo-itsetuntemus-ajo -p User=aivo -p Group=aivo -p WorkingDirectory=/opt/agentti-pohja \
+  -p "Environment=PYTHONPATH=/opt/agentti-pohja PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1" \
+  /usr/bin/python3 -m aivo.mallivertailu itse-aja --ulos /var/lib/aivo-yksityinen/itsetuntemus-8 \
+  --mallit qwen/qwen3-235b-a22b-2507,deepseek/deepseek-chat-v3.1,qwen/qwen3.8-2.4t-a95b,qwen/qwen3.5-397b-a17b,deepseek/deepseek-r1-0528,qwen/qwen3-235b-a22b-thinking-2507,meta-llama/llama-4-maverick,mistralai/mistral-small-2603 \
+  --vahvista
+journalctl -u aivo-itsetuntemus-ajo -f
+```
+
+Ajo on valmis, kun lokissa on yhteenvedon JSON-rivi ja systemd:n rivi `Deactivated successfully` (paluuarvo 0) tai `Failed with result 'exit-code'`. Epäonnistunut yksikkö jää listaan: ennen uutta ajoa samalla nimellä aja `systemctl reset-failed aivo-itsetuntemus-ajo`. Taulukko tehdään sen jälkeen kohdan 3 komennolla.
+
 ## Yhdistelmäkoe: kolme tai viisi mallia (A1105)
 
 Valitsimilla `--yhdistelma N` (N = 3 tai 5) ja `--kokoaja <malli>` jokainen kysymys kysytään kaikilta `--mallit`-listan malleilta (listassa on oltava tasan N mallia). Sen jälkeen kokoaja saa samat kehotteet ja numeroidut vastaukset ja kirjoittaa lopullisen vastauksen. Kokoajan ohje on lyhyt: valitse tai yhdistä, jätä pois väitteet, joita vastaukset eivät tue, ja merkitse epävarmuus. Kokoaja ei näe mallien nimiä, ja vastauksista poistetaan `[[ ]]`-merkinnät.
 
 - Pisteytys tehdään lopullisesta vastauksesta samalla luokituksella kuin yksittäisille malleille. Jäsenten vastaukset tallentuvat riville (`osat`) käsin tarkistusta varten.
 - Kysymystä kohden tehdään N + 1 kutsua. Kuluarvio laskee ne ja kokoajan pidemmän syötteen (N vastausta enimmäispituudella). Ajon 3 USD:n raja tarkistetaan ennen jokaista kysymystä koko kysymyksen varauksella.
-- Jos jäsen epäonnistuu, kokoaja saa muiden vastaukset. Jos kokoaja epäonnistuu, rivillä on virhe eikä vastausta, ja se lasketaan vääräksi.
+- Jos jäsen epäonnistuu tai vastaa tyhjää, kokoaja saa muiden vastaukset. Jos kaikki jäsenet vastaavat tyhjää, kokoajaa ei kutsuta ja rivi on ”ei vastausta”. Jos kokoajan vastaus on tyhjä, rivi on ”ei vastausta”. Jos kokoaja epäonnistuu, rivillä on virhe eikä vastausta, ja se lasketaan vääräksi. Yhteenvedossa `jasenten_tyhjat` kertoo jäsenten tyhjien vastausten määrän.
 - Kutsut tehdään peräkkäin. Rivin `sekuntia` on arvio rinnakkaisesta ajosta (hitain jäsen + kokoaja), ja `sekuntia_perakkain` on todellinen peräkkäinen aika. Taulukon mediaaniaika käyttää arvoa `sekuntia`.
 - Taulukossa yhdistelmä näkyy omana rivinään nimellä `yhdistelma-N (kokoaja <malli>)`. Yhteenveto kirjoitetaan tiedostoon `ajo-yhdistelma-N.json`.
 - Koe on erillinen ajo. Palvelun yhdistelmärajat (`aivo/yhdistelma.py`: `MAX_MALLEJA = 3`, `MAX_KUTSUT_VIESTI = 4`) eivät muutu.
