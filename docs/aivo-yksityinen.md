@@ -315,6 +315,8 @@ Rajat:
 - Jos päiväkatto on täynnä, vastaus näytetään ilman tarkistusta ja merkintä kertoo sen. Kelvoton tarkastajan vastaus tai verkkovirhe näkyy merkintänä "tarkistus: ei onnistunut".
 - Kutsuraja 4 per viesti (`yhdistelma.MAX_KUTSUT_VIESTI`) koskee yhdistelmän ja tarkistuksen summaa. Jos raja on täynnä, tarkistus ohitetaan. Jos tilaa on vain yhdelle kutsulle, korjausta ei tehdä.
 - Tarkastajan kutsussa vastausraja on 1 500 tokenia ja aikaraja 120 s. Korjauksessa ne ovat samat kuin chatissa.
+- Tarkistuksella on oma kokonaisaikaraja 240 s (tarkastaja ja korjaus yhteensä). Jokainen kutsu saa enintään jäljellä olevan ajan, ja kun aika loppuu, korjausta ei aloiteta. Tarkistus voi siis pidentää viestin vastausaikaa enintään noin 240 s.
+- `[[AGENTTI]]`-lohkot tulevat vain alkuperäisestä vastauksesta, kuten muutkin merkinnät.
 
 ## Rajat ja avoimet asiat
 

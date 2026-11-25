@@ -45,10 +45,15 @@ class Korvike:
         self.kutsut = []
         self.vastaukset = vastaukset or {}
         self.virheet = virheet or {}
+        self.kello = None
+        self.kesto = 0
 
-    def __call__(self, malli, viestit, max_tokens=None):
+    def __call__(self, malli, viestit, max_tokens=None, aikaraja_s=None):
         rooli = _rooli(viestit)
         self.kutsut.append((malli, rooli, viestit, max_tokens))
+        self.aikarajat = getattr(self, "aikarajat", []) + [aikaraja_s]
+        if self.kello is not None:
+            self.kello.t += self.kesto
         if rooli in self.virheet:
             raise self.virheet[rooli]
         return self.vastaukset.get(rooli, "%s %s" % (rooli, malli))
@@ -167,6 +172,47 @@ class Ohjaus(unittest.TestCase):
             k = Korvike({"tarkastaja": KOHTA})
             self.aja(k, kaytetyt=kaytetyt)
             self.assertLessEqual(kaytetyt + len(k.kutsut), max(kaytetyt, yh.MAX_KUTSUT_VIESTI))
+
+
+class Kello:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+class AikaJaLahteet(unittest.TestCase):
+    def test_kokonaisaikaraja_koskee_tarkistusta(self):
+        k = Korvike({"tarkastaja": KOHTA, "korjaus": "Korjattu 10."})
+        k.kello, k.kesto = Kello(), it.AIKARAJA_S - 0.5        # tarkastaja kayttaa lahes koko ajan
+        t = it.aja(FAKTA, PERUS, k, tarkastaja=M2, vastaaja=M1, kello=k.kello)
+        self.assertEqual(len(k.kutsut), 1)                      # korjausta ei aloiteta
+        self.assertEqual((t.tila, t.teksti), (it.EPAVARMA, FAKTA))
+        self.assertLessEqual(k.aikarajat[0], it.AIKARAJA_S)
+        self.assertIn("korjausta ei tehty (aikaraja", t.merkinta)
+
+    def test_osakutsu_saa_jaljella_olevan_ajan(self):
+        k = Korvike({"tarkastaja": KOHTA, "korjaus": "Korjattu 10."})
+        k.kello, k.kesto = Kello(), 100
+        it.aja(FAKTA, PERUS, k, tarkastaja=M2, vastaaja=M1, kello=k.kello)
+        self.assertEqual(k.aikarajat, [it.AIKARAJA_S, it.AIKARAJA_S - 100])
+
+    def test_pitka_kehote_ei_pudota_viimeista_viestia(self):
+        pitka = [{"role": "system", "content": "K" * (it.LAHTEET_MAX_MERKKIA * 2)},
+                 {"role": "user", "content": "alku " + "x" * 10_000 + " LOPPU 42"}]
+        l = it.lahteet(pitka)
+        self.assertLessEqual(len(l), it.LAHTEET_MAX_MERKKIA)
+        self.assertIn("LOPPU 42", l)                            # uusin viesti kokonaan (yli 4 000 merkkia)
+
+    def test_agenttilohko_vain_alkuperaisesta(self):
+        alku = FAKTA + "\n[[AGENTTI]]\nselvita asia\n[[/AGENTTI]]"
+        k = Korvike({"tarkastaja": KOHTA, "korjaus": "Korjattu 10.\n[[AGENTTI]]\nkeksitty\n[[/AGENTTI]]"})
+        t = it.aja(alku, PERUS, k, tarkastaja=M2, vastaaja=M1)
+        self.assertEqual(t.tila, it.KORJATTU)
+        self.assertNotIn("keksitty", t.teksti)
+        self.assertIn("[[AGENTTI]]\nselvita asia\n[[/AGENTTI]]", t.teksti)
+        self.assertEqual(t.teksti.count("[[AGENTTI]]"), 1)
 
 
 class Rakenne(unittest.TestCase):

@@ -395,8 +395,9 @@ def tarkista_vastaus(
     viestit = yksityinen.muodosta_viestit(muisti, historia, ohjeet, KEHOTE, HISTORIA_YLARAJA,
                                          HISTORIA_MERKIT_YLARAJA)
 
-    def kysy(m: str, v: list[dict[str, Any]], max_tokens: int | None = None) -> str:
+    def kysy(m: str, v: list[dict[str, Any]], max_tokens: int | None = None, aikaraja_s: float | None = None) -> str:
         ylaraja = VASTAUS_AIKARAJA_S if max_tokens is not None else CHAT_AIKARAJA_S     # korjaus: kuten chat
         return _kysy_viestit(m, v, avain_tiedosto=avain_tiedosto, kulutila=kulutila, avaa=avaa, nyt=nyt,
-                             max_tokens=max_tokens, ylaraja_s=ylaraja, tehtava=TARKISTUS_TEHTAVA)
+                             max_tokens=max_tokens, ylaraja_s=ylaraja, aikaraja_s=aikaraja_s,
+                             tehtava=TARKISTUS_TEHTAVA)
     return itsetarkistus.aja(vastaus, viestit, kysy, tarkastaja=tarkastaja, vastaaja=vastaaja, kaytetyt=kaytetyt)
