@@ -14,7 +14,7 @@ from aivo import openrouter_kulut as ok, yksityinen, yksityinen_or as yo
 MALLI = "meta-llama/llama-3.3-70b-instruct"
 AVAIN = "sk-testi-" + "x" * 30          # keksitty, ei oikea avain
 NYT = datetime(2026, 11, 19, 12, 0, tzinfo=ok.TZ)
-EI_TYOKALUJA = "T\u00e4ss\u00e4 tilassa sinulla ei ole ty\u00f6kaluja, verkkoa eik\u00e4 taustaprosesseja."
+EI_TYOKALUJA = "Sinulla ei ole verkkoa etk\u00e4 voi ajaa ohjelmia itse. Voit ehdottaa agenttiteht\u00e4v\u00e4\u00e4 s\u00e4\u00e4nn\u00f6n 8 mukaisesti."
 EI_LUPAUKSIA = "\u00c4l\u00e4 koskaan sano aloittavasi, suorittavasi tai jatkavasi teht\u00e4v\u00e4\u00e4 my\u00f6hemmin, \u00e4l\u00e4k\u00e4 arvioi kestoa."
 
 

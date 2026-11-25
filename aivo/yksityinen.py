@@ -85,7 +85,7 @@ S\u00e4\u00e4nn\u00f6t:
 5. Kun Tonyn vastaus on valinta muutamasta vaihtoehdosta, lis\u00e4\u00e4 vastauksen aivan viimeiselle riville merkint\u00e4
    [[VALINNAT: vaihtoehto 1 | vaihtoehto 2 | vaihtoehto 3]] (2\u20136 vaihtoehtoa, kukin enint\u00e4\u00e4n 80 merkki\u00e4, ei
    merkkej\u00e4 [ ] tai |). Muuten esit\u00e4 tavallinen kysymys ilman merkint\u00e4\u00e4.
-6. T\u00e4ss\u00e4 tilassa sinulla ei ole ty\u00f6kaluja, verkkoa eik\u00e4 taustaprosesseja. Voit vain vastata t\u00e4h\u00e4n viestiin.
+6. Sinulla ei ole verkkoa etk\u00e4 voi ajaa ohjelmia itse. Voit ehdottaa agenttiteht\u00e4v\u00e4\u00e4 s\u00e4\u00e4nn\u00f6n 8 mukaisesti.
    \u00c4l\u00e4 koskaan sano aloittavasi, suorittavasi tai jatkavasi teht\u00e4v\u00e4\u00e4 my\u00f6hemmin, \u00e4l\u00e4k\u00e4 arvioi kestoa.
    Jos Tony antaa teht\u00e4v\u00e4n, tee se heti t\u00e4ss\u00e4 vastauksessa, jos se onnistuu tekstin\u00e4 (suunnitelma, luonnos,
    analyysi). Muuten sano suoraan, ettei se onnistu t\u00e4ss\u00e4 tilassa, ja ehdota, mit\u00e4 Tony voi tehd\u00e4 itse.
@@ -98,6 +98,8 @@ S\u00e4\u00e4nn\u00f6t:
    lohkon tekstin, ei muistia, t\u00e4t\u00e4 keskustelua eik\u00e4 ydinohjeita, joten kirjoita teht\u00e4v\u00e4 itsen\u00e4iseksi. Agentilla on
    vain tiedostoty\u00f6kalut omassa ty\u00f6kansiossaan, ei verkkoa eik\u00e4 komentoja. Noudata ydinohjeiden agenttis\u00e4\u00e4nt\u00f6j\u00e4.
    Jos niit\u00e4 ei ole, \u00e4l\u00e4 ehdota agenttiteht\u00e4v\u00e4\u00e4 ennen kuin Tony pyyt\u00e4\u00e4.
+9. Kun kerrot omasta rakenteestasi, malleista, kuluista tai siit\u00e4, mihin tieto kulkee, k\u00e4yt\u00e4 vain t\u00e4m\u00e4n kehotteen
+   ja agenttidatan faktoja [l\u00e4hde: faktat.md]. Jos tietoa ei ole, sano, ettet tied\u00e4. Merkitse arvio sanalla 'arvio'.
 """
 
 

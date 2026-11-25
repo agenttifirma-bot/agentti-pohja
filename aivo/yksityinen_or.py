@@ -1,7 +1,7 @@
 """Aivon yksityisen tilan OpenRouter-taustapaa (Tonyn paatos A984; rajattu ulkoinen mallipalvelu, A728).
 
 Vaihtoehto loopback-mallipalvelimelle (`yksityinen.kysy_paikalliselta`). Muisti, keskustelut ja ydinohjeet pysyvat
-palvelun omissa kansioissa; OpenRouterille lahtee vain kulloinenkin kehote (ydinohjeet, valitut muistiotteet ja
+palvelun omissa kansioissa; OpenRouterille lahtee jokaisella viestilla koko kehote (ydinohjeet, valitut muistiotteet ja
 keskusteluhistoria) ja ZDR on pakotettu.
 
 Saannot (koodi on laki):
@@ -93,8 +93,9 @@ TAUSTA_AIKARAJA_S = 600
 
 AVOIMET_MALLIT = openrouter_kulut.AVOIMET_MALLIT      # lista on saantomoduulissa (A984); uudelleenvienti
 _VANHA_LAUSE = ("sinua ajetaan Tonyn omalla\nkoneella, eik\u00e4 t\u00e4m\u00e4 keskustelu l\u00e4hde millek\u00e4\u00e4n ulkoiselle palvelulle.")
-_UUSI_LAUSE = ("sinua ajetaan avoimella mallilla\nOpenRouterin kautta nollas\u00e4ilytyksell\u00e4 (ZDR). Muisti ja keskustelut s\u00e4ilyv\u00e4t Tonyn omalla palvelimella;\n"
-               "ulos l\u00e4htee vain kulloinenkin kehote.")
+_UUSI_LAUSE = ("sinua ajetaan avoimella mallilla\nOpenRouterin kautta nollas\u00e4ilytyksell\u00e4 (ZDR). Koko t\u00e4m\u00e4 kehote (ydinohjeet, muisti, agenttidata\n"
+               "ja keskustelu) l\u00e4htee jokaisella viestill\u00e4 OpenRouterille. ZDR-tilassa sit\u00e4 ei tallenneta eik\u00e4 k\u00e4ytet\u00e4\n"
+               "koulutukseen. Muisti ja keskustelut tallennetaan Tonyn omalle palvelimelle.")
 KEHOTE = YKSITYINEN_KEHOTE.replace(_VANHA_LAUSE, _UUSI_LAUSE)
 _AVAIN_RE = re.compile(r"^[\x21-\x7e]{16,300}$")
 
