@@ -776,8 +776,10 @@ class Asiakasrajaus(Pohja):
             c.request("POST", "/haku", body=json.dumps({"lauseke": LAUSEKE, "tunnus": TUNNUS}),
                       headers={"Content-Type": "application/json", "Authorization": "Bearer " + AVAIN})
             return c.getresponse().status
-        except (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError):
-            return None
+        except (http.client.HTTPException, OSError) as e:
+            if isinstance(e, socket.timeout):
+                raise  # aikakatkaisu ei ole suljettu yhteys
+            return None  # suljettu ilman vastausta (RST tai EOF, riippuu ytimen ajoituksesta)
         finally:
             c.close()
 
