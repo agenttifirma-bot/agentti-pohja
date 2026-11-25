@@ -17,6 +17,7 @@ Saannot (koodi on laki):
   * Loopback-taustapaalla vartijamallia ei kayteta, koska teksti ei muuten lahtisi palvelimelta.
   * Tiedostojen ja mallin vastauksen sisalto on dataa, ei ohjeita. Poikkeuksista talletetaan vain tyypin nimi."""
 import json
+import math
 import os
 import re
 import stat
@@ -50,6 +51,18 @@ IPV6_RE = re.compile(r"(?i)(?<![\w:])(?:[0-9a-f]{1,4}:){4,7}[0-9a-f]{1,4}(?![\w:
 TAILNET_RE = re.compile(r"(?i)(?<![\w-])(?:[a-z0-9-]+\.)*[a-z0-9-]+\.ts\.net\b|(?<![\w-])tail[0-9a-f]{4,}\b")
 HETU_RE = re.compile(r"(?<!\w)\d{6}[-+A-FU-Y]\d{3}[0-9A-Y](?!\w)")
 IBAN_RE = re.compile(r"(?<!\w)FI\d{2}(?: ?\d{4}){3} ?\d{2}(?!\w)")
+# Avaimet. Otsikkoa ei kirjoiteta kokonaisena tahan, koska test_repo etsii sita repon tiedostoista.
+SSH_YKSITYINEN_RE = re.compile(r"-----BEGIN (?:OPENSSH |RSA |DSA |EC |ENCRYPTED )?PRIVATE KEY-----")
+SSH_JULKINEN_RE = re.compile(
+    r"(?<![\w-])(?:ssh-ed25519|ssh-rsa|ssh-dss|ecdsa-sha2-nistp(?:256|384|521)) AAAA[0-9A-Za-z+/]{16,}={0,3}")
+API_AVAIN_RE = re.compile(
+    r"(?<![\w-])(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{22,}"
+    r"|xox[abposr]-[A-Za-z0-9-]{10,}|(?:AKIA|ASIA)[0-9A-Z]{16})(?![\w-])")
+# Avainsana (key, token, secret, password, salasana, avain) ja sen jalkeen pitka satunnainen arvo. Vain arvo merkitaan.
+AVAINSANA_ARVO_RE = re.compile(
+    r"(?i)(?:key|token|secret|passw(?:or)?d|salasana|avain)\w*[\"']?(?:\s*[:=]\s*|\s+(?:on|is)\s+|\s+)[\"']?"
+    r"(?P<arvo>[A-Za-z0-9+/_.~-]{20,}={0,2})(?![\w+/=.~-])")
+AVAIN_MIN_ENTROPIA = 3.5           # bittia merkkia kohden: sanat ja tiedostonimet jaavat alle
 
 MEKAANISET = (
     (SAHKOPOSTI_RE, "s\u00e4hk\u00f6postiosoite"),
@@ -59,6 +72,10 @@ MEKAANISET = (
     (TAILNET_RE, "tailnet-nimi"),
     (HETU_RE, "henkil\u00f6tunnus"),
     (IBAN_RE, "tilinumero"),
+    (SSH_YKSITYINEN_RE, "SSH-yksityisavain"),
+    (SSH_JULKINEN_RE, "SSH-julkisavain"),
+    (API_AVAIN_RE, "API-avain"),
+    (AVAINSANA_ARVO_RE, "avain avainsanan j\u00e4lkeen"),
 )
 
 OHJE = (
@@ -123,6 +140,18 @@ def _sana_re(sana):
     return re.compile(r"(?<!\w)" + re.escape(sana) + r"\w*", re.I)
 
 
+def _satunnainen(arvo):
+    """Pitka arvo nayttaa satunnaiselta: siina on kirjaimia ja numeroita, merkkien entropia on korkea, eika se ole
+    erottimilla sanoista koottu tunniste (build-2026-11-25-linux-py312: erottimia enemman kuin joka kahdeksas merkki)."""
+    if not (any(c.isdigit() for c in arvo) and any(c.isalpha() for c in arvo)):
+        return False
+    if sum(arvo.count(c) for c in "-_.~") > len(arvo) // 8:
+        return False
+    n = len(arvo)
+    entropia = -sum(k / n * math.log2(k / n) for k in (arvo.count(c) for c in set(arvo)))
+    return entropia >= AVAIN_MIN_ENTROPIA
+
+
 def mekaaninen(teksti, nimet=(), avainsanat=()):
     """Palauttaa listan {alku, loppu, kohta, syy, lahde="mekaaninen"} alkukohdan mukaan. Ei muuta tekstia."""
     if not isinstance(teksti, str):
@@ -133,6 +162,11 @@ def mekaaninen(teksti, nimet=(), avainsanat=()):
             if rx is PUHELIN_RE and sum(c.isdigit() for c in m.group(0)) < 7:
                 continue
             if rx is IPV4_RE and any(int(o) > 255 for o in m.group(0).split(".")):
+                continue
+            if rx is AVAINSANA_ARVO_RE:
+                if not _satunnainen(m.group("arvo")):
+                    continue
+                osumat.append((m.start("arvo"), m.end("arvo"), syy))
                 continue
             osumat.append((m.start(), m.end(), syy))
     for lista, syy in ((nimet, "nimi nimilistalta"), (avainsanat, "avainsana")):

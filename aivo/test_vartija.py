@@ -86,6 +86,73 @@ class MekaaninenTesti(unittest.TestCase):
             self.assertEqual(vartija.lue_listat(str(h / "ei-ole")), ([], []))
 
 
+# Keksityt avaimet kootaan paloista, jotta repossa ei ole avaimen nakoista merkkijonoa (test_repo, GitHubin skanneri).
+def _k(*osat):
+    return "".join(osat)
+
+
+class AvainTesti(unittest.TestCase):
+    def syyt(self, teksti):
+        return [(o["kohta"], o["syy"]) for o in vartija.mekaaninen(teksti)]
+
+    def test_ssh_yksityisavaimen_otsikko(self):
+        for laji in ("OPENSSH ", "RSA ", "EC ", "DSA ", "ENCRYPTED ", ""):
+            otsikko = _k("-----BEGIN ", laji, "PRIVATE", " KEY-----")
+            teksti = "avain:\n" + otsikko + "\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU\n"
+            self.assertEqual(self.syyt(teksti), [(otsikko, "SSH-yksityisavain")], laji)
+        self.assertEqual(self.syyt(_k("-----BEGIN ", "PUBLIC", " KEY-----")), [])
+
+    def test_ssh_julkisavain(self):
+        for laji in ("ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256"):
+            avain = laji + " " + _k("AAAA", "C3NzaC1lZDI1NTE5AAAAIHq3x9k2Lm8pQ7rT5vW1")
+            self.assertEqual(self.syyt("lisaa " + avain + " kayttaja@kone"), [(avain, "SSH-julkisavain")], laji)
+        self.assertEqual(self.syyt("ssh-keygen -t ed25519 ja ssh-rsa ilman avainta"), [])
+
+    def test_api_avainten_muodot(self):
+        avaimet = [
+            _k("sk", "-or-v1-", "0123456789abcdefABCDEF0123"),
+            _k("sk", "-proj-", "Zq8vR2mX9pL4tK7wN3bY6cH1"),
+            _k("gh", "p_", "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3z00"),
+            _k("gh", "s_", "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3z00"),
+            _k("github", "_pat_", "11ABCDEFG0123456789_abcdefghijklmnop"),
+            _k("xo", "xb-", "1234567890-abcdefABCDEF"),
+            _k("xo", "xp-", "1234567890-abcdefABCDEF"),
+            _k("AK", "IA", "ZZZZEXAMPLE0123456"[:16]),
+        ]
+        for a in avaimet:
+            self.assertEqual(self.syyt("arvo " + a + "."), [(a, "API-avain")], a[:6])
+
+    def test_api_avaimen_nakoiset_sanat_eivat_halyta(self):
+        for t in ("scikit-learn ja sk-learn", "sk-12345", "ghp_lyhyt", "xoxb-", "AKIA123", "taskmaster-ghp_x",
+                  "AKIAZZZZEXAMPLE012345 on liian pitka"):
+            self.assertEqual(self.syyt(t), [], t)
+
+    def test_pitka_satunnainen_arvo_avainsanan_jalkeen(self):
+        arvo = _k("Zq8vR2m", "X9pL4tK7wN3bY6cH1")
+        for etu in ("API_KEY=", "token: \"", "secret on ", "Salasana = ", "githubToken ", "avain: "):
+            teksti = "asetus " + etu + arvo + "\" loppu"
+            self.assertEqual(self.syyt(teksti), [(arvo, "avain avainsanan j\u00e4lkeen")], etu)
+        url_arvo = _k("Zq8v-R2mX9pL4", "tK7_wN3bY6cH1")      # base64url: yksittaiset - ja _ sallitaan
+        self.assertEqual(self.syyt("API_KEY=" + url_arvo), [(url_arvo, "avain avainsanan j\u00e4lkeen")])
+
+    def test_avainsanan_jalkeen_tavallinen_sana_tai_lyhyt_arvo_ei_halyta(self):
+        for t in ("token authentication_middleware_handler", "key-value store", "secret: hunter2",
+                  "token bucket algorithm_implementation_v", "API_KEY=${OPENROUTER_API_KEY}",
+                  "key aaaaaaaaaaaaaaaaaaaaaaaa1", "commit token a37009d6",
+                  "Valimuistin key on build-2026-11-25-linux-py312"):
+            self.assertEqual(self.syyt(t), [], t)
+
+    def test_avain_ei_muuta_tekstia_ja_paikka_oikein(self):
+        a = _k("gh", "p_", "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3z00")
+        teksti = "token=" + a + " ja ssh-ed25519 " + _k("AAAA", "C3NzaC1lZDI1NTE5AAAAIHq3x9k2")
+        alkuperainen = str(teksti)
+        o = vartija.mekaaninen(teksti)
+        self.assertEqual(teksti, alkuperainen)
+        self.assertEqual([x["syy"] for x in o], ["API-avain", "SSH-julkisavain"])
+        for x in o:
+            self.assertEqual(teksti[x["alku"]:x["loppu"]], x["kohta"])
+
+
 class MalliTesti(unittest.TestCase):
     def test_jasennys_ja_kohdan_paikka(self):
         teksti = "Tony muuttaa Kuvitteelaan kev\u00e4\u00e4ll\u00e4.\n"
