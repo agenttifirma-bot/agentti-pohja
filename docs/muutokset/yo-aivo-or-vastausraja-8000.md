@@ -1,0 +1,1 @@
+- aivo: yksityisen tilan OpenRouter-vastausten raja 700 -> 8 000 tokenia (A1095), yhden mallin chat-kutsun aikaraja 120 -> 360 s ja näkyvä huomautus, kun vastaus katkeaa pituusrajaan (finish_reason=length). Paikallinen malli, mallivertailu, yhdistelmät, päiväkatto ja varaus ennallaan.

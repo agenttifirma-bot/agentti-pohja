@@ -26,7 +26,7 @@ Tehtävässä kuvataan keksitty henkilökohtainen tavoite ja tausta. Mallin pit�
 
 Mekaaninen tarkistus etsii rajatusta ohjeesta taustan avainsanoja (nimi, paikka, tavoitesana). Avainsana tunnistetaan sanan alusta, joten myös taivutusmuodot osuvat (esimerkiksi `oulu` osuu sanaan ”Oulun”). Jos avainsana löytyy tai rajausrivit puuttuvat, tehtävä saa 0 pistettä tuomarin arviosta riippumatta. Muuten mekaaninen osa pisteyttää osien määrän (3–6) ja neljä otsikkoa. Tuomari arvioi rakennettavuuden: voisiko agentti toteuttaa ohjeen ilman lisäkysymyksiä?
 
-Vastauksen enimmäispituus on sama kuin tuotannossa (700 tokenia), joten tehtävä pyytää tiivistä vastausta. Jos vastaus katkeaa ennen päättävää riviä, tulos on 0.
+Vastauksen enimmäispituus on oma vakio `mallivertailu.MAX_TOKENIA` (700 tokenia, sama kuin tuotannossa ennen A1095:tä), joten tehtävä pyytää tiivistä vastausta. Jos vastaus katkeaa ennen päättävää riviä, tulos on 0.
 
 ### Ohjeiden kunnioitus
 

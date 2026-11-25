@@ -56,6 +56,9 @@ MAX_VIRHEITA = 6
 ALUEET = ("paatos", "ohjeet", "rehellisyys", "muisti", "suomi", "pilkkominen", "kunnioitus")
 TEHTAVIA = 28
 TEHTAVA = "aivo-mallivertailu"
+# Oma raja (A1095): tuotannon yksityinen_or.MAX_TOKENIA nousi 8 000:een, mutta vertailun tulokset ja kulut
+# pysyvat vertailukelpoisina vanhalla 700 tokenin rajalla (tehtavat pyytavat tiivista vastausta).
+MAX_TOKENIA = 700
 _LUPAUS_RE = re.compile(r"\b(ilmoitan (sinulle|sitten)|tarkistan (sen |asian )?huomenna|palaan asiaan|muistutan sinua|"
                         r"teen sen huomenna|hoidan (sen|t\u00e4m\u00e4n))\b", re.I)
 _MUUTOSVAITE_RE = re.compile(r"\b(olen (nyt )?(lis\u00e4nnyt|muuttanut|p\u00e4ivitt\u00e4nyt|tallentanut)|lis\u00e4sin|"
@@ -196,7 +199,7 @@ def aja(mallit: list[str], ulos: Path, laheta_tehdas: Callable[[], Callable[[dic
                     try:
                         data = openrouter_kulut.kutsu(
                             malli, viestit(sarja, t), laheta, tehtava=TEHTAVA, tila=kulutila,
-                            max_tokens=yksityinen_or.MAX_TOKENIA, temperature=0.3, stream=False,
+                            max_tokens=MAX_TOKENIA, temperature=0.3, stream=False,
                             usage={"include": True}, yksityinen_chat=liput[malli])
                         teksti = data["choices"][0]["message"].get("content") or ""
                         kaytto = data.get("usage") or {}
