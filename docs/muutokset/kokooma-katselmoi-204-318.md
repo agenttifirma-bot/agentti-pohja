@@ -1,0 +1,1 @@
+- katselmointi: kokooma PR:ista #204 ja #318. Katselmointi rajataan muutoksiin edellisen katselmoinnin jälkeen, ja otsikoton raportti merkitään vajaaksi. Ajurin VAJAA-tarkistus ohittaa rajausyhteenvedon rivit, ja "ei muutoksia" -raportti saa otsikkorivin, jotta ne eivät merkitse ehjää raporttia vajaaksi.
