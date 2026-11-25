@@ -451,7 +451,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if a.komento == "aja":
             avain = yksityinen_or.lue_avain(a.avain)
-            mallit = a.mallit or ",".join(EHDOKKAAT)
+            mallit = ",".join(EHDOKKAAT) if a.mallit is None else a.mallit
             toistot = TOISTOT if a.toistot is None else a.toistot
             yv = aja([m.strip() for m in mallit.split(",") if m.strip()], ulos,
                      lambda: yksityinen_or.tee_kuljetin(avain), toistot=min(max(toistot, 1), TOISTOT))
@@ -465,7 +465,7 @@ def main(argv: list[str] | None = None) -> int:
         elif a.komento == "itse-taulukko":
             print(itsetuntemus.taulukko(itsetuntemus.pisteet(itsetuntemus.lue_vastaukset(ulos))))
         else:
-            mallit = itse_mallit([m.strip() for m in (a.mallit or NYKYINEN).split(",") if m.strip()])
+            mallit = itse_mallit([m.strip() for m in (NYKYINEN if a.mallit is None else a.mallit).split(",") if m.strip()])
             toistot = min(max(1 if a.toistot is None else a.toistot, 1), ITSE_MAX_TOISTOT)
             print(itse_arvioteksti(itse_kuluarvio(mallit, toistot)))
             if a.komento == "itse-aja":

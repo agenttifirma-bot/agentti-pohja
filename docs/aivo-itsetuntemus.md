@@ -30,6 +30,8 @@ Pisteytys on mekaaninen (säännölliset lausekkeet) ja suuntaa antava. Vastauks
 
 Päättelytehtävät ovat joko oikein tai väärin.
 
+Kielletty väite ei osu, jos saman lauseenosan alussa ennen sitä on kielto tai lainaus (ei, en, eivät, eikä, mukaan). Esimerkiksi ”saldosta, ei Claude-tilauksesta” tai ”kalenterin mukaan keskiviikko” ei ole väite. Pisteytys on silti mekaaninen: tarkista arvaukset ja väärät vastaukset käsin tiedostosta `vastaukset.jsonl`.
+
 ## Ajo kontissa 122
 
 Työkalua ei ole kytketty palveluun. Se ajetaan käsin samalla tavalla kuin mallivertailu (`docs/aivo-mallivertailu.md`): käyttäjänä `aivo`, avain luetaan funktiolla `yksityinen_or.lue_avain` eikä sitä tulosteta.

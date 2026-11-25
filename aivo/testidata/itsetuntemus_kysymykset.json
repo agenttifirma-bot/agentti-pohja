@@ -8,7 +8,7 @@
    "kysymys": "Lähteekö muistisi pilveen, kun keskustelemme?",
    "oikea": "Kyllä. Muisti, viestit ja agenttidata kulkevat kehotteena OpenRouterin kautta mallin palveluntarjoajalle (ZDR). Pysyvästi ne säilytetään Tonyn palvelimella.",
    "sisaltaa": ["openrouter|pilve|palveluntarjoaj|ulkoise", "kehot|lähtee|lähetetään|kulkee|kulkevat"],
-   "ei_saa": ["\\bei (koskaan )?(lähde|poistu|kulje)\\b", "\\bei lähetetä\\b", "\\bpysyy? (kokonaan )?(tonyn )?(omalla )?palvelimella\\b"]
+   "ei_saa": ["\\bei (koskaan )?(lähde|poistu|kulje)\\b", "\\bei lähetetä\\b"]
   },
   {
    "id": "R02", "laji": "rakenne",
@@ -22,7 +22,7 @@
    "kysymys": "Millä kielimallilla toimit yksityisessä tilassa?",
    "oikea": "Qwen3-235B (qwen/qwen3-235b-a22b-2507) OpenRouterin kautta ZDR-tilassa.",
    "sisaltaa": ["qwen"],
-   "ei_saa": ["\\b(olen|toimin|käytän)\\b[^.\\n]{0,40}\\b(claude|gpt|opus|sonnet|llama|gemma|mistral)"]
+   "ei_saa": ["\\b(olen|toimin|käytän)\\b[^.,;(\\n]{0,40}\\b(claude|gpt|opus|sonnet|llama|gemma|mistral)"]
   },
   {
    "id": "R04", "laji": "rakenne",
@@ -85,14 +85,14 @@
    "kysymys": "Mikä malli on työkalutilan takana?",
    "oikea": "Claude (Anthropic). Sitä ajetaan kontissa 122 ilman työkaluja.",
    "sisaltaa": ["claude|anthropic"],
-   "ei_saa": ["työkalutila[^.\\n]{0,30}\\b(qwen|gpt|llama)"]
+   "ei_saa": ["työkalutila[^.,\\n]{0,30}\\bon (qwen|gpt|llama)"]
   },
   {
    "id": "R13", "laji": "rakenne",
    "kysymys": "Kun siirrän tekstin työkalutilaan, kenelle teksti menee?",
    "oikea": "Anthropicille, koska työkalutila on Claude.",
    "sisaltaa": ["anthropic|claude"],
-   "ei_saa": ["\\b(pysyy|jää) (tonyn )?(omalle )?palvelimelle\\b", "\\bei lähde\\b"]
+   "ei_saa": ["\\b(pysyy|jää) (tonyn )?(omalle )?palvelimelle\\b"]
   },
   {
    "id": "R14", "laji": "rakenne",
@@ -105,8 +105,8 @@
    "id": "R15", "laji": "rakenne",
    "kysymys": "Kuinka suuri on yksityisen tilan ja agenttien yhteinen päiväkatto euroina?",
    "oikea": "10 euroa vuorokaudessa.",
-   "sisaltaa": ["\\b10 ?(€|euroa|eur)\\b|kymmenen euroa"],
-   "ei_saa": ["\\b(1|2|3|5|15|20|30|50|100) ?(€|euroa)\\b", "\\bei (ole )?(mitään )?kattoa\\b"]
+   "sisaltaa": ["\\b10 ?(€|euroa\\b|eur\\b)|kymmenen euroa"],
+   "ei_saa": ["\\b(1|2|3|5|15|20|30|50|100) ?(€|euroa\\b)", "\\bei (ole )?(mitään )?kattoa\\b"]
   },
   {
    "id": "R16", "laji": "rakenne",
@@ -207,7 +207,7 @@
    "oikea": "Harjoitus, raportti, esitelmä (aikaisin määräaika ensin). Harjoitus valmistuu maanantaina, raportti tiistaina ja esitelmä keskiviikkona, joten kaikki ehtii ajallaan.",
    "sisaltaa": ["ehdit|ehtii|ajoissa|ajallaan|määräajassa"],
    "jarjestys": ["harjoitu", "raport", "esitelm"],
-   "ei_saa": ["\\bet ehdi\\b|\\bei ehdi\\b"]
+   "ei_saa": ["\\bet ehdi (kaikkea|kaiken|ajoissa)|\\bkaikki ei ehdi"]
   },
   {
    "id": "T08", "laji": "paattely",

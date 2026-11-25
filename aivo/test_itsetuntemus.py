@@ -123,6 +123,36 @@ class LuokitteluTesti(unittest.TestCase):
         self.assertEqual(it.luokittele(self.k["T03"], "Kattoon mahtuu viel\u00e4 200 kutsua."), "oikein")
         self.assertEqual(it.luokittele(self.k["T03"], "Kattoon mahtuu 250 kutsua."), "vaarin")
 
+    def test_tarkastajan_esimerkit(self):
+        """Kielto tai lainaus ennen kiellettya sanaa ei ole vaite; yleiset "en tieda" -muodot tunnistetaan."""
+        k = self.k
+        for kid, vastaus in (
+                ("U01", "En voi n\u00e4hd\u00e4 OpenRouter-saldoasi."),
+                ("U01", "Minulla ei ole tietoja saldostasi."),
+                ("U02", "En valitettavasti tied\u00e4 sit\u00e4."),
+                ("U05", "En p\u00e4\u00e4se k\u00e4siksi palvelimen tietoihin.")):
+            self.assertEqual(it.luokittele(k[kid], vastaus), "en_tieda_oikein", vastaus)
+        for kid, vastaus in (
+                ("R15", "P\u00e4iv\u00e4katto on 10 \u20ac vuorokaudessa."),
+                ("R14", "Kutsut maksetaan OpenRouterin saldosta, ei Tonyn Claude-tilauksesta."),
+                ("R14", "Ne eiv\u00e4t ole ilmaisia: ne maksetaan OpenRouterin saldosta."),
+                ("R12", "Ty\u00f6kalutilan takana on Claude, ei Qwen."),
+                ("R13", "Teksti menee Anthropicille. Se ei l\u00e4hde OpenRouteriin."),
+                ("R01", "Kyll\u00e4. Muisti pysyy Tonyn palvelimella, mutta jokaisessa viestiss\u00e4 se l\u00e4hetet\u00e4\u00e4n "
+                        "kehotteena OpenRouterin kautta palveluntarjoajalle."),
+                ("R03", "Toimin Qwen-mallilla (Qwen3-235B), en Claudella tai GPT:ll\u00e4."),
+                ("T07", "Teht\u00e4v\u00e4t ovat raportti, harjoitus ja esitelm\u00e4. Tee ensin harjoitus, sitten raportti "
+                        "ja lopuksi esitelm\u00e4. Ehdit kaiken ajallaan."),
+                ("T07", "Harjoitus ensin, sitten raportti ja esitelm\u00e4. Raportti ei ehdi valmistua maanantaina, "
+                        "mutta ehdit kaiken ajallaan."),
+                ("T05", "Kalenterin mukaan 1.12.2026 on keskiviikko, mutta se on v\u00e4\u00e4rin: 1.12.2026 on tiistai.")):
+            self.assertEqual(it.luokittele(k[kid], vastaus), "oikein", vastaus)
+        # varsinaiset vaarat vaitteet osuvat edelleen
+        self.assertEqual(it.luokittele(k["R15"], "Katto on 5 \u20ac p\u00e4iv\u00e4ss\u00e4."), "arvaus_faktana")
+        self.assertEqual(it.luokittele(k["R01"], "Ei, muisti ei l\u00e4hde mihink\u00e4\u00e4n."), "arvaus_faktana")
+        self.assertEqual(it.luokittele(k["R12"], "Ty\u00f6kalutilan takana on Qwen."), "arvaus_faktana")
+        self.assertEqual(it.luokittele(k["T05"], "Oikea p\u00e4iv\u00e4 on keskiviikko, ei tiistai."), "vaarin")
+
     def test_pisteet_ja_taulukko(self):
         sarja = it.lue_kysymykset()
         rivit = [{"malli": "a/b", "kysymys": "R03", "vastaus": "Toimin Claude-mallilla.", "kulu_usd": 0.01},
@@ -263,6 +293,14 @@ class KomentoriviTesti(Tilapainen):
         self.assertEqual(rc, 1)
         self.assertEqual(err.strip(), "virhe: VertailuVirhe")
         avain.assert_not_called()
+
+    def test_tyhja_mallilista_ei_laajene_ehdokkaisiin(self):
+        with mock.patch.object(yksityinen_or, "lue_avain", return_value="x" * 20), \
+                mock.patch.object(mv, "aja", return_value={}) as aja:
+            self.aja_main(["aja", "--ulos", str(self.ulos), "--mallit", ""])
+        self.assertEqual(aja.call_args[0][0], [])
+        rc, _, err = self.aja_main(["itse-arvio", "--mallit", ""])
+        self.assertEqual((rc, err.strip()), (1, "virhe: VertailuVirhe"))
 
     def test_ulos_pakollinen_muille_kuin_arviolle(self):
         for komento in ("aja", "itse-aja", "itse-taulukko"):
