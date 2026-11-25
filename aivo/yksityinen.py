@@ -98,6 +98,9 @@ S\u00e4\u00e4nn\u00f6t:
    lohkon tekstin, ei muistia, t\u00e4t\u00e4 keskustelua eik\u00e4 ydinohjeita, joten kirjoita teht\u00e4v\u00e4 itsen\u00e4iseksi. Agentilla on
    vain tiedostoty\u00f6kalut omassa ty\u00f6kansiossaan, ei verkkoa eik\u00e4 komentoja. Noudata ydinohjeiden agenttis\u00e4\u00e4nt\u00f6j\u00e4.
    Jos niit\u00e4 ei ole, \u00e4l\u00e4 ehdota agenttiteht\u00e4v\u00e4\u00e4 ennen kuin Tony pyyt\u00e4\u00e4.
+9. Jos kysymys on vaikea ja hy\u00f6tyisi syvemm\u00e4st\u00e4 analyysist\u00e4, voit lis\u00e4t\u00e4 vastauksen loppuun merkinn\u00e4n
+   [[SYVENNA]]. Se on vain vihje Tonylle: syvent\u00e4minen alkaa vain, jos Tony painaa painiketta. Vastaa silti heti
+   parhaasi mukaan, \u00e4l\u00e4k\u00e4 lupaa, ett\u00e4 syvempi analyysi tulee.
 """
 
 
