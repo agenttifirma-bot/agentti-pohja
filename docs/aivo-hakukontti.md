@@ -317,6 +317,13 @@ pct push 123 /root/hakukontti/searxng.service /etc/systemd/system/searxng.servic
 ```
 Odotettu: ei tulostetta.
 
+Palvelut vaativat palomuurin (`Requires=nftables.service`). Tarkista ennen käynnistystä, että palomuuri latautuu myös kontin käynnistyessä.
+
+```bash
+pct exec 123 -- systemctl is-enabled nftables
+```
+Odotettu: `enabled`. Jos tulos on muu, pysähdy: ilman palomuuria kontissa ei ole kill switchiä, eikä SearXNG käynnisty.
+
 ```bash
 pct exec 123 -- systemctl enable --now searxng
 ```

@@ -94,6 +94,16 @@ class PohjaTesti(unittest.TestCase):
         self.assertNotIn("User=root", s)
         self.assertNotIn("--access-log", s)
 
+    def test_searxng_vaatii_palomuurin(self):
+        # Ilman kill switchia (nftables) palvelu ei saa kaynnistya.
+        rivit = aktiiviset(lue("searxng.service"))
+        unit = rivit[rivit.index("[Unit]") + 1:rivit.index("[Service]")]
+        vaatii = [r.split("=", 1)[1].split() for r in unit if r.startswith(("Requires=", "BindsTo="))]
+        self.assertIn("nftables.service", sum(vaatii, []))
+        jalkeen = sum([r.split("=", 1)[1].split() for r in unit if r.startswith("After=")], [])
+        self.assertIn("nftables.service", jalkeen)
+        self.assertFalse(any(r.startswith("Requires=-") for r in unit))
+
     def test_journald_30_paivaa(self):
         self.assertIn("MaxRetentionSec=30day", aktiiviset(lue("journald-hakukontti.conf")))
 
@@ -137,6 +147,13 @@ class OhjeTesti(unittest.TestCase):
                 self.assertTrue("> /etc/aivo-haku/avain" in koodi or "k=$(" in koodi, koodi[:80])
                 self.assertNotIn("cat /etc/aivo-haku/avain", koodi)
         self.assertNotIn("echo \"$k\"", self.teksti)
+
+    def test_palomuuri_tarkistetaan_ennen_kaynnistysta(self):
+        komennot = [k.strip() for k, _ in self.lohkot]
+        tarkistus = komennot.index("pct exec 123 -- systemctl is-enabled nftables")
+        kaynnistys = komennot.index("pct exec 123 -- systemctl enable --now searxng")
+        self.assertLess(tarkistus, kaynnistys)
+        self.assertTrue(self.lohkot[tarkistus][1].startswith("Odotettu: `enabled`"))
 
     def test_rajattu_merkinta(self):
         self.assertIn("RAJATTU", self.teksti)
