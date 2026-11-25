@@ -142,16 +142,19 @@ def viestien_merkit(viestit: Iterable[dict]) -> int:
 
 
 def muistiraja(mallit: str | Iterable[str], max_tokenia: int, kiintea_merkit: int, historia_tarve: int,
-               lisavaraus_merkit: int = 0, varaus_usd: float | None = None) -> int:
+               lisavaraus_merkit: int = 0, varaus_usd: float | None = None, suojattu_tarve: int = 0) -> int:
     """Muistiosion (kirjasto, agenttidata, tiivistelmat) merkkiraja.
 
     `kiintea_merkit` = jarjestelmakehote + ydinohjeet, `historia_tarve` = keskusteluhistorian merkit kokonaan,
     `lisavaraus_merkit` = yhdistelman roolisyote (luonnokset). Muisti tayttaa tilan ensin, mutta historialle jaa aina
-    vahintaan HISTORIA_VAHIMMAISOSUUS jaljella olevasta tilasta (tai koko historia, jos se on pienempi)."""
+    vahintaan HISTORIA_VAHIMMAISOSUUS jaljella olevasta tilasta (tai koko historia, jos se on pienempi).
+    `suojattu_tarve` = uusin Tonyn viesti ja sita uudemmat (lyhenna_historia ei lyhenna niita): ne mahtuvat aina
+    historian osuuteen; jos eivat mahdu edes yksin, muistille ei jaa tilaa (0)."""
     jaljella = syote_merkit(mallit, max_tokenia, varaus_usd) - max(0, kiintea_merkit) - max(0, lisavaraus_merkit) - JARJESTELMA_LISA
     if jaljella <= 0:
         return 0
-    historialle = min(max(0, historia_tarve), int(jaljella * HISTORIA_VAHIMMAISOSUUS))
+    historialle = max(max(0, suojattu_tarve),
+                      min(max(0, historia_tarve), int(jaljella * HISTORIA_VAHIMMAISOSUUS)))
     return max(0, jaljella - historialle)
 
 

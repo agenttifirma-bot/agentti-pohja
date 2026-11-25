@@ -293,9 +293,14 @@ def muistin_merkkiraja(mallit: Any, ohjeet: str, historia: list[dict[str, Any]],
     """Muistiosion merkkiraja (kirjasto, agenttidata ja tiivistelmat yhteensa) OpenRouter-taustapaalla. Historialle
     jaa aina vahintaan kontekstiraja.HISTORIA_VAHIMMAISOSUUS jaljella olevasta tilasta."""
     viimeiset = historia[-HISTORIA_YLARAJA:]
-    tarve = sum(len(str(v.get("teksti", ""))) + kontekstiraja.VIESTI_LISA for v in viimeiset)
+    per_viesti = kontekstiraja.VIESTI_LISA + len(yksityinen.LYHENNETTY % 10 ** 7)     # sama kuin historian_merkkiraja
+    tarve = sum(len(str(v.get("teksti", ""))) + per_viesti for v in viimeiset)
+    # uusin Tonyn viesti ja sita uudemmat sailyvat aina kokonaan (lyhenna_historia): niille tila ensin
+    tony = [i for i, v in enumerate(viimeiset) if v.get("rooli") == "tony"]
+    suojattu = sum(len(str(v.get("teksti", ""))) + per_viesti for v in viimeiset[tony[-1]:]) if tony else 0
+    suojattu += (tony[-1] if tony else 0) * per_viesti      # vanhemmista jaa ainakin rakenne ja lyhennysmerkinta
     kiintea = len(KEHOTE) + len(ohjeet or "(ei ydinohjeita)\n")
-    return kontekstiraja.muistiraja(mallit, MAX_TOKENIA, kiintea, tarve, lisavaraus_merkit, _VARAUS_USD)
+    return kontekstiraja.muistiraja(mallit, MAX_TOKENIA, kiintea, tarve, lisavaraus_merkit, _VARAUS_USD, suojattu)
 
 
 def yhdistelman_mallit(malli: str, roolit: Mapping[str, str] | None) -> list[str]:

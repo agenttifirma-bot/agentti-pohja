@@ -613,10 +613,11 @@ def _muutosaika(juuri, nimi):
         return 0.0
 
 
-def lue_muisti(kirjasto, ylaraja=None, tiedosto_raja=None, kysymys=None, tuoreet_ensin=False):
+def lue_muisti(kirjasto, ylaraja=None, tiedosto_raja=None, kysymys=None, tuoreet_ensin=False, laske_otsikot=False):
     """Palauttaa (teksti, tiedostolista). Lukee vain .md/.txt-tiedostot kirjaston sisalta (ei .git, ei linkkeja
     kirjaston ulkopuolelle). Ylarajan ylittyessa loput jaavat pois ja puute mainitaan.
-    `tuoreet_ensin` (OpenRouter-taustapaa, A1106): kysymykseen osuvat ensin, sitten uusin muutosaika ensin."""
+    `tuoreet_ensin` (OpenRouter-taustapaa, A1106): kysymykseen osuvat ensin, sitten uusin muutosaika ensin.
+    `laske_otsikot`: tiedosto-otsikot ja rajamerkit lasketaan ylarajaan (koko teksti pysyy rajan sisalla)."""
     ylaraja = MUISTI_YLARAJA if ylaraja is None else ylaraja
     tiedosto_raja = TIEDOSTO_YLARAJA if tiedosto_raja is None else tiedosto_raja
     juuri = Path(kirjasto).resolve()
@@ -650,16 +651,18 @@ def lue_muisti(kirjasto, ylaraja=None, tiedosto_raja=None, kysymys=None, tuoreet
             tiedostot.sort(key=lambda n: (osuma(n), _jarjestys(n)))
     else:
         tiedostot.sort(key=_jarjestys)
-    osat, mukana, yht = [], [], 0
+    osat, mukana = [], []
+    yht = len(RAJA) + 1 if laske_otsikot else 0
     for nimi in tiedostot:
         try:
             data = (juuri / nimi).read_bytes()[:tiedosto_raja].decode("utf-8", "replace")
         except OSError:
             continue
         data = data.replace(RAJA, "").replace("\x00", "")
-        if yht + len(data) > ylaraja:
+        koko = len(data) + (len(RAJA) + len(nimi) + 17 if laske_otsikot else 0)   # "\n### TIEDOSTO: " ja rivinvaihdot
+        if yht + koko > ylaraja:
             continue
-        yht += len(data)
+        yht += koko
         mukana.append(nimi)
         osat.append("%s\n### TIEDOSTO: %s\n%s\n" % (RAJA, nimi, data))
     return "".join(osat) + RAJA + "\n", mukana
@@ -1120,14 +1123,17 @@ def yksityinen_muisti(tila, teksti, historia, ohjeet, malli, yh):
     else:
         raja = yksityinen.MUISTI_YLARAJA
         merkintoja, ad_tiedosto = agenttidata_kehote.MERKINTOJA, raja // 6
+    # OpenRouter: tiivistelmille varataan oma osuus ennen kirjastoa, jotta iso kirjasto ei syrjayta niita kokonaan
+    tiiv_varaus = min(tiivistelmat_kehote.YLARAJA_TAVUA, raja // 10) if (malli and tila.yks_tiivistelmat) else 0
     ad, ad_tiedostot = agenttidata_kehote.muodosta(tila.agenttidata, RAJA, raja // 2, ad_tiedosto, merkintoja=merkintoja)
-    muisti, tiedostot = lue_muisti(tila.yks_muisti, raja - len(ad), raja // 4, teksti, tuoreet_ensin=bool(malli))
+    muisti, tiedostot = lue_muisti(tila.yks_muisti, max(0, raja - len(ad) - tiiv_varaus), raja // 4, teksti,
+                                   tuoreet_ensin=bool(malli), laske_otsikot=bool(malli))
     if ad:         # agenttidata mahtuu samaan muistirajaan: kirjastolle jaa loput (A1015)
         muisti, tiedostot = ad + muisti, ad_tiedostot + tiedostot
     if tila.yks_tiivistelmat:     # yksityisen alueen tiivistelmat, sama mekanismi ja 60 kt raja kuin tyokalutilassa
         tiiv_raja = tiivistelmat_kehote.YLARAJA_TAVUA
         if malli:                 # OpenRouter: tiivistelmat mahtuvat samaan muistirajaan (tavuina, varovainen)
-            tiiv_raja = max(0, min(tiiv_raja, raja - len(muisti)))
+            tiiv_raja = max(0, min(tiiv_raja, raja - len(muisti) - len(RAJA) - 1))
         tiiv, tiiv_tiedostot = (tiivistelmat_kehote.muodosta(tila.yks_tiivistelmat, teksti, tiiv_raja)
                                 if tiiv_raja else ("", []))
         if tiiv:

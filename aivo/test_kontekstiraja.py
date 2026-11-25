@@ -180,11 +180,33 @@ class MuistiEiSyrjaytaHistoriaaTesti(unittest.TestCase):
         h = historia(1, 10)
         raja = yo.muistin_merkkiraja(ISO, "o", h)
         kaikki = kr.syote_merkit(ISO, yo.MAX_TOKENIA, VARAUS) - len(yo.KEHOTE) - len("o") - kr.JARJESTELMA_LISA
-        self.assertEqual(kaikki - raja, len(h[0]["teksti"]) + kr.VIESTI_LISA)
+        per_viesti = kr.VIESTI_LISA + len(yksityinen.LYHENNETTY % 10 ** 7)     # sama kuin historian_merkkiraja
+        self.assertEqual(kaikki - raja, len(h[0]["teksti"]) + per_viesti)
 
     def test_liian_pieni_tila_ei_negatiivinen(self):
         self.assertEqual(kr.muistiraja(PIKKU, yo.MAX_TOKENIA, 10 ** 7, 0), 0)
         self.assertEqual(kr.historiaraja(PIKKU, yo.MAX_TOKENIA, 10 ** 7), 0)
+
+
+class SuojattuViestiTesti(unittest.TestCase):
+    """Katselmoinnin havainto: uusin Tonyn viesti (enintaan 16 000 merkkia) sailyy aina kokonaan, joten sen pitaa
+    mahtua historian osuuteen myos pienella mallilla, kun muisti on taynna."""
+
+    def koko(self, malli, ohjeet):
+        h = historia(9, 2_000) + [{"rooli": "tony", "teksti": "u" * 16_000}]
+        muisti = "m" * yo.muistin_merkkiraja(malli, ohjeet, h)
+        v = yksityinen.muodosta_viestit(muisti, h, ohjeet, yo.KEHOTE, yo.HISTORIA_YLARAJA,
+                                        yo.historian_merkkiraja(malli, muisti, ohjeet, h))
+        self.assertEqual(v[-1]["content"], "u" * 16_000)
+        return kr.viestien_merkit(v)            # otsikot ovat jo jarjestelmaviestin sisallossa
+
+    def test_mahtuu_kontekstiin(self):
+        for m in ("mistralai/mistral-small-24b-instruct-2501", "qwen/qwen3-32b", "ei/olemassa", PIENI, ISO):
+            self.assertLessEqual(self.koko(m, "o" * 20_000), kr.syote_merkit(m, yo.MAX_TOKENIA, VARAUS), m)
+
+    def test_ei_mahdu_muisti_nolla(self):
+        h = [{"rooli": "tony", "teksti": "u" * 16_000}]
+        self.assertEqual(yo.muistin_merkkiraja(PIKKU, "o" * 20_000, h), 0)
 
 
 class ChatMuistiTesti(unittest.TestCase):
@@ -216,6 +238,13 @@ class ChatMuistiTesti(unittest.TestCase):
         self.assertGreater(len(muisti), 320_000)
         self.assertEqual(tiedostot[0], "osuma.md")                    # muistihaun osuma ensin
         self.assertEqual(tiedostot[1:4], ["muistio-39.md", "muistio-38.md", "muistio-37.md"])   # sitten tuoreimmat
+
+    def test_otsikot_lasketaan_rajaan(self):
+        for i in range(300):
+            (self.kirjasto / ("pieni-%03d.md" % i)).write_text("p", encoding="utf-8")
+        raja = yo.muistin_merkkiraja(PIENI, "o", historia(1, 10))
+        muisti, _ = chat.yksityinen_muisti(self.tila(), "kissa", historia(1, 10), "o", PIENI, yhdistelma.OLETUS)
+        self.assertLessEqual(len(muisti), raja)
 
     def test_pieni_malli_leikkaa_vanhimmat(self):
         muisti, tiedostot = chat.yksityinen_muisti(self.tila(), "kissa", historia(1, 10), "o", PIENI, yhdistelma.OLETUS)
