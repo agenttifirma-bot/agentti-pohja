@@ -273,7 +273,8 @@ class TyokalutilaTesti(Pohja):
         # mallivertailu.py: erillinen ajotyokalu synteettiselle datalle (Tony 19.11.2026), ei kytketty palveluun.
         sallitut = {"yksityinen_or.py", "openrouter_kulut.py", "openrouter_zdr.py", "chat.py", "mallivertailu.py"}
         # yksityisen alueen tiivistys saa tuoda vain yksityinen_or-moduulin (ZDR, avoin malli, katto), ei muuta
-        vain_yksityinen_or = {"tiivista_yksityinen.py"}
+        # taustaajo (ajattelija keskusteluun myohemmin, A1040) samoin: vain yksityinen_or.kysy_taustatyo
+        vain_yksityinen_or = {"tiivista_yksityinen.py", "taustaajo.py"}
         # agenttiytimen mallikytkenta (A1072): saa tuoda tasan openrouter_kulut- ja yksityinen_or-moduulit, ei
         # openrouter_zdr:aa. Polku on suhteellinen aivo/-kansioon, joten samanniminen tiedosto muualla ei paase lapi.
         agentin_malli = {"agentti/malli.py": {"openrouter_kulut", "yksityinen_or"}}
