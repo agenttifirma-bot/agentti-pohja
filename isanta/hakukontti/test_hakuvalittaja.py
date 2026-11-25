@@ -4,6 +4,7 @@ TLS korvataan testeissa identiteettifunktiolla (kaari), joten SOCKS-kattely, HTT
 testataan oikeilla soketeilla. Oikea TLS ja Tor todennetaan kayttoonotossa (docs/aivo-hakuvalittaja.md).
 """
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -15,6 +16,7 @@ import subprocess
 import struct
 import tempfile
 import threading
+import types
 import time
 import unittest
 import urllib.error
@@ -349,7 +351,8 @@ class Pohja(unittest.TestCase):
                                       searxng="http://127.0.0.1:%d" % self.web.server_address[1],
                                       socks=self.socks.osoite, kaari=lambda s, isanta: s, loki=self.loki,
                                       **self.valittaja_lisa)
-        self.palvelin = hv.Palvelin(("127.0.0.1", 0), hv.tee_kasittelija(self.valittaja))
+        self.palvelin = hv.Palvelin(("127.0.0.1", 0), hv.tee_kasittelija(self.valittaja), {"127.0.0.1"},
+                                    kirjaa=self.valittaja.kirjaa)
         threading.Thread(target=self.palvelin.serve_forever, daemon=True).start()
         self.osoite = "http://127.0.0.1:%d" % self.palvelin.server_address[1]
         self.avaaja = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -732,13 +735,8 @@ class Lokit(Pohja):
 
 class Koe(Pohja):
     def aja(self, *koe):
-        polku = os.path.join(self.tmp.name, "avain")
-        with open(polku, "w") as f:
-            f.write(AVAIN)
         ulos = io.StringIO()
-        with mock.patch("sys.stdout", ulos):
-            rc = hv.main(["--koe"] + list(koe) + ["--avain", polku, "--kuuntele",
-                                                  "127.0.0.1:%d" % self.palvelin.server_address[1]])
+        rc = hv.koe(types.SimpleNamespace(koe=list(koe)), ulos, valittaja=self.valittaja)
         return rc, ulos.getvalue().strip()
 
     def test_koe_tulostaa_vain_maarat(self):
@@ -748,6 +746,124 @@ class Koe(Pohja):
         self.assertEqual(self.aja("sivu", "http://%s/ok" % SIVUISANTA), (1, "KOE sivu: tila 403, virhe vain_https"))
         self.tor.piiri = False
         self.assertEqual(self.aja("haku", LAUSEKE), (1, "KOE haku: tila 503, virhe reitti_poikki"))
+
+    def test_koe_komentorivilta_samassa_prosessissa(self):
+        # Koe ei kayta HTTP-palvelinta: palvelu ei palvele kontin omaa osoitetta (vain kontti 122).
+        polku = os.path.join(self.tmp.name, "avain")
+        with open(polku, "w") as f:
+            f.write(AVAIN)
+        ulos = io.StringIO()
+        argv = ["--koe", "haku", LAUSEKE, "--avain", polku, "--searxng", self.valittaja.searxng,
+                "--socks", "%s:%d" % self.socks.osoite, "--tor-hallinta", self.tor.polku, "--tor-evaste", self.tor.evaste]
+        with mock.patch("sys.stdout", ulos), mock.patch.object(hv, "Palvelin") as palvelin:
+            rc = hv.main(argv)
+        self.assertEqual((rc, ulos.getvalue().strip()), (0, "KOE haku: tila 200, tuloksia 10, estaneet 2"))
+        palvelin.assert_not_called()
+        self.assertNotIn(AVAIN, ulos.getvalue())
+        with mock.patch("sys.stdout", ulos):
+            self.assertEqual(hv.main(["--koe", "haku", LAUSEKE, "--avain", polku + "x"]), 1)
+        self.assertIn("KOE haku: avain FileNotFoundError", ulos.getvalue())
+
+
+class Asiakasrajaus(Pohja):
+    """Kuuntelu vain asetetussa osoitteessa ja vain sallitut asiakasosoitteet (tarkastus 25.11.2026)."""
+
+    def yhteys(self, palvelin, lahde=None):
+        """Raaka POST valittajalle. Palauttaa HTTP-tilan tai None, jos yhteys suljettiin ilman vastausta."""
+        c = http.client.HTTPConnection("127.0.0.1", palvelin.server_address[1], timeout=10,
+                                       source_address=(lahde, 0) if lahde else None)
+        try:
+            c.request("POST", "/haku", body=json.dumps({"lauseke": LAUSEKE, "tunnus": TUNNUS}),
+                      headers={"Content-Type": "application/json", "Authorization": "Bearer " + AVAIN})
+            return c.getresponse().status
+        except (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError):
+            return None
+        finally:
+            c.close()
+
+    def uusi_palvelin(self, sallitut):
+        p = hv.Palvelin(("127.0.0.1", 0), hv.tee_kasittelija(self.valittaja), sallitut, kirjaa=self.valittaja.kirjaa)
+        threading.Thread(target=p.serve_forever, daemon=True).start()
+        self.addCleanup(p.server_close)
+        self.addCleanup(p.shutdown)
+        return p
+
+    def test_muu_osoite_hylataan_ennen_pyynnon_kasittelya(self):
+        p = self.uusi_palvelin({ip4(127, 0, 0, 2)})
+        self.assertIsNone(self.yhteys(p))                   # lahde 127.0.0.1, ei sallittu
+        self.assertEqual(Web.pyynnot, [])
+        self.assertEqual(self.tor.komennot, [])
+        rivit = self.lokirivit()
+        self.assertEqual([(r["toiminto"], r["virhe"]) for r in rivit], [("hylatty_osoite", "osoite_ei_sallittu")])
+        self.assertNotIn("127.0.0.1", self.loki.getvalue())  # asiakkaan osoitetta ei kirjata
+
+    def test_sallittu_osoite_palvellaan(self):
+        p = self.uusi_palvelin({ip4(127, 0, 0, 2)})
+        try:
+            tila = self.yhteys(p, lahde=ip4(127, 0, 0, 2))
+        except OSError as e:  # jarjestelma ei salli lahdeosoitetta 127.0.0.2
+            self.skipTest(type(e).__name__)
+        self.assertEqual(tila, 200)
+
+    def test_jokeri_ja_nimi_hylataan(self):
+        kasittelija = hv.tee_kasittelija(self.valittaja)
+        for osoite in ("0.0.0.0", "::", "", "localhost", "hakukontti", "224.0.0.1"):
+            with self.assertRaises(ValueError, msg=osoite):
+                hv.Palvelin((osoite, 0), kasittelija, {"127.0.0.1"})
+        for sallitut in (set(), None, {"0.0.0.0"}, {ip4(192, 0, 2, 0) + "/24"}, {"kone"}):
+            with self.assertRaises(ValueError, msg=repr(sallitut)):
+                hv.Palvelin(("127.0.0.1", 0), kasittelija, sallitut)
+
+    def test_asetusten_jasennys(self):
+        self.assertEqual(hv.kuunteluosoite("192.0.2.10:8890"), ("192.0.2.10", 8890))
+        self.assertEqual(hv.kuunteluosoite("[2001:db8::5]:8890"), ("2001:db8::5", 8890))
+        for huono in ("0.0.0.0:8890", "[::]:8890", ":8890", "kone:8890", "192.0.2.10:0", "192.0.2.10:70000", "", None):
+            with self.assertRaises((ValueError, TypeError), msg=repr(huono)):
+                hv.kuunteluosoite(huono)
+        self.assertEqual(hv.sallitut_osoitteet(" 192.0.2.7 , 192.0.2.8"), frozenset({"192.0.2.7", "192.0.2.8"}))
+        for huono in ("", " , ", "0.0.0.0", "192.0.2.0/24", "kone", None):
+            with self.assertRaises(ValueError, msg=repr(huono)):
+                hv.sallitut_osoitteet(huono)
+
+    def test_ipv4_mapattu_asiakas(self):
+        self.assertEqual(hv.asiakkaan_osoite("::ffff:192.0.2.7"), "192.0.2.7")
+        self.assertEqual(hv.asiakkaan_osoite("192.0.2.7"), "192.0.2.7")
+        self.assertIsNone(hv.asiakkaan_osoite("ei-osoite"))
+
+    def test_main_vaatii_osoitteet(self):
+        polku = os.path.join(self.tmp.name, "avain")
+        with open(polku, "w") as f:
+            f.write(AVAIN)
+        tavalliset = ["--avain", polku, "--tor-hallinta", self.tor.polku, "--tor-evaste", self.tor.evaste]
+        for lisa in ([], ["--kuuntele", "127.0.0.1:0"], ["--salli", "127.0.0.1"],
+                     ["--kuuntele", "0.0.0.0:0", "--salli", "127.0.0.1"], ["--kuuntele", "127.0.0.1:0", "--salli", ""]):
+            err = io.StringIO()
+            with mock.patch("sys.stderr", err), mock.patch.object(hv.Palvelin, "serve_forever") as palvele:
+                self.assertEqual(hv.main(tavalliset + lisa), 1, lisa)
+            palvele.assert_not_called()
+            self.assertIn("kaynnistys epaonnistui: ValueError", err.getvalue())
+
+    def test_main_kuuntelee_annetussa_osoitteessa(self):
+        polku = os.path.join(self.tmp.name, "avain")
+        with open(polku, "w") as f:
+            f.write(AVAIN)
+        luodut = []
+
+        class Valepalvelin:
+            def __init__(self, osoite, kasittelija, sallitut, kirjaa=None):
+                luodut.append((osoite, sallitut))
+
+            def serve_forever(self):
+                pass
+
+            def server_close(self):
+                pass
+
+        with mock.patch.object(hv, "Palvelin", Valepalvelin), mock.patch("sys.stderr", io.StringIO()):
+            rc = hv.main(["--avain", polku, "--kuuntele", "127.0.0.1:8890", "--salli", ip4(127, 0, 0, 2),
+                          "--tor-hallinta", self.tor.polku, "--tor-evaste", self.tor.evaste])
+        self.assertEqual(rc, 0)
+        self.assertEqual(luodut, [(("127.0.0.1", 8890), frozenset({ip4(127, 0, 0, 2)}))])
 
 
 class Yksikot(unittest.TestCase):
@@ -833,6 +949,19 @@ class Kaynnistystarkistus(unittest.TestCase):
         self.assertEqual(self.aja(tor_hallinta=self.tor.polku + "x")[1], "TARKISTUS: VIRHE hallinta reitti_poikki")
         self.assertNotIn(AVAIN, self.aja(tor_evaste=self.avain)[1])
 
+    def test_osoitteet_tarkistetaan(self):
+        argv = ["--tarkista", "--avain", self.avain, "--tor-hallinta", self.tor.polku, "--tor-evaste", self.tor.evaste]
+        for lisa, odotettu in ((["--kuuntele", "127.0.0.1:8890", "--salli", "127.0.0.1"], (0, "TARKISTUS: OK")),
+                               (["--kuuntele", "0.0.0.0:8890", "--salli", "127.0.0.1"],
+                                (1, "TARKISTUS: VIRHE osoitteet ValueError")),
+                               (["--kuuntele", "127.0.0.1:8890", "--salli", ""],
+                                (1, "TARKISTUS: VIRHE osoitteet ValueError")),
+                               (["--kuuntele", "127.0.0.1:8890"], (1, "TARKISTUS: VIRHE osoitteet ValueError"))):
+            ulos = io.StringIO()
+            with mock.patch("sys.stdout", ulos):
+                rc = hv.main(argv + lisa)
+            self.assertEqual((rc, ulos.getvalue().strip()), odotettu, lisa)
+
     def test_palvelu_ja_tarkistus_kayttavat_samaa_avausta(self):
         with mock.patch.object(hv, "lue_tiedosto", wraps=hv.lue_tiedosto) as lt:
             self.aja()
@@ -875,7 +1004,17 @@ class Yksikkotiedosto(unittest.TestCase):
         self.assertFalse(alku[0].startswith(("+", "!", "-")))  # sama kayttaja ja hiekkalaatikko kuin palvelulla
         self.assertTrue(alku[0].endswith(" --tarkista"))
         self.assertEqual(alku[0].split()[:3], paa[0].split()[:3])
+        # Tarkistus saa samat osoiteasetukset kuin palvelu.
+        self.assertEqual(alku[0][:-len(" --tarkista")], paa[0])
         self.assertEqual(paa[0].split()[:3], ["/usr/bin/python3", "-I", "/usr/local/lib/hakukontti/hakuvalittaja.py"])
+
+    def test_kuuntelee_vain_asetetussa_osoitteessa(self):
+        teksti = "\n".join(self.rivit)
+        self.assertNotIn("0.0.0.0", teksti)
+        self.assertEqual(self.arvot("EnvironmentFile"), ["/etc/aivo-haku/osoitteet.env"])  # ei '-': pakollinen
+        paa = self.arvot("ExecStart")[0].split()
+        self.assertEqual(paa[paa.index("--kuuntele") + 1], "${HAKU_KUUNTELE}")
+        self.assertEqual(paa[paa.index("--salli") + 1], "${HAKU_SALLITUT}")
 
     def test_vaatii_palomuurin(self):
         # Ilman kill switchia (nftables) palvelu ei saa kaynnistya.
@@ -903,6 +1042,20 @@ class Yksikkotiedosto(unittest.TestCase):
                      "systemd-analyze security aivo-haku"):
             self.assertIn(sana, ohje)
         self.assertNotIn("systemd-run --pipe", ohje)
+        # Kuuntelu vain asetetussa osoitteessa, ja tarkistukset osoittavat rajauksen kontista 122 ja kontin sisalta.
+        self.assertNotIn("0.0.0.0:8890", ohje)
+        lohkot = re.findall(r"```bash\n(.*?)```\n([^\n]*)", ohje, re.DOTALL)
+        komennot = {k.strip(): o for k, o in lohkot}
+        for k, o in lohkot:
+            self.assertTrue(o.startswith("Odotettu:"), k[:80])
+        osoitteet = [k for k in komennot if "/etc/aivo-haku/osoitteet.env" in k and k.startswith("printf")]
+        self.assertEqual(len(osoitteet), 1)
+        kontista_122 = [k for k in komennot if k.startswith("pct exec 122 --") and "8890" in k]
+        self.assertEqual(len(kontista_122), 1)
+        self.assertEqual(komennot[kontista_122[0]], "Odotettu: `401`.")
+        sisalta = 'pct exec 123 -- curl -sS -m 10 -o /dev/null -X POST "http://$IP123:8890/haku"; echo "paluuarvo $?"'
+        self.assertIn("`52`", komennot[sisalta])
+        self.assertTrue(any("hylatty_osoite" in k for k in komennot))
         # Avainta ei tulosteta: ohjeessa ei ole cat-komentoa avaintiedostolle.
         self.assertNotRegex(ohje, r"cat\s+/etc/aivo-haku/avain")
 

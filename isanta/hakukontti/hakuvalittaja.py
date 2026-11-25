@@ -2,6 +2,8 @@
 """Hakuvalittaja (hakukontti): ainoa reitti hakukonttiin. Vain stdlib.
 
 Rajapinta (vain kontille 122, jaettu avain otsakkeessa Authorization: Bearer):
+  Kuuntelee vain asetetussa osoitteessa (--kuuntele, ei 0.0.0.0) ja hylkaa yhteydet muista kuin sallituista
+  osoitteista (--salli) jo ennen pyynnon lukemista. Palomuuri on ensimmainen raja, tama toinen.
   POST /haku {lauseke, reitti, tunnus} -> {tulokset: [{otsikko, url, ote, moottori}], estaneet: [...]}
   POST /sivu {url, reitti, tunnus}     -> {teksti, merkkeja, katkaistu, sha256, sisaltotyyppi, tila, url, ohjauksia}
 
@@ -38,9 +40,7 @@ import sys
 import threading
 import time
 import unicodedata
-import urllib.error
 import urllib.parse
-import urllib.request
 from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -869,9 +869,75 @@ def tee_kasittelija(valittaja):
     return Kasittelija
 
 
+def _osoite(teksti):
+    isanta, _, portti = teksti.rpartition(":")
+    return isanta.strip("[]"), int(portti)
+
+
+def _ip(teksti):
+    """IP-literaali ilman jokerimerkkia ja monilahetysta. Nimia ei hyvaksyta (ei nimipalvelua)."""
+    ip = ipaddress.ip_address(teksti)
+    if ip.is_unspecified or ip.is_multicast:
+        raise ValueError("osoite ei kelpaa")
+    return ip
+
+
+def kuunteluosoite(teksti):
+    """--kuuntele IP:PORTTI -> (ip, portti). 0.0.0.0, :: ja nimet hylataan."""
+    if not isinstance(teksti, str) or not teksti:
+        raise ValueError("kuunteluosoite puuttuu")
+    isanta, portti = _osoite(teksti)
+    if not 0 < portti < 65536:
+        raise ValueError("portti ei kelpaa")
+    return _ip(isanta).compressed, portti
+
+
+def sallitut_osoitteet(teksti):
+    """--salli A[,B...] -> frozenset normalisoituja IP-osoitteita. Tyhja lista, verkot ja nimet hylataan."""
+    if not isinstance(teksti, str):
+        raise ValueError("sallitut puuttuvat")
+    osat = [o.strip() for o in teksti.split(",") if o.strip()]
+    if not osat:
+        raise ValueError("sallitut puuttuvat")
+    return frozenset(_ip(o).compressed for o in osat)
+
+
+def asiakkaan_osoite(osoite):
+    """Normalisoi asiakkaan osoitteen vertailua varten (IPv4-mapattu IPv6 -> IPv4). Kelvoton -> None."""
+    try:
+        ip = ipaddress.ip_address(str(osoite).split("%", 1)[0])
+    except ValueError:
+        return None
+    mapattu = getattr(ip, "ipv4_mapped", None)
+    return (mapattu or ip).compressed
+
+
 class Palvelin(ThreadingHTTPServer):
+    """HTTP-palvelin, joka kuuntelee vain yhdessa osoitteessa ja palvelee vain sallittuja asiakasosoitteita."""
     daemon_threads = True
     allow_reuse_address = True
+
+    def __init__(self, osoite, kasittelija, sallitut, kirjaa=None):
+        isanta, portti = osoite
+        ip = _ip(isanta)  # 0.0.0.0, ::, tyhja ja nimet -> ValueError
+        if not sallitut:
+            raise ValueError("sallitut puuttuvat")
+        self.sallitut = frozenset(_ip(o).compressed for o in sallitut)
+        self._kirjaa = kirjaa
+        if ip.version == 6:
+            self.address_family = socket.AF_INET6
+        super().__init__((ip.compressed, portti), kasittelija)
+
+    def verify_request(self, request, client_address):
+        """Muu kuin sallittu osoite: yhteys suljetaan ilman vastausta ja ennen kuin pyyntoa luetaan."""
+        if asiakkaan_osoite(client_address[0]) in self.sallitut:
+            return True
+        rivi = dict(toiminto="hylatty_osoite", tunnus=None, tila=0, virhe="osoite_ei_sallittu", kesto_ms=0, tavuja=0)
+        if self._kirjaa is not None:
+            self._kirjaa(**rivi)  # ei asiakkaan osoitetta lokiin
+        else:
+            sys.stderr.write(json.dumps(rivi, sort_keys=True) + "\n")
+        return False
 
     def handle_error(self, request, client_address):
         """Ei tracebackia lokiin (voisi sisaltaa dataa): vain poikkeuksen tyyppi."""
@@ -879,16 +945,15 @@ class Palvelin(ThreadingHTTPServer):
         sys.stderr.write(json.dumps({"toiminto": "kasittelyvirhe", "virhe": tyyppi}) + "\n")
 
 
-def _osoite(teksti):
-    isanta, _, portti = teksti.rpartition(":")
-    return isanta.strip("[]"), int(portti)
-
-
 def kaynnistystarkistus(args, tuloste=None):
     """Avaa avaimen ja evasteen samoin liputuksin kuin palvelu ja tunnistautuu hallintasokettiin. Ei vaadi piiria."""
     tuloste = tuloste if tuloste is not None else sys.stdout
-    vaihe = "avain"
+    vaihe = "osoitteet"
     try:
+        if args.kuuntele is not None or args.salli is not None:
+            kuunteluosoite(args.kuuntele)
+            sallitut_osoitteet(args.salli)
+        vaihe = "avain"
         lue_avain(args.avain)
         vaihe = "evaste"
         if len(lue_tiedosto(args.tor_evaste, 64)) != 32:
@@ -905,37 +970,34 @@ def kaynnistystarkistus(args, tuloste=None):
     return 0
 
 
-def koe(args, tuloste=None):
-    """Kayttoonoton koekutsu paikalliseen valittajaan. Tulostaa vain tilan ja maarat, ei sisaltoa eika avainta."""
+def koe(args, tuloste=None, valittaja=None):
+    """Kayttoonoton koekutsu samassa prosessissa (ei HTTP:ta): palvelu ei palvele kontin omaa osoitetta.
+    Tulostaa vain tilan ja maarat, ei sisaltoa eika avainta."""
     tuloste = tuloste if tuloste is not None else sys.stdout
     toiminto, arvo = args.koe
     if toiminto not in ("haku", "sivu"):
         tuloste.write("KOE: tuntematon toiminto (haku tai sivu)\n")
         return 2
-    try:
-        avain = lue_avain(args.avain)
-    except Exception as e:
-        tuloste.write("KOE %s: avain %s\n" % (toiminto, type(e).__name__))
-        return 1
-    isanta, portti = _osoite(args.kuuntele)
-    if isanta in ("", "0.0.0.0"):
-        isanta = "127.0.0.1"
-    runko = {"tunnus": "kayttoonotto-koe", "reitti": "tor", ("lauseke" if toiminto == "haku" else "url"): arvo}
-    pyynto = urllib.request.Request("http://%s:%d/%s" % (isanta, portti, toiminto), data=json.dumps(runko).encode(),
-                                    headers={"Content-Type": "application/json", "Authorization": "Bearer " + avain},
-                                    method="POST")
-    avaaja = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    try:
-        with avaaja.open(pyynto, timeout=90) as v:
-            tila, vastaus = v.status, json.loads(v.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        tila = e.code
+    if valittaja is None:
         try:
-            vastaus = json.loads(e.read().decode("utf-8"))
-        except ValueError:
-            vastaus = {}
+            avain = lue_avain(args.avain)
+        except Exception as e:
+            tuloste.write("KOE %s: avain %s\n" % (toiminto, type(e).__name__))
+            return 1
+        try:
+            valittaja = Valittaja(avain, TorReitti(args.tor_hallinta, args.tor_evaste), searxng=args.searxng,
+                                  socks=_osoite(args.socks))
+        except Exception as e:
+            tuloste.write("KOE %s: asetus %s\n" % (toiminto, type(e).__name__))
+            return 1
+    runko = {"tunnus": "kayttoonotto-koe", "reitti": "tor", ("lauseke" if toiminto == "haku" else "url"): arvo}
+    try:
+        _, vastaus, _ = (valittaja.haku if toiminto == "haku" else valittaja.sivu)(runko)
+        tila = 200
+    except Virhe as v:
+        tila, vastaus = v.http_tila, {"virhe": v.koodi}
     except Exception as e:
-        tuloste.write("KOE %s: yhteys %s\n" % (toiminto, type(e).__name__))
+        tuloste.write("KOE %s: sisainen %s\n" % (toiminto, type(e).__name__))
         return 1
     if tila != 200:
         tuloste.write("KOE %s: tila %d, virhe %s\n" % (toiminto, tila, vastaus.get("virhe")))
@@ -951,7 +1013,8 @@ def koe(args, tuloste=None):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Hakuvalittaja (hakukontti)")
-    ap.add_argument("--kuuntele", default="0.0.0.0:8890")
+    ap.add_argument("--kuuntele", help="pakollinen: kontin oma sisaverkon osoite ja portti (IP:PORTTI), ei 0.0.0.0")
+    ap.add_argument("--salli", help="pakollinen: sallitut asiakasosoitteet pilkuin eroteltuna (Aivon kontti)")
     ap.add_argument("--avain", default="/etc/aivo-haku/avain")
     ap.add_argument("--searxng", default="http://127.0.0.1:8888")
     ap.add_argument("--socks", default="127.0.0.1:9050")
@@ -967,9 +1030,11 @@ def main(argv=None):
         return kaynnistystarkistus(args)
     try:
         avain = lue_avain(args.avain)
+        osoite = kuunteluosoite(args.kuuntele)
+        sallitut = sallitut_osoitteet(args.salli)
         valittaja = Valittaja(avain, TorReitti(args.tor_hallinta, args.tor_evaste), searxng=args.searxng,
                               socks=_osoite(args.socks))
-        palvelin = Palvelin(_osoite(args.kuuntele), tee_kasittelija(valittaja))
+        palvelin = Palvelin(osoite, tee_kasittelija(valittaja), sallitut, kirjaa=valittaja.kirjaa)
     except Exception as e:
         sys.stderr.write("hakuvalittaja: kaynnistys epaonnistui: %s\n" % type(e).__name__)
         return 1

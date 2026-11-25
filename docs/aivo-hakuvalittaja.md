@@ -16,6 +16,8 @@ Pohja: suunnitelma `claude-jono/suunnitelmat/aivo-verkkohaku.md` (kohdat 3.3, 4,
 
 ## Rajapinta
 
+Kuuntelu ja asiakkaat: välittäjä kuuntelee vain asetuksessa annetussa osoitteessa (`--kuuntele IP:PORTTI`, kontin oma sisäverkon tai tailnet-osoite). Osoitteet `0.0.0.0` ja `::` sekä nimet hylätään, eikä palvelu käynnisty ilman asetusta. Yhteydet muista kuin sallituista osoitteista (`--salli`, Aivon kontin osoite) suljetaan ilman vastausta ennen kuin pyyntöä luetaan. Lokiin kirjataan rivi `hylatty_osoite` ilman asiakkaan osoitetta. Tämä on toinen kerros palomuurin (nftables ja Proxmox) rinnalla: rajaus pysyy, vaikka palomuurisääntö puuttuisi. Osoitteet ovat tiedostossa `/etc/aivo-haku/osoitteet.env` (`HAKU_KUUNTELE`, `HAKU_SALLITUT`), joka kirjoitetaan asennuksessa komennoilla. Repossa ei ole osoitteita.
+
 Tunnistus: otsake `Authorization: Bearer <avain>`. Avain on tiedostossa `/etc/aivo-haku/avain` (PR 1:n kohta 9). Vertailu on vakioaikainen (`hmac.compare_digest`). Pyynnön runko on JSON, enintään 8 kt.
 
 - `POST /haku {lauseke, reitti, tunnus}` → `{tulokset: [{otsikko, url, ote, moottori}], estaneet: [moottori, ...]}`
@@ -54,7 +56,9 @@ Virhekoodit (`{"virhe": koodi}`): `tunnistus` 401, `tunnus_ei_kelpaa`, `lauseke_
 
 ## systemd-yksikkö
 
-`aivo-haku.service` ajaa palvelun käyttäjänä `aivo-haku` (lisäryhmä `debian-tor` hallintasokettia varten). Suojat: `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateDevices`, tyhjä `CapabilityBoundingSet`, `RestrictAddressFamilies=AF_INET AF_UNIX`, `SystemCallFilter=@system-service`, `MemoryDenyWriteExecute`, `RestrictSUIDSGID`, `RestrictNamespaces`, `UMask=0077`, `MemoryMax=200M` ja `TasksMax=64`.
+`aivo-haku.service` ajaa palvelun käyttäjänä `aivo-haku` (lisäryhmä `debian-tor` hallintasokettia varten). Osoitteet tulevat tiedostosta `EnvironmentFile=/etc/aivo-haku/osoitteet.env` (pakollinen, ilman `-`-etuliitettä), ja käynnistystarkistus saa samat `--kuuntele`- ja `--salli`-arvot kuin palvelu.
+
+Miksi `debian-tor`-ryhmä: välittäjä tarkistaa ennen jokaista pyyntöä Torin hallintasoketista, että piiri on ylhäällä, ja pyytää haulle uuden piirin (`SIGNAL NEWNYM`). Socket `/run/tor/control` ja eväste ovat Debianissa vain ryhmän `debian-tor` luettavissa. Ryhmä ei anna Torin verkkooikeuksia, koska nftables tunnistaa käyttäjän (`skuid`), ei ryhmää: `aivo-haku` pääsee edelleen vain silmukan portteihin 8888 ja 9050. Riski on se, että hallintasoketin kautta voi muuttaa Torin asetuksia. Palomuuri rajaa silti Torin ulosmenon internetiin ilman yksityisiä osoitteita ja sisääntulon porttiin 8890 kontista 122. Vaihtoehdot (TCP-hallintaportti salasanalla tai reitin tarkistuksen poisto) olisivat heikompia: TCP-portti näkyisi kaikille kontin käyttäjille, ja ilman tarkistusta sovellustason kill switch puuttuisi. Suojat: `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateDevices`, tyhjä `CapabilityBoundingSet`, `RestrictAddressFamilies=AF_INET AF_UNIX`, `SystemCallFilter=@system-service`, `MemoryDenyWriteExecute`, `RestrictSUIDSGID`, `RestrictNamespaces`, `UMask=0077`, `MemoryMax=200M` ja `TasksMax=64`.
 
 `PrivateDevices`, `ProtectSystem` ja `ProtectHome` tarvitsevat mount-nimiavaruuden. Hakukontti saa `nesting=1`:n PR 1:n ohjeessa. Jos palvelu kaatuu virheeseen `226/NAMESPACE`, kirjaa se raporttiin äläkä poista suojia ilman päätöstä.
 
@@ -112,14 +116,33 @@ pct exec 123 -- install -d -m 0755 /usr/local/lib/hakukontti && pct push 123 /ro
 ```
 Odotettu: kaksi riviä, joissa `644 root` ja tiedoston polku.
 
-### 3. Käynnistystarkistus ja palvelu
+### 3. Osoitteet
 
-Käynnistystarkistus palvelun käyttäjänä (ilman systemd:tä):
+Välittäjä kuuntelee vain hakukontin omassa osoitteessa ja palvelee vain kontin 122 osoitetta. Osoitteet luetaan konttien asetuksista.
 
 ```bash
-pct exec 123 -- setpriv --reuid=aivo-haku --regid=aivo-haku --init-groups python3 -I /usr/local/lib/hakukontti/hakuvalittaja.py --tarkista
+IP122=$(pct config 122 | sed -n 's/^net0:.*ip=\([0-9.]*\)\/.*/\1/p'); echo "$IP122"
 ```
-Odotettu: `TARKISTUS: OK`. Virhetilanteessa tuloste on muotoa `TARKISTUS: VIRHE <vaihe> <tyyppi>` (vaihe `avain`, `evaste` tai `hallinta`).
+Odotettu: yksi IPv4-osoite (kontti 122). Tyhjä tuloste: pysähdy.
+
+```bash
+IP123=$(pct config 123 | sed -n 's/^net0:.*ip=\([0-9.]*\)\/.*/\1/p'); echo "$IP123"
+```
+Odotettu: yksi IPv4-osoite (hakukontti). Tyhjä tuloste: pysähdy.
+
+```bash
+printf 'HAKU_KUUNTELE=%s:8890\nHAKU_SALLITUT=%s\n' "$IP123" "$IP122" > /root/hakukontti/osoitteet.env && pct push 123 /root/hakukontti/osoitteet.env /etc/aivo-haku/osoitteet.env --perms 0644 && pct exec 123 -- cat /etc/aivo-haku/osoitteet.env
+```
+Odotettu: kaksi riviä, `HAKU_KUUNTELE=` hakukontin osoitteella ja portilla 8890 sekä `HAKU_SALLITUT=` kontin 122 osoitteella. Tiedostossa ei ole salaisuuksia.
+
+### 4. Käynnistystarkistus ja palvelu
+
+Käynnistystarkistus palvelun käyttäjänä (ilman systemd:tä) samoilla osoitteilla kuin palvelu:
+
+```bash
+pct exec 123 -- sh -c 'set -a; . /etc/aivo-haku/osoitteet.env; set +a; setpriv --reuid=aivo-haku --regid=aivo-haku --init-groups python3 -I /usr/local/lib/hakukontti/hakuvalittaja.py --kuuntele "$HAKU_KUUNTELE" --salli "$HAKU_SALLITUT" --tarkista'
+```
+Odotettu: `TARKISTUS: OK`. Virhetilanteessa tuloste on muotoa `TARKISTUS: VIRHE <vaihe> <tyyppi>` (vaihe `osoitteet`, `avain`, `evaste` tai `hallinta`).
 
 ```bash
 pct exec 123 -- systemd-analyze verify /etc/systemd/system/aivo-haku.service; echo "paluuarvo $?"
@@ -146,16 +169,16 @@ Odotettu: rivi `TARKISTUS: OK` (ExecStartPre samassa hiekkalaatikossa) ja JSON-r
 ```bash
 pct exec 123 -- ss -ltn 'sport = :8890'
 ```
-Odotettu: yksi `LISTEN`-rivi osoitteella `0.0.0.0:8890`.
+Odotettu: yksi `LISTEN`-rivi, jonka osoite on hakukontin oma osoite ja portti 8890 (sama kuin `$IP123`). Jos osoite on `0.0.0.0` tai `*`, pysähdy.
 
 ```bash
 pct exec 123 -- systemd-analyze security aivo-haku --no-pager | tail -n 1
 ```
 Odotettu: rivi `→ Overall exposure level for aivo-haku.service: <luku> ...`. Kirjaa luku raporttiin. Jos luku on yli 5,0, pysähdy.
 
-### 4. Käyttöönoton testit
+### 5. Käyttöönoton testit
 
-Koekutsut ajetaan kontissa rootina silmukan kautta (`--koe`). Ne tulostavat vain tilan ja määrät, eivät sisältöä eivätkä avainta. Lausekkeet ovat neutraaleja.
+Koekutsut (`--koe`) ajetaan kontissa rootina samassa prosessissa kuin välittäjän koodi, ei HTTP:n kautta, koska palvelu ei vastaa kontin omasta osoitteesta. Ne käyttävät samaa SearXNG:tä, Tor-porttia ja hallintasokettia kuin palvelu. Ne tulostavat vain tilan ja määrät, eivät sisältöä eivätkä avainta. Lausekkeet ovat neutraaleja.
 
 Testi 1. Haku Torin kautta.
 
@@ -200,7 +223,28 @@ pct exec 123 -- systemctl start tor@default && pct exec 123 -- systemctl is-acti
 ```
 Odotettu: `active`. Toista sen jälkeen testi 1, kunnes tulos on `tila 200` (Tor muodostaa piirin yleensä alle minuutissa). Jos tulos ei ole 200 kahden minuutin kuluttua, pysähdy.
 
-Testi 5. Lokeissa ei ole lausekkeita eikä osoitteita.
+Testi 5. Hakuvälittäjä vastaa kontista 122. Pyyntö ilman avainta riittää: vastaus `401` osoittaa, että yhteys ja osoiterajaus päästävät kontin 122 läpi. Avainta ei kopioida konttiin 122 tässä vaiheessa.
+
+```bash
+pct exec 122 -- python3 -c 'import sys, http.client as h; c = h.HTTPConnection(sys.argv[1], 8890, timeout=10); c.request("POST", "/haku", b"{}"); print(c.getresponse().status)' "$IP123"
+```
+Odotettu: `401`.
+
+Testi 6. Hakuvälittäjä ei vastaa muualta kuin kontista 122, ei edes kontin omasta osoitteesta. Kontin root pääsee palomuurin läpi silmukan kautta, joten tämä testaa sovelluksen oman rajauksen.
+
+```bash
+pct exec 123 -- curl -sS -m 10 -o /dev/null -X POST "http://$IP123:8890/haku"; echo "paluuarvo $?"
+```
+Odotettu: `Empty reply from server` ja paluuarvo `52`. Paluuarvo `0` tai HTTP-vastaus tarkoittaa, että rajaus ei toimi: pysähdy.
+
+Testi 7. Kontista 115 yhteys porttiin 8890 estyy palomuurissa.
+
+```bash
+pct exec 115 -- curl -sS -m 5 "http://$IP123:8890/"; echo "paluuarvo $?"
+```
+Odotettu: paluuarvo `28` (aikakatkaisu, paketit hylätään) tai `7`.
+
+Testi 8. Lokeissa ei ole lausekkeita eikä osoitteita.
 
 ```bash
 pct exec 123 -- sh -c 'journalctl -u aivo-haku --since "-30min" -o cat | grep -c -i -E "metasearch|wikipedia|example\.com"'
@@ -208,11 +252,9 @@ pct exec 123 -- sh -c 'journalctl -u aivo-haku --since "-30min" -o cat | grep -c
 Odotettu: `0`.
 
 ```bash
-pct exec 123 -- sh -c 'journalctl -u aivo-haku --since "-30min" -o cat | grep -c "\"toiminto\""'
+pct exec 123 -- sh -c 'journalctl -u aivo-haku --since "-30min" -o cat | grep -c -e "\"toiminto\": \"hylatty_osoite\"" -e "\"virhe\": \"tunnistus\""'
 ```
-Odotettu: vähintään `7` (käynnistys ja koekutsut).
-
-Testi 6. Kontin 115 yhteys porttiin 8890 estyy edelleen: aja PR 1:n ohjeen testi 9 uudelleen. Odotettu: paluuarvo `28` tai `7`, kuten PR 1:n ohjeessa.
+Odotettu: vähintään `2` (testin 5 hylätty tunnistus ja testin 6 hylätty osoite). Rivit eivät sisällä asiakkaan osoitetta.
 
 ### Palautus
 
@@ -223,5 +265,6 @@ Jos jokin kohta epäonnistuu: `pct exec 123 -- systemctl disable --now aivo-haku
 ```bash
 python3 -m unittest isanta.hakukontti.test_hakuvalittaja -v
 ```
+Odotettu: lopussa `OK` (osa TLS-testeistä voidaan ohittaa, jos `openssl` puuttuu).
 
-Testit käyttävät valepalvelinta, vale-SOCKS5-palvelinta ja vale-Torin hallintasokettia silmukassa. Oikeaa verkkoa ei käytetä. Katetut tapaukset: tunnistus, SSRF-yritykset (sisäverkko, silmukka, linkkipaikallinen, CGNAT, IPv6, numeromuodot, käyttäjätiedot, väärät portit ja protokollat), `http://`, liian iso sivu (ilmoitettu ja virta), uudelleenohjausketju (3 sallitaan, 4 ei, ohjaus sisäverkkoon, silmukkaan tai `http://`:hen hylätään), injektiosivu (skriptit, piilotetut elementit, `[[ ]]`, `<<< >>>`, näkymättömät merkit), reitti poikki (ei piiriä, hallintasoketti puuttuu, väärä eväste, SOCKS-portti kiinni), piirin eristys ja socks5h, aikaraja, salaisuustyyppien esto, lokien sisällöttömyys, käynnistystarkistus (sama avaus, `O_NOFOLLOW`) ja yksikkötiedoston suojat. Jos `openssl` on asennettu, testit tarkistavat myös, että oletus-TLS hylkää itse allekirjoitetun ja väärän nimen varmenteen.
+Testit käyttävät valepalvelinta, vale-SOCKS5-palvelinta ja vale-Torin hallintasokettia silmukassa. Oikeaa verkkoa ei käytetä. Katetut tapaukset: kuunteluosoite (ei `0.0.0.0`, `::` eikä nimeä, asetus pakollinen), asiakasrajaus (muu osoite suljetaan ennen pyynnön lukemista, sallittu palvellaan, IPv4-mapattu osoite), tunnistus, SSRF-yritykset (sisäverkko, silmukka, linkkipaikallinen, CGNAT, IPv6, numeromuodot, käyttäjätiedot, väärät portit ja protokollat), `http://`, liian iso sivu (ilmoitettu ja virta), uudelleenohjausketju (3 sallitaan, 4 ei, ohjaus sisäverkkoon, silmukkaan tai `http://`:hen hylätään), injektiosivu (skriptit, piilotetut elementit, `[[ ]]`, `<<< >>>`, näkymättömät merkit), reitti poikki (ei piiriä, hallintasoketti puuttuu, väärä eväste, SOCKS-portti kiinni), piirin eristys ja socks5h, aikaraja, salaisuustyyppien esto, lokien sisällöttömyys, käynnistystarkistus (sama avaus, `O_NOFOLLOW`) ja yksikkötiedoston suojat. Jos `openssl` on asennettu, testit tarkistavat myös, että oletus-TLS hylkää itse allekirjoitetun ja väärän nimen varmenteen.
