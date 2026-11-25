@@ -1,5 +1,6 @@
 """Testit aivo/vartija_kehote.py:lle ja aivo/vartija_arvio.py:lle. Ei verkkoa: mallin vastaus on vaarennetty."""
 import io
+import ipaddress
 import json
 import os
 import re
@@ -15,6 +16,7 @@ from aivo import vartija_arvio as va
 from aivo import vartija_kehote as vk
 
 URL = "http://127.0.0.1:8081"
+DOKUMENTAATIOVERKOT = ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24")  # RFC 5737
 
 
 class _Vastaus(io.BytesIO):
@@ -213,10 +215,21 @@ class LainausTesti(unittest.TestCase):
         self.assertEqual(_sisalto(v[-1]["content"])[1], teksti)
 
     def test_tormays_esimerkkiin_huomioidaan(self):
-        sana = vk.ESIMERKIT[0][0].split()[0]
+        # ASCII-alimerkkijono esimerkista: muoto kelpaa tunnukseksi, joten hylkays voi johtua vain tormayksesta.
+        sana = "testin"
+        self.assertIn(sana, vk.ESIMERKIT[0][0])
+        self.assertTrue(sana.isascii() and sana.isalnum())
+        self.assertEqual(vk.uusi_tunnus(["x"], arpa=lambda: sana), sana)  # ilman esimerkkeja kelpaa
         arvot = iter([sana, "ffff0000"])
-        with mock.patch.object(vk.secrets, "token_hex", side_effect=lambda n: next(arvot)):
+        kutsut = []
+
+        def arpa(n):
+            kutsut.append(n)
+            return next(arvot)
+
+        with mock.patch.object(vk.secrets, "token_hex", side_effect=arpa):
             v = vk.viestit("x")
+        self.assertEqual(len(kutsut), 2)  # ensimmainen tunnus hylattiin tormayksen takia
         self.assertEqual(_tunnus(v[1]["content"]), "ffff0000")
 
     def test_jatkuva_tormays_on_virhe(self):
@@ -312,13 +325,32 @@ class KutsuTesti(unittest.TestCase):
 
 
 class AjuriTesti(unittest.TestCase):
-    def test_aineisto_ei_viittaa_oikeaan_infraan(self):
-        # Oikeat kontit ovat 110-122 ja 211; aineiston ja esimerkkien numerot ovat keksittyja (9xx).
-        tekstit = [k["teksti"] for k in va.lue_aineisto(va.OLETUS_AINEISTO)[0]] + [t for t, _, _ in vk.ESIMERKIT]
-        for t in tekstit:
-            for luku in re.findall(r"\d+", t):
-                self.assertFalse(110 <= int(luku) <= 122 or int(luku) == 211, t)
-            self.assertNotRegex(t, r"192\.168\.|100\.87\.|\b(4000|8700|8701|8800)\b")
+    def _infratekstit(self):
+        return [k["teksti"] for k in va.lue_aineisto(va.OLETUS_AINEISTO)[0]] + [t for t, _, _ in vk.ESIMERKIT]
+
+    def test_aineiston_infratunnisteet_ovat_keksityilta_alueilta(self):
+        # Sovittu keksitty alue: konttinumerot 900-999, portit 9000-9999, IPv4 vain RFC 5737 -dokumentaatioverkoista.
+        kontit, portit = [], []
+        for t in self._infratekstit():
+            kontit += [int(x) for x in re.findall(r"\bkont\w*\s+(\d+)", t, re.IGNORECASE)]
+            portit += [int(x) for x in re.findall(r"\bport\w*\s+(\d+)", t, re.IGNORECASE)]
+            for osoite in re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", t):
+                ip = ipaddress.ip_address(osoite)
+                self.assertTrue(any(ip in ipaddress.ip_network(v) for v in DOKUMENTAATIOVERKOT), t)
+        self.assertTrue(kontit and portit, "aineistossa pitaa olla infraesimerkkeja")
+        for k in kontit:
+            self.assertTrue(900 <= k <= 999, k)
+        for p in portit:
+            self.assertTrue(9000 <= p <= 9999, p)
+
+    def test_aineisto_ei_sisalla_paikallisia_tunnisteita(self):
+        # Oikeita tunnisteita ei kirjoiteta repoon. Valinnainen tarkistus: pilkuilla eroteltu lista ymparistomuuttujassa.
+        tunnisteet = [x.strip() for x in os.environ.get("AIVO_TESTI_OIKEAT_TUNNISTEET", "").split(",") if x.strip()]
+        if not tunnisteet:
+            self.skipTest("AIVO_TESTI_OIKEAT_TUNNISTEET puuttuu")
+        for t in self._infratekstit():
+            for x in tunnisteet:
+                self.assertNotRegex(t, r"(?<![\w.])" + re.escape(x) + r"(?![\w])")
 
     def test_oletusaineisto(self):
         k, ilman = va.lue_aineisto(va.OLETUS_AINEISTO)
