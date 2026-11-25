@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
 import re
@@ -451,7 +452,7 @@ def _itse_kutsu(malli: str, viestit: list[dict[str, Any]], laheta_tehdas: Callab
     teksti = data["choices"][0]["message"].get("content") or ""
     kaytto = data.get("usage") or {}
     kulu = kaytto.get("cost")
-    if not isinstance(kulu, (int, float)) or isinstance(kulu, bool) or kulu < 0:
+    if not isinstance(kulu, (int, float)) or isinstance(kulu, bool) or not math.isfinite(kulu) or kulu < 0:
         # Kulu puuttuu vastauksesta: ajon oma raja laskee kulukirjanpidon varovaisen arvion, ei nollaa.
         kulu = openrouter_kulut.arvioi_usd(malli, kaytto.get("prompt_tokens"), kaytto.get("completion_tokens"))
     return {"vastaus": teksti.strip(), "kulu_usd": float(kulu), "sekuntia": round(kello() - t0, 2),
@@ -591,15 +592,18 @@ def itse_tuotannon_mallit(env: Any) -> dict[str, str]:
 
 
 def _itse_viikko_rivi(aika: str, roolit: dict[str, str], yv: dict[str, Any], tulos: dict[str, dict[str, Any]],
-                      kysymyksia: int) -> dict[str, Any]:
+                      kysymyksia: int, rivit: list[dict[str, Any]]) -> dict[str, Any]:
+    """vastattu = rivit, joilla on vastaus (virherivi lasketaan pisteissa vaaraksi, mutta ei vastatuksi). Ajo on
+    kesken, jos se pysahtyi, jos yksikin kutsu epaonnistui tai jos vastauksia puuttuu: silloin se ei ole vertailukohta."""
     mallit = {}
     for m, t in tulos.items():
+        vastattu = sum(1 for r in rivit if r.get("malli") == m and "vastaus" in r and "virhe" not in r)
         mallit[m] = {"yhteensa": t["yhteensa"], "lajit": dict(t["lajit"]), "luokat": dict(t["luokat"]),
-                     "vastattu": sum(t["luokat"].values()), "kulu_usd": t["kulu"], "mediaani_s": t["mediaani_s"]}
+                     "vastattu": vastattu, "kulu_usd": t["kulu"], "mediaani_s": t["mediaani_s"]}
     for m in yv["mallit"]:
         mallit.setdefault(m, {"yhteensa": None, "lajit": {}, "luokat": {}, "vastattu": 0, "kulu_usd": 0.0,
                               "mediaani_s": None})
-    kesken = bool(yv.get("pysahtyi")) or any(v["vastattu"] < kysymyksia for v in mallit.values())
+    kesken = bool(yv.get("pysahtyi")) or yv["virheita"] > 0 or any(v["vastattu"] < kysymyksia for v in mallit.values())
     return {"aika": aika, "roolit": dict(roolit), "kysymyksia": kysymyksia, "kulut_usd": yv["kulut_usd"],
             "raja_usd": yv["raja_usd"], "pysahtyi": yv.get("pysahtyi"), "virheita": yv["virheita"],
             "kesken": kesken, "mallit": mallit}
@@ -681,8 +685,9 @@ def itse_viikko(env: Any, ulos: Path, tiivistelma: Path, laheta_tehdas: Callable
     tiivistelma.mkdir(mode=0o700, parents=True, exist_ok=True)
     yv = aja_itsetuntemus(mallit, ajo, laheta_tehdas, raja=float(raja), kulutila=kulutila, loki=loki)
     kysymyksia = len(itsetuntemus.lue_kysymykset()["kysymykset"])
-    tulos = itsetuntemus.pisteet(itsetuntemus.lue_vastaukset(ajo))
-    rivi = _itse_viikko_rivi(nyt.isoformat(timespec="seconds"), roolit, yv, tulos, kysymyksia)
+    vastausrivit = itsetuntemus.lue_vastaukset(ajo)
+    tulos = itsetuntemus.pisteet(vastausrivit)
+    rivi = _itse_viikko_rivi(nyt.isoformat(timespec="seconds"), roolit, yv, tulos, kysymyksia, vastausrivit)
     hpolku = tiivistelma / ITSE_VIIKKO_HISTORIA
     historia = _lue_historia(hpolku)
     _kirjoita_atomisesti(tiivistelma / ITSE_VIIKKO_TIIVISTELMA, itse_viikko_teksti(rivi, historia))

@@ -148,6 +148,36 @@ class ViikkoajoTesti(Pohja):
         self.assertLessEqual(rivi["kulut_usd"], 1.0)
         self.assertTrue(rivi["kesken"])
 
+    def test_yksittainen_virhe_tekee_ajosta_kesken(self):
+        laskuri = []
+
+        def t():
+            perus = tehdas()()
+
+            def laheta(runko):
+                laskuri.append(1)
+                if len(laskuri) == 3:
+                    raise TimeoutError("x")
+                return perus(runko)
+            return laheta
+        env = {"AIVO_OPENROUTER_MALLIT": PAA}
+        self.aja(env, paiva=15)
+        rivi = self.aja(env, paiva=22, tehdas=t)
+        self.assertIsNone(rivi["pysahtyi"])
+        self.assertEqual(rivi["virheita"], 1)
+        self.assertEqual(rivi["mallit"][PAA]["vastattu"], N - 1)
+        self.assertTrue(rivi["kesken"])
+        historia = mv._lue_historia(self.tiiv / mv.ITSE_VIIKKO_HISTORIA)
+        self.assertEqual(mv._edellinen(historia, PAA), historia[0]["mallit"][PAA])
+
+    def test_nan_kulu_ei_ohita_rajaa(self):
+        rungot = []
+        rivi = self.aja({"AIVO_OPENROUTER_MALLIT": PAA}, tehdas=tehdas(
+            rungot=rungot, kaytto={"cost": float("nan"), "prompt_tokens": 1500, "completion_tokens": 800}))
+        self.assertEqual(rivi["pysahtyi"], "kuluraja")
+        self.assertLessEqual(rivi["kulut_usd"], 1.0)
+        self.assertLess(len(rungot), N)
+
     def test_sama_aika_kahdesti_hylataan(self):
         env = {"AIVO_OPENROUTER_MALLIT": PAA}
         self.aja(env)

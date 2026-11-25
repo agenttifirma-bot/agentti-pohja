@@ -86,7 +86,7 @@ Ajastin ajaa sarjan kerran viikossa sunnuntaiyönä tuotannon malleilla. Näin k
   - `viimeisin.json`: samat luvut koneluettavina,
   - `historia.jsonl`: rivi per ajo (enintään 260 riviä).
 - Tiivistelmässä on vain luvut, mallien nimet ja kulut, ei vastausten tekstiä. Kysymykset ovat synteettisiä, eikä malli saa muistia eikä ydinohjeita.
-- Jos ajo jää kesken (kuluraja, päiväkatto, virheet tai puuttuvia vastauksia), tiivistelmässä on rivi `HUOM: ajo jai kesken`, palvelun paluuarvo on 1, eikä keskeneräistä ajoa käytetä seuraavan viikon vertailukohtana.
+- Jos ajo jää kesken (kuluraja, päiväkatto, yksikin epäonnistunut kutsu tai puuttuvia vastauksia), tiivistelmässä on rivi `HUOM: ajo jai kesken`, palvelun paluuarvo on 1, eikä keskeneräistä ajoa käytetä seuraavan viikon vertailukohtana.
 - Palvelu ajetaan käyttäjänä `aivo`. Se saa kirjoittaa vain kansioon `/var/lib/aivo-itsetuntemus` ja kulukirjanpitoon `/var/lib/claude-jono` (sama kansio kuin `aivo-chat.service`lla, ei tmpfs-liitoksia). Aivon kirjasto (`/var/lib/aivo`), työkalutila ja agenttien kansio eivät näy palvelulle.
 
 Agenttidata-vienti toimii kontissa 115 eikä näe kontin 122 tiedostoja, joten tiivistelmää ei vielä viedä automaattisesti. Tony lukee sen isännältä: `pct exec 122 -- cat /var/lib/aivo-itsetuntemus/tiivistelma/viimeisin.md`.
@@ -139,18 +139,18 @@ Aja komennot kontissa 122 rootina (`pct enter 122`). Jokaisen komennon jälkeen 
    runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -B -m aivo.mallivertailu itse-arvio --mallit qwen/qwen3-235b-a22b-2507
    ```
 
-   Odotettu: ensimmäinen rivi `Kuluarvio (ei kutsuja tehty):` ja `kutsuja yhteensa 33`. Varovainen yläraja (noin 2,71 USD) on tuntemattoman mallin oletushinnalla. Todellinen kulu on yleensä murto-osa, ja ajo pysähtyy joka tapauksessa ennen 1 USD:a.
+   Odotettu: ensimmäinen rivi `Kuluarvio (ei kutsuja tehty):` ja `kutsuja yhteensa 33`. Varovainen yläraja (noin 2,71 USD) on tuntemattoman mallin oletushinnalla. Todellinen kulu on yleensä murto-osa. Arvion rivi `ajo pysahtyy ennen 3.00 USD` koskee käsiajoa; viikkoajon raja on palvelun valitsin `--raja 1.0`, ja se pysäyttää ajon ennen 1 USD:a.
 
 6. Ensimmäinen ajo heti (oikeat kutsut, kulu yleensä alle 0,10 USD). Tämä todentaa systemd-suojat, joita yksikkötestit eivät näe. Komento odottaa ajon loppuun (tyypillisesti 5–30 minuuttia):
 
    ```
    systemctl start aivo-itsetuntemus.service; echo START-rc=$?
    systemctl show -p Result -p ExecMainStatus aivo-itsetuntemus.service
-   journalctl -u aivo-itsetuntemus -n 3 --no-pager
+   journalctl -u aivo-itsetuntemus -o cat --no-pager | grep -E '"kesken"|^virhe:' | tail -n 2
    cat /var/lib/aivo-itsetuntemus/tiivistelma/viimeisin.md
    ```
 
-   Odotettu: `START-rc=0`, `Result=success`, `ExecMainStatus=0`, journaalissa rivi, jossa on `"kesken": false`, ja tiivistelmässä taulukko, jossa päämallin rivillä on `(uusi)`. Jos journaalissa on `virhe: <tyyppi>`, pysähdy ja kerro tyyppi.
+   Odotettu: `START-rc=0`, `Result=success`, `ExecMainStatus=0`, journaalin suodatuksessa rivi, jossa on `"kesken": false`, ja tiivistelmässä taulukko, jossa päämallin rivillä on `(uusi)`. Jos journaalissa on `virhe: <tyyppi>`, pysähdy ja kerro tyyppi.
 
 7. Ajastin päälle ja seuraavan ajon aika:
 
