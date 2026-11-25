@@ -56,7 +56,7 @@ from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from aivo import kalenteri, kalenteri_kehote, luovutus, openrouter_kulut, tiivistelmat_kehote, yksityinen, yksityinen_or
+from aivo import itsetarkistus, kalenteri, kalenteri_kehote, luovutus, openrouter_kulut, tiivistelmat_kehote, yksityinen, yksityinen_or
 from aivo.yksityinen import YksityinenVirhe as ChatVirhe, julkaise_kirjastoon   # sama poikkeus kaikkialla
 from aivo import agenttidata_kehote   # agenttidata-kopion kompassi, faktat ja paatokset (vain luku)
 from aivo import yhdistelma        # usean mallin yhdistelmat (oma rivi: ei ristiriitaa rinnakkaisten tuontimuutosten kanssa)
@@ -190,6 +190,14 @@ function yhdistelmatieto(d,mn,j){if(!Array.isArray(j.mallit))return;
  if(typeof j.luonnos==='string'){const a=document.createElement('a');a.href='#';a.className='mallinimi';a.textContent='N\u00e4yt\u00e4 luonnos';
   const pre=document.createElement('pre');pre.className='luonnos';pre.hidden=true;pre.textContent=j.luonnos;
   a.onclick=e=>{e.preventDefault();pre.hidden=!pre.hidden;a.textContent=pre.hidden?'N\u00e4yt\u00e4 luonnos':'Piilota luonnos';};d.append(a,pre);}}
+function tarkistustieto(d,t){if(!t||typeof t!=='object'||typeof t.merkinta!=='string')return;
+ const k=document.createElement('span');k.className='mallinimi tarkistus';k.textContent=t.merkinta;d.appendChild(k);
+ if(Array.isArray(t.kohdat)&&t.kohdat.length){const ul=document.createElement('ul');ul.className='mallinimi tarkistus';
+  t.kohdat.forEach(x=>{if(!x||typeof x.kohta!=='string'||typeof x.syy!=='string')return;const li=document.createElement('li');
+   li.textContent='\u201d'+x.kohta+'\u201d \u2013 '+x.syy;ul.appendChild(li);});d.appendChild(ul);}
+ if(typeof t.alkuperainen==='string'){const a=document.createElement('a');a.href='#';a.className='mallinimi';a.textContent='N\u00e4yt\u00e4 alkuper\u00e4inen vastaus';
+  const pre=document.createElement('pre');pre.className='luonnos';pre.hidden=true;pre.textContent=t.alkuperainen;
+  a.onclick=e=>{e.preventDefault();pre.hidden=!pre.hidden;a.textContent=pre.hidden?'N\u00e4yt\u00e4 alkuper\u00e4inen vastaus':'Piilota alkuper\u00e4inen vastaus';};d.append(a,pre);}}
 const H={'Content-Type':'application/json','X-Aivo':'1'};
 function alas(){V.scrollTop=V.scrollHeight;const k=V.lastElementChild;if(k&&k.scrollIntoView)k.scrollIntoView({block:'end'});}
 function lisaa(rooli,teksti){const d=document.createElement('div');d.className='v '+rooli;d.textContent=teksti;
@@ -415,7 +423,7 @@ async function laheta(s){if(pituus(s)>RAJA){lisaa('aivo',ylipitka(pituus(s)));re
    else if(j.vastaus)odota.textContent=j.vastaus;
    else if(Array.isArray(j.valinnat)||Array.isArray(j.ehdotukset)||Array.isArray(j.agentit)||Number.isInteger(j.paatosehdotus))odota.hidden=true;
    else odota.textContent='(Aivo ei antanut vastausta. Kokeile uudelleen.)';
-   if(r.ok&&typeof j.malli==='string'){const mn=document.createElement('span');mn.className='mallinimi';mn.textContent='Malli: '+j.malli;odota.appendChild(mn);yhdistelmatieto(odota,mn,j);}
+   if(r.ok&&typeof j.malli==='string'){const mn=document.createElement('span');mn.className='mallinimi';mn.textContent='Malli: '+j.malli;odota.appendChild(mn);yhdistelmatieto(odota,mn,j);tarkistustieto(odota,j.tarkistus);}
    if(Number.isInteger(j.indeksi)){tonyn[j.indeksi]=s;painike(oma,j.indeksi);if(nyt==='yksityinen')luovuta(oma,j.indeksi);}
    if(r.ok&&nyt==='yksityinen'&&Number.isInteger(j.vastaus_indeksi))luovuta(odota,j.vastaus_indeksi);
    if(Array.isArray(j.luovutukset))j.luovutukset.forEach(t=>{if(typeof t==='string')luovutusKortti(t);});
@@ -997,10 +1005,25 @@ def lue_kulukerroin(arvo):
     return k
 
 
+ITSETARKISTUS_ARVOT = {"": False, "pois": False, "paalla": True}
+
+
+def tarkista_itsetarkistus(arvo):
+    """AIVO_YKSITYINEN_ITSETARKISTUS: paalla tai pois (tyhja = pois). Muu arvo estaa kaynnistyksen."""
+    if arvo is None or arvo is False:
+        return False
+    if arvo is True:
+        return True
+    a = str(arvo).strip().lower()
+    if a not in ITSETARKISTUS_ARVOT:
+        raise ChatVirhe("AIVO_YKSITYINEN_ITSETARKISTUS pit\u00e4\u00e4 olla paalla tai pois")
+    return ITSETARKISTUS_ARVOT[a]
+
+
 def kayttotarkoitus(tehtava):
     """Kirjanpidon tehtava-kentta kayttotarkoitukseksi: chat, tiivistys tai muu (tunnistetta ei palauteta)."""
     t = str(tehtava or "")
-    if t == yksityinen_or.TEHTAVA:
+    if t in (yksityinen_or.TEHTAVA, yksityinen_or.TARKISTUS_TEHTAVA):     # itsetarkistus on osa chat-vastausta
         return "chat"
     if "tiivist" in t.lower():
         return "tiivistys"
@@ -1070,7 +1093,7 @@ class Tila:
                  taustapaa="loopback", or_malli=None, or_avain=yksityinen_or.OLETUS_AVAIN, or_mallit=None,
                  or_kulutila=None, tiivistelmat=None, kalenteri_lahde=None, yks_tiivistelmat=None,   # or_kulutila vain testeille: tuotannossa yhteinen kulutila (openrouter_kulut.OLETUS_TILA)
                  yhdistelma_oletus=None, roolit=None, kysy_yhd=None, ajattelija_aika=None, agenttidata=None,
-                 agentit=None, agenttitehtavat=None):
+                 agentit=None, agenttitehtavat=None, itsetarkistus=None, tarkista_yks=None):
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
         self.kulutila = or_kulutila               # None = openrouter_kulut.OLETUS_TILA (yhteinen kirjanpito)
@@ -1135,6 +1158,16 @@ class Tila:
                 agenttitehtavat or str(Path(yks_data).parent / agenttitehtava.KANSIO)))
         if not yks_data and (self.yhdistelma_oletus != yhdistelma.OLETUS or roolit):
             raise ChatVirhe("usean mallin yhdistelm\u00e4 vaatii yksityisen tilan ja OpenRouter-taustap\u00e4\u00e4n")
+        # Itsetarkistus (aivo/itsetarkistus.py): vain yksityinen tila ja OpenRouter-taustapaa. Oletus pois.
+        self.itsetarkistus = tarkista_itsetarkistus(itsetarkistus)
+        self.tarkista_yks = None
+        if self.itsetarkistus:
+            if not yks_data or self.taustapaa != "openrouter":
+                raise ChatVirhe("itsetarkistus vaatii yksityisen tilan ja OpenRouter-taustap\u00e4\u00e4n")
+            self.tarkista_yks = tarkista_yks or (
+                lambda muisti, historia, ohjeet, vastaus, vastaaja, kaytetyt: yksityinen_or.tarkista_vastaus(
+                    muisti, historia, ohjeet, vastaus, vastaaja=vastaaja, tarkastaja=self.roolit.get("tarkastaja"),
+                    kaytetyt=kaytetyt, avain_tiedosto=or_avain, kulutila=or_kulutila))
         self.kysy_yhd = kysy_yhd
         if kysy_yhd is None and self.taustapaa == "openrouter" and yks_data:
             self.kysy_yhd = lambda muisti, historia, ohjeet, malli, yhdistelma_nimi: yksityinen_or.kysy_yhdistelmalla(
@@ -1423,6 +1456,13 @@ def tee_kasittelija(tila):
                 except ChatVirhe as e:
                     tulos = (502, {"virhe": str(e), "indeksi": oma_idx})
                     return
+                tarkistus = None
+                if tila.tarkista_yks is not None and malli:     # ennen merkintojen kasittelya: sama raaka vastaus
+                    tarkistus = tila.tarkista_yks(muisti, historia, ohjeet, vastaus, malli,
+                                                  yhd.kutsuja if yhd is not None else 1)
+                    vastaus = tarkistus.teksti
+                    if tarkistus.tila == itsetarkistus.EI_TARVITA:
+                        tarkistus = None
                 tallennetut = []
 
                 def tallenna(n, t):
@@ -1455,6 +1495,13 @@ def tee_kasittelija(tila):
                     lisatiedot = {"yhdistelma": yhd.yhdistelma, "mallit": yhd.mallit, "kutsuja": yhd.kutsuja}
                     if yhd.merkinta:
                         lisatiedot["merkinta"] = yhd.merkinta
+                tarkistustieto = None
+                if tarkistus is not None:      # nakyy vastauksen alla; alkuperainen sailyy keskustelutiedostossa
+                    tarkistustieto = tarkistus.tiedot()
+                    lisatiedot = dict(lisatiedot or {})
+                    lisatiedot["tarkistus"] = dict(tarkistustieto, mallit=tarkistus.mallit)
+                    if tarkistus.alkuperainen is not None:
+                        lisatiedot["tarkistus"]["alkuperainen"] = tarkistus.alkuperainen
                 tila.yks.lisaa(kid, "aivo", vastaus, [t for t in tiedostot if t in vastaus], malli=malli,
                                lisatiedot=lisatiedot)
                 tulos = (200, {"vastaus": vastaus, "tuntemattomia_lahteita": len(tunn), "tila": "yksityinen",
@@ -1462,9 +1509,13 @@ def tee_kasittelija(tila):
                 if malli:
                     tulos[1]["malli"] = malli
                 if yhd is not None:
-                    tulos[1].update(lisatiedot)
+                    tulos[1].update({k: v for k, v in lisatiedot.items() if k != "tarkistus"})
                     if yhd.luonnos:
                         tulos[1]["luonnos"] = yhd.luonnos
+                if tarkistustieto is not None:
+                    tulos[1]["tarkistus"] = tarkistustieto
+                    if tarkistus.alkuperainen is not None:
+                        tulos[1]["tarkistus"]["alkuperainen"] = tarkistus.alkuperainen
                 if luovutukset:                # vain palvelimen tallentamat tunnukset; mitaan ei ole lahtenyt
                     tulos[1]["luovutukset"] = luovutukset
                 if agentit:                    # vain ehdotuksia; mitaan ei ole kaynnistetty
@@ -1935,6 +1986,9 @@ def main(argv=None):
                     help="roolit muodossa vastaaja:malli,tarkastaja:malli; mallit --openrouter-mallit-listalta")
     ap.add_argument("--yksityinen-ajattelija-aika", default=os.environ.get("AIVO_YKSITYINEN_AJATTELIJA_AIKA"),
                     help="tiimi: ajattelijan aikaraja sekunteina (10-3600, oletus 300); kokonaisaikaraja on aina voimassa")
+    ap.add_argument("--yksityinen-itsetarkistus", default=os.environ.get("AIVO_YKSITYINEN_ITSETARKISTUS", ""),
+                    help="paalla: tarkastajamalli vertaa faktoja sisaltavan vastauksen kehotteen faktoihin ja vastaaja "
+                         "voi korjata kerran (vain OpenRouter-taustapaa; kuluttaa yhteista paivakattoa). Oletus pois")
     ap.add_argument("--agentit", default=os.environ.get("AIVO_AGENTIT", ""),
                     help="eristettyjen agenttien peruskansio (esim. /var/lib/aivo-agentit); ottaa agenttitehtavat "
                          "kayttoon yksityisessa tilassa. Oletus tyhja = pois kaytosta")
@@ -1959,7 +2013,8 @@ def main(argv=None):
                     if a.yksityiset_tiivistelmat_kaytossa and a.yksityinen_data else None,
                     kalenteri_lahde=kalenteri.IcalLahde(a.kalenteri_osoitetiedosto, a.kalenteri_data)
                     if a.kalenteri_kaytossa else None,
-                    agenttidata=a.agenttidata or None, agentit=a.agentit or None)
+                    agenttidata=a.agenttidata or None, agentit=a.agentit or None,
+                    itsetarkistus=a.yksityinen_itsetarkistus)
         tila.kulut_kerroin = lue_kulukerroin(a.kulut_kerroin)
         palvelin = kaynnista(a.osoite, a.portti, tila)
     except ChatVirhe as e:
