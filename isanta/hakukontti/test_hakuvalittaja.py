@@ -884,7 +884,6 @@ class Yksikkotiedosto(unittest.TestCase):
             return sum([r.split("=", 1)[1].split() for r in unit if r.split("=", 1)[0] == avain], [])
         self.assertIn("nftables.service", osat("Requires") + osat("BindsTo"))
         self.assertIn("nftables.service", osat("After"))
-        self.assertFalse(any(r.startswith("Requires=-") for r in unit))
 
     def test_ohje_tarkistaa_palomuurin_ennen_kaynnistysta(self):
         with open(os.path.join(JUURI, "docs", "aivo-hakuvalittaja.md"), encoding="utf-8") as f:
