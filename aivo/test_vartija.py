@@ -149,6 +149,35 @@ class AvainTesti(unittest.TestCase):
             vartija.mekaaninen(teksti)
             self.assertLess(time.perf_counter() - alku, 1.0, teksti[:12])
 
+    def test_uudet_avainmuodot(self):
+        b64u = "Zq8vR2mX9pL4tK7wN3bY6cH1aB3dE5fG7hJ9kL1mN3pQ5rS7"
+        avaimet = [
+            _k("ts", "key-auth-", "kAbCdEf123456-", b64u[:28]),
+            _k("ts", "key-client-", b64u[:20]),
+            _k("AI", "za", b64u[:35]),
+            _k("s", "k_live_", b64u[:24]),
+            _k("r", "k_live_", b64u[:24]),
+            _k("gl", "pat-", b64u[:20]),
+            _k("h", "f_", b64u[:34]),
+            _k("gh", "o_", b64u[:36]),
+            _k("ey", "J", b64u[:20], ".", "ey", "J", b64u[:30], ".", b64u[:43]),
+            _k("ey", "J", b64u[:20], ".", "ey", "J", b64u[:30], "."),       # alg none: allekirjoitus puuttuu
+        ]
+        for a in avaimet:
+            self.assertEqual(self.syyt("arvo " + a + " loppu"), [(a, "API-avain")], a[:8])
+            self.assertEqual(vartija.tekstin_paatos("arvo " + a + "\n")["tulos"], vartija.TULOS_ESTA, a[:8])
+        for t in ("tskey-x", "AIza on lyhyt", "sk_live_x", "glpat-lyhyt", "hf_lyhyt", "eyJ.eyJ.x",
+                  "hf_transfer ja hf_hub_download", "eyJhbGciOi on vain otsake"):
+            self.assertEqual(self.syyt(t), [], t)
+
+    def test_kaikki_yksityisavainten_otsikot(self):
+        for laji, loppu in (("PGP ", " BLOCK"), ("", ""), ("ENCRYPTED ", ""), ("OPENSSH ", ""), ("PGP ", "")):
+            otsikko = _k("-----BEGIN ", laji, "PRIVATE", " KEY", loppu, "-----")
+            p = vartija.tekstin_paatos("x\n" + otsikko + "\nabc\n")
+            self.assertEqual(p["tulos"], vartija.TULOS_ESTA, otsikko)
+            self.assertEqual(len(p["syyt"]), 1, otsikko)         # sama otsikko ei tule kahdesti
+        self.assertEqual(self.syyt(_k("-----BEGIN ", "PGP PUBLIC", " KEY BLOCK-----")), [])
+
     def test_avain_ei_muuta_tekstia_ja_paikka_oikein(self):
         a = _k("gh", "p_", "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3z00")
         teksti = "token=" + a + " ja ssh-ed25519 " + _k("AAAA", "C3NzaC1lZDI1NTE5AAAAIHq3x9k2")
@@ -403,3 +432,106 @@ class SivuTesti(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OsoiteTesti(unittest.TestCase):
+    """IPv6:n lyhennetty ja upotettu muoto, nollilla taytetty IPv4 ja tailnet-nimet (PR #413, tarkastajan loydos)."""
+
+    def tyypit(self, teksti):
+        return vartija.mekaaniset_tyypit(teksti)
+
+    def test_lyhennetty_ipv6_estetaan(self):
+        for osoite in ("fd7a:115c:a1e0::1", "fe80::1ff:fe23:4567:890a", "fd12:3456::42", "FD7A:115C:A1E0::AB:CD",
+                       "fe80::1%eth0", "fec0::1:2", "fd12:3456:789a:1:0:0:0:1"):
+            for teksti in (osoite, "Kone " + osoite + ".", "[" + osoite + "]:22", "osoite " + osoite + ", ja"):
+                self.assertEqual(self.tyypit(teksti), [vartija.SYY_YKSITYINEN_IP], teksti)
+                p = vartija.paatos(self.tyypit(teksti), {"tila": vartija.TILA_TARKISTETTU, "arvio": "ei"})
+                self.assertEqual(p["tulos"], vartija.TULOS_ESTA, teksti)
+
+    def test_ipv4_upotettu_ipv6(self):
+        sisa = ".".join(["10", "1", "2", "3"])
+        for osoite in ("::ffff:" + sisa, "::" + sisa, "64:ff9b::a01:203", "2002:a01:203::1"):
+            self.assertIn(vartija.SYY_YKSITYINEN_IP, self.tyypit("osoite " + osoite + " on"), osoite)
+        self.assertEqual(self.tyypit("osoite ::ffff:192.0.2.1 on"), [vartija.SYY_IP])
+
+    def test_ip_luokka(self):
+        cgnat = ".".join(["100", "101", "1", "2"])
+        self.assertEqual(vartija.ip_luokka("fd7a:115c:a1e0::1"), "tailnet")
+        self.assertEqual(vartija.ip_luokka(cgnat), "tailnet")
+        self.assertEqual(vartija.ip_luokka("fd12:3456::1"), "yksityinen")
+        self.assertEqual(vartija.ip_luokka("fe80::1"), "link-local")
+        self.assertEqual(vartija.ip_luokka(".".join(["169", "254", "1", "1"])), "link-local")
+        self.assertEqual(vartija.ip_luokka("::1"), "loopback")
+        self.assertEqual(vartija.ip_luokka("127.0.0.1"), "loopback")
+        self.assertEqual(vartija.ip_luokka("2001:db8::1"), "muu")
+        self.assertEqual(vartija.ip_luokka("192.0.2.1"), "muu")
+        self.assertIsNone(vartija.ip_luokka("12:30:45"))
+        self.assertIsNone(vartija.ip_luokka("999.1.1.1"))
+
+    def test_nollilla_taytetty_ipv4(self):
+        for osat in (("010", "001", "002", "003"), ("192", "168", "007", "007"), ("172", "016", "000", "001"),
+                     ("100", "064", "000", "001"), ("169", "254", "001", "001")):
+            teksti = "kone " + ".".join(osat) + " vastaa"
+            self.assertEqual(self.tyypit(teksti), [vartija.SYY_YKSITYINEN_IP], teksti)
+        self.assertEqual(self.tyypit("kone 192.000.002.001 vastaa"), [vartija.SYY_IP])
+
+    def test_dokumentaatio_ja_loopback_ovat_kysy_eivat_esto(self):
+        for teksti in ("2001:db8::1", "2001:db8:1:2::3", "192.0.2.10", "127.0.0.1", "0:0:0:0:0:0:0:1"):
+            self.assertEqual(self.tyypit("osoite " + teksti), [vartija.SYY_IP], teksti)
+
+    def test_ipv6_nakoiset_eivat_halyta(self):
+        for t in ("aikaleima 12:30:45", "x[::2] ja y[1::]", "std::vector ja a::b::c", "::1", "sha256:9f86d0",
+                  "kello 1:2:3", "versio 3.10.12"):
+            self.assertEqual(self.tyypit(t), [], t)
+
+    def test_mac_osoite_pysyy_ip_halytyksena(self):
+        # aiempi taysi IPv6-muoto pysyy rinnalla: saantoja saa vain tiukentaa
+        self.assertEqual(self.tyypit("MAC 00:1A:2B:3C:4D:5E"), [vartija.SYY_IP])
+
+    def test_tailnet_nimi(self):
+        nimi = ".".join(["kone", "example-tailnet", "ts", "net"])
+        for teksti in (nimi, "ssh " + nimi + ":22", "..." + nimi, "https://" + nimi + "/x"):
+            self.assertEqual(self.tyypit(teksti), [vartija.SYY_TAILNET], teksti)
+
+    def test_tailnet_ei_ole_neliollinen(self):
+        import time
+        for teksti in ("a." * 8000, "a-" * 8000 + ".ts", "a." * 8000 + "ts.ne", "a:" * 8000, "1." * 8000,
+                       "fd" + ":" * 8000, "FI12 " * 4000, "eyJ" + "a" * 16000):
+            alku = time.perf_counter()
+            vartija.mekaaninen(teksti)
+            self.assertLess(time.perf_counter() - alku, 0.2, teksti[:12])
+        alku = time.perf_counter()
+        list(vartija.TAILNET_RE.finditer("a." * 8000))
+        self.assertLess(time.perf_counter() - alku, 0.2)
+
+
+class IbanJaHetuTesti(unittest.TestCase):
+    @staticmethod
+    def iban(maa, bban):
+        luku = "".join(str(int(c, 36)) for c in bban + maa + "00")
+        return maa + "%02d" % (98 - int(luku) % 97) + bban
+
+    def test_iban_kaikista_maista(self):
+        for maa, bban in (("DE", "370400440532013000"), ("NO", "86011117947"), ("GB", "WEST12345698765432"),
+                          ("FR", "20041010050500013M02606"), ("SE", "50000000058398257466"), ("EE", "3820001234567890")):
+            i = self.iban(maa, bban)
+            valit = " ".join(i[j:j + 4] for j in range(0, len(i), 4))
+            for teksti in (i, valit, i.lower(), valit.lower()):
+                osumat = vartija.mekaaninen("tili " + teksti + " ja muuta")
+                self.assertEqual([(o["kohta"], o["syy"]) for o in osumat], [(teksti, vartija.SYY_IBAN)], teksti)
+            self.assertEqual(vartija.tekstin_paatos("tili " + i)["tulos"], vartija.TULOS_ESTA)
+
+    def test_vaara_tarkiste_tai_pituus_ei_halyta(self):
+        i = self.iban("DE", "370400440532013000")
+        vaara = i[:2] + "%02d" % ((int(i[2:4]) + 1) % 100) + i[4:]
+        for t in (vaara, i[:-1], "ZZ12 3456 7890 1234 56", "AB12CDEFGHIJKLMNOP"):
+            self.assertNotIn(vartija.SYY_IBAN, vartija.mekaaniset_tyypit("tili " + t + " loppu"), t)
+
+    def test_suomen_iban_ilman_tarkistetta_pysyy(self):
+        # aiempi FI-saanto ei tarkistanut tarkistetta; se pysyy (saantoja saa vain tiukentaa)
+        self.assertEqual(vartija.mekaaniset_tyypit("tili FI00 1234 5600 0007 85"), [vartija.SYY_IBAN])
+        self.assertEqual(vartija.mekaaniset_tyypit("tili fi21 1234 5600 0007 85"), [vartija.SYY_IBAN])
+
+    def test_henkilotunnus_pienilla(self):
+        for h in ("131052-308t", "010101a123b", "131052-308T"):
+            self.assertEqual(vartija.mekaaniset_tyypit("tunnus " + h + "."), [vartija.SYY_HETU], h)

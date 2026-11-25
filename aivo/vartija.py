@@ -11,7 +11,8 @@ Saannot (koodi on laki):
     0600), ja se sidotaan tekstin sha256-tiivisteeseen. Hyvaksynta kayttaa sita vain saman sha:n tekstille.
   * Lopputulos (Tonyn paatos A1096, 25.11.2026) on yksi kolmesta (paatos()):
       - "esta": mekaaninen osuma on SSH- tai API-avain, avain avainsanan jalkeen, henkilotunnus, IBAN-tilinumero,
-        tailnet-nimi tai yksityinen IP-osoite (RFC 1918, Tailscalen CGNAT-alue, link-local, fc00::/7). Hyvaksynta ei ole
+        tailnet-nimi tai yksityinen IP-osoite (RFC 1918, Tailscalen CGNAT-alue ja fd7a:115c:a1e0::/48, link-local,
+        fc00::/7, fec0::/10; myos lyhennetty IPv6, IPv4-upotettu IPv6 ja nollilla taytetty IPv4). Hyvaksynta ei ole
         mahdollinen ennen kuin teksti on muokattu ja tarkistettu uudelleen. Estoa ei voi ohittaa.
       - "kysy": muu mekaaninen osuma (sahkoposti, puhelinnumero, muu IP-osoite, nimi- tai avainsanalista),
         vartijamallin arvio "suuri" tai vartijamalli ei tarkistanut tekstia (ei kaytossa, kesken, virhe, kelvoton
@@ -68,33 +69,72 @@ SYY_HETU = "henkil\u00f6tunnus"
 SYY_IBAN = "tilinumero"
 SYY_SSH_YKSITYINEN = "SSH-yksityisavain"
 SYY_SSH_JULKINEN = "SSH-julkisavain"
+SYY_YKSITYISAVAIN = "yksityisavain"
 SYY_API = "API-avain"
 SYY_AVAINSANA_ARVO = "avain avainsanan j\u00e4lkeen"
 # Naista tyypeista tulee aina esto (koodi on laki, Tonyn paatos A1096). Muut mekaaniset osumat -> kysy.
 ESTOTYYPIT = frozenset((SYY_YKSITYINEN_IP, SYY_TAILNET, SYY_HETU, SYY_IBAN, SYY_SSH_YKSITYINEN, SYY_SSH_JULKINEN,
-                        SYY_API, SYY_AVAINSANA_ARVO))
+                        SYY_YKSITYISAVAIN, SYY_API, SYY_AVAINSANA_ARVO))
 # Yksityiset verkot: RFC 1918, Tailscalen CGNAT-alue, link-local ja IPv6 ULA. Dokumentaatio-IP:t (192.0.2.0/24 ym.)
 # ja loopback eivat ole tassa: ne eivat paljasta sisaverkkoa, joten ne ovat "kysy".
 # IPv4-verkot oktetteina: test_repo hylkaa sisaverkon osoitteet kirjaimellisina repossa.
 YKSITYISET_VERKOT = tuple(
     [ipaddress.ip_network((bytes(a), n)) for a, n in (((10, 0, 0, 0), 8), ((172, 16, 0, 0), 12), ((192, 168, 0, 0), 16),
                                                      ((100, 64, 0, 0), 10), ((169, 254, 0, 0), 16))]
-    + [ipaddress.ip_network(v) for v in ("fc00::/7", "fe80::/10")])
+    + [ipaddress.ip_network(v) for v in ("fc00::/7", "fe80::/10", "fec0::/10")])
+# Tailscalen osoitealueet (luokka "tailnet"): CGNAT-alue ja IPv6 ULA -alue. Molemmat ovat myos YKSITYISET_VERKOT-alueilla.
+TAILNET_VERKOT = (ipaddress.ip_network((bytes((100, 64, 0, 0)), 10)), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
+# IPv6-alueet, joiden sisalla on IPv4-osoite viimeisissa 32 bitissa: NAT64 (RFC 6052) ja paikallinen NAT64 (RFC 8215).
+NAT64_VERKOT = tuple(ipaddress.ip_network(v) for v in ("64:ff9b::/96", "64:ff9b:1::/48"))
 
 SAHKOPOSTI_RE = re.compile(r"(?<![\w.+-])[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 PUHELIN_RE = re.compile(r"(?<![\w+])(?:\+\d{1,3}|0)(?:[ -]?\d){5,12}(?!\w)")
 IPV4_RE = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.]*\d)")
-IPV6_RE = re.compile(r"(?i)(?<![\w:])(?:[0-9a-f]{1,4}:){4,7}[0-9a-f]{1,4}(?![\w:])")
-TAILNET_RE = re.compile(r"(?i)(?<![\w-])(?:[a-z0-9-]+\.)*[a-z0-9-]+\.ts\.net\b|(?<![\w-])tail[0-9a-f]{4,}\b")
-HETU_RE = re.compile(r"(?<!\w)\d{6}[-+A-FU-Y]\d{3}[0-9A-Y](?!\w)")
-IBAN_RE = re.compile(r"(?<!\w)FI\d{2}(?: ?\d{4}){3} ?\d{2}(?!\w)")
+# IPv6-ehdokas: heksamerkkien, kaksoispisteiden ja pisteiden yhtenainen jakso (myos ::-lyhennetty ja IPv4-upotettu
+# muoto), valinnaisesti vyohyketunnus (%eth0). Ehdokas kelpaa vasta, kun ipaddress hyvaksyy sen (_ipv6_ehdokas).
+# Jakso alkaa vain sanan, kaksoispisteen ja pisteen ulkopuolelta, joten jokainen jakso kaydaan lapi kerran (lineaarinen).
+IPV6_RE = re.compile(r"(?<![\w:.%])[0-9A-Fa-f:.]{2,}(?:%[\w.-]{1,32})?")
+IPV6_EHDOKAS_MAX = 64
+# Aiempi taysi muoto (4-7 ryhmaa) pysyy rinnalla: se merkitsee myos IPv6:n nakoiset jaksot, joita ipaddress ei hyvaksy
+# (esim. MAC-osoite). Saantoja saa vain tiukentaa, joten nama ovat edelleen "IP-osoite" (kysy).
+IPV6_TAYSI_RE = re.compile(r"(?i)(?<![\w:])(?:[0-9a-f]{1,4}:){4,7}[0-9a-f]{1,4}(?![\w:])")
+# Tailnet-nimi: alku ei saa olla nimen osan ja pisteen jalkeen (a.a.a.a...: vain ensimmainen kohta on alku). Ilman tata
+# rajausta jokainen osa oli uusi alku, ja syote "a." * 8000 vei 2,7 s (neliollinen).
+TAILNET_RE = re.compile(r"(?i)(?<![\w-])(?<![\w-]\.)(?:[a-z0-9-]+\.)*[a-z0-9-]+\.ts\.net\b"
+                        r"|(?<![\w-])tail[0-9a-f]{4,}\b")
+HETU_RE = re.compile(r"(?i)(?<!\w)\d{6}[-+A-FU-Y]\d{3}[0-9A-Y](?!\w)")
+IBAN_RE = re.compile(r"(?i)(?<!\w)FI\d{2}(?: ?\d{4}){3} ?\d{2}(?!\w)")
+# IBAN kaikista maista: maatunnus, kaksi tarkistenumeroa ja 11-30 merkkia (valilyonnit sallittu). Ehdokas kelpaa vain,
+# jos maan IBAN-pituus tasmaa ja mod 97 -tarkiste on 1 (_iban_osumat). Suomen IBAN_RE pysyy lisaksi ilman tarkistetta.
+# Ehdokas on nollapituinen ennakointi, joten edellinen ehdokas ei niele seuraavan alkua ("DE.. ja SE..").
+IBAN_YLEINEN_RE = re.compile(r"(?i)(?<!\w)(?=(?P<iban>[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}))")
+# ISO 13616 -rekisterin maat ja IBAN-pituudet.
+IBAN_PITUUDET = {
+    "AD": 24, "AE": 23, "AL": 28, "AT": 20, "AZ": 28, "BA": 20, "BE": 16, "BG": 22, "BH": 22, "BI": 27, "BR": 29,
+    "BY": 28, "CH": 21, "CR": 22, "CY": 28, "CZ": 24, "DE": 22, "DJ": 27, "DK": 18, "DO": 28, "EE": 20, "EG": 29,
+    "ES": 24, "FI": 18, "FK": 18, "FO": 18, "FR": 27, "GB": 22, "GE": 22, "GI": 23, "GL": 18, "GR": 27, "GT": 28,
+    "HN": 28, "HR": 21, "HU": 28, "IE": 22, "IL": 23, "IQ": 23, "IS": 26, "IT": 27, "JO": 30, "KW": 30, "KZ": 20,
+    "LB": 28, "LC": 32, "LI": 21, "LT": 20, "LU": 20, "LV": 21, "LY": 25, "MC": 27, "MD": 24, "ME": 22, "MK": 19,
+    "MN": 20, "MR": 27, "MT": 31, "MU": 30, "NI": 28, "NL": 18, "NO": 15, "OM": 23, "PK": 24, "PL": 28, "PS": 29,
+    "PT": 25, "QA": 29, "RO": 24, "RS": 22, "RU": 33, "SA": 24, "SC": 31, "SD": 18, "SE": 24, "SI": 19, "SK": 24,
+    "SM": 27, "SO": 23, "ST": 25, "SV": 28, "TL": 23, "TN": 24, "TR": 26, "UA": 29, "VA": 22, "VG": 24, "XK": 20,
+    "YE": 30,
+}
 # Avaimet. Otsikkoa ei kirjoiteta kokonaisena tahan, koska test_repo etsii sita repon tiedostoista.
 SSH_YKSITYINEN_RE = re.compile(r"-----BEGIN (?:OPENSSH |RSA |DSA |EC |ENCRYPTED )?PRIVATE KEY-----")
+# Mika tahansa yksityisavaimen otsikko (PKCS#8, PGP:n "PRIVATE KEY BLOCK" ym.).
+# SSH_YKSITYINEN_RE:n otsikot rajataan pois, jotta sama otsikko ei tule kahdesti.
+YKSITYISAVAIN_RE = re.compile(
+    r"-----BEGIN (?!(?:OPENSSH |RSA |DSA |EC |ENCRYPTED )?PRIVATE KEY-----)(?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----")
 SSH_JULKINEN_RE = re.compile(
     r"(?<![\w-])(?:ssh-ed25519|ssh-rsa|ssh-dss|ecdsa-sha2-nistp(?:256|384|521)) AAAA[0-9A-Za-z+/]{16,}={0,3}")
 API_AVAIN_RE = re.compile(
     r"(?<![\w-])(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{22,}"
-    r"|xox[abposr]-[A-Za-z0-9-]{10,}|(?:AKIA|ASIA)[0-9A-Z]{16})(?![\w-])")
+    r"|xox[abposr]-[A-Za-z0-9-]{10,}|(?:AKIA|ASIA)[0-9A-Z]{16}"
+    r"|tskey-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|[sr]k_live_[0-9A-Za-z]{10,}|glpat-[0-9A-Za-z_-]{20,}"
+    r"|hf_[A-Za-z0-9]{30,})(?![\w-])")
+# JWT: kolme base64url-osaa pisteilla erotettuina, otsake alkaa eyJ ({"). Allekirjoitus voi puuttua (alg none).
+JWT_RE = re.compile(r"(?<![\w-])eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]*(?![\w-])")
 # Avainsana (key, token, secret, password, salasana, avain) ja sen jalkeen pitka satunnainen arvo. Vain arvo merkitaan.
 # Avainsanan jatko on rajattu (\w{0,30}): rajaton \w* teki syotteesta keykeykey... neliollisen (3 s / 16 000 merkkia).
 AVAINSANA_ARVO_RE = re.compile(
@@ -107,12 +147,16 @@ MEKAANISET = (
     (PUHELIN_RE, "puhelinnumero"),
     (IPV4_RE, SYY_IP),
     (IPV6_RE, SYY_IP),
+    (IPV6_TAYSI_RE, SYY_IP),
     (TAILNET_RE, SYY_TAILNET),
     (HETU_RE, SYY_HETU),
     (IBAN_RE, SYY_IBAN),
+    (IBAN_YLEINEN_RE, SYY_IBAN),
     (SSH_YKSITYINEN_RE, SYY_SSH_YKSITYINEN),
+    (YKSITYISAVAIN_RE, SYY_YKSITYISAVAIN),
     (SSH_JULKINEN_RE, SYY_SSH_JULKINEN),
     (API_AVAIN_RE, SYY_API),
+    (JWT_RE, SYY_API),
     (AVAINSANA_ARVO_RE, SYY_AVAINSANA_ARVO),
 )
 
@@ -191,12 +235,106 @@ def _satunnainen(arvo):
     return entropia >= AVAIN_MIN_ENTROPIA
 
 
-def _yksityinen_ip(osoite):
+def _ip(osoite):
+    """Merkkijono -> ipaddress-olio tai None. IPv4:n nollilla taytetyt oktetit (010.001.002.003) luetaan
+    kymmenjarjestelmana kuten normaalimuoto. IPv6:n vyohyketunnus (%eth0) ohitetaan."""
+    if not isinstance(osoite, str):
+        return None
+    s = osoite.split("%", 1)[0]
+    if ":" not in s:
+        osat = s.split(".")
+        if len(osat) != 4 or not all(o.isdigit() and len(o) <= 3 and int(o) <= 255 for o in osat):
+            return None
+        s = ".".join(str(int(o)) for o in osat)
     try:
-        ip = ipaddress.ip_address(osoite)
+        return ipaddress.ip_address(s)
     except ValueError:
-        return False
-    return any(ip.version == v.version and ip in v for v in YKSITYISET_VERKOT)
+        return None
+
+
+def _upotetut_ipv4(ip):
+    """IPv6-osoitteen sisaan upotetut IPv4-osoitteet: ::ffff:a.b.c.d, ::a.b.c.d (vanha muoto), 6to4, Teredo, NAT64."""
+    ulos = []
+    if ip.ipv4_mapped is not None:
+        ulos.append(ip.ipv4_mapped)
+    if ip.sixtofour is not None:
+        ulos.append(ip.sixtofour)
+    if ip.teredo is not None:
+        ulos.extend(ip.teredo)
+    n = int(ip)
+    if 1 < n < 2 ** 32 or any(ip in v for v in NAT64_VERKOT):
+        ulos.append(ipaddress.IPv4Address(n & 0xFFFFFFFF))
+    return ulos
+
+
+def ip_luokka(osoite):
+    """IP-osoitteen luokka: "tailnet", "yksityinen", "link-local", "loopback", "muu" tai None (ei IP-osoite).
+    IPv6:n sisaan upotettu IPv4 luokitellaan kuten IPv4 itse. Estoon johtavat tailnet, yksityinen ja link-local.
+    Loopback ja dokumentaatioalueet (192.0.2.0/24, 2001:db8::/32 ym.) eivat paljasta sisaverkkoa: "kysy"
+    (Tonyn paatos A1096)."""
+    ip = _ip(osoite)
+    if ip is None:
+        return None
+    ehdokkaat = [ip] + (_upotetut_ipv4(ip) if ip.version == 6 else [])
+    for e in ehdokkaat:
+        if any(e.version == v.version and e in v for v in TAILNET_VERKOT):
+            return "tailnet"
+    for e in ehdokkaat:
+        if e.is_link_local:
+            return "link-local"
+        if any(e.version == v.version and e in v for v in YKSITYISET_VERKOT) or (e.version == 6 and e.is_site_local):
+            return "yksityinen"
+    return "loopback" if ip.is_loopback else "muu"
+
+
+ESTO_IP_LUOKAT = frozenset(("tailnet", "yksityinen", "link-local"))
+
+
+def _yksityinen_ip(osoite):
+    return ip_luokka(osoite) in ESTO_IP_LUOKAT
+
+
+def _ipv6_ehdokas(osuma):
+    """IPV6_RE:n jakso -> (alku, loppu) kelvolliselle IPv6-osoitteelle tai None. Lauseen loppupiste ja jakson
+    perassa oleva yksittainen kaksoispiste (esim. "osoite fe80::1: ...") jaavat osoitteen ulkopuolelle.
+    Hylataan: alle kaksi kaksoispistetta, alle kaksi heksaryhmaa (esim. Pythonin viipale [::2]) ja ylipitkat jaksot."""
+    s = osuma.group(0)
+    if len(s) > IPV6_EHDOKAS_MAX or s.count(":") < 2:
+        return None
+    osoite, _, vyohyke = s.partition("%")
+    loppu = len(osoite)
+    while loppu and osoite[loppu - 1] == ".":
+        loppu -= 1
+    if loppu >= 2 and osoite[loppu - 1] == ":" and osoite[loppu - 2] != ":":
+        loppu -= 1
+    osoite = osoite[:loppu]
+    if sum(1 for r in re.split(r"[:.]", osoite) if r) < 2 or _ip(osoite) is None or _ip(osoite).version != 6:
+        return None
+    pituus = loppu + (1 + len(vyohyke) if vyohyke and loppu == len(s.partition("%")[0]) else 0)
+    return osuma.start(), osuma.start() + pituus
+
+
+def _iban_osumat(osuma, teksti):
+    """IBAN_YLEINEN_RE:n ehdokas -> (alku, loppu) tai None. Pituus maan mukaan ja mod 97 -tarkiste. Ehdokas voi jatkua
+    seuraavaan sanaan ("FI21 ... 85 ja"), joten loppu haetaan kohdasta, jossa tiivis pituus tasmaa maan pituuteen."""
+    s = osuma.group("iban")
+    maa = s[:2].upper()
+    pituus = IBAN_PITUUDET.get(maa)
+    if pituus is None:
+        return None
+    tiivis = []
+    for i, c in enumerate(s):
+        if c == " ":
+            continue
+        tiivis.append(c.upper())
+        if len(tiivis) == pituus:
+            loppu = osuma.start() + i + 1
+            if loppu < len(teksti) and (teksti[loppu].isalnum() or teksti[loppu] == "_"):
+                return None
+            t = "".join(tiivis)
+            luku = "".join(str(int(x, 36)) for x in t[4:] + t[:4])
+            return (osuma.start(), loppu) if int(luku) % 97 == 1 else None
+    return None
 
 
 def mekaaninen(teksti, nimet=(), avainsanat=()):
@@ -235,8 +373,19 @@ def _raaka_osumat(teksti, nimet=(), avainsanat=()):
                 continue
             if rx is IPV4_RE and any(int(o) > 255 for o in m.group(0).split(".")):
                 continue
-            if rx is IPV4_RE or rx is IPV6_RE:
+            if rx is IPV6_RE:
+                paikka = _ipv6_ehdokas(m)
+                if paikka is not None:
+                    a, l = paikka
+                    osumat.append((a, l, SYY_YKSITYINEN_IP if _yksityinen_ip(teksti[a:l]) else SYY_IP))
+                continue
+            if rx is IPV4_RE or rx is IPV6_TAYSI_RE:
                 osumat.append((m.start(), m.end(), SYY_YKSITYINEN_IP if _yksityinen_ip(m.group(0)) else SYY_IP))
+                continue
+            if rx is IBAN_YLEINEN_RE:
+                paikka = _iban_osumat(m, teksti)
+                if paikka is not None:
+                    osumat.append(paikka + (syy,))
                 continue
             if rx is AVAINSANA_ARVO_RE:
                 if not _satunnainen(m.group("arvo")):

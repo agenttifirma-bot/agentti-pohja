@@ -21,24 +21,27 @@ SYY_RYHMA = {
     "s\u00e4hk\u00f6postiosoite": "sahkoposti",
     "puhelinnumero": "puhelin",
     "IP-osoite": "ip",
+    "yksityinen IP-osoite": "yksityinen-ip",
     "tailnet-nimi": "tailnet",
     "henkil\u00f6tunnus": "hetu",
     "tilinumero": "iban",
     "SSH-yksityisavain": "avain",
     "SSH-julkisavain": "avain",
+    "yksityisavain": "avain",
     "API-avain": "avain",
     "avain avainsanan j\u00e4lkeen": "avain",
 }
 # Vartijan syy -> rivi, jolle vaara halytys kirjataan.
 SYY_RIVI = {
     "SSH-yksityisavain": "ssh-yksityisavain",
+    "yksityisavain": "yksityisavain",
     "SSH-julkisavain": "ssh-julkisavain",
     "API-avain": "api-avain",
     "avain avainsanan j\u00e4lkeen": "avainsana-arvo",
 }
 TYYPPI_RYHMA = {
-    "sahkoposti": "sahkoposti", "ip": "ip", "hetu": "hetu", "iban": "iban",
-    "ssh-yksityisavain": "avain", "ssh-julkisavain": "avain", "api-avain": "avain", "avainsana-arvo": "avain",
+    "sahkoposti": "sahkoposti", "ip": "ip", "yksityinen-ip": "yksityinen-ip", "tailnet": "tailnet",
+    "hetu": "hetu", "iban": "iban", "ssh-yksityisavain": "avain", "yksityisavain": "avain", "ssh-julkisavain": "avain", "api-avain": "avain", "avainsana-arvo": "avain",
     "nimi": "nimi", "paikka": "paikka",
 }
 
