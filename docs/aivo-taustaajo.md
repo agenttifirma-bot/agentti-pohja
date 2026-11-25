@@ -54,6 +54,7 @@ Ajuri toimii vain OpenRouter-taustapäällä. Jos `AIVO_YKSITYINEN_TAUSTAPAA=loo
   - jonon tilaa ei voi lukea.
 
   Este tarkistetaan palvelimella uudelleen ennen jonoon kirjoitusta. Ajuri tarkistaa päivärajan ja katon silti itse.
+  Laskurin raja on sama kuin ajurilla: ajuri kirjoittaa käyttämänsä päivärajan jonon `tila.json`-tiedostoon (kenttä `paivaraja`), ja chat lukee sen sieltä. Jos ajuri ei ole vielä ajanut, chat käyttää omaa `AIVO_TAUSTA_PAIVARAJA`-asetustaan.
 - Malli voi ehdottaa syventämistä merkinnällä `[[SYVENNA]]` vastauksen lopussa. Chat poistaa merkinnän, ja painikkeen tekstinä on "Syvennä (Aivo ehdottaa)". Merkintä ei luo ehdotusta eikä työtä.
 - Ajattelijamalli valitaan asetuksella `AIVO_YKSITYINEN_ROOLIT` (rooli `ajattelija`), kuten osiossa Roolit ja mallit. Chat ja ajuri lukevat saman asetuksen. Mallin pitää olla listalla `AIVO_OPENROUTER_MALLIT`, jonka mallit tarkistetaan listaa `AVOIMET_MALLIT` vasten. Chat näyttää mallin kortissa.
 - Rajat ovat ennallaan (A1076): 5 työtä vuorokaudessa, työn aikaraja 10 min, kutsun aikaraja 10 min ja yhteinen päiväkatto 10 €/vrk.

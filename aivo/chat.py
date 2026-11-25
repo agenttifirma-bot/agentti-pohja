@@ -1215,9 +1215,12 @@ def yksityinen_muisti(tila, teksti, historia, ohjeet, malli, yh):
     sitten vanhemmat), tiivistelmat (60 kt raja, A983, hakuosumat mukaan luettuina). Hakuosumien tiivistelmia ei
     toisteta tiivistelmien osiossa."""
     if malli:
+        lisa = yksityinen_or.yhdistelman_lisavaraus(yh)
+        if getattr(tila, "tarkista_yks", None) is not None:      # itsetarkistuksen korjauskutsun lisasyote
+            lisa = max(lisa, itsetarkistus.KORJAUS_LISAVARAUS)
         raja = yksityinen_or.muistin_merkkiraja(
             yksityinen_or.yhdistelman_mallit(malli, tila.roolit if yh != yhdistelma.OLETUS else None), ohjeet, historia,
-            yksityinen_or.yhdistelman_lisavaraus(yh))
+            lisa)
         merkintoja, ad_tiedosto = agenttidata_kehote.MERKINTOJA_MAKSIMI, raja // 4   # paatoksille enemman tilaa
     else:
         raja = yksityinen.MUISTI_YLARAJA
@@ -2200,9 +2203,14 @@ def tee_kasittelija(tila):
         def _syvenna_keskustelu(self, d):
             return tila.tausta_jono is not None and self._yks_keskustelu(d)
 
+        def _tausta_paivaraja(self):
+            # sama raja kuin ajurilla: ajuri kirjoittaa kayttamansa rajan jonon tila.json:iin (AIVO_TAUSTA_PAIVARAJA
+            # ajurin ymparistosta). Jos ajuri ei ole viela ajanut, kaytetaan chatin omaa asetusta.
+            return taustaajo.ajurin_paivaraja(tila.tausta_jono) or tila.tausta_paivaraja
+
         def _syvenna_este(self):
             kulut = kulut_yhteenveto(tila.kulutila, datetime.now(openrouter_kulut.TZ), tila.kulut_kerroin)
-            return syvennys.este(tila.tausta_jono, tila.tausta_paivaraja, kulut)
+            return syvennys.este(tila.tausta_jono, self._tausta_paivaraja(), kulut)
 
         def _syvenna_tiedot(self, este):
             try:
@@ -2210,7 +2218,7 @@ def tee_kasittelija(tila):
             except (taustaajo.TaustaVirhe, OSError):
                 kaytetty = None
             return {"kaytossa": este is None, "este": este[1] if este else None, "syy": este[0] if este else None,
-                    "kaytetty": kaytetty, "paivaraja": tila.tausta_paivaraja, "ajattelija": tila.tausta_ajattelija}
+                    "kaytetty": kaytetty, "paivaraja": self._tausta_paivaraja(), "ajattelija": tila.tausta_ajattelija}
 
         def _syvenna_tila(self, d):
             if not self._syvenna_keskustelu(d):

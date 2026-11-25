@@ -388,7 +388,7 @@ Kulut: tarkastus ja reititys tekevät 2 kutsua ja rinnakkais 3 kutsua viestiä k
 Asetus `AIVO_YKSITYINEN_ITSETARKISTUS=paalla` (tai `--yksityinen-itsetarkistus paalla`) ottaa käyttöön vastauksen itsetarkistuksen. Oletus on `pois`. Muu arvo estää käynnistyksen, ja asetus vaatii yksityisen tilan ja OpenRouter-taustapään. Koodi on tiedostossa `aivo/itsetarkistus.py`, ja kutsut kulkevat funktion `yksityinen_or.tarkista_vastaus` kautta.
 
 1. Tarkistus tehdään vain, jos vastauksessa on lukuja, päivämääriä, A-päätösviittauksia (esim. A984) tai väitteitä Aivon rakenteesta. Muut vastaukset eivät maksa mitään.
-2. Tarkastajamalli saa vastauksen ja sen lähteet: kehotteen järjestelmäosan (ydinohjeet, muisti, tiivistelmät, agenttidata) ja keskustelun viimeiset viestit. Se palauttaa JSON-listan ristiriidoista (`kohta`, `syy`). Malli on roolin `tarkastaja` malli (`AIVO_YKSITYINEN_ROOLIT`), muuten keskustelun malli. Mallin pitää läpäistä `avoin_malli()`-tarkistus.
+2. Tarkastajamalli saa vastauksen ja sen lähteet: kehotteen järjestelmäosan (ydinohjeet, muisti, tiivistelmät, agenttidata) ja keskustelun viimeiset viestit. Lähteiden järjestys on: keskustelun viimeiset viestit, muistiosat, joihin vastaus viittaa (`[lähde: ...]`), ja muistihaun osumat, kehotteen alku (säännöt ja ydinohjeet) ja lopuksi muu muisti. Lähteiden enimmäispituus lasketaan tarkastajamallin kontekstista samalla tavalla kuin kehotteen koko (A1106, `yksityinen_or.tarkastajan_lahderaja`). Näin pitkässäkin kehotteessa tarkastaja näkee ne kohdat, joihin vastaus nojaa. Tarkastaja palauttaa JSON-listan ristiriidoista (`kohta`, `syy`). Malli on roolin `tarkastaja` malli (`AIVO_YKSITYINEN_ROOLIT`), muuten keskustelun malli. Mallin pitää läpäistä `avoin_malli()`-tarkistus.
 3. Jos ristiriitoja on, vastaaja saa korjata vastauksen kerran. Korjattua vastausta ei tarkisteta uudelleen. Vastauksen alla näkyy merkintä, esimerkiksi "tarkistus: 1 kohta epävarma; vastaus korjattiin kerran", ja kohdat luettelona. "Näytä alkuperäinen vastaus" näyttää korjaamattoman vastauksen, ja se tallentuu myös keskustelutiedostoon (`tarkistus.alkuperainen`). Tarkistus ei siis muuta vastausta hiljaa.
 4. Merkinnät (`[[EHDOTUS ..]]`, `[[VALINNAT: ..]]` ym.) tulevat vain alkuperäisestä vastauksesta. Tarkastajan teksti on dataa: siitä poistetaan merkinnät ja ohjausmerkit.
 
@@ -400,6 +400,7 @@ Rajat:
 - Tarkastajan kutsussa vastausraja on 1 500 tokenia ja aikaraja 120 s. Korjauksessa ne ovat samat kuin chatissa.
 - Tarkistuksella on oma kokonaisaikaraja 240 s (tarkastaja ja korjaus yhteensä). Jokainen kutsu saa enintään jäljellä olevan ajan, ja kun aika loppuu, korjausta ei aloiteta. Tarkistus voi siis pidentää viestin vastausaikaa enintään noin 240 s.
 - `[[AGENTTI]]`-lohkot tulevat vain alkuperäisestä vastauksesta, kuten muutkin merkinnät.
+- Korjauskutsun lisäsyötteelle (ohje, vastaus enintään 12 000 merkkiä ja havainnot, `itsetarkistus.KORJAUS_LISAVARAUS`) varataan tila ennen kuin muisti ja historia täyttävät kehotteen. Jos korjauskehote ei silti mahdu vastaajamallin kontekstiin, korjausta ei tehdä, ja merkintä kertoo sen.
 
 ## Rajat ja avoimet asiat
 

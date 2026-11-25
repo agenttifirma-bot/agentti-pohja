@@ -190,26 +190,64 @@ class MuistiEiSyrjaytaHistoriaaTesti(unittest.TestCase):
 
 
 class ItsetarkistusRajaTesti(unittest.TestCase):
-    """#445 + #446: itsetarkistuksen kehote rajataan samoin kuin vastauksen, myos pienen tarkastajamallin mukaan."""
+    """#445 + #446 ja tarkastajan loydokset: tarkastajan kutsu mahtuu tarkastajamallin kontekstiin (lahteet rajataan
+    sen mukaan) ja korjauskutsu vastaajamallin kontekstiin, vaikka muisti ja historia olisivat taynna."""
 
-    def viestit(self, vastaaja, tarkastaja, h):
-        talteen = {}
+    PITKA_VASTAUS = "Vuonna 2026 " + "y" * 13_000          # yli yhdistelma.VASTAUS_MAX_MERKKIA
 
-        def aja(vastaus, viestit, kysy, **kw):
-            talteen["v"] = viestit
-            return None
-        with unittest.mock.patch.object(yo.itsetarkistus, "aja", aja):
-            yo.tarkista_vastaus("muisti", h, "ohje", "vastaus", vastaaja=vastaaja, tarkastaja=tarkastaja)
-        return talteen["v"]
+    def aja(self, vastaaja, tarkastaja, h, ohjeet="ohje", muisti=None):
+        kutsut = []
+        kohdat = [{"kohta": "k" * 400, "syy": "s" * 400} for _ in range(10)]      # havainnot enimmillaan
+
+        def kysy(m, v, **kw):
+            kutsut.append((m, v, kw.get("max_tokens")))
+            return json.dumps(kohdat) if len(kutsut) == 1 else "korjattu vastaus"
+        # muisti kuten chatissa itsetarkistuksen ollessa paalla: korjauksen lisasyotteelle varattu tila
+        if muisti is None:
+            muisti = "m" * yo.muistin_merkkiraja(vastaaja, ohjeet, h, yo.itsetarkistus.KORJAUS_LISAVARAUS)
+        with unittest.mock.patch.object(yo, "_kysy_viestit", kysy):
+            tulos = yo.tarkista_vastaus(muisti, h, ohjeet, self.PITKA_VASTAUS, vastaaja=vastaaja, tarkastaja=tarkastaja)
+        return tulos, kutsut
 
     def test_pieni_tarkastaja_mahtuu_kontekstiin(self):
-        v = self.viestit(ISO, PIENI, historia(150, 3_000))
-        self.assertLessEqual(kr.viestien_merkit(v), kr.syote_merkit(PIENI, yo.MAX_TOKENIA, VARAUS))
-        self.assertTrue(v[-1]["content"].startswith("v149 "))      # uusin viesti kokonaan
+        tulos, kutsut = self.aja(ISO, PIENI, historia(150, 3_000))
+        m, v, tokenit = kutsut[0]
+        self.assertEqual(m, PIENI)
+        self.assertLessEqual(kr.viestien_merkit(v), kr.syote_merkit(PIENI, tokenit, VARAUS))
+        self.assertIn("v149 ", v[1]["content"])                     # uusin viesti mukana lahteissa
+
+    def test_korjaus_mahtuu_pienen_kontekstin_malliin(self):
+        for vastaaja in ("mistralai/mistral-small-24b-instruct-2501", "qwen/qwen3-32b", PIENI, ISO):
+            with self.subTest(vastaaja=vastaaja):
+                tulos, kutsut = self.aja(vastaaja, vastaaja, historia(40, 3_000), ohjeet="o" * 20_000)
+                self.assertEqual(len(kutsut), 2, tulos.merkinta)
+                m, v, _ = kutsut[1]
+                self.assertLessEqual(kr.viestien_merkit(v), kr.syote_merkit(vastaaja, yo.MAX_TOKENIA, VARAUS))
+                self.assertEqual(tulos.tila, yo.itsetarkistus.KORJATTU)
+
+    def test_liian_pitka_korjauskehote_ei_kutsu(self):
+        """Jos muistia ei varattu korjaukselle (esim. vanha kutsuja), korjausta ei tehda eika kutsua lahde."""
+        kutsut = []
+
+        def kysy(m, v, **kw):
+            kutsut.append(m)
+            return json.dumps([{"kohta": "2026", "syy": "ei tukea"}])
+        h = historia(4, 1_000)
+        muisti = "m" * yo.muistin_merkkiraja(PIENI, "ohje", h)       # ei lisavarausta
+        with unittest.mock.patch.object(yo, "_kysy_viestit", kysy):
+            tulos = yo.tarkista_vastaus(muisti, h, "ohje", self.PITKA_VASTAUS, vastaaja=PIENI, tarkastaja=PIENI)
+        self.assertEqual(kutsut, [PIENI])
+        self.assertEqual(tulos.tila, yo.itsetarkistus.EPAVARMA)
+        self.assertIn("ei mahdu", tulos.merkinta)
 
     def test_iso_malli_ei_lyhenna(self):
-        v = self.viestit(ISO, ISO, historia(150, 3_000))
-        self.assertFalse(any("lyhennetty" in x["content"] for x in v[1:]))
+        _, kutsut = self.aja(ISO, ISO, historia(150, 3_000), muisti="muisti")
+        self.assertFalse(any("lyhennetty" in x["content"] for x in kutsut[1][1][1:]))
+
+    def test_tarkastajan_raja_seuraa_mallia(self):
+        self.assertLess(yo.tarkastajan_lahderaja(PIENI), yo.tarkastajan_lahderaja(ISO))
+        self.assertGreater(yo.tarkastajan_lahderaja(ISO), 500_000)       # maksimimuisti (#446) mahtuu kokonaan
+        self.assertGreater(yo.tarkastajan_lahderaja(PIKKU), 0)
 
 
 class SuojattuViestiTesti(unittest.TestCase):

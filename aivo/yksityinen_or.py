@@ -40,6 +40,9 @@ Saannot (koodi on laki):
     funktion `tarkista_vastaus` kautta `_kysy_viestit`-reittia (avoin_malli, ZDR, yhteinen 10 EUR/vrk katto ja kirjaus,
     lippu `yksityinen_chat=True`). Tehtavan tunniste on oma (TARKISTUS_TEHTAVA), jotta osuus nakyy kulukirjanpidossa.
     Paivakatto nayttaa vastauksen ilman tarkistusta; kutsuraja 4 per viesti koskee yhdistelman ja tarkistuksen summaa.
+    Tarkastajan lahteiden raja lasketaan tarkastajamallin kontekstista samalla laskennalla kuin kehotteen raja
+    (tarkastajan_lahderaja). Korjauskutsun lisasyotteelle (itsetarkistus.KORJAUS_LISAVARAUS) varataan tila ennen
+    muistin ja historian tayttoa (chat: muistin_merkkiraja, tarkista_vastaus: historian_merkkiraja).
   * Vastauksen pituusraja (A1095): OpenRouter-taustapaan MAX_TOKENIA = 8 000 on erillaan paikallisen loopback-mallin
     rajasta (yksityinen.MAX_TOKENIA = 700, i5-8400 ei ehtisi 8 000 tokenia). Yhden mallin chat-kutsun aikaraja on
     CHAT_AIKARAJA_S. Jos vastaus katkeaa pituusrajaan (finish_reason == "length"), chat lisaa loppuun
@@ -452,6 +455,20 @@ def kysy_taustatyo(
     return teksti.strip()
 
 
+def tarkastajan_lahderaja(tarkastaja: str) -> int:
+    """Tarkastajan lahteiden merkkiraja: tarkastajamallin syoteraja (kontekstiraja.syote_merkit, vastaukselle
+    itsetarkistus.TARKISTUS_MAX_TOKENIA, sama kiintea varaus kuin chatissa) - tarkastajan ohje, vastaus ja rakenne."""
+    syote = kontekstiraja.syote_merkit(tarkastaja, itsetarkistus.TARKISTUS_MAX_TOKENIA, _VARAUS_USD)
+    kiintea = (len(itsetarkistus.TARKASTAJA_OHJE) + itsetarkistus.VASTAUS_MAX_MERKKIA + 2 * kontekstiraja.VIESTI_LISA
+               + kontekstiraja.JARJESTELMA_LISA)
+    return max(0, syote - kiintea)
+
+
+def korjauksen_raja(vastaaja: str) -> int:
+    """Korjauskehotteen (perusviestit + korjauksen lisasyote) merkkiraja vastaajamallin kontekstista."""
+    return kontekstiraja.syote_merkit(vastaaja, MAX_TOKENIA, _VARAUS_USD)
+
+
 def tarkista_vastaus(
     muisti: str,
     historia: list[dict[str, Any]],
@@ -471,13 +488,16 @@ def tarkista_vastaus(
     ne nakyvat merkintana ja alkuperainen vastaus sailyy."""
     tarkista_malli(vastaaja)
     tarkastaja = tarkista_malli(tarkastaja or vastaaja)
-    # sama mallikohtainen historiaraja kuin vastauksessa (A1106): pienempi tarkastajamalli rajaa molempia
+    # Historiaraja vastaajan mallin mukaan (korjaus menee vastaajalle) ja korjauksen lisasyotteelle varattu tila.
+    # Tarkastaja ei saa koko kehotetta vaan oman rajansa (tarkastajan_lahderaja), viitatut lahteet ensin.
     viestit = yksityinen.muodosta_viestit(muisti, historia, ohjeet, KEHOTE, HISTORIA_YLARAJA,
-                                         historian_merkkiraja([vastaaja, tarkastaja], muisti, ohjeet, historia))
+                                         historian_merkkiraja(vastaaja, muisti, ohjeet, historia,
+                                                              itsetarkistus.KORJAUS_LISAVARAUS))
 
     def kysy(m: str, v: list[dict[str, Any]], max_tokens: int | None = None, aikaraja_s: float | None = None) -> str:
         ylaraja = VASTAUS_AIKARAJA_S if max_tokens is not None else CHAT_AIKARAJA_S     # korjaus: kuten chat
         return _kysy_viestit(m, v, avain_tiedosto=avain_tiedosto, kulutila=kulutila, avaa=avaa, nyt=nyt,
                              max_tokens=max_tokens, ylaraja_s=ylaraja, aikaraja_s=aikaraja_s,
                              tehtava=TARKISTUS_TEHTAVA)
-    return itsetarkistus.aja(vastaus, viestit, kysy, tarkastaja=tarkastaja, vastaaja=vastaaja, kaytetyt=kaytetyt)
+    return itsetarkistus.aja(vastaus, viestit, kysy, tarkastaja=tarkastaja, vastaaja=vastaaja, kaytetyt=kaytetyt,
+                             lahteet_raja=tarkastajan_lahderaja(tarkastaja), korjaus_raja=korjauksen_raja(vastaaja))

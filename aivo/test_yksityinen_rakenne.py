@@ -12,7 +12,7 @@ PAIKALLINEN_LAUSE = ("sinua ajetaan Tonyn omalla\nkoneella, eik\u00e4 t\u00e4m\u
                      "ulkoiselle palvelulle.")
 SAANTO6_ALKU = "Sinulla ei ole verkkoa etk\u00e4 voi ajaa ohjelmia itse. Voit ehdottaa agenttiteht\u00e4v\u00e4\u00e4 s\u00e4\u00e4nn\u00f6n 8 mukaisesti."
 SAANTO9 = ("Kun kerrot omasta rakenteestasi, malleista, kuluista tai siit\u00e4, mihin tieto kulkee, k\u00e4yt\u00e4 vain t\u00e4m\u00e4n kehotteen\n"
-           "   ja agenttidatan faktoja [l\u00e4hde: faktat.md]. Jos tietoa ei ole, sano, ettet tied\u00e4. "
+           "   ja agenttidatan faktoja [l\u00e4hde: agenttidata/faktat.md]. Jos tietoa ei ole, sano, ettet tied\u00e4. "
            "Merkitse arvio sanalla 'arvio'.")
 
 
@@ -80,3 +80,16 @@ class Saannot6ja8Testi(Taustapaat):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Saanto9LahdeTesti(unittest.TestCase):
+    """Tarkastajan loydos #441: saannon 9 lahdenimi on sama kuin muistissa (agenttidata_kehote.ETULIITE), joten
+    chat.tarkista_lahteet ei merkitse oikeaa viitetta tuntemattomaksi."""
+
+    def test_lahde_loytyy_muistista(self):
+        from aivo import agenttidata_kehote
+        nimet = chat.LAHDE_RE.findall(saanto(yksityinen.YKSITYINEN_KEHOTE, 9))
+        self.assertEqual(nimet, [agenttidata_kehote.ETULIITE + "faktat.md"])
+        tiedostot = [agenttidata_kehote.ETULIITE + n for n in agenttidata_kehote.TIEDOSTOT]
+        vastaus = "Konttia 122 kaytetaan [l\u00e4hde: %s]." % nimet[0]
+        self.assertEqual(chat.tarkista_lahteet(vastaus, tiedostot), (vastaus, []))

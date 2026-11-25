@@ -469,3 +469,72 @@ class Asetus(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LahteetJarjestysTesti(unittest.TestCase):
+    """Tarkastajan loydos: kiintea 100 000 merkin raja nayttaa vain kehotteen alun. Vastauksen viittaamat muistiosat ja
+    muistihaun osumat tulevat ensin, ja raja lasketaan tarkastajamallin kontekstista."""
+
+    FAKTA = "KIRJASTOFAKTA: varmuuskopio ajetaan sunnuntaisin klo 03.15."
+
+    def kehote(self, muistia=560_000):
+        osat = ["%s\n### TIEDOSTO: kirjasto/tayte-%03d.md\n%s\n" % (it.MUISTI_RAJA, i, "t" * 9_900)
+                for i in range(muistia // 10_000)]
+        osat.append("%s\n### TIEDOSTO: kirjasto/varmuus.md\n%s\n" % (it.MUISTI_RAJA, self.FAKTA))
+        muisti = "".join(osat) + it.MUISTI_RAJA + "\n"
+        return [{"role": "system", "content": "%s\nYDINOHJEET (Tonyn hyv\u00e4ksymi\u00e4 ja voimassa):\nohje\n%s%s"
+                 % (yo.KEHOTE, it.MUISTI_OTSIKKO, muisti)},
+                {"role": "user", "content": "Milloin varmuuskopio ajetaan?"}]
+
+    def test_vakiot_vastaavat_chattia(self):
+        from aivo import kontekstiraja, tiivistelmat_kehote
+        self.assertEqual(it.MUISTI_RAJA, chat.RAJA)
+        self.assertEqual(it._LAHDE_RE.pattern, chat.LAHDE_RE.pattern)
+        self.assertEqual(it.VIESTI_LISA, kontekstiraja.VIESTI_LISA)
+        self.assertTrue(tiivistelmat_kehote.HAKU_OTSIKKO.startswith(it.HAKU_ALKU))
+        self.assertIn(it.MUISTI_OTSIKKO, yksityinen.muodosta_viestit("m", [], "o")[0]["content"])
+
+    def test_viitattu_lahde_ensin(self):
+        perus = self.kehote()
+        vastaus = "Varmuuskopio ajetaan sunnuntaisin klo 03.15 [l\u00e4hde: kirjasto/varmuus.md]."
+        teksti = it.lahteet(perus, vastaus, 50_000)
+        self.assertLessEqual(len(teksti), 50_000)
+        self.assertIn(self.FAKTA, teksti)
+        self.assertLess(teksti.index(self.FAKTA), teksti.index("KEHOTE:"))
+        self.assertIn("Milloin varmuuskopio", teksti)              # keskustelu sailyy
+        self.assertNotIn(self.FAKTA, it.lahteet(perus, "Ei viitteita, vuosi 2026.", 50_000))
+
+    def test_hakuosumat_ensin(self):
+        perus = self.kehote(100_000)
+        perus[0]["content"] = perus[0]["content"].replace(
+            it.MUISTI_OTSIKKO, it.MUISTI_OTSIKKO + "HAKUOSUMAT (testi)\n### HAKUOSUMA 1 HAKU-FAKTA\n" + it.MUISTI_RAJA)
+        teksti = it.lahteet(perus, "vuonna 2026", 20_000)
+        self.assertIn("HAKU-FAKTA", teksti)
+        self.assertLess(teksti.index("HAKU-FAKTA"), teksti.index("KEHOTE:"))
+
+    def test_myohainen_kirjastofakta_ei_ole_epavarma(self):
+        """Kutsupolku: maksimimuistin kehote (~570 000 merkkia), fakta aivan lopussa. Tarkastaja (korvike) ilmoittaa
+        ristiriidan vain, jos fakta puuttuu sen lahteista."""
+        perus = self.kehote()
+        self.assertGreater(len(perus[0]["content"]), 560_000)
+        vastaus = "Varmuuskopio ajetaan sunnuntaisin klo 03.15 [l\u00e4hde: kirjasto/varmuus.md]."
+        for tarkastaja in (M1, "qwen/qwen3-14b"):          # iso ja pieni (40 960 tokenia) tarkastaja
+            with self.subTest(tarkastaja=tarkastaja):
+                saadut = []
+
+                def kysy(m, v, max_tokens=None, aikaraja_s=None):
+                    saadut.append(v)
+                    if self.FAKTA in v[1]["content"]:
+                        return "[]"
+                    return json.dumps([{"kohta": "03.15", "syy": "l\u00e4hteiss\u00e4 ei tukea"}])
+                tulos = it.aja(vastaus, perus, kysy, tarkastaja=tarkastaja, vastaaja=M1,
+                               lahteet_raja=yo.tarkastajan_lahderaja(tarkastaja))
+                self.assertEqual(tulos.tila, it.OK, tulos.merkinta)
+                self.assertLessEqual(sum(len(x["content"]) + it.VIESTI_LISA for x in saadut[0]),
+                                     yo.kontekstiraja.syote_merkit(tarkastaja, it.TARKISTUS_MAX_TOKENIA,
+                                                                    yo._VARAUS_USD))
+
+    def test_vanha_kiintea_raja_ei_riittanyt(self):
+        """Regressio: ilman viitejarjestysta 100 000 merkin raja ei nayta myohaista faktaa."""
+        perus = self.kehote()
+        self.assertNotIn(self.FAKTA, it.lahteet(perus, "ei viitetta 2026", it.LAHTEET_MAX_MERKKIA))

@@ -260,8 +260,14 @@ def epaonnistui_teksti(syy):
 
 # --- Tila: paivalaskuri ------------------------------------------------------------------------------------------------
 
+def _kelpo_paivaraja(arvo):
+    return (isinstance(arvo, int) and not isinstance(arvo, bool) and 1 <= arvo <= PAIVARAJA_MAX)
+
+
 def lue_tila(jono, nyt):
-    """{'versio': 1, 'paiva': 'YYYY-MM-DD', 'ajettu': n}. Lukuvirhe tai vaara muoto -> TaustaVirhe (fail closed)."""
+    """{'versio': 1, 'paiva': 'YYYY-MM-DD', 'ajettu': n[, 'paivaraja': r]}. Lukuvirhe tai vaara muoto -> TaustaVirhe
+    (fail closed). 'paivaraja' on ajurin viimeksi kayttama raja (vain chatin nayttoon); se sailyy paivan
+    vaihtuessa."""
     p = Path(jono) / TILA_TIEDOSTO
     paiva = _paiva(nyt)
     try:
@@ -276,12 +282,30 @@ def lue_tila(jono, nyt):
             or not isinstance(t.get("ajettu"), int) or isinstance(t.get("ajettu"), bool) or t["ajettu"] < 0):
         raise TaustaVirhe("tilatiedoston muoto on virheellinen")
     if t["paiva"] != paiva:
-        return {"versio": 1, "paiva": paiva, "ajettu": 0}
+        uusi = {"versio": 1, "paiva": paiva, "ajettu": 0}
+        if _kelpo_paivaraja(t.get("paivaraja")):
+            uusi["paivaraja"] = t["paivaraja"]
+        return uusi
     return t
 
 
 def kirjoita_tila(jono, t):
     _kirjoita_600(Path(jono) / TILA_TIEDOSTO, json.dumps(t) + "\n")
+
+
+def ajurin_paivaraja(jono):
+    """Ajurin viimeksi kayttama paivaraja tila.json:sta (aja() kirjoittaa sen), jotta chatin Syvenna-laskuri nayttaa
+    saman rajan kuin ajuri soveltaa. Puuttuva, kelvoton tai lukematon arvo -> None (chat kayttaa omaa asetustaan).
+    Vain naytto ja painikkeen esto: ajuri tarkistaa paivarajan aina itse."""
+    try:
+        p = tarkista_kansio(jono) / TILA_TIEDOSTO
+        if p.is_symlink():
+            return None
+        t = json.loads(p.read_text(encoding="utf-8"))
+    except (TaustaVirhe, OSError, ValueError):
+        return None
+    arvo = t.get("paivaraja") if isinstance(t, dict) else None
+    return arvo if _kelpo_paivaraja(arvo) else None
 
 
 def paivan_kaytto(jono, nyt=None):
@@ -443,6 +467,9 @@ def aja(jono, chat, kysy, roolit, nyt=None, paivaraja=PAIVARAJA, aikaraja_s=AIKA
                 _merkitse_epaonnistuneeksi(jono, chat, p, _kid_tiedostonimesta(p), p.stem, "keskeytyi", nyt, tulosta)
                 tulos["epaonnistui"] += 1
         tila = lue_tila(jono, nyt)
+        if tila.get("paivaraja") != paivaraja:                      # chat lukee rajan tasta (ajurin_paivaraja)
+            tila["paivaraja"] = paivaraja
+            kirjoita_tila(jono, tila)
         aloitettu = 0                                               # tassa ajossa aloitetut (varatut) tyot
         for i, polku in enumerate(lista):
             tunnus = polku.stem

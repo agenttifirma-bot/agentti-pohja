@@ -215,6 +215,18 @@ class RajaJaKattoTesti(SyvennysPohja):
         self.assertEqual(d["syy"], "paivaraja")
         self.assertEqual(self.tyot(), [])
 
+    def test_ajurin_paivaraja_naytetaan(self):
+        """Ajurin tila.json:iin kirjaama raja ohittaa chatin oman asetuksen (2), jotta laskuri ei poikkea."""
+        kid = self.uusi()
+        nyt = datetime.now(timezone.utc)
+        taustaajo.kirjoita_tila(self.jono, {"versio": 1, "paiva": taustaajo._paiva(nyt), "ajettu": 2, "paivaraja": 4})
+        s, t = self.pyynto("GET", "/api/syvenna/tila?keskustelu=" + kid)
+        self.assertEqual((s, t["kaytossa"], t["kaytetty"], t["paivaraja"]), (200, True, 2, 4))
+        taustaajo.kirjoita_tila(self.jono, {"versio": 1, "paiva": taustaajo._paiva(nyt), "ajettu": 1, "paivaraja": 1})
+        s, t = self.pyynto("GET", "/api/syvenna/tila?keskustelu=" + kid)
+        self.assertEqual((t["kaytossa"], t["syy"], t["paivaraja"]), (False, "paivaraja", 1))
+        self.assertIn("1/1", t["este"])
+
     def test_rikkinainen_tila_estaa(self):
         kid = self.uusi()
         (self.jono / taustaajo.TILA_TIEDOSTO).write_text("ei jsonia")
