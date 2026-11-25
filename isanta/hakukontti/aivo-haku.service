@@ -1,0 +1,47 @@
+# Aivon hakuvalittaja hakukontissa (pohja). Asennus: /etc/systemd/system/aivo-haku.service. Ohje: docs/aivo-hakuvalittaja.md.
+# Kuuntelee porttia 8890 (nftables ja Proxmox-palomuuri: sisaan vain kontista 122). Ulosmeno vain silmukkaan:
+# SearXNG 127.0.0.1:8888 ja Tor SOCKS 127.0.0.1:9050 (nftables meta skuid aivo-haku). Lokiin ei sisaltoa.
+# Kontin 122 opit (virheloki 25.11.2026): ei tmpfs:aa sticky-bitilla (ei PrivateTmp- eika TemporaryFileSystem-asetusta,
+# palvelu ei kirjoita tiedostoja), ei setgid-chmodia (RestrictSUIDSGID), ja kaynnistystarkistus (ExecStartPre) avaa
+# avaimen ja Torin evasteen samalla funktiolla, samoin liputuksin ja samassa hiekkalaatikossa kuin palvelu.
+[Unit]
+Description=Aivon hakuvalittaja (hakukontti, vain kontille 122, ulosmeno Torin kautta)
+After=network-online.target tor@default.service searxng.service
+Wants=tor@default.service searxng.service
+
+[Service]
+Type=simple
+User=aivo-haku
+Group=aivo-haku
+SupplementaryGroups=debian-tor
+ExecStartPre=/usr/bin/python3 -I /usr/local/lib/hakukontti/hakuvalittaja.py --tarkista
+ExecStart=/usr/bin/python3 -I /usr/local/lib/hakukontti/hakuvalittaja.py --kuuntele 0.0.0.0:8890
+Restart=on-failure
+RestartSec=10
+UMask=0077
+MemoryMax=200M
+TasksMax=64
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
