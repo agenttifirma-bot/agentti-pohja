@@ -6,6 +6,9 @@ import json
 import os
 import random
 import re
+import shutil
+import subprocess
+import tempfile
 import threading
 import unittest
 import urllib.parse
@@ -78,7 +81,13 @@ class PohjaTesti(unittest.TestCase):
         self.assertNotRegex(teksti, r"dport\s+(\{[^}]*\b53\b|53\b)")
         # Ainoa ehdoton ulos-sallinta eth0:aan on debian-torilla.
         ulos = [r for r in rivit if 'oifname "eth0"' in r and r.endswith("accept")]
-        self.assertEqual(ulos, [VASTAUS_122, 'meta skuid "debian-tor" oifname "eth0" accept'])
+        self.assertEqual(ulos, [VASTAUS_122, TOR_ULOS])
+        # debian-tor: vain TCP. Mikaan ulos-sallinta ei mainitse UDP:ta.
+        self.assertEqual([r for r in rivit if 'skuid "debian-tor"' in r], [TOR_ULOS])
+        self.assertIn("meta l4proto tcp", TOR_ULOS)
+        alku = rivit.index("chain output {")
+        output = rivit[alku + 1:rivit.index("}", alku)]
+        self.assertEqual([r for r in output if "udp" in r and r.endswith("accept")], [])
         self.assertIn('include "/etc/nftables.d/hakukontti-osoitteet.nft"', rivit)
 
     def test_systemd_yksikko(self):
@@ -108,6 +117,8 @@ def ip4(a, b, c, d):
 
 
 VASTAUS_122 = 'oifname "eth0" ip daddr $CT122 tcp sport 8890 ct state established accept'
+# Tor tarvitsee vain TCP:n: UDP (myos portti 53) ei saa paasta ulos debian-torinakaan (tarkastus 26.11.2026).
+TOR_ULOS = 'meta skuid "debian-tor" oifname "eth0" meta l4proto tcp accept'
 ESTOT = ('ip daddr $KIELLETYT4 counter drop comment "yksityinen tai erikoisosoite"',
          'ip daddr $LAHIVERKOT4 counter drop comment "lahiverkko"',
          'ip6 daddr $KIELLETYT6 counter drop comment "yksityinen tai erikoisosoite"',
@@ -142,7 +153,8 @@ class YksityisetEstoTesti(unittest.TestCase):
     def test_kaikki_yksityiset_alueet_katettu(self):
         vaaditut = [ip4(10, 0, 0, 0) + "/8", ip4(172, 16, 0, 0) + "/12", ip4(192, 168, 0, 0) + "/16",
                     ip4(100, 64, 0, 0) + "/10", "169.254.0.0/16", "127.0.0.0/8", "0.0.0.0/8", "224.0.0.0/4",
-                    "240.0.0.0/4", "fc00::/7", "fe80::/10", "::1/128", "::ffff:0:0/96"]
+                    "240.0.0.0/4", "192.0.0.0/24", "198.18.0.0/15", "fc00::/7", "fe80::/10", "::1/128",
+                    "::ffff:0:0/96"]
         for alue in vaaditut:
             verkko = ipaddress.ip_network(alue)
             kattaja = self.v4 if verkko.version == 4 else self.v6
@@ -151,10 +163,12 @@ class YksityisetEstoTesti(unittest.TestCase):
     def test_esimerkkiosoitteet(self):
         for o in (ip4(192, 168, 1, 1), ip4(192, 168, 255, 254), ip4(10, 1, 2, 3), ip4(172, 31, 255, 1),
                   ip4(100, 100, 100, 100), "169.254.169.254", "127.0.0.2", "0.0.0.0", "255.255.255.255",
-                  "224.0.0.251", "fd00::1", "fe80::1", "::1", "::ffff:" + ip4(192, 168, 1, 1), "ff02::1"):
+                  "224.0.0.251", "192.0.0.8", "192.0.0.170", "198.18.0.1", "198.19.255.254", "fd00::1", "fe80::1",
+                  "::1", "::ffff:" + ip4(192, 168, 1, 1), "ff02::1"):
             self.assertTrue(self.estetty(o), o)
         # Julkiset osoitteet (dokumentaatio- ja esimerkkialueet) eivat ole listalla.
-        for o in ("8.8.8.8", "1.1.1.1", "203.0.113.5", "2001:db8::1", "2a00:1450::1"):
+        for o in ("8.8.8.8", "1.1.1.1", "203.0.113.5", "192.0.1.1", "198.17.255.255", "198.20.0.1",
+                  "2001:db8::1", "2a00:1450::1"):
             self.assertFalse(self.estetty(o), o)
 
     def test_ei_paallekkaisia_alueita(self):
@@ -181,14 +195,14 @@ class YksityisetEstoTesti(unittest.TestCase):
         # Avatut yhteydet (established) ja Torin internetyhteys sallitaan vasta estojen jalkeen.
         viimeinen = max(self.output.index(e) for e in ESTOT)
         self.assertGreater(self.output.index("ct state established,related accept"), viimeinen)
-        self.assertGreater(self.output.index('meta skuid "debian-tor" oifname "eth0" accept'), viimeinen)
+        self.assertGreater(self.output.index(TOR_ULOS), viimeinen)
 
     def test_ipv6_ulosmeno_vain_silmukkaan_ja_naapurinhakuun(self):
         # Globaalit IPv6-osoitteet lahiverkossa (SLAAC) eivat ole KIELLETYT6:ssa, joten IPv6 estetaan kokonaan.
         esto = self.output.index('meta nfproto ipv6 counter drop comment "ei IPv6-ulosmenoa"')
         for r in self.output[esto + 1:]:
             self.assertNotIn("ip6", r)
-        self.assertGreater(self.output.index('meta skuid "debian-tor" oifname "eth0" accept'), esto)
+        self.assertGreater(self.output.index(TOR_ULOS), esto)
 
     def test_ainoa_poikkeus_on_vastaus_kontille_122(self):
         poikkeus = [r for r in self.output if "$CT122" in r]
@@ -222,6 +236,41 @@ class YksityisetEstoTesti(unittest.TestCase):
         self.assertIn("IPAddressDeny=any", rivit)
         self.assertIn("IPAddressAllow=localhost", rivit)
         self.assertEqual([r for r in rivit if r.startswith("IPAddressAllow=")], ["IPAddressAllow=localhost"])
+
+
+def nft_ohjelma():
+    """nft-polku, jos sen voi ajaa omassa kayttaja- ja verkkonimiavaruudessa (unshare -rn), muuten None."""
+    nft = shutil.which("nft") or next((p for p in ("/usr/sbin/nft", "/sbin/nft") if os.access(p, os.X_OK)), None)
+    if not nft or not shutil.which("unshare"):
+        return None
+    try:
+        r = subprocess.run(["unshare", "-rn", "true"], capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return nft if r.returncode == 0 else None
+
+
+@unittest.skipUnless(nft_ohjelma(), "nft tai unshare -rn ei kaytettavissa")
+class NftSyntaksiTesti(unittest.TestCase):
+    """nft -c hyvaksyy pohjan. Kayttajanimet korvataan numeroilla, koska kayttajia ei ole testikoneella,
+    ja osoitetiedosto korvataan dokumentaatio-osoitteilla (RFC 5737)."""
+
+    def test_nft_c_hyvaksyy_pohjan(self):
+        teksti = lue("nftables.conf")
+        with tempfile.TemporaryDirectory() as hak:
+            osoitteet = os.path.join(hak, "osoitteet.nft")
+            with open(osoitteet, "w", encoding="utf-8") as f:
+                f.write("define CT122 = 198.51.100.7\ndefine LAHIVERKOT4 = { 203.0.113.0/24 }\n")
+            teksti = teksti.replace("/etc/nftables.d/hakukontti-osoitteet.nft", osoitteet)
+            for i, kayttaja in enumerate(("searxng", "aivo-haku", "_apt", "debian-tor", "root")):
+                teksti = teksti.replace('skuid "%s"' % kayttaja, "skuid %d" % (2000 + i))
+            self.assertNotIn('skuid "', teksti)
+            saannot = os.path.join(hak, "nftables.conf")
+            with open(saannot, "w", encoding="utf-8") as f:
+                f.write(teksti)
+            r = subprocess.run(["unshare", "-rn", nft_ohjelma(), "-c", "-f", saannot],
+                               capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
 
 
 class OhjeTesti(unittest.TestCase):
@@ -285,6 +334,12 @@ class OhjeTesti(unittest.TestCase):
         # Proxmox-palomuurin yksityiset alueet luetaan pohjasta, ei kirjoiteta ohjeeseen.
         self.assertTrue(any(k.startswith("KIELLETYT4=$(sed -n") for k in komennot))
         self.assertTrue(any("/etc/pve/firewall/123.fw" in k and '"$KIELLETYT4"' in k for k in komennot))
+
+    def test_tor_udp_esto_tarkistetaan(self):
+        komennot = {k.strip(): o for k, o in self.lohkot}
+        udp = [k for k in komennot if "--reuid=debian-tor" in k and "SOCK_DGRAM" in k]
+        self.assertEqual(len(udp), 1)
+        self.assertIn("Operation not permitted", komennot[udp[0]])
 
     def test_rajattu_merkinta(self):
         self.assertIn("RAJATTU", self.teksti)
