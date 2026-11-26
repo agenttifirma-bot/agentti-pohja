@@ -1,1 +1,0 @@
-- aivo: `test_katto_kirjataan_tilaan_ja_lokiin_kerran_paivassa` etsii kattorivin sisällön perusteella eikä oleta sitä viimeiseksi riviksi. #449:n hakuindeksirivi tulostuu kattorivin jälkeen, ja yhdistelmä (#449 + #456) kaatoi mainin CI:n. Katto ja sen tarkistukset eivät muutu.
