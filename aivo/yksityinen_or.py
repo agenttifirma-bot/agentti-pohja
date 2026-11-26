@@ -539,7 +539,7 @@ def tarkastajan_lahderaja(tarkastaja: str, muisti_max: int | None = None, ohjeet
     `muisti_max` (A1123) rajaa lahteet samaan muistin enimmaiskokoon: muisti + kehotteen alku + keskustelun
     viimeiset viestit. Asetus voi vain pienentaa rajaa."""
     syote = kontekstiraja.syote_merkit(tarkastaja, itsetarkistus.TARKISTUS_MAX_TOKENIA, _VARAUS_USD)
-    kiintea = (len(itsetarkistus.TARKASTAJA_OHJE) + itsetarkistus.VASTAUS_MAX_MERKKIA + 2 * kontekstiraja.VIESTI_LISA
+    kiintea = (itsetarkistus.TARKASTAJA_OHJE_MAX_MERKKIA + itsetarkistus.VASTAUS_MAX_MERKKIA + 2 * kontekstiraja.VIESTI_LISA
                + kontekstiraja.JARJESTELMA_LISA)
     raja = max(0, syote - kiintea)
     if muisti_max is not None:
