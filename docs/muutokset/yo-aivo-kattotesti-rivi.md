@@ -1,0 +1,1 @@
+- aivo: test_katto_kirjataan_tilaan_ja_lokiin_kerran_paivassa etsii 'N/N'-tekstin kattorivilta eika oleta kattorivia lokin viimeiseksi (perassa tulee nykyaan hakuindeksi-rivi, joten testi kaatui mainissa ja esti tarkista-ja-pushaa.sh:n kaikissa PR:issa).

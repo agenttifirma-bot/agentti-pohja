@@ -149,8 +149,10 @@ class KattoKirjattuTesti(KattoPohja):
         self.aseta_kutsuja(ty.PAIVAKATTO)
         _, rivit1 = self.aja_maksullinen(Vaarennos())
         self.assertEqual(self.tila()["katto_kirjattu"], ty._paiva(NYT))
-        self.assertEqual(len(self.kattorivit(rivit1)), 1)
-        self.assertIn("%d/%d" % (ty.PAIVAKATTO, ty.PAIVAKATTO), rivit1[-1] if self.kattorivit(rivit1) else "")
+        katto1 = self.kattorivit(rivit1)
+        self.assertEqual(len(katto1), 1)
+        # Kattorivi ei ole valttamatta viimeinen (perassa voi tulla esim. hakuindeksi-rivi).
+        self.assertIn("%d/%d" % (ty.PAIVAKATTO, ty.PAIVAKATTO), katto1[0])
         _, rivit2 = self.aja_maksullinen(Vaarennos())
         self.assertEqual(self.kattorivit(rivit2), [])          # sama paiva: ei toista kirjausta
         loki = (self.a.polku("indeksi") / ty.LOKI_TIEDOSTO).read_text()
