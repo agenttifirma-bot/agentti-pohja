@@ -1,0 +1,1 @@
+- aivo-testit: test_chat_katkos keskeyttää POSTin vasta, kun palvelin on tallentanut viestin, eikä kiinteän 300 ms:n viiveen jälkeen; hitaalla CI-koneella testi sai oikean tuloksen 'ei-perilla' väärään odotukseen (main 5aada7e, test 3.11). Lisätty testi POSTille, joka keskeytyy ennen vastaanottoa.
