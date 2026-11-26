@@ -505,6 +505,61 @@ class OsoiteTesti(unittest.TestCase):
         self.assertLess(time.perf_counter() - alku, 0.2)
 
 
+
+class LokimuotoTesti(unittest.TestCase):
+    """Lokimuotoinen IPv6 (ip:fe80::1 ym.), IBAN sitovilla valilyonneilla ja viivoilla seka x[1::2]-tyyppiset vaarat
+    halytykset (tehtava 26-24, PR #443)."""
+
+    def osumat(self, teksti):
+        return [(o["kohta"], o["syy"]) for o in vartija.mekaaninen(teksti)]
+
+    def test_lokimuotoinen_ipv6_estetaan(self):
+        for teksti, osoite in (("ip:fe80::1", "fe80::1"), ("addr:fd7a:115c:a1e0::1", "fd7a:115c:a1e0::1"),
+                               ("IPv6:fe80::1", "fe80::1"), ("inet6 addr:fe80::1/64 scope link", "fe80::1"),
+                               ("a_fe80::1", "fe80::1"), ("loki host:fd12:3456::42, ok", "fd12:3456::42"),
+                               ("dev=eth0 ip:fe80::1%eth0 up", "fe80::1%eth0")):
+            self.assertEqual(self.osumat(teksti), [(osoite, vartija.SYY_YKSITYINEN_IP)], teksti)
+            self.assertEqual(vartija.tekstin_paatos(teksti)["tulos"], vartija.TULOS_ESTA, teksti)
+
+    def test_lokimuotoinen_taysi_muoto(self):
+        self.assertEqual(self.osumat("hwaddr:00:1A:2B:3C:4D:5E"), [("00:1A:2B:3C:4D:5E", vartija.SYY_IP)])
+        self.assertEqual(self.osumat("ip:fd12:3456:789a:1:0:0:0:1"),
+                         [("fd12:3456:789a:1:0:0:0:1", vartija.SYY_YKSITYINEN_IP)])
+        self.assertEqual(self.osumat("x_2001:db8::1"), [("2001:db8::1", vartija.SYY_IP)])
+
+    def test_osuma_ei_ala_keskelta_heksajonoa(self):
+        # kaksoispisteen edella pelkka heksaryhma: jakso kuuluu osoitteeseen, eika osuma saa alkaa sen keskelta
+        self.assertEqual(self.osumat("dead:beef::1"), [("dead:beef::1", vartija.SYY_IP)])
+        self.assertEqual(self.osumat("fd12:3456::42"), [("fd12:3456::42", vartija.SYY_YKSITYINEN_IP)])
+        for t in ("aikaleima 12:30:45", "kello 1:2:3", "sha256:9f86d0", "std::vector ja a::b::c", "time:12:30:45",
+                  "localhost:8800", "PR:ien 1:n"):
+            self.assertEqual(self.osumat(t), [], t)
+
+    def test_viipale_ja_nimiavaruus_eivat_halyta(self):
+        for t in ("x[1::2]", "a::b", "lista[0::3] ja y[ab::cd]", "Foo::Bar ja a_1::2"):
+            self.assertEqual(vartija.mekaaniset_tyypit(t), [], t)
+        # estoluokan osoite tunnistetaan lyhyenakin
+        self.assertEqual(vartija.mekaaniset_tyypit("x[fe80::1]"), [vartija.SYY_YKSITYINEN_IP])
+        self.assertEqual(vartija.mekaaniset_tyypit("osoite 2001::1"), [vartija.SYY_IP])
+
+    def test_iban_valimerkit(self):
+        for vali in (" ", "\u00a0", "\u202f", "-"):
+            fi = vali.join(("FI21", "1234", "5600", "0007", "85"))
+            de = vali.join(("DE89", "3704", "0044", "0532", "0130", "00"))
+            for iban in (fi, de, fi.lower()):
+                self.assertEqual(self.osumat("tili " + iban + " ja muuta"), [(iban, vartija.SYY_IBAN)], repr(iban))
+                self.assertEqual(vartija.tekstin_paatos("tili " + iban)["tulos"], vartija.TULOS_ESTA, repr(iban))
+        # vaara tarkiste ei halyta myoskaan viivoilla (FI-saanto tunnistaa FI:n ilman tarkistetta kuten ennenkin)
+        self.assertNotIn(vartija.SYY_IBAN, vartija.mekaaniset_tyypit("tili DE88-3704-0044-0532-0130-00 loppu"))
+
+    def test_ei_neliollinen(self):
+        import time
+        for teksti in ("a." * 8000, ":a" * 8000, "_a" * 8000, "a:" * 8000, "ip:" + "fe80:" * 3000,
+                       "FI21\u00a0" * 4000, "FI12-" * 4000, "g" * 16000 + ":fe80::1"):
+            alku = time.perf_counter()
+            vartija.mekaaninen(teksti)
+            self.assertLess(time.perf_counter() - alku, 0.1, teksti[:12])
+
 class IbanJaHetuTesti(unittest.TestCase):
     @staticmethod
     def iban(maa, bban):
