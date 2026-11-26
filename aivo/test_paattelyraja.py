@@ -10,13 +10,15 @@ from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
-from aivo import chat, openrouter_kulut as ok, openrouter_zdr, salasana_apu, yhdistelma, yksityinen_or as yo
+from aivo import chat, mallivertailu as mv, openrouter_kulut as ok, openrouter_zdr, salasana_apu, taustaajo as ta
+from aivo import tiivista_yksityinen as ty, yhdistelma, yksityinen_or as yo
 
 UUSI = "qwen/qwen3.8-2.4t-a95b"            # paattely pakollinen, tasot xhigh/medium/low (oletus xhigh)
 QWEN35 = "qwen/qwen3.5-397b-a17b"          # paattely valinnainen, tasoja ei kerrota
 Q27 = "qwen/qwen3.8-27b"                   # paattely valinnainen, taso "none" tuettu
 R1 = "deepseek/deepseek-r1-0528"           # paattely pakollinen, tasoja ei kerrota
 MAVERICK = "meta-llama/llama-4-maverick"   # ei reasoning-parametria
+VALINNAISET = ("deepseek/deepseek-chat-v3.1", "mistralai/mistral-small-2603")   # tukevat, mutta eivat paattele oletuksena
 AVAIN = "sk-testi-" + "x" * 30             # keksitty, ei oikea avain
 NYT = datetime(2026, 11, 26, 19, 43, tzinfo=ok.TZ)
 H = [{"rooli": "tony", "teksti": "Mit\u00e4 tied\u00e4t minusta?"}]
@@ -229,6 +231,128 @@ class TarkistusTesti(Pohja):
             tulos = yo.tarkista_vastaus("muisti", H, "ohje", "Tony asuu Espoossa vuodesta 2020.", vastaaja=UUSI,
                                         **self.yhteiset(TYHJA))
         self.assertEqual(len(self.rungot), 1, tulos.merkinta)
+
+
+class OletuksenaPaattelevatTesti(Pohja):
+    """reasoning-kentta vain malleille, jotka paattelevat oletuksena (katselmointi 26.11.)."""
+
+    def test_tuki_on_osajoukko_ja_yhteinen_lahde(self):
+        self.assertLessEqual(set(yo.PAATTELY_TUKI), yo.OLETUKSENA_PAATTELEVAT)
+        self.assertIs(mv.AJATTELEVAT_MALLIT, yo.OLETUKSENA_PAATTELEVAT)
+        for m in VALINNAISET:
+            self.assertNotIn(m, yo.PAATTELY_TUKI)
+            self.assertNotIn(m, yo.OLETUKSENA_PAATTELEVAT)
+
+    def test_valinnainen_malli_ilman_parametria_ja_uusintaa(self):
+        for m in VALINNAISET:
+            if not openrouter_zdr.avoin_malli(m):
+                continue
+            with self.subTest(malli=m):
+                self.rungot.clear()
+                self.assertEqual(self.kysy(m, vastaus()), "Hei!")
+                [runko] = self.rungot
+                self.assertNotIn("reasoning", runko)
+                self.assertEqual(yo.paattelyraja(m, 8_000), 0)
+                self.assertIsNone(yo.uusinnan_parametri(m))
+                self.rungot.clear()
+                with self.assertRaises(yo.VastausKatkesi):
+                    self.kysy(m, TYHJA, vastaus())
+                self.assertEqual(len(self.rungot), 1)                     # ei uusintaa
+                self.assertNotIn("reasoning", self.rungot[0])
+
+    def test_tukitaulu_ei_riita_ilman_oletuspaattelya(self):
+        m = "deepseek/deepseek-chat-v3.1"
+        with mock.patch.dict(yo.PAATTELY_TUKI, {m: (False, None)}):
+            self.assertEqual(yo.paattelyraja(m, 8_000), 0)
+            self.assertIsNone(yo.paattelyparametri(m, 2_000))
+            self.assertIsNone(yo.uusinnan_parametri(m))
+
+
+class TaustaJaTiivistysTesti(Pohja):
+    def test_taustatyo_saa_rajan_vain_paattelevalle(self):
+        for malli, odotus in ((UUSI, {"max_tokens": 2_000, "exclude": True}), (MAVERICK, None)):
+            with self.subTest(malli=malli):
+                self.rungot.clear()
+                with contextlib.redirect_stderr(self.err):
+                    yo.kysy_taustatyo(malli, [{"role": "user", "content": "x"}], aikaraja_s=60,
+                                      **self.yhteiset(vastaus()))
+                [runko] = self.rungot
+                self.assertEqual(runko.get("reasoning"), odotus)
+                self.assertEqual(runko["max_tokens"], yo.MAX_TOKENIA)
+                self.assertEqual(runko["provider"]["zdr"], True)
+
+    def test_taustatyo_asetus_nolla_ja_ei_uusintaa(self):
+        with contextlib.redirect_stderr(self.err):
+            yo.kysy_taustatyo(UUSI, [{"role": "user", "content": "x"}], aikaraja_s=60, paattely_max=0,
+                              **self.yhteiset(vastaus()))
+        self.assertNotIn("reasoning", self.rungot[0])
+        self.rungot.clear()
+        with contextlib.redirect_stderr(self.err), self.assertRaises(yo.VastausKatkesi):
+            yo.kysy_taustatyo(UUSI, [{"role": "user", "content": "x"}], aikaraja_s=60, **self.yhteiset(TYHJA, vastaus()))
+        self.assertEqual(len(self.rungot), 1)
+
+    def test_taustaajon_main_valittaa_asetuksen(self):
+        saadut = []
+
+        def tee_kysyja(avain, **kw):
+            saadut.append(kw)
+            return lambda *a: "ok"
+        env = {"AIVO_OPENROUTER_MALLIT": UUSI, "AIVO_YKSITYINEN_PAATTELY_MAX": "1200"}
+        jono, keskustelut = self.d / "jono", self.d / "chat"
+        for k in (jono, keskustelut):
+            k.mkdir(mode=0o700)
+            os.chmod(k, 0o700)
+        with mock.patch.object(ta, "tee_kysyja", tee_kysyja), contextlib.redirect_stderr(self.err):
+            rc = ta.main(["--jono", str(jono), "--chat", str(self.d / "chat"), "--kuiva"], env=env)
+        self.assertEqual(rc, 0, self.err.getvalue())
+        self.assertEqual(saadut, [{"paattely_max": 1_200}])
+        with mock.patch.object(ta, "tee_kysyja", tee_kysyja), contextlib.redirect_stderr(self.err):
+            rc = ta.main(["--jono", str(jono), "--chat", str(self.d / "chat"), "--kuiva"],
+                         env={**env, "AIVO_YKSITYINEN_PAATTELY_MAX": "9000"})
+        self.assertEqual(rc, 1)
+        self.assertEqual(len(saadut), 1)
+
+    def test_taustaajon_kysyja_valittaa_rajan_kutsuun(self):
+        kysy = ta.tee_kysyja(str(self.avain), paattely_max=1_000, **{k: v for k, v in self.yhteiset(vastaus()).items()
+                                                                      if k != "avain_tiedosto"})
+        with contextlib.redirect_stderr(self.err):
+            kysy(UUSI, [{"role": "user", "content": "x"}], 60)
+        self.assertEqual(self.rungot[0]["reasoning"], {"max_tokens": 1_000, "exclude": True})
+
+    def test_tiivistys_saa_rajan(self):
+        kw = {k: v for k, v in self.yhteiset(vastaus("{}")).items() if k != "avain_tiedosto"}
+        kysy, _ = ty.tee_or_kysyja(UUSI, str(self.avain), "1000", **kw)
+        kysy("ohje", "data")
+        self.assertEqual(self.rungot[0]["reasoning"], {"max_tokens": 750, "exclude": True})   # 1 500 // 2
+        self.assertEqual(self.rungot[0]["max_tokens"], yo.TIIVISTYS_MAX_TOKENIA)
+        self.rungot.clear()
+        kysy, _ = ty.tee_or_kysyja(MAVERICK, str(self.avain), None, **{**kw, "avaa": self.avaa(vastaus("{}"))})
+        kysy("ohje", "data")
+        self.assertNotIn("reasoning", self.rungot[0])
+        with self.assertRaises(ty.TiivistaVirhe):
+            ty.tee_or_kysyja(UUSI, str(self.avain), "abc", **kw)
+
+    def test_tiivistyksen_main_lukee_asetuksen(self):
+        lahde = Path(ty.__file__).read_text(encoding="utf-8")
+        self.assertIn('tee_or_kysyja(a.or_malli, a.or_avain, env.get("AIVO_YKSITYINEN_PAATTELY_MAX"))', lahde)
+
+
+class LokiTesti(unittest.TestCase):
+    def test_reasoning_tokens_kirjataan(self):
+        err = io.StringIO()
+        data = {"usage": {"prompt_tokens": 10, "completion_tokens": 2400,
+                          "completion_tokens_details": {"reasoning_tokens": 1987}, "cost": 0.01}}
+        with contextlib.redirect_stderr(err):
+            yo.loki_toteutunut(UUSI, data)
+        self.assertIn("reasoning_tokens=1987", err.getvalue())
+
+    def test_puuttuva_tai_vaara_tyyppi_ohitetaan(self):
+        for tiedot in (None, {}, {"reasoning_tokens": True}, {"reasoning_tokens": "5"}, "x"):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                yo.loki_toteutunut(UUSI, {"usage": {"completion_tokens": 5, "completion_tokens_details": tiedot}})
+            self.assertNotIn("reasoning_tokens", err.getvalue())
+            self.assertIn("completion_tokens=5", err.getvalue())
 
 
 if __name__ == "__main__":

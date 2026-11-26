@@ -445,9 +445,10 @@ def kysy_paikalliselta(url, ohje, data, avaa=None, aikaraja=VASTAUS_AIKARAJA_S):
     return teksti.strip()
 
 
-def tee_or_kysyja(malli, avain_tiedosto, **testi):
+def tee_or_kysyja(malli, avain_tiedosto, paattely_max=None, **testi):
     """Kysyja maksulliselle taustapaalle. Kutsu kulkee vain yksityinen_or.kysy_tiivistys-funktion kautta (ZDR pakotettu,
     avoin malli, kulukirjaus ja yhteinen 10 EUR/vrk katto). `testi` (kulutila, avaa, nyt) vain testeille.
+    `paattely_max`: AIVO_YKSITYINEN_PAATTELY_MAX (sama paattelyn ylaraja kuin chatissa; None = oletus).
     Palauttaa (kysy, mallin merkinta tiivistelmaan)."""
     from aivo import yksityinen_or                          # tuodaan vain, kun taustapaa on valittu
     avain_tiedosto = avain_tiedosto or yksityinen_or.OLETUS_AVAIN
@@ -455,10 +456,15 @@ def tee_or_kysyja(malli, avain_tiedosto, **testi):
         merkinta = yksityinen_or.tiivistyksen_malli(malli)
     except yksityinen.YksityinenVirhe as e:
         raise TiivistaVirhe("malli ei kelpaa (%s)" % type(e).__name__)
+    try:
+        paattely = yksityinen_or.tarkista_paattely_max(paattely_max)
+    except yksityinen.YksityinenVirhe as e:
+        raise TiivistaVirhe("paattelyn ylaraja ei kelpaa (%s)" % type(e).__name__)
 
     def kysy(ohje, data):
         try:
-            return yksityinen_or.kysy_tiivistys(ohje, data, malli=malli, avain_tiedosto=avain_tiedosto, **testi)
+            return yksityinen_or.kysy_tiivistys(ohje, data, malli=malli, avain_tiedosto=avain_tiedosto,
+                                                paattely_max=paattely, **testi)
         except yksityinen_or.PaivakattoTaynna:
             raise KattoTaynna("kulukatto taynna")
         except yksityinen.YksityinenVirhe as e:              # viesti ei sisalla dataa eika avainta; silti vain tyyppi
@@ -492,7 +498,7 @@ def main(argv=None, kysy=None, env=None, nyt=None):
                     raise TiivistaVirhe("mallipalvelimen osoite ei ole loopback")
                 kysy = lambda ohje, data: kysy_paikalliselta(a.malli_url, ohje, data)
         elif kysy is None and not a.kuiva:
-            kysy, malli = tee_or_kysyja(a.or_malli, a.or_avain)
+            kysy, malli = tee_or_kysyja(a.or_malli, a.or_avain, env.get("AIVO_YKSITYINEN_PAATTELY_MAX"))
         aja(a.juuri, kysy, nyt=nyt, kuiva=a.kuiva, taustapaa=a.taustapaa, malli=malli)
         return 0
     except (TiivistaVirhe, TiivistelmaVirhe) as e:

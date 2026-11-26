@@ -67,7 +67,10 @@ Saannot (koodi on laki):
     yhdistelman osakutsuja, vartijaa seka itsetarkistuksen tarkastajaa ja korjausta. Yhden mallin chat tekee enintaan
     yhden uusinnan ilman paattelya (uusinnan_parametri), jos vastaus katkeaa silti ennen tekstia; uusinta kulkee saman
     openrouter_kulut.kutsu-reitin kautta (paivakatto) ja lasketaan kutsurajaan (Vastausteksti.kutsuja ->
-    itsetarkistuksen `kaytetyt`). Tiivistys ja taustaajo eivat muutu."""
+    itsetarkistuksen `kaytetyt`). Taustaajo (kysy_taustatyo) ja tiivistys (kysy_tiivistys) saavat saman rajan ilman
+    uusintaa. Raja lahetetaan vain malleille, jotka paattelevat oletuksena (OLETUKSENA_PAATTELEVAT, yhteinen
+    mallivertailun kanssa); valinnaisen paattelyn malleilla parametri kytkisi paattelyn paalle. Toteutuneen kutsun
+    lokiin kirjataan usage.completion_tokens_details.reasoning_tokens, jos OpenRouter ilmoittaa sen."""
 from __future__ import annotations
 
 import json
@@ -136,19 +139,43 @@ MUISTI_MAX_YLARAJA = 1_000_000
 PAATTELY_MAX_OLETUS = 2_000
 PAATTELY_MAX_YLARAJA = 6_000
 PAATTELY_VASTAUSVARA = 2_000
+# Oletuksena paattelevat mallit (yhteinen lahde: mallivertailu.AJATTELEVAT_MALLIT on sama joukko). Lahde: OpenRouter,
+# docs/use-cases/reasoning-tokens, luettu 25.11.2026; ajo 25.11.: qwen3.5-397b-a17b sai 800 tokenin rajalla 33/33
+# tyhjaa vastausta. Mukana paattelymallit (r1, thinking, gpt-oss) ja Qwen3-hybridiperheet, jotka ajattelevat
+# oletuksena. Taman joukon ulkopuolinen malli ei saa reasoning-kenttaa, vaikka se tukisi parametria: OpenRouter
+# paattelee enabled-tilan kentista, joten valinnaisen paattelyn mallilla (esim. deepseek/deepseek-chat-v3.1,
+# mistralai/mistral-small-2603) reasoning.max_tokens kytkisi paattelyn paalle ja kasvattaisi kuluja.
+OLETUKSENA_PAATTELEVAT = frozenset({
+    "qwen/qwen3.5-397b-a17b",
+    "qwen/qwen3-235b-a22b-thinking-2507",
+    "deepseek/deepseek-r1-0528",
+    "qwen/qwen3.8-2.4t-a95b",
+    "qwen/qwen3.8-27b",
+    "qwen/qwen3.6-27b",
+    "qwen/qwen3.6-35b-a3b",
+    "qwen/qwen3.5-122b-a10b",
+    "qwen/qwen3.5-27b",
+    "qwen/qwen3.5-35b-a3b",
+    "qwen/qwen3.5-9b",
+    "qwen/qwen3-14b",
+    "qwen/qwen3-32b",
+    "qwen/qwen3-30b-a3b",
+    "openai/gpt-oss-120b",
+    "minimax/minimax-m3",
+})
 # Lahde: OpenRouter, docs/use-cases/reasoning-tokens ja mallilista GET /api/v1/models (kentat
 # supported_parameters ja reasoning), luettu 26.11.2026. Mukana vain AVOIMET_MALLIT, joiden supported_parameters
-# sisaltaa "reasoning". Arvo: (pakollinen, tuetut effort-tasot tai None = mallitieto ei kerro tasoja).
+# sisaltaa "reasoning" JA jotka ovat joukossa OLETUKSENA_PAATTELEVAT (raja saa vain pienentaa paattelya, ei kytkea
+# sita paalle). Arvo: (pakollinen, tuetut effort-tasot tai None = mallitieto ei kerro tasoja).
 #   * Dokumentaation mukaan malli, joka tukee vain effort-tasoja, muuntaa reasoning.max_tokens-arvon tasoksi
-#     (osuus max_tokens-rajasta; low noin 20 %, medium 50 %, xhigh 95 %). qwen3.8-2.4t-a95b:n oletus on xhigh.
+#     (osuus max_tokens-rajasta; low noin 20 %, medium 50 %, xhigh 95 %). Naille malleille raja on siis vain
+#     taso, ei tarkka tokenmaara. qwen3.8-2.4t-a95b:n oletus on xhigh.
 #   * Qwen-malleille reasoning.max_tokens valitetaan thinking_budget-arvona "joillakin malleilla". Etta jokainen
 #     listan Qwen-malli noudattaa rajaa, on ARVAUS; uusinta (alla) kattaa tapauksen, jossa raja ei pida.
-#   * Listan ulkopuolinen malli (esim. meta-llama/llama-4-maverick, ei "reasoning"-parametria) kutsutaan ilman
-#     reasoning-parametria.
+#   * Listan ulkopuolinen malli (esim. meta-llama/llama-4-maverick, ei "reasoning"-parametria, tai valinnaisen
+#     paattelyn deepseek-chat-v3.1 ja mistral-small-2603) kutsutaan ilman reasoning-parametria eika sille tehda uusintaa.
 PAATTELY_TUKI: dict[str, tuple[bool, tuple[str, ...] | None]] = {
-    "deepseek/deepseek-chat-v3.1": (False, None),
     "deepseek/deepseek-r1-0528": (True, None),
-    "mistralai/mistral-small-2603": (False, ("high", "none")),
     "qwen/qwen3-14b": (False, None),
     "qwen/qwen3-235b-a22b-thinking-2507": (True, None),
     "qwen/qwen3-30b-a3b": (False, None),
@@ -163,6 +190,12 @@ PAATTELY_TUKI: dict[str, tuple[bool, tuple[str, ...] | None]] = {
     "qwen/qwen3.8-2.4t-a95b": (True, ("xhigh", "medium", "low")),
     "qwen/qwen3.8-27b": (False, ("xhigh", "medium", "low", "none")),
 }
+
+
+def _paattelee_ja_tukee(malli: str) -> bool:
+    """reasoning-kentta vain mallille, joka paattelee oletuksena ja tukee parametria (molemmat ehdot)."""
+    return malli in PAATTELY_TUKI and malli in OLETUKSENA_PAATTELEVAT
+
 
 TIIVISTYS_TEHTAVA = "aivo-yksityinen-tiivistys"
 # Tiivistys palauttaa JSON:n (enintaan tiivistelma.MAX_KOHDAT kohtaa, tulkinta enintaan 300 merkkia). 700 tokenia
@@ -409,6 +442,12 @@ def loki_toteutunut(malli: str, data: Any) -> None:
             arvo = tiedot.get(avain)
             if isinstance(arvo, int) and not isinstance(arvo, bool):
                 osat.append("%s=%d" % (avain, arvo))
+    # paattelytokenit (usage.completion_tokens_details.reasoning_tokens): osa completion_tokens-maarasta; vain luku
+    tiedot = u.get("completion_tokens_details")
+    if isinstance(tiedot, Mapping):
+        arvo = tiedot.get("reasoning_tokens")
+        if isinstance(arvo, int) and not isinstance(arvo, bool):
+            osat.append("reasoning_tokens=%d" % arvo)
     if isinstance(u.get("cost"), (int, float)) and not isinstance(u.get("cost"), bool):
         osat.append("cost=%.4f USD" % u["cost"])
     if osat:
@@ -462,11 +501,12 @@ def tarkista_paattely_max(arvo: Any) -> int:
 
 
 def paattelyraja(malli: str, max_tokens: int, paattely_max: int = PAATTELY_MAX_OLETUS) -> int:
-    """Paattelyn tokenraja kutsulle: 0, jos asetus on 0 tai malli ei tue reasoning-parametria (PAATTELY_TUKI).
+    """Paattelyn tokenraja kutsulle: 0, jos asetus on 0 tai malli ei paattele oletuksena ja tue reasoning-parametria
+    (PAATTELY_TUKI ja OLETUKSENA_PAATTELEVAT).
     Muuten min(asetus, max_tokens - vastausvara), jossa vastausvara = max(1, min(PAATTELY_VASTAUSVARA, max_tokens // 2)).
     Tulos on aina pienempi kuin max_tokens."""
     asetus = max(0, min(int(paattely_max), PAATTELY_MAX_YLARAJA))
-    if asetus == 0 or malli not in PAATTELY_TUKI:
+    if asetus == 0 or not _paattelee_ja_tukee(malli):
         return 0
     tokenit = max(0, int(max_tokens))
     vara = max(1, min(PAATTELY_VASTAUSVARA, tokenit // 2))
@@ -476,7 +516,7 @@ def paattelyraja(malli: str, max_tokens: int, paattely_max: int = PAATTELY_MAX_O
 def paattelyparametri(malli: str, raja: int) -> dict[str, Any] | None:
     """reasoning-kentta: {"max_tokens": raja, "exclude": True} tai None (raja 0 tai malli ei tue parametria).
     exclude: paattelyn tekstia ei palauteta (Chat Completions; sita ei kayteta, eika se kuulu vastaukseen)."""
-    if raja < 1 or malli not in PAATTELY_TUKI:
+    if raja < 1 or not _paattelee_ja_tukee(malli):
         return None
     return {"max_tokens": int(raja), "exclude": True}
 
@@ -485,10 +525,9 @@ def uusinnan_parametri(malli: str) -> dict[str, Any] | None:
     """Uusintakutsun reasoning-kentta, kun vastaus katkesi paattelyyn: paattely pois, jos malli sallii
     (effort "none" tai enabled False), pakollisella mallilla effort "low", jos malli kertoo tukevansa sita.
     None = uusinnasta ei olisi apua (malli ei tue parametria, tai paattely on pakollinen ilman tasoja)."""
-    tuki = PAATTELY_TUKI.get(malli)
-    if tuki is None:
+    if not _paattelee_ja_tukee(malli):
         return None
-    pakollinen, tasot = tuki
+    pakollinen, tasot = PAATTELY_TUKI[malli]
     if not pakollinen:
         if tasot is not None and "none" in tasot:
             return {"effort": "none", "exclude": True}
@@ -623,19 +662,23 @@ def kysy_tiivistys(
     kulutila: str | None = None,
     avaa: Callable[..., Any] | None = None,
     nyt: Callable[[], datetime] | None = None,
+    paattely_max: int = PAATTELY_MAX_OLETUS,
 ) -> str:
     """Yksityisen alueen keskusteluosan tiivistys OpenRouterin avoimella mallilla (ZDR pakotettu).
     `ohje` on jarjestelmaviesti ja `data` keskusteluosa. Virheet: YksityinenVirhe (viestissa ei sisaltoa eika avainta);
-    katon tayttyminen: PaivakattoTaynna."""
+    katon tayttyminen: PaivakattoTaynna.
+    `paattely_max`: sama paattelyn ylaraja kuin chatissa (paattelyraja); TIIVISTYS_MAX_TOKENIA 1 500 -> paattely
+    enintaan 750, jolloin JSON-vastaukselle jaa tilaa. Ei uusintaa: tiivistys ajetaan uudelleen seuraavalla ajolla."""
     tarkista_malli(malli)
     avain = lue_avain(avain_tiedosto)                     # ennen varausta: puuttuva avain ei jata varausta
     laheta = tee_kuljetin(avain, avaa)
     viestit = [{"role": "system", "content": ohje}, {"role": "user", "content": data}]
+    paattely = paattelyparametri(malli, paattelyraja(malli, TIIVISTYS_MAX_TOKENIA, paattely_max))
     try:
         vastaus = openrouter_kulut.kutsu(
             malli, viestit, laheta, tehtava=TIIVISTYS_TEHTAVA, nyt=nyt, tila=kulutila,
             max_tokens=TIIVISTYS_MAX_TOKENIA, temperature=0.2, stream=False, usage={"include": True},
-            yksityinen_chat=True)
+            yksityinen_chat=True, **({"reasoning": paattely} if paattely else {}))
     except openrouter_kulut.KutsuEstetty:
         raise PaivakattoTaynna("OpenRouterin p\u00e4iv\u00e4katto on t\u00e4ynn\u00e4 tai kulukirjanpito ei kelpaa; kutsua ei tehty") from None
     except openrouter_kulut.ZdrVirhe:
@@ -652,18 +695,22 @@ def kysy_taustatyo(
     kulutila: str | None = None,
     avaa: Callable[..., Any] | None = None,
     nyt: Callable[[], datetime] | None = None,
+    paattely_max: int = PAATTELY_MAX_OLETUS,
 ) -> str:
     """Taustaajon yksi mallikutsu (ajattelija tai keskustelija) OpenRouterin avoimella mallilla, ZDR pakotettu.
     `aikaraja_s` voi vain lyhentaa TAUSTA_AIKARAJA_S:aa. Virheet: YksityinenVirhe (viestissa ei sisaltoa eika avainta);
-    katon tayttyminen: PaivakattoTaynna."""
+    katon tayttyminen: PaivakattoTaynna.
+    `paattely_max`: sama paattelyn ylaraja kuin chatissa (AIVO_YKSITYINEN_PAATTELY_MAX, taustaajo.main lukee sen);
+    reasoning-kentta vain oletuksena paattelevalle mallille. Ei uusintaa: taustaajolla on oma paivaraja."""
     tarkista_malli(malli)
     avain = lue_avain(avain_tiedosto)                     # ennen varausta: puuttuva avain ei jata varausta
     laheta = tee_kuljetin(avain, avaa, aikaraja_s, ylaraja_s=TAUSTA_AIKARAJA_S)
+    paattely = paattelyparametri(malli, paattelyraja(malli, MAX_TOKENIA, paattely_max))
     try:
         vastaus = openrouter_kulut.kutsu(
             malli, viestit, laheta, tehtava=TAUSTA_TEHTAVA, nyt=nyt, tila=kulutila,
             max_tokens=MAX_TOKENIA, temperature=0.3, stream=False, usage={"include": True},
-            yksityinen_chat=True)
+            yksityinen_chat=True, **({"reasoning": paattely} if paattely else {}))
     except openrouter_kulut.KutsuEstetty:
         raise PaivakattoTaynna("OpenRouterin p\u00e4iv\u00e4katto on t\u00e4ynn\u00e4 tai kulukirjanpito ei kelpaa; kutsua ei tehty") from None
     except openrouter_kulut.ZdrVirhe:
