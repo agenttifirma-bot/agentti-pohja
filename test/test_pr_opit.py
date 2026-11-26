@@ -174,7 +174,9 @@ class MainTesti(unittest.TestCase):
         def kommentit_rikki(url):
             if "/issues/" in url:
                 raise OSError("kommentit")
-            return feikki({"evalkit": [pr(1, "yojono: testit evalkit")]})(url)
+            # suhteellinen paiva: kiintea 2026-10-27 putosi oletusikkunasta 26.11. (aikapommi), jolloin kommentteja ei haettu
+            tuore = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            return feikki({"evalkit": [pr(1, "yojono: testit evalkit", luotu=tuore, suljettu=tuore)]})(url)
         with tempfile.TemporaryDirectory() as d:
             polku = os.path.join(d, "opit.md")
             self.assertEqual(self.aja(["--kirjoita", polku], kommentit_rikki)[0], 1)
