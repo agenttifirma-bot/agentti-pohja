@@ -8,6 +8,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from aivo import chat, luovutus, yksityinen, yksityinen_or
 from aivo.test_yksityinen_hyvaksynta import Pohja
@@ -205,6 +206,12 @@ class RajatTesti(LuovutusPohja):
         self.assertTrue(ulkona.is_file())
         self.assertEqual(self.saapuneet_tiedostot(), [])
         self.assertEqual(self.odottavat_l(kid), [t])
+
+    def test_polkujen_ohitus_tunnuksessa_estyy_numerotunnuksella(self):
+        # Pakotettu pelkista numeroista koostuva tunnus: t.upper() == t, joten isojen kirjainten tapaus jaa pois.
+        fake = mock.Mock(token_hex=lambda n: "444444444444")
+        with mock.patch.object(luovutus, "secrets", fake):
+            self.test_polkujen_ohitus_tunnuksessa_estyy()
 
     def test_tyokalutila_ei_nae_luovutusehdotuksia_eika_reitteja(self):
         tkid = self.uusi("tyokalu")

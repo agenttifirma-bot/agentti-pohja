@@ -1,1 +1,1 @@
-- testit: aivo/test_luovutus.py RajatTesti ohittaa t.upper()-tapauksen, kun tunnus on pelkkiä numeroita (muuten satunnainen kaatuminen noin 0,36 % ajoista)
+- testit: aivo/test_luovutus.py ja aivo/test_luovutuspaketti.py RajatTesti ohittavat t.upper()-tapauksen, kun tunnus on pelkkiä numeroita (muuten satunnainen kaatuminen noin 0,36 % ajoista per testi); mock-pohjaiset numerotunnustestit varmistavat tapauksen pysyvästi
