@@ -154,13 +154,15 @@ class OpenRouterTaustapaaTesti(Pohja):
         nahty = []
 
         def tee(malli, avain, **kw):
-            nahty.append((malli, avain))
+            nahty.append((malli, avain, kw))
             return (lambda ohje, data: mallin_vastaus()), "zdr:" + malli
         with mock.patch.object(ty, "tee_or_kysyja", side_effect=tee), redirect_stdout(io.StringIO()):
             rc = ty.main(["--juuri", str(self.juuri)], env={"AIVO_YKSITYINEN_TAUSTAPAA": "openrouter",
-                                                             "AIVO_OPENROUTER_MALLI": MALLI})
+                                                             "AIVO_OPENROUTER_MALLI": MALLI,
+                                                             "AIVO_YKSITYINEN_PAATTELY_MAX": "1200"})
         self.assertEqual(rc, 0)
-        self.assertEqual(nahty, [(MALLI, None)])                 # avain: oletus (yksityinen_or.OLETUS_AVAIN)
+        # avain: oletus (yksityinen_or.OLETUS_AVAIN); paattelyn ylaraja samasta asetuksesta kuin chatissa
+        self.assertEqual(nahty, [(MALLI, None, {"paattely_max": "1200"})])
 
     def test_tuntematon_taustapaa_ymparistosta_hylataan(self):
         with redirect_stderr(io.StringIO()):

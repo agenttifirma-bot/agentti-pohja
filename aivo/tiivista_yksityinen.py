@@ -498,7 +498,7 @@ def main(argv=None, kysy=None, env=None, nyt=None):
                     raise TiivistaVirhe("mallipalvelimen osoite ei ole loopback")
                 kysy = lambda ohje, data: kysy_paikalliselta(a.malli_url, ohje, data)
         elif kysy is None and not a.kuiva:
-            kysy, malli = tee_or_kysyja(a.or_malli, a.or_avain, env.get("AIVO_YKSITYINEN_PAATTELY_MAX"))
+            kysy, malli = tee_or_kysyja(a.or_malli, a.or_avain, paattely_max=env.get("AIVO_YKSITYINEN_PAATTELY_MAX"))
         aja(a.juuri, kysy, nyt=nyt, kuiva=a.kuiva, taustapaa=a.taustapaa, malli=malli)
         return 0
     except (TiivistaVirhe, TiivistelmaVirhe) as e:

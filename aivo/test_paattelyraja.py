@@ -321,20 +321,21 @@ class TaustaJaTiivistysTesti(Pohja):
 
     def test_tiivistys_saa_rajan(self):
         kw = {k: v for k, v in self.yhteiset(vastaus("{}")).items() if k != "avain_tiedosto"}
-        kysy, _ = ty.tee_or_kysyja(UUSI, str(self.avain), "1000", **kw)
+        kysy, _ = ty.tee_or_kysyja(UUSI, str(self.avain), paattely_max="1000", **kw)
         kysy("ohje", "data")
         self.assertEqual(self.rungot[0]["reasoning"], {"max_tokens": 750, "exclude": True})   # 1 500 // 2
         self.assertEqual(self.rungot[0]["max_tokens"], yo.TIIVISTYS_MAX_TOKENIA)
         self.rungot.clear()
-        kysy, _ = ty.tee_or_kysyja(MAVERICK, str(self.avain), None, **{**kw, "avaa": self.avaa(vastaus("{}"))})
+        kysy, _ = ty.tee_or_kysyja(MAVERICK, str(self.avain), paattely_max=None, **{**kw, "avaa": self.avaa(vastaus("{}"))})
         kysy("ohje", "data")
         self.assertNotIn("reasoning", self.rungot[0])
         with self.assertRaises(ty.TiivistaVirhe):
-            ty.tee_or_kysyja(UUSI, str(self.avain), "abc", **kw)
+            ty.tee_or_kysyja(UUSI, str(self.avain), paattely_max="abc", **kw)
 
     def test_tiivistyksen_main_lukee_asetuksen(self):
         lahde = Path(ty.__file__).read_text(encoding="utf-8")
-        self.assertIn('tee_or_kysyja(a.or_malli, a.or_avain, env.get("AIVO_YKSITYINEN_PAATTELY_MAX"))', lahde)
+        self.assertIn('tee_or_kysyja(a.or_malli, a.or_avain, paattely_max=env.get("AIVO_YKSITYINEN_PAATTELY_MAX"))',
+                      lahde)              # main()-reitti: test_yksityinen_tiivistys_or (asetus valittyy)
 
 
 class LokiTesti(unittest.TestCase):
