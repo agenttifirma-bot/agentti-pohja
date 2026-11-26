@@ -538,22 +538,25 @@ document.getElementById('tila').onchange=e=>{if(e.target.value==='tyokalu'&&!con
 let lahetyksessa=false;
 document.getElementById('teksti').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&e.keyCode!==229){e.preventDefault();document.getElementById('lomake').requestSubmit();}});
 document.getElementById('teksti').addEventListener('input',laskuri);
-const ODOTUS_MS=45000,KYSELY_MS=3000,KYSELY_YLARAJA_MS=900000,VIELA='Aivo vastaa viel\u00e4\u2026';
+const ODOTUS_MS=45000,KYSELY_MS=3000,KYSELY_YLARAJA_MS=900000,KYSELY_VIRHEET=20,VIELA='Aivo vastaa viel\u00e4\u2026';
 function nuku(ms){return new Promise(f=>setTimeout(f,ms));}
-async function viimeisin(k){const x=await haeJson('/api/viimeisin?keskustelu='+q(k));return x&&x.r.ok?x.j:null;}
+async function viimeisin(k,ms){const ac=new AbortController(),t=setTimeout(()=>ac.abort(),ms||10000);
+ try{const r=await fetch('/api/viimeisin?keskustelu='+q(k),{headers:H,signal:ac.signal});return r.ok?await r.json():null;}finally{clearTimeout(t);}}
 // Yhteys katkesi tai venyi: palvelin tallentaa vastauksen keskusteluun ennen lahetysta, joten haetaan se sielta.
-// alku = keskustelun pituus ennen lahetysta (estaa vanhan vastauksen naytamisen). Pysahtyy, kun ohjaus.valmis.
-async function seuraa(k,s,alku,ohjaus,ac){const raja=Date.now()+KYSELY_YLARAJA_MS;let vapaana=0;
+// alku = keskustelun pituus ennen lahetysta (estaa vanhan vastauksen naytamisen; tuntematon alku -> ei hyvaksyta).
+// Pysahtyy, kun ohjaus.valmis, ylarajaan tai kun KYSELY_VIRHEET perakkaista hakua epaonnistuu (verkko poikki).
+async function seuraa(k,s,alku,ohjaus,ac){const raja=Date.now()+KYSELY_YLARAJA_MS;let vapaana=0,virheet=0;
  while(!ohjaus.valmis&&Date.now()<raja){await nuku(KYSELY_MS);if(ohjaus.valmis)return null;
-  let j=null;try{j=await viimeisin(k);}catch(z){}if(!j)continue;
-  const oma=j.tony&&Number.isInteger(j.tony.indeksi)&&j.tony.indeksi>=alku&&j.tony.teksti===s.trim();
+  let j=null;try{j=await viimeisin(k);}catch(z){}
+  if(!j){if(++virheet>=KYSELY_VIRHEET){ohjaus.valmis=true;ac.abort();return {tila:'ei-yhteytta'};}continue;}virheet=0;
+  const oma=alku>=0&&j.tony&&Number.isInteger(j.tony.indeksi)&&j.tony.indeksi>=alku&&j.tony.teksti===s.trim();
   if(oma&&j.vastaus&&typeof j.vastaus.teksti==='string'){ohjaus.valmis=true;ac.abort();return {tila:'valmis',tony:j.tony.indeksi,v:j.vastaus};}
   vapaana=j.kesken?0:vapaana+1;
   if(vapaana>=2){ohjaus.valmis=true;ac.abort();return {tila:oma?'ei-vastausta':'ei-perilla'};}}
  if(ohjaus.valmis)return null;ohjaus.valmis=true;ac.abort();return {tila:'aikaraja'};}
 function naytaHaettu(odota,oma,s,h){
  if(!h||h.tila!=='valmis'){odota.textContent=!h||h.tila==='aikaraja'?'Vastaus ei n\u00e4y viel\u00e4. Kokeile hetken p\u00e4\u00e4st\u00e4 uudelleen.'
-   :(h.tila==='ei-vastausta'?'Virhe: vastausta ei saatu valmiiksi. Kokeile uudelleen.':'Yhteysvirhe: viesti ei mennyt perille.');alas();return;}
+   :(h.tila==='ei-vastausta'?'Virhe: vastausta ei saatu valmiiksi. Kokeile uudelleen.':(h.tila==='ei-yhteytta'?'Yhteysvirhe: palvelimeen ei saada yhteytt\u00e4. Vastaus voi olla tallessa keskustelussa.':'Yhteysvirhe: viesti ei mennyt perille.'));alas();return;}
  odota.textContent=h.v.teksti;const t=document.createElement('span');t.className='mallinimi';
  t.textContent='Yhteys katkesi kesken; vastaus haettiin keskustelusta.'+(typeof h.v.malli==='string'?' Malli: '+h.v.malli:'');odota.appendChild(t);
  tonyn[h.tony]=s;painike(oma,h.tony);
@@ -562,7 +565,7 @@ function naytaHaettu(odota,oma,s,h){
 async function laheta(s){if(pituus(s)>RAJA){lisaa('aivo',ylipitka(pituus(s)));return;}if(lahetyksessa)return;lahetyksessa=true;lukitse();
  try{if(!kid)await aloita();if(!kid)return;
   const oma=lisaa('tony',s);const odota=lisaa('aivo','\u2026');const k=kid;
-  let alku=-1;try{const x=await viimeisin(k);if(x&&Number.isInteger(x.pituus))alku=x.pituus;}catch(z){}
+  let alku=-1;try{const x=await viimeisin(k,5000);if(x&&Number.isInteger(x.pituus))alku=x.pituus;}catch(z){}
   const ac=new AbortController(),ohjaus={valmis:false};let haku=null;
   const ajastin=setTimeout(()=>{if(ohjaus.valmis)return;odota.textContent=VIELA;haku=haku||seuraa(k,s,alku,ohjaus,ac);},ODOTUS_MS);
   let r=null,j=null;

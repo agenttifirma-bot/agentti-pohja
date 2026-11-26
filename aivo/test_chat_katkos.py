@@ -5,6 +5,10 @@ yhdella journal-rivilla ilman tracebackia. Selain hakee vastauksen reitilta /api
 import contextlib
 import io
 import json
+import os
+import shutil
+import subprocess
+import tempfile
 import socket
 import struct
 import threading
@@ -61,7 +65,7 @@ class KatkosTesti(Pohja):
         loki = virheet.getvalue()
         self.assertNotIn("Traceback", loki)
         self.assertIn("aivo-chat: yhteys katkesi ennen vastausta (POST '/api/viesti', tila 200,", loki)
-        self.assertNotIn("pitk\u00e4", loki)                      # ei viestien sisaltoa lokiin
+        self.assertNotIn("pitk", loki)                            # ei viestien sisaltoa lokiin (myos ascii()-muodossa)
         historia = ks.lue(kid)
         self.assertEqual([v["rooli"] for v in historia], ["tony", "aivo"])
         self.assertEqual(historia[1]["teksti"], "pitk\u00e4 vastaus")
@@ -145,6 +149,75 @@ class SelainRakenneTesti(unittest.TestCase):
 
     def test_ei_innerhtml(self):
         self.assertNotIn("innerHTML", self.h)
+
+
+AJURI_JS = """
+const [base, ev, kid, skenaario, alku] = process.argv.slice(2);
+const KYSELY_MS=150, KYSELY_YLARAJA_MS=20000, KYSELY_VIRHEET=3;
+const H={'Content-Type':'application/json','X-Aivo':'1'};
+const q=encodeURIComponent;
+const oikea=globalThis.fetch;
+globalThis.fetch=(u,o)=>oikea(base+u,Object.assign({},o,{headers:Object.assign({},(o||{}).headers,{Cookie:ev})}));
+const fs=require('fs');
+eval(fs.readFileSync(process.argv[7],'utf8'));
+(async()=>{const ohjaus={valmis:false},ac=new AbortController();
+ let lahetys=null;
+ if(skenaario==='katkos'){const p=new AbortController();setTimeout(()=>p.abort(),300);
+  lahetys=fetch('/api/viesti',{method:'POST',headers:H,signal:p.signal,body:JSON.stringify({keskustelu:kid,teksti:'uusi kysymys'})}).then(()=>'ok',e=>e.name);}
+ const h=await seuraa(kid,skenaario==='katkos'?'uusi kysymys':'sama',Number(alku),ohjaus,ac);
+ console.log(JSON.stringify({h:h,post:lahetys?await lahetys:null}));})();
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "node puuttuu")
+class SelainAjoTesti(Pohja):
+    """Ajaa sivun omat viimeisin()- ja seuraa()-funktiot Nodessa elavaa palvelinta vasten."""
+
+    def setUp(self):
+        super().setUp()
+        h = chat.HTML
+        self.koodi = h[h.index("function nuku("):h.index("function naytaHaettu(")]
+        self.hak = tempfile.TemporaryDirectory()
+        self.addCleanup(self.hak.cleanup)
+        self.ajuri = os.path.join(self.hak.name, "ajuri.js")
+        self.funktiot = os.path.join(self.hak.name, "funktiot.js")
+        with open(self.ajuri, "w", encoding="utf-8") as f:
+            f.write(AJURI_JS)
+        with open(self.funktiot, "w", encoding="utf-8") as f:
+            f.write(self.koodi.replace("async function seuraa(", "globalThis.seuraa=async function(")
+                    .replace("async function viimeisin(", "globalThis.viimeisin=async function(")
+                    .replace("function nuku(", "globalThis.nuku=function("))
+
+    def aja(self, kid, skenaario, alku, base=None):
+        base = base or "http://%s:%d" % (LOOP, self.srv.server_address[1])
+        r = subprocess.run(["node", self.ajuri, base, self.ev, kid, skenaario, str(alku), self.funktiot],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-500:])
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_katkennut_post_ja_haku_loytaa_vastauksen(self):
+        def hidas(*a, **kw):
+            time.sleep(1.5)
+            return "valmis vastaus"
+        self.tila.kysy_yks = hidas
+        kid = self.uusi()
+        with contextlib.redirect_stderr(io.StringIO()):
+            t = self.aja(kid, "katkos", 0)
+        self.assertEqual(t["post"], "AbortError")
+        self.assertEqual(t["h"], {"tila": "valmis", "tony": 0, "v": {"indeksi": 1, "teksti": "valmis vastaus"}})
+
+    def test_vanhaa_samaa_vastausta_ei_nayteta(self):
+        kid = self.uusi()
+        self.assertEqual(self.pyynto("POST", "/api/viesti", {"keskustelu": kid, "teksti": "sama"})[0], 200)
+        self.assertEqual(self.aja(kid, "ei-lahetysta", 2)["h"], {"tila": "ei-perilla"})
+        self.assertEqual(self.aja(kid, "ei-lahetysta", -1)["h"], {"tila": "ei-perilla"})   # alku tuntematon
+
+    def test_verkko_poikki_lopettaa_kyselyn(self):
+        s = socket.socket()
+        s.bind((LOOP, 0))
+        vapaa = s.getsockname()[1]
+        s.close()
+        self.assertEqual(self.aja("x", "ei-lahetysta", 0, base="http://%s:%d" % (LOOP, vapaa))["h"], {"tila": "ei-yhteytta"})
 
 
 if __name__ == "__main__":
