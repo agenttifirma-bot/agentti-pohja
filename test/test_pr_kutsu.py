@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 import urllib.error
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -850,8 +851,19 @@ class PaivarajaTarkkaTest(unittest.TestCase):
         self.assertEqual(pk.paikkoja_jaljella(self.tila({"pvm": "2026-10-21", "n": pk.RAJA_PAIVASSA + 50}), "2026-10-21"), 0)
         self.assertEqual(pk.paikkoja_jaljella(os.path.join(tempfile.mkdtemp(), "ei-ole.json"), "2026-10-21"), pk.RAJA_PAIVASSA)
 
+    def kiintea_paiva(self):
+        """Jaadyttaa pk.date.today():n, jotta keskiyon ylitys testin ja koodin kutsujen valilla ei kaada testia."""
+        class _Kiintea:
+            @staticmethod
+            def today():
+                return date(2026, 11, 23)
+        patch = mock.patch.object(pk, "date", _Kiintea)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return _Kiintea.today().isoformat()
+
     def test_oletuspaiva_ja_ymparistopolku(self):
-        tanaan = pk.date.today().isoformat()
+        tanaan = self.kiintea_paiva()
         polku = self.tila({"pvm": tanaan, "n": 4})
         self.assertEqual(pk.paikkoja_jaljella(polku), pk.RAJA_PAIVASSA - 4)
         with mock.patch.dict(os.environ, {"YOJONO_PR_TILA": polku}):
@@ -868,7 +880,7 @@ class PaivarajaTarkkaTest(unittest.TestCase):
             self.assertEqual(json.load(f), {"pvm": "2026-10-21", "n": 1})
         polku = self.tila({"pvm": "2026-10-21", "n": pk.RAJA_PAIVASSA})
         self.assertIs(pk.varaa_paikka(polku, "2026-10-21"), False)
-        polku = self.tila({"pvm": pk.date.today().isoformat(), "n": 2})
+        polku = self.tila({"pvm": self.kiintea_paiva(), "n": 2})
         self.assertTrue(pk.varaa_paikka(polku))
         with open(polku) as f:
             self.assertEqual(json.load(f)["n"], 3)
