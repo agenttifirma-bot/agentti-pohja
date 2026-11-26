@@ -81,6 +81,8 @@ Ota ensin snapshot, jos asennat konttiin. Käyttäjänimet ovat ehdotus.
 
 4. **Chat-palvelu.** Lisää olemassa olevan `aivo-chat.service`-tiedoston `ExecStart`-riville `--yksityinen-data /var/lib/aivo-yksityinen/chat --yksityinen-muisti /var/lib/aivo-yksityinen/muisti --ehdotukset /var/lib/aivo-yksityinen/ehdotukset --ydinohjeet /var/lib/aivo-yksityinen/ydinohjeet`, aseta `User=aivo-yksityinen` (säilytä `SupplementaryGroups=aivo-tyokalu-socket`, jotta työkalutilan socket pysyy käytettävänä) ja lisää `ReadOnlyPaths=/var/lib/aivo-yksityinen/ydinohjeet`. Palvelu voi silloin lukea ohjeita mutta ei kirjoittaa niitä; vain `hyvaksy`-komento kirjoittaa.
 
+   **Huomautus:** Tällä rivillä hyväksyntä chat-sivulla ei toimi (katso `docs/aivo-chat.md`, Kirjoitusoikeus). Asetus on Tonyn avoin päätös.
+
 5. **Varmuuskopio.** `/var/lib/aivo-yksityinen` saa mennä Driveen vain salattuna (rclone crypt, A715–A718). Älä lisää sitä salaamattomaan varmuuskopioon.
 
 6. **Todennus** (ei vielä tehty, odottaa Tonya ja riippumatonta tarkastajaa):
@@ -307,6 +309,24 @@ OpenRouter-taustapäällä muisti, agenttidata ja keskusteluhistoria täyttävä
 Esimerkki: mallilla `qwen/qwen3-235b-a22b-2507` kehotteeseen mahtuu noin 228 000 tokenia eli noin 570 000 merkkiä. Täysi kehote maksaa arviolta enintään noin 0,04 USD.
 
 Kehotteen sääntö 2 kertoo mallille, että keskustelun aiemmat viestit ovat käytettävissä, ja sääntö 6 kieltää lupaamasta taustatyötä tai arvioimasta kestoa: Aivolla ei ole verkkoa, eikä se voi ajaa ohjelmia itse. Agenttitehtävää se voi ehdottaa säännön 8 mukaisesti. Säännöt 9–11 koskevat omaa rakennetta ja kuluja (9), `[[SYVENNA]]`-vihjettä (10) ja `tonyn-korjaukset`-tiedostoa (11). Testi `aivo/test_yksityinen_saantonumerot.py` varmistaa, että säännöt on numeroitu 1..N ilman aukkoja ja kaksoisnumeroita kummassakin taustapäässä.
+
+## Paikallisen vartijamallin kehote ja arviointi (valmiina, ei kytketty)
+
+Pieni paikallinen malli (3–4B, llama-server loopbackissa) arvioi vain kontekstiriskin. Muodolliset tiedot (sähköpostit, puhelinnumerot, IP-osoitteet, henkilötunnukset, IBAN, avaimet) hoitaa mekaaninen tarkistus, ja ne näkyvät mallille paikkamerkkeinä.
+
+- `aivo/vartija_kehote.py`: englanninkielinen kehote, kuusi keksittyä suomenkielistä esimerkkiä (myös kiertoilmaus, kokonaiskuva ja injektio), vastaus `{"riski": "ei"|"pieni"|"suuri", "syy": enintään 15 sanaa}`. Pyyntö käyttää llama-serverin `response_format`-kenttää JSON-skeemalla ja lämpötilaa 0. Vastaus tarkistetaan silti: kelvoton JSON, ylimääräinen avain, tuntematon riski tai liian pitkä syy antaa tilan `ei-tarkistanut`.
+- Kutsu menee vain osoitteeseen, jonka `yksityinen.sallittu_malli_osoite` hyväksyy. Välityspalvelinasetukset ohitetaan, eikä uudelleenohjauksia seurata.
+- `aivo/vartija_arvio.py`: arviointiajuri. Se tarkistaa ensin `/health`-osoitteen. Jos malli ei vastaa, ajuri kertoo sen ja lopettaa paluukoodilla 2 kutsumatta mitään. Muuten se lähettää aineiston tekstit ja tulostaa osuvuuden, väärät hälytykset, suurten riskien ohitukset ja sekaannustaulun.
+
+Ajo kontissa, kun mallipalvelu on käynnissä:
+
+```
+python3 -m aivo.vartija_arvio                       # oletusaineisto aivo/testidata/vartija_kehote_arvio.json
+python3 -m aivo.vartija_arvio --kahdesti --tulos /tmp/vartija-arvio.json
+python3 -m aivo.vartija_arvio --aineisto muu.json --tyypeista
+```
+
+`--kahdesti` ajaa jokaisen tekstin toiseen kertaan käännetyllä esimerkkijärjestyksellä ja laskee erimieliset. `--tyypeista` johtaa odotuksen totuustiedon `tyypit`-listasta kaksiarvoisesti (tyhjä = ei riskiä). Kytkentä vuotovartijaan on oma muutoksensa.
 
 ## Mallin valinta (OpenRouter-taustapää)
 

@@ -33,7 +33,7 @@ from aivo.tiivistelma import TiivistelmaVirhe
 
 PAIVAKATTO = 10                  # A983 A3: enintaan 10 tiivistysta (mallikutsua) paivassa
 HILJAISUUS_S = 30 * 60           # A983 A3: tiivistys 30 min hiljaisuuden jalkeen
-KAYTETYT_ALIKANSIOT = ("chat", "tiivistelmat", "indeksi")   # ajo lukee ja kirjoittaa vain nama; kirjasto jaa tarkistamatta
+KAYTETYT_ALIKANSIOT = tiivistelma.TIIVISTYS_ALIKANSIOT   # ajo lukee ja kirjoittaa vain nama; kirjasto jaa tarkistamatta
 YRITYKSIA_MAX = 2                # sama viestialue enintaan kahdesti (onnistunut tai ei)
 RYHMA_VIESTEJA = 100             # enintaan tama monta viestia yhteen kutsuun
 RYHMA_MERKKEJA = 40_000          # ja enintaan tama monta merkkia

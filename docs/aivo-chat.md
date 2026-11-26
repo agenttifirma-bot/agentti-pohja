@@ -487,6 +487,8 @@ VIKA avain /etc/aivo/chat-salasana: puuttuu
 
 Valinnat `--koodi` (oletus `/opt/agentti-pohja`) ja `--portti` (oletus 8780) vaihtavat polun ja portin.
 
+**Päivitys: aja tarkistus sekä ennen päivitystä että sen jälkeen.** Komento tarkistaa myös tiivistyksen kansiot `chat`, `tiivistelmat` ja `indeksi` kummankin alueen juuressa (`--yksityinen-juuri`, oletus `/var/lib/aivo-yksityinen`, ja `--tyokalu-juuri`, oletus `/var/lib/aivo`). Kansion pitää olla hakemisto, eikä ryhmällä tai muilla saa olla siihen oikeuksia. Puuttuvasta kansiosta tulostetaan korjauskomento `install -d -m 700 -o <omistaja> -g <omistaja> <polku>`. Omistaja luetaan alueen juuresta. Jos juurikin puuttuu, komennossa lukee `<omistaja>`, koska käyttäjänimi on vielä avoin päätös. Tarkistus ei luo eikä muuta mitään, eikä se avaa kansioiden tiedostoja. Jos yksityisen alueen juuri kuuluu eri käyttäjälle kuin komennon ajaja, rivi on `ei oikeutta tarkistaa (PermissionError)`.
+
 ## OpenRouter-kulut chat-sivulla
 
 Yläpalkissa on pieni teksti, esimerkiksi "Tänään 0,42 € / 10 €". Luku on Aivon OpenRouter-kulujen summa kuluvalta vuorokaudelta (Europe/Helsinki), ja 10 € on päiväkatto (A963, A1005). Kun kulusta on käytetty 80 % katosta, teksti muuttuu varoitusväriseksi. Teksti päivittyy, kun sivu avataan ja kun vastaus on tullut. Tekstin painallus avaa keskusteluun erittelyn:

@@ -110,9 +110,15 @@ def kirjoita(juuri, arg):
         raise TyokaluVirhe("sisalto ei ole kelvollista UTF-8-tekstia") from None
     if b"\x00" in data:
         raise TyokaluVirhe("sisalto sisaltaa NUL-merkin")
-    kansio = polut.avaa_kansio(juuri, osat[:-1], luo=True)
+    try:
+        kansio = polut.avaa_kansio(juuri, osat[:-1])
+    except polut.KansioPuuttuu:
+        # uusi tiedosto uuteen kansioon: tila tarkistetaan ennen kansioiden luontia,
+        # jotta hylatty kirjoitus ei jata tyhjia kansioita
+        polut.tarkista_tila(juuri, len(data), None)
+        kansio = polut.avaa_kansio(juuri, osat[:-1], luo=True)
     nimi = osat[-1]
-    valiaikainen = ".kirj-%d.tmp" % os.getpid()
+    valiaikainen = polut.valiaikainen_nimi()
     try:
         vanha = polut.tarkista_tiedosto(kansio, nimi)
         polut.tarkista_tila(juuri, len(data), None if vanha is None else vanha.st_size)
@@ -122,8 +128,10 @@ def kirjoita(juuri, arg):
             raise PolkuVirhe("kirjoitus ei onnistu") from None
         try:
             with os.fdopen(fd, "wb") as f:
+                polut.lukitse_valiaikainen(f.fileno())   # lukko pysyy, kunnes tiedosto on nimetty
                 f.write(data)
-            os.replace(valiaikainen, nimi, src_dir_fd=kansio, dst_dir_fd=kansio)
+                f.flush()
+                os.replace(valiaikainen, nimi, src_dir_fd=kansio, dst_dir_fd=kansio)
         except BaseException:
             try:
                 os.unlink(valiaikainen, dir_fd=kansio)
