@@ -45,9 +45,9 @@ class PaaohjelmaTesti(unittest.TestCase):
         p = aja(KAATUVA)
         self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
         rivit = [r for r in p.stdout.splitlines() if r.startswith("::error")]
-        self.assertIn("::error title=test_koe.T.test_vaite::AssertionError", rivit)
-        self.assertIn("::error title=test_koe.T.test_virhe::KeyError", rivit)
-        self.assertTrue(any(r.startswith("::error title=test_koe.T.test_ali (i=2)::AssertionError") for r in rivit), rivit)
+        self.assertIn("::error file=test_koe.py,line=6,title=test_koe.T.test_vaite::AssertionError", rivit)
+        self.assertIn("::error file=test_koe.py,line=8,title=test_koe.T.test_virhe::KeyError", rivit)
+        self.assertTrue(any(r == "::error file=test_koe.py,line=12,title=test_koe.T.test_ali (i=2)::AssertionError" for r in rivit), rivit)
         self.assertEqual(len(rivit), 3, rivit)
         # Viestit eivat paady annotaatioihin (traceback nakyy vain unittestin omassa lokissa stderrissa).
         for r in rivit:
@@ -77,6 +77,20 @@ class PaaohjelmaTesti(unittest.TestCase):
 class YksikkoTesti(unittest.TestCase):
     def test_pako(self):
         self.assertEqual(ct.annotaatio("a.b (x=1, y:2)", "E\n%"), "::error title=a.b (x=1%2C y%3A2)::E%0A%25")
+
+    def test_paikka_annotaatiossa(self):
+        self.assertEqual(ct.annotaatio("a.T.t", "KeyError", ("x/test_a.py", 7)),
+                         "::error file=x/test_a.py,line=7,title=a.T.t::KeyError")
+
+    def test_sijainti_vain_juuren_alta(self):
+        try:
+            raise ValueError("x")
+        except ValueError:
+            tb = sys.exc_info()[2]
+        self.assertEqual(ct.sijainti(tb, str(JUURI)), ("tools/test_ci_testit.py", tb.tb_lineno))
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(ct.sijainti(tb, d))
+        self.assertIsNone(ct.sijainti(None))
 
     def test_tyypin_nimi(self):
         self.assertEqual(ct.tyypin_nimi(KeyError), "KeyError")

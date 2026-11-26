@@ -5,13 +5,15 @@ Kaytto (repon juuressa): python -m tools.ci_testit [unittest-argumentit...]
 
 Miksi: GitHubin Actions-lokia ei voi lukea ilman tunnusta (HTTP 403), mutta check-runin annotaatiot voi.
 Kun testi kaatuu, tulostetaan rivi `::error title=<testin tunnus>::<poikkeuksen tyyppi>`, jolloin kaatunut
-testi nakyy tunnuksettomalla GET-kutsulla (/repos/<o>/<r>/check-runs/<id>/annotations).
+testi (ja sen kaatumisrivi file/line-kenttina) nakyy tunnuksettomalla GET-kutsulla (/repos/<o>/<r>/check-runs/<id>/annotations).
 
-Turva: annotaatioon menee vain testin tunnus ja poikkeuksen tyypin nimi, ei poikkeuksen viestia eika
+Turva: annotaatioon menee vain testin tunnus, poikkeuksen tyypin nimi ja kaatumiskohdan tiedosto:rivi, ei poikkeuksen viestia eika
 tracebackia (viesti voi sisaltaa salaisuuksia). Paluuarvo on sama kuin unittestin: 0 ok, 1 kaatui,
 5 ei yhtaan testia (Python 3.12+).
 """
+import os
 import sys
+import traceback
 import unittest
 
 OLETUS = ["discover", "-s", ".", "-t", ".", "-p", "test_*.py", "-v"]
@@ -37,8 +39,22 @@ def tyypin_nimi(exc_type):
     return "%s.%s" % (moduuli, nimi)
 
 
-def annotaatio(tunnus, tyyppi):
-    return "::error title=%s::%s" % (_pako(tunnus, ominaisuus=True), _pako(tyyppi))
+def sijainti(tb, juuri=None):
+    """Syvin traceback-kehys juuren alla: (suhteellinen polku, rivi) tai None. Vain sijainti, ei koodia eika viestia."""
+    juuri = os.path.realpath(juuri or os.getcwd())
+    loydetty = None
+    for kehys in traceback.extract_tb(tb) if tb is not None else []:
+        polku = os.path.realpath(kehys.filename)
+        if polku.startswith(juuri + os.sep) and kehys.lineno:
+            loydetty = (os.path.relpath(polku, juuri).replace(os.sep, "/"), kehys.lineno)
+    return loydetty
+
+
+def annotaatio(tunnus, tyyppi, paikka=None):
+    ominaisuudet = ""
+    if paikka:
+        ominaisuudet = "file=%s,line=%d," % (_pako(paikka[0], ominaisuus=True), int(paikka[1]))
+    return "::error %stitle=%s::%s" % (ominaisuudet, _pako(tunnus, ominaisuus=True), _pako(tyyppi))
 
 
 class KeraavaTulos(unittest.TextTestResult):
@@ -46,11 +62,12 @@ class KeraavaTulos(unittest.TextTestResult):
 
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
-        self.kaatuneet = []  # (tunnus, tyyppi)
+        self.kaatuneet = []  # (tunnus, tyyppi, paikka tai None)
 
     def _kirjaa(self, test, err):
         exc_type = err[0] if err else None
-        self.kaatuneet.append((test.id(), tyypin_nimi(exc_type)))
+        tb = err[2] if err and len(err) > 2 else None
+        self.kaatuneet.append((test.id(), tyypin_nimi(exc_type), sijainti(tb)))
 
     def addError(self, test, err):
         super().addError(test, err)
@@ -67,7 +84,7 @@ class KeraavaTulos(unittest.TextTestResult):
 
     def addUnexpectedSuccess(self, test):
         super().addUnexpectedSuccess(test)
-        self.kaatuneet.append((test.id(), "UnexpectedSuccess"))
+        self.kaatuneet.append((test.id(), "UnexpectedSuccess", None))
 
 
 class Ajaja(unittest.TextTestRunner):
@@ -81,14 +98,14 @@ def paluuarvo(tulos):
 
 
 def kirjoita_annotaatiot(kaatuneet, ulos):
-    for tunnus, tyyppi in kaatuneet[:MAX_ANNOTAATIOT]:
-        print(annotaatio(tunnus, tyyppi), file=ulos)
+    for tunnus, tyyppi, paikka in kaatuneet[:MAX_ANNOTAATIOT]:
+        print(annotaatio(tunnus, tyyppi, paikka), file=ulos)
     if len(kaatuneet) > MAX_ANNOTAATIOT:
         print("::error title=ci_testit::%d kaatunutta lisaa, katso loki" % (len(kaatuneet) - MAX_ANNOTAATIOT), file=ulos)
     if kaatuneet:
         print("KAATUNEET (%d):" % len(kaatuneet), file=ulos)
-        for tunnus, tyyppi in kaatuneet:
-            print("  %s: %s" % (tunnus, tyyppi), file=ulos)
+        for tunnus, tyyppi, paikka in kaatuneet:
+            print("  %s: %s%s" % (tunnus, tyyppi, " (%s:%d)" % paikka if paikka else ""), file=ulos)
 
 
 def main(argv=None):
