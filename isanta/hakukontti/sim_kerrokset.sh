@@ -75,7 +75,11 @@ n "$ULKO" ip addr add 198.51.100.2/24 dev e0
 n "$ULKO" ip link set e0 up
 n "$ULKO" ip addr add 192.0.2.1/30 dev tun0
 n "$ULKO" ip link set tun0 up
-n "$ULKO" ip link add name d0 type dummy
+# Ilman ytimen dummy-moduulia simulaatiota ei voi rakentaa: testi ohitetaan (TULOS ohitus), ei kaadu.
+if ! n "$ULKO" ip link add name d0 type dummy; then
+	tulos ohitus dummy_puuttuu
+	exit 0
+fi
 n "$ULKO" ip addr add 203.0.113.10/32 dev d0
 n "$ULKO" ip addr add 203.0.113.80/32 dev d0
 n "$ULKO" ip addr add "$LAN_IP/32" dev d0

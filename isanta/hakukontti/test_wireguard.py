@@ -290,6 +290,8 @@ class KerrosSimulaatioTesti(unittest.TestCase):
             if rivi.startswith("TULOS "):
                 _, nimi, arvo = (rivi.split(" ", 2) + [""])[:3]
                 cls.tulokset[nimi] = arvo.strip()
+        if "ohitus" in cls.tulokset:
+            raise unittest.SkipTest("nimiavaruussimulaatio ohitettu: " + cls.tulokset["ohitus"])
 
     def tulos(self, nimi):
         self.assertIn(nimi, self.tulokset, "puuttuu %s; stderr: %s" % (nimi, self.stderr[-1500:]))

@@ -259,9 +259,9 @@ pct exec 123 -- systemctl enable --now nftables
 Odotettu: viesti symbolisen linkin luonnista, ei virhettä.
 
 ```bash
-pct exec 123 -- nft list chain inet hakukontti output
+pct exec 123 -- nft -u list chain inet hakukontti output
 ```
-Odotettu: ketju, jonka `policy drop` ja säännöt vastaavat tiedostoa `nftables.conf`. Mukana on rivi `oifname "eth0" meta mark 0x0000ca6c ip daddr` ja VPN-palvelimen osoite sekä rivi `meta skuid "debian-tor" oifname "wg0"`.
+Odotettu: ketju, jonka `policy drop` ja säännöt vastaavat tiedostoa `nftables.conf`. Mukana on rivi `oifname "eth0" meta mark 0x0000ca6c ip daddr` ja VPN-palvelimen osoite sekä rivi `meta skuid "debian-tor" oifname "wg0"`. Valitsin `-u` näyttää käyttäjät niminä. Ilman sitä `nft list` näyttää käyttäjänumeron (esim. `meta skuid 101`).
 
 ```bash
 pct exec 123 -- sh -c 'nft list chain inet hakukontti output | grep -c "yksityinen tai erikoisosoite"'
