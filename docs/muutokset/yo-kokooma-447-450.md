@@ -1,1 +1,2 @@
 - aivo-itsetuntemus: kokooma #447 + #450; itse-viikko käyttää vertailun kuljetinta (kuljetin_tehdas, 360 s), ja viikkoajon vastattu-laskenta ohittaa tyhjät vastaukset ja aikakatkaisut, jotta ajatteleva malli ei näytä täydeltä ajolta ilman vastauksia
+- aivo-itsetuntemus: viikkoajon TimeoutStartSec 90 min -> 420 min, koska kaksi ajattelevaa mallia (2 × 33 kutsua × 360 s) ei mahtunut 90 minuuttiin; mediaaniaika ohittaa aikakatkaisut ja virheet kuten mallivertailu.pisteet

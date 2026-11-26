@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from aivo import alue, tiivistelma, yksityinen, yksityinen_alue
+from aivo import alue, haku, tiivistelma, yksityinen, yksityinen_alue
 from aivo.tiivistelma import TiivistelmaVirhe
 
 HILJAISUUS_S = 30 * 60           # suunnitelma 2.1 (B): tiivistys vasta 30 min hiljaisuuden jalkeen
@@ -180,6 +180,24 @@ def paivita_indeksi(a, nyt):
     rivit.sort(key=lambda r: str(r["viimeinen_aika"]), reverse=True)
     d = {"versio": 1, "paivitetty": nyt.isoformat(timespec="seconds"), "tiivistelmat": rivit}
     tiivistelma._kirjoita_600(indeksi / INDEKSI_TIEDOSTO, json.dumps(d, ensure_ascii=False, indent=1) + "\n")
+
+
+def paivita_hakuindeksi(a, nyt, tulos, tulosta=print):
+    """Rakentaa alueen FTS5-hakuindeksin (aivo/haku.py) uudelleen, jos ajo tallensi tiivistelmia, indeksia ei viela
+    ole tai tiivistelmakansio on muuttunut indeksin jalkeen (esim. tiivistelma.py korjaa/poista). Ei mallikutsuja eika
+    verkkoa. Virhe kirjataan lokiin (vain tyyppi) eika kaada ajoa."""
+    if not tulos.get("tiivistetty"):
+        try:
+            if os.stat(haku.indeksin_polku(a)).st_mtime >= os.stat(a.polku("tiivistelmat")).st_mtime:
+                return
+        except OSError:
+            pass                                            # indeksi puuttuu: rakennetaan
+    try:
+        tiiv, paloja = haku.rakenna(a)
+    except (haku.HakuVirhe, OSError) as e:
+        kirjaa(a.polku("indeksi"), nyt, "hakuindeksi: rakennus epaonnistui (%s)" % type(e).__name__, tulosta)
+        return
+    kirjaa(a.polku("indeksi"), nyt, "hakuindeksi: %d tiivistelmaa, %d palaa" % (tiiv, paloja), tulosta)
 
 
 # --- Valinta ja pilkkominen --------------------------------------------------------------------------------
@@ -390,6 +408,7 @@ def aja(juuri, kysy, nyt=None, kuiva=False, tulosta=print, taustapaa="loopback",
                 kirjaa(indeksi, nyt, "tiivistetty: %s viestit %d-%d, kohtia %d, hylattyja lainauksia %d, pudotettuja kohtia %d"
                        % (kid, alku, loppu, len(kohdat), hyl, pud), tulosta)
                 paivita_indeksi(a, nyt)
+        paivita_hakuindeksi(a, nyt, tulos, tulosta)
         return tulos
     finally:
         os.close(fd)

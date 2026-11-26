@@ -108,6 +108,8 @@ runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -B -m aivo.malliver
 Ajastin ajaa sarjan kerran viikossa sunnuntaiyönä tuotannon malleilla. Näin kehote-, malli- tai muistimuutoksen vaikutus näkyy luvuista viikon sisällä.
 
 - Komento `itse-viikko` käyttää samaa kuljetinta kuin `aja` ja `itse-aja` (`mallivertailu.kuljetin_tehdas`, aikaraja 360 s).
+- Palvelun aikaraja on `TimeoutStartSec=420min`. Pahimmassa tapauksessa päämalli ja tarkastaja ovat molemmat ajattelevia, ja jokainen kutsu käyttää koko 360 sekunnin rajan: 2 × 33 × 360 s = 396 min. Kuluraja ja päiväkatto pysäyttävät ajon tätä aiemmin, jos kulu täyttyy.
+- Taulukon mediaaniaika lasketaan vain riveistä, joilla on vastaus. Aikakatkaisut ja virheet eivät vaikuta siihen, samoin kuin mallivertailun pisteytyksessä.
 - Komento `itse-viikko` lukee mallit samoista asetuksista kuin palvelu: päämalli on `AIVO_OPENROUTER_MALLIT`-listan ensimmäinen ja tarkastaja asetuksen `AIVO_YKSITYINEN_ROOLIT` rooli `tarkastaja`. Ilman roolia tarkastaja on päämalli, ja sama malli ajetaan vain kerran. Valitsimia `--mallit`, `--toistot`, `--yhdistelma` ja `--kokoaja` ei hyväksytä.
 - Ajon kuluraja on 1 USD toteutunutta kulua (`ITSE_VIIKKO_RAJA_USD`), ja raja koskee kaikkia ajon malleja yhteensä. Suurempi `--raja` hylätään ennen ensimmäistä kutsua. Jokainen kutsu kulkee `openrouter_kulut.kutsu`n kautta, joten yhteinen 10 €:n päiväkatto ja kulukirjaus (tehtävä `aivo-itsetuntemus`) ovat voimassa.
 - Jos OpenRouterin vastauksesta puuttuu kulu, ajon raja laskee kulukirjanpidon varovaisen arvion (tuntemattomalle mallille korkea hinta), ei nollaa. Silloin ajo voi pysähtyä rajaan kesken.

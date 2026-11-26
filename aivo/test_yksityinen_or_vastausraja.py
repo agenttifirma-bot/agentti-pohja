@@ -147,7 +147,7 @@ class KatkeaminenTesti(Pohja):
         with contextlib.redirect_stderr(err):
             self.assertEqual(self.kysy(vastaus("valmis", "stop")), "valmis")
             self.assertEqual(self.kysy({"choices": [{"message": {"content": "ok"}}]}), "ok")
-        self.assertEqual(err.getvalue(), "")
+        self.assertNotIn("katkesi", err.getvalue())      # kehotteen kokorivi (A1106) saa olla, katkeamisrivi ei
 
     def test_yhdistelman_osakutsuun_ei_huomautusta(self):
         with contextlib.redirect_stderr(io.StringIO()):

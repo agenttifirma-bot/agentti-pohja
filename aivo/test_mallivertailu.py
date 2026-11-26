@@ -48,13 +48,13 @@ class SarjaTesti(unittest.TestCase):
         self.assertNotIn("2222", json.dumps(paikallinen[1:]))    # paikallisen taustapaan 12 viestin raja leikkaisi
 
     def test_historiaraja_on_openrouter_taustapaan(self):
-        self.assertEqual(yksityinen_or.HISTORIA_YLARAJA, 40)
+        n = yksityinen_or.HISTORIA_YLARAJA + 11      # pariton maara: viimeinen on Tonyn viesti
         s = mv.lue_tehtavat()
         pitka = {"id": "X", "alue": "muisti", "historia": [{"rooli": "tony" if i % 2 == 0 else "aivo", "teksti": str(i)}
-                                                          for i in range(51)]}
+                                                          for i in range(n)]}
         v = mv.viestit(s, pitka)
         self.assertEqual(len(v), 1 + yksityinen_or.HISTORIA_YLARAJA)
-        self.assertEqual(v[-1]["content"], "50")
+        self.assertEqual(v[-1]["content"], str(n - 1))
         self.assertEqual(v[1]["content"], "11")
 
     def test_ydinohjeiden_lisays_vain_omaan_tehtavaan(self):

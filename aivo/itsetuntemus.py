@@ -122,7 +122,8 @@ def lue_vastaukset(ulos: Path) -> list[dict[str, Any]]:
 
 def pisteet(rivit: list[dict[str, Any]], sarja: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
     """Malleittain: luokkien maarat, lajikohtaiset pisteet 0-1, kokonaispisteet, kulu ja mediaaniaika per kysymys
-    (rivin "sekuntia"; yhdistelmarivilla hitain vastaaja + kokoaja). Virhe = vaarin, paitsi aikakatkaisu (aikaraja=True)
+    (rivin "sekuntia"; yhdistelmarivilla hitain vastaaja + kokoaja; vain rivit, joilla on vastaus, joten aikakatkaisu
+    ja virhe eivat vaikuta mediaaniin). Virhe = vaarin, paitsi aikakatkaisu (aikaraja=True)
     = "aikaraja", jota ei pisteyteta. Tyhja vastaus = "ei_vastausta":
     lasketaan luokkiin mutta ei pisteisiin; jos mallilla ei ole yhtaan pisteytettya vastausta, yhteensa on None."""
     kys = {k["id"]: k for k in (sarja or lue_kysymykset())["kysymykset"]}
@@ -142,7 +143,8 @@ def pisteet(rivit: list[dict[str, Any]], sarja: dict[str, Any] | None = None) ->
             m["lajit"][k["laji"]].append(PISTEET[luokka])
         m["kysymykset"].setdefault(k["id"], []).append(luokka)
         m["kulu"] += r.get("kulu_usd") or 0.0
-        if isinstance(r.get("sekuntia"), (int, float)):
+        # mediaaniaika vain vastatuista riveista (kuten mallivertailu.pisteet): aikakatkaisu ja virhe eivat mukana
+        if not r.get("aikaraja") and "vastaus" in r and isinstance(r.get("sekuntia"), (int, float)):
             m["ajat"].append(float(r["sekuntia"]))
     for m in tulos.values():
         kaikki = [p for ps in m["lajit"].values() for p in ps]

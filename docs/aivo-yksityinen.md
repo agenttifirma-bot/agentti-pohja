@@ -113,6 +113,8 @@ Yksityisen tilan päätös kirjataan vain yksityiseen muistiin (tiedosto 0600) e
 
 ## Luovutus työkalutilaan
 
+Tony voi antaa jokaiselle yksityisen tilan vastaukselle palautteen (Hyvä tai Väärin ja korjaus). Korjaukset tallentuvat kansioon `/var/lib/aivo-yksityinen/korjaukset` (0700), tulevat seuraavan viestin kehotteeseen datana ja toistuessaan johtavat ydinohje-ehdotukseen, jonka Tony hyväksyy itse. Tarkemmin: `docs/aivo-chat.md`, kohta Palaute ja korjaukset yksityisessä tilassa.
+
 Yksityisessä tilassa sovitun tekstin voi luovuttaa työkalutilaan vain Tonyn hyväksynnällä. Aivo voi ehdottaa luovutusta lohkolla `[[LUOVUTUS]] … [[/LUOVUTUS]]`, ja Tony voi luovuttaa minkä tahansa viestin painikkeella. Ehdotukset ja loki luovutetuista teksteistä ovat kansiossa `/var/lib/aivo-yksityinen/luovutukset` (0700). Hyväksytty teksti kopioidaan kirjaston kansioon `saapuneet/`. Kehote käskee noudattamaan ydinohjeiden luovutussääntöjä; jos niitä ei ole, Aivo ei ehdota luovutusta ennen kuin Tony pyytää. Tarkemmin: `docs/aivo-chat.md`, kohta Luovutus yksityisestä tilasta työkalutilaan.
 
 ## Keskustelujen tiivistys (komento)
@@ -142,6 +144,76 @@ Chat liittää yksityisen alueen tiivistelmät yksityisen tilan kehotteeseen vai
 - Paikallisella mallilla 60 kt pidentää kehotteen käsittelyä selvästi (katso Keskusteluhistoria mallille). Kytkin on tarkoitettu ensisijaisesti OpenRouter-taustapäälle.
 
 Käyttöönotto: lisää `aivo-chat.service`-tiedostoon rivi `Environment=AIVO_YKSITYISET_TIIVISTELMAT_KAYTOSSA=1` ja käynnistä palvelu uudelleen (`systemctl daemon-reload && systemctl restart aivo-chat`).
+
+### Muistihaku: kysymykseen liittyvät kohdat kehotteen alkuun
+
+Kun tiivistelmät on kytketty päälle (yllä), chat hakee jokaisella viestillä Tonyn viestin sanoilla alueen hakuindeksistä (`aivo/haku.py`, SQLite FTS5). Osumat tulevat kehotteeseen ensimmäiseksi muistiosaksi (otsikko `HAKUOSUMAT`). Jokaisen osuman otsikossa on lähdeviite muodossa `[lähde: tiivistelmat/<tunnus>.json]`, ja sama viite kelpaa vastauksen lähteeksi.
+
+- **Alueet eivät sekoitu.** Yksityinen tila hakee vain yksityisen alueen indeksistä (`/var/lib/aivo-yksityinen/indeksi/tiivistelmat.sqlite`) ja työkalutila vain työkalualueen indeksistä (`/var/lib/aivo/indeksi/tiivistelmat.sqlite`). Indeksin paikka johdetaan tiivistelmäkansiosta (sen sisarkansio `indeksi`). Jos kansion nimi ei ole `tiivistelmat`, hakua ei tehdä. Osuman teksti luetaan aina saman alueen tiivistelmäkansiosta, joten väärään paikkaan kopioitu indeksi ei voi tuoda toisen alueen sisältöä.
+- **Ei verkkoa eikä mallikutsuja.** Haku on paikallinen SQLite-kysely, joka avataan vain luku -tilassa.
+- **Koko.** Enintään 5 osumaa (yksi tiivistelmää kohti) ja enintään 24 000 tavua. Paikallisella mallilla raja on neljännes muistirajasta (4 000). Osuman kohdat järjestetään kysymykseen osuvimmasta alkaen, ja kohta, joka ei mahdu, jää pois. Osumat kuuluvat tiivistelmien 60 kt:n rajaan, eikä samaa tiivistelmää toisteta tiivistelmien osiossa. Paikallisella taustapäällä kirjaston osuus pienenee hakuosion verran, joten muistiraja (16 000 merkkiä) ei kasva. OpenRouter-taustapäällä hakuosumat lasketaan mallin kontekstin mukaiseen muistirajaan (`aivo/kontekstiraja.py`), eivät sen päälle: osumille enintään neljännes rajasta, ja agenttidata, Tonyn korjaukset ja kirjasto saavat sen, mitä jää jäljelle.
+- **Virheet.** Tyhjä tai pelkistä välimerkeistä koostuva viesti, puuttuva tai rikkinäinen indeksi tai liian laajat oikeudet indeksikansiossa tarkoittavat, ettei osumia tule. Keskustelu jatkuu normaalisti.
+- **Indeksin päivitys.** Tiivistysajo (`python3 -m aivo.tiivista --alue yksityinen` tai `--alue tyokalu`) rakentaa indeksin uudelleen ajon lopussa, jos se tallensi tiivistelmiä, jos indeksiä ei vielä ole tai jos tiivistelmäkansio on muuttunut indeksin jälkeen (esimerkiksi `aivo.tiivistelma korjaa` tai `poista`). Journaliin tulee rivi `hakuindeksi: N tiivistelmaa, M palaa`.
+- **Journal.** Chat kirjaa jokaisesta viestistä rivin `muistihaku yksityinen: N osumaa` tai `muistihaku tyokalu: N osumaa`. Rivillä ei ole tunnuksia eikä sisältöä.
+
+Käyttöönotto kontissa 122 (Tony ajaa kontin päätteessä, `pct enter 122`; ota ensin snapshot). Jos jokin komento ei tulosta odotettua riviä, pysähdy.
+
+1. Palvelun käyttäjä ja kytkin:
+
+   ```
+   systemctl show -p User -p Environment aivo-chat
+   ```
+
+   Odotettu tulos: rivi `User=aivo` ja `Environment=`-rivillä `AIVO_YKSITYISET_TIIVISTELMAT_KAYTOSSA=1`. Jos käyttäjä on eri, käytä sitä nimeä alla. Jos kytkin puuttuu, tee ensin yllä oleva kohta Tiivistelmät yksityisen tilan kehotteeseen: ilman kytkintä hakua ei tehdä.
+
+2. FTS5 on käytettävissä:
+
+   ```
+   runuser -u aivo -- python3 -c "import sqlite3; sqlite3.connect(':memory:').execute('create virtual table t using fts5(x)'); print('fts5 ok')"
+   ```
+
+   Odotettu tulos: `fts5 ok`.
+
+3. Päivitä koodi `/opt/agentti-pohja`-kansioon samalla tavalla kuin edellisissä Aivon käyttöönotoissa ja tarkista, että muutos on mukana:
+
+   ```
+   grep -c hakuosio /opt/agentti-pohja/aivo/chat.py
+   ```
+
+   Odotettu tulos: luku 2 tai suurempi. Luku 0 tarkoittaa, että koodi on vanha.
+
+4. Rakenna indeksit kerran käsin (muuten ne syntyvät seuraavassa tiivistysajossa):
+
+   ```
+   runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -m aivo.haku rakenna --alue yksityinen
+   runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -m aivo.haku rakenna --alue tyokalu
+   ```
+
+   Odotettu tulos: kummastakin rivi `indeksi: N tiivistelmaa, M palaa`. Rivin `virhe: alue ei ole kayttokelpoinen (AlueVirhe)` syy on yleensä kansion omistaja tai oikeudet (`stat -c '%a %U' /var/lib/aivo-yksityinen/indeksi` → `700 aivo`). Jos N on 0, tiivistelmiä ei vielä ole, eikä haku voi löytää mitään.
+
+5. Koehaku sanalla, jonka tiedät esiintyvän jossain tiivistelmässä (tulostaa vain tunnukset, ei sisältöä):
+
+   ```
+   runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -m aivo.haku hae --alue yksityinen muutto
+   ```
+
+   Vaihda sana `muutto` omaan sanaasi. Odotettu tulos: vähintään yksi rivi `<tunnus>  pala N  pisteet …`. Tyhjä tuloste tarkoittaa, ettei sanaa löytynyt tai ettei indeksiä ole (kohta 4). Kokeile toista sanaa ennen kuin jatkat.
+
+6. Käynnistä chat uudelleen:
+
+   ```
+   systemctl restart aivo-chat && systemctl is-active aivo-chat
+   ```
+
+   Odotettu tulos: `active`.
+
+7. Lähetä selaimessa yksityisessä tilassa viesti, jossa on kohdan 5 sana. Aja sen jälkeen:
+
+   ```
+   journalctl -u aivo-chat --since "5 min ago" --no-pager | grep muistihaku
+   ```
+
+   Odotettu tulos: rivi `muistihaku yksityinen: 1 osumaa` (tai suurempi luku). Rivi `0 osumaa` tarkoittaa, että haku ajettiin mutta ei löytänyt mitään. Ei riviä lainkaan: kytkin puuttuu (kohta 1) tai koodi on vanha (kohta 3).
 
 ### Tiivistyksen ajastin (ohje, ei asennettu)
 
@@ -217,13 +289,24 @@ Yksityisen tilan kutsuun liitetään keskustelun viimeiset viestit. Raja riippuu
 | Taustapää | Viestejä enintään | Vakio | Peruste |
 |---|---|---|---|
 | Paikallinen malli (loopback) | 12 | `yksityinen.HISTORIA_YLARAJA` | i5-8400 käsittelee pitkän kehotteen hitaasti, ja vastauksen aikaraja on 900 s. Pidempi historia ylittäisi aikarajan. |
-| OpenRouter | 40 | `yksityinen_or.HISTORIA_YLARAJA` | Etämalli käsittelee pitkän kehotteen sekunneissa. Raja on sama kuin työkalutilassa (`chat.HISTORIA_YLARAJA`). |
+| OpenRouter | 200 | `yksityinen_or.HISTORIA_YLARAJA` | Etämalli käsittelee pitkän kehotteen sekunneissa. Varsinainen raja on mallin konteksti (ks. alla). |
 
-Yhden viestin raja on 16 000 merkkiä (`chat.VIESTI_YLARAJA`). Selain näyttää merkkilaskurin ja estää liian pitkän viestin lähettämisen. Se ei katkaise tekstiä, ja palvelin hylkää liian pitkän viestin virheellä. Historian viestien yhteenlaskettu pituus on rajattu: OpenRouter-taustapäässä ja työkalutilassa 80 000 merkkiä, paikallisessa taustapäässä 24 000 merkkiä. Uusin viesti säilyy aina kokonaan. Vanhemmista viesteistä säilyy alku, ja loppuun tulee merkintä lyhennyksestä (`yksityinen.lyhenna_historia`).
+Yhden viestin raja on 16 000 merkkiä (`chat.VIESTI_YLARAJA`). Selain näyttää merkkilaskurin ja estää liian pitkän viestin lähettämisen. Se ei katkaise tekstiä, ja palvelin hylkää liian pitkän viestin virheellä. Historian viestien yhteenlaskettu pituus on rajattu: paikallisessa taustapäässä 24 000 merkkiä ja työkalutilassa 80 000 merkkiä. Uusin viesti säilyy aina kokonaan. Vanhemmista viesteistä säilyy alku, ja loppuun tulee merkintä lyhennyksestä (`yksityinen.lyhenna_historia`).
 
-OpenRouter-taustapään pahin tapaus: historia 80 000 merkkiä (40 viestiä), muisti 16 000 merkkiä, ydinohjeet 20 000 merkkiä ja kehote noin 4 000 merkkiä. Yhteensä noin 120 000 merkkiä eli alle 60 000 tokenia, vaikka arvioitaisiin varovasti 2 merkkiä tokenia kohti. Suositusmallin `qwen/qwen3-235b-a22b-2507` konteksti on 262 144 tokenia, joten kehote mahtuu. Jos vaihdat mallin, tarkista, että sen konteksti on vähintään 100 000 tokenia.
+### Kehotteen koko OpenRouter-taustapäällä (A1106)
 
-Kehotteen sääntö 2 kertoo mallille, että keskustelun aiemmat viestit ovat käytettävissä, ja sääntö 6 kieltää lupaamasta taustatyötä tai arvioimasta kestoa: yksityisessä tilassa ei ole työkaluja, verkkoa eikä taustaprosesseja.
+OpenRouter-taustapäällä muisti, agenttidata ja keskusteluhistoria täyttävät kehotteen mallin kontekstiin asti (`aivo/kontekstiraja.py`). Paikallisen taustapään rajat (muisti 16 000 merkkiä, historia 12 viestiä ja 24 000 merkkiä, vastaus 700 tokenia) eivät muutu.
+
+- **Konteksti** on mallikohtainen vakio taulukossa `kontekstiraja.KONTEKSTIT`. Lähde on OpenRouterin julkiset rajapinnat `/api/v1/models` ja `/api/v1/endpoints/zdr` (haettu 25.11.2026). Arvo on konteksti, jota vähintään puolet mallin ZDR-endpointeista tukee, enintään 262 144 tokenia. Tuntematon malli saa varovaisen oletuksen 32 768 tokenia.
+- **Varaukset**: vastaukselle varataan `yksityinen_or.MAX_TOKENIA` (8 000) tokenia, pienellä mallilla enintään neljännes kontekstista. Lisäksi varataan 10 %:n turvamarginaali. Yhdistelmässä raja lasketaan pienimmän mukana olevan mallin mukaan, ja roolisyötteelle (luonnokset) varataan noin 25 000 merkkiä.
+- **Merkit ja tokenit**: arvio on 2,5 merkkiä tokenia kohti. Suomen teksti on noin 3 merkkiä tokenia kohti, mutta koodi ja luettelot pilkkoutuvat tiheämmin. Arvio on tarkoituksella alakanttiin, koska kontekstin ylitys kaataisi koko vastauksen.
+- **Hinta**: kehotteen arvioitu ylin hinta pidetään enintään kulukatkaisimen kiinteän varauksen (0,50 USD) suuruisena. Päiväkatto (10 €/vrk) ja varaus eivät muutu.
+- **Täyttöjärjestys**: ensin agenttidata (tuoreimmat päätökset ensin, enintään puolet muistin tilasta), sitten kirjasto (kysymykseen osuvat tiedostot ensin, sitten uusin muutosaika ensin) ja lopuksi tiivistelmät (enintään 60 kt; niille varataan oma osuus, enintään 10 % muistin tilasta, ennen kirjastoa). Historialle jää aina vähintään 25 % jäljellä olevasta tilasta, ja uusin Tonyn viesti mahtuu aina kokonaan, joten muisti ei syrjäytä keskustelua kokonaan. Jos uusin viesti ei pienellä mallilla mahdu edes yksin, muistia ei liitetä lainkaan.
+- **Näkyvyys**: jokaisesta kutsusta kirjataan journaliin rivi `yksityinen_or: kehote N merkkia, arvio T tokenia …, arvioitu hinta enintaan X USD` ja vastauksen jälkeen `yksityinen_or: toteutunut prompt_tokens=…`. Riveillä ei ole sisältöä. Kulunäkymä (`GET /api/kulut`) näyttää chatin kehotteen keskimääräisen ja suurimman koon tokeneina, keskimääräisen kulun kutsua kohti ja mallien kehoterajat.
+
+Esimerkki: mallilla `qwen/qwen3-235b-a22b-2507` kehotteeseen mahtuu noin 228 000 tokenia eli noin 570 000 merkkiä. Täysi kehote maksaa arviolta enintään noin 0,04 USD.
+
+Kehotteen sääntö 2 kertoo mallille, että keskustelun aiemmat viestit ovat käytettävissä, ja sääntö 6 kieltää lupaamasta taustatyötä tai arvioimasta kestoa: Aivolla ei ole verkkoa, eikä se voi ajaa ohjelmia itse. Agenttitehtävää se voi ehdottaa säännön 8 mukaisesti. Säännöt 9–11 koskevat omaa rakennetta ja kuluja (9), `[[SYVENNA]]`-vihjettä (10) ja `tonyn-korjaukset`-tiedostoa (11). Testi `aivo/test_yksityinen_saantonumerot.py` varmistaa, että säännöt on numeroitu 1..N ilman aukkoja ja kaksoisnumeroita kummassakin taustapäässä.
 
 ## Mallin valinta (OpenRouter-taustapää)
 
@@ -299,6 +382,25 @@ Käyttöliittymä:
 Rajapinta: `GET /api/mallit` palauttaa OpenRouter-taustapäällä myös kentät `yhdistelmat` ja `yhdistelma` (oletus). `POST /api/uusi` ja `POST /api/viesti` hyväksyvät kentän `yhdistelma`. Muu arvo saa vastauksen 400, eikä viestiä silloin tallenneta. Työkalutila ei hyväksy kenttää (400). Yhdistelmän vastaus sisältää kentät `yhdistelma`, `mallit`, `kutsuja` sekä tarvittaessa `luonnos` ja `merkinta`. Keskustelutiedoston Aivon rivillä ovat `yhdistelma`, `mallit`, `kutsuja` ja `merkinta`.
 
 Kulut: tarkastus ja reititys tekevät 2 kutsua ja rinnakkais 3 kutsua viestiä kohden. Tiimi tekee arkisessa viestissä 2 ja vaativassa 4 kutsua. Tarkastajan ja kokoajan syöte sisältää luonnoksen, joten se on yhden mallin kutsua pidempi.
+
+## Itsetarkistus (OpenRouter-taustapää)
+
+Asetus `AIVO_YKSITYINEN_ITSETARKISTUS=paalla` (tai `--yksityinen-itsetarkistus paalla`) ottaa käyttöön vastauksen itsetarkistuksen. Oletus on `pois`. Muu arvo estää käynnistyksen, ja asetus vaatii yksityisen tilan ja OpenRouter-taustapään. Koodi on tiedostossa `aivo/itsetarkistus.py`, ja kutsut kulkevat funktion `yksityinen_or.tarkista_vastaus` kautta.
+
+1. Tarkistus tehdään vain, jos vastauksessa on lukuja, päivämääriä, A-päätösviittauksia (esim. A984) tai väitteitä Aivon rakenteesta. Muut vastaukset eivät maksa mitään.
+2. Tarkastajamalli saa vastauksen ja sen lähteet: kehotteen järjestelmäosan (ydinohjeet, muisti, tiivistelmät, agenttidata) ja keskustelun viimeiset viestit. Lähteiden järjestys on: keskustelun viimeiset viestit, muistiosat, joihin vastaus viittaa (`[lähde: ...]`), ja muistihaun osumat, kehotteen alku (säännöt ja ydinohjeet) ja lopuksi muu muisti. Lähteiden enimmäispituus lasketaan tarkastajamallin kontekstista samalla tavalla kuin kehotteen koko (A1106, `yksityinen_or.tarkastajan_lahderaja`). Näin pitkässäkin kehotteessa tarkastaja näkee ne kohdat, joihin vastaus nojaa. Tarkastaja palauttaa JSON-listan ristiriidoista (`kohta`, `syy`). Malli on roolin `tarkastaja` malli (`AIVO_YKSITYINEN_ROOLIT`), muuten keskustelun malli. Mallin pitää läpäistä `avoin_malli()`-tarkistus.
+3. Jos ristiriitoja on, vastaaja saa korjata vastauksen kerran. Korjattua vastausta ei tarkisteta uudelleen. Vastauksen alla näkyy merkintä, esimerkiksi "tarkistus: 1 kohta epävarma; vastaus korjattiin kerran", ja kohdat luettelona. "Näytä alkuperäinen vastaus" näyttää korjaamattoman vastauksen, ja se tallentuu myös keskustelutiedostoon (`tarkistus.alkuperainen`). Tarkistus ei siis muuta vastausta hiljaa.
+4. Merkinnät (`[[EHDOTUS ..]]`, `[[VALINNAT: ..]]` ym.) tulevat vain alkuperäisestä vastauksesta. Tarkastajan teksti on dataa: siitä poistetaan merkinnät ja ohjausmerkit.
+
+Rajat:
+
+- Kutsut kulkevat samaa ZDR-reittiä (`openrouter_kulut.kutsu`, lippu `yksityinen_chat=True`) ja kuluttavat yhteistä päiväkattoa. Kulukirjanpidossa tehtävä on `aivo-yksityinen-tarkistus`, ja kulunäkymä laskee sen chatiksi.
+- Jos päiväkatto on täynnä, vastaus näytetään ilman tarkistusta ja merkintä kertoo sen. Kelvoton tarkastajan vastaus tai verkkovirhe näkyy merkintänä "tarkistus: ei onnistunut".
+- Kutsuraja 4 per viesti (`yhdistelma.MAX_KUTSUT_VIESTI`) koskee yhdistelmän ja tarkistuksen summaa. Jos raja on täynnä, tarkistus ohitetaan. Jos tilaa on vain yhdelle kutsulle, korjausta ei tehdä.
+- Tarkastajan kutsussa vastausraja on 1 500 tokenia ja aikaraja 120 s. Korjauksessa ne ovat samat kuin chatissa.
+- Tarkistuksella on oma kokonaisaikaraja 240 s (tarkastaja ja korjaus yhteensä). Jokainen kutsu saa enintään jäljellä olevan ajan, ja kun aika loppuu, korjausta ei aloiteta. Tarkistus voi siis pidentää viestin vastausaikaa enintään noin 240 s.
+- `[[AGENTTI]]`-lohkot tulevat vain alkuperäisestä vastauksesta, kuten muutkin merkinnät.
+- Korjauskutsun lisäsyötteelle (ohje, vastaus enintään 12 000 merkkiä ja havainnot, `itsetarkistus.KORJAUS_LISAVARAUS`) varataan tila ennen kuin muisti ja historia täyttävät kehotteen. Jos korjauskehote ei silti mahdu vastaajamallin kontekstiin, korjausta ei tehdä, ja merkintä kertoo sen.
 
 ## Rajat ja avoimet asiat
 

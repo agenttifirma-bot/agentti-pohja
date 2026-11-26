@@ -2,7 +2,9 @@
 
 Moduuli on tilaneutraali: se saa `Alue`-olion eika tunne yhtaan oletuspolkua. Jokaisella alueella on oma indeksi
 (SQLite-tiedosto alueen `indeksi`-kansiossa), joten alueiden sisallot eivat voi sekoittua. Vain stdlib, ei mallikutsuja,
-ei verkkoa, ei alaprosesseja. Hakua ei ole kytketty chattiin eika kehotteeseen.
+ei verkkoa, ei alaprosesseja. Chat kayttaa hakua `hae_kansiosta`-funktion kautta (aivo/tiivistelmat_kehote.hakuosio):
+yksityinen tila hakee vain yksityisen alueen indeksista ja tyokalutila vain tyokalualueen indeksista. Indeksi
+rakennetaan tiivistyksen yhteydessa (aivo/tiivista_yksityinen.py ja aivo/tiivista_tyokalu.py).
 
   * Tiivistelman tekstit (Tonyn lainaukset, tulkinta ja korjaus) pilkotaan 800-1 500 merkin paloihin sanarajoilla.
   * Sanat pienennetaan ja katkaistaan 6 merkkiin (karkea suomen vartalo), seka indeksissa etta kyselyssa.
@@ -22,7 +24,7 @@ import tempfile
 from pathlib import Path
 
 from aivo import tiivistelma
-from aivo.alue import AlueVirhe, tarkista_hakemisto
+from aivo.alue import Alue, AlueVirhe, tarkista_hakemisto
 
 INDEKSI_NIMI = "tiivistelmat.sqlite"
 KAYTETYT_ALIKANSIOT = ("tiivistelmat", "indeksi")   # rakennus lukee ja kirjoittaa vain nama; muut jaavat tarkistamatta
@@ -175,6 +177,26 @@ def hae(alue, kysely, k=5):
         if len(tulos) >= k:
             break
     return tulos
+
+
+def hae_kansiosta(tiivistelmat_kansio, kysely, k=5):
+    """Hakee sen alueen indeksista, johon tiivistelmakansio kuuluu: indeksi on kansion sisarkansio `indeksi`
+    (alueen rakenne <juuri>/tiivistelmat ja <juuri>/indeksi). Jos kansion nimi ei ole `tiivistelmat`, indeksin
+    sijaintia ei voi paatella varmasti, joten palautetaan [] (ei arvata toisen alueen indeksia). Suhteellinen polku
+    tulkitaan prosessin tyohakemistosta, kuten chatin muutkin kansioasetukset. Indeksikansion
+    pitaa olla oikea kansio, prosessin kayttajan oma ja 0700 (lukupolku ei korjaa oikeuksia); muuten []. Haun
+    virhe nostaa HakuVirheen; kutsuja paattaa, kaadetaanko."""
+    if not tiivistelmat_kansio:
+        return []
+    kansio = Path(os.path.abspath(tiivistelmat_kansio))   # suhteellinen asetus (--data) toimii kuten muu chat
+    if kansio.name != "tiivistelmat":
+        return []
+    try:
+        a = Alue("haku", kansio.parent, KAYTETYT_ALIKANSIOT)
+        tarkista_hakemisto(a.polku("indeksi"), luo=False, korjaa=False)
+    except AlueVirhe:
+        return []
+    return hae(a, kysely, k)
 
 
 # --- CLI ---------------------------------------------------------------------------------------------

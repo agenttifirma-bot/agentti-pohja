@@ -1,0 +1,1 @@
+- aivo: yksityisen tilan itsetarkistus (AIVO_YKSITYINEN_ITSETARKISTUS, oletus pois): tarkastajamalli vertaa lukuja, päivämääriä, A-päätösviittauksia ja Aivon rakennetta koskevat väitteet kehotteen faktoihin, vastaaja korjaa kerran ja merkintä näkyy vastauksen alla; sama ZDR-reitti ja yhteinen päiväkatto, kutsuraja 4 per viesti koskee summaa

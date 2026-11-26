@@ -63,9 +63,10 @@ MERKINTA_RE = re.compile(
     r"\[\[EHDOTUS [^\]\n]*\]\].*?\[\[/EHDOTUS\]\]"
     r"|\[\[LUOVUTUS\]\].*?\[\[/LUOVUTUS\]\]"
     r"|\[\[VALINNAT:[^\n]*?\]\]"
-    r"|\[\[PAATOS [0-9]{1,6}\]\]", re.S)
+    r"|\[\[PAATOS [0-9]{1,6}\]\]"
+    r"|\[\[SYVENNA\]\]", re.S)
 KATKENNUT_RE = re.compile(r"\[\[(?:EHDOTUS [^\]\n]*|LUOVUTUS)\]\](?:(?!\[\[/(?:EHDOTUS|LUOVUTUS)\]\]).)*\Z", re.S)
-IRRALLINEN_RE = re.compile(r"\[\[/?(?:EHDOTUS|LUOVUTUS|VALINNAT|PAATOS)[^\]\n]*\]\]")
+IRRALLINEN_RE = re.compile(r"\[\[/?(?:EHDOTUS|LUOVUTUS|VALINNAT|PAATOS|SYVENNA)[^\]\n]*\]\]")
 
 TARKASTAJA_OHJE = (
     "\n\nROOLISI T\u00c4SS\u00c4 VASTAUKSESSA: tarkastaja. Tonyn viimeisen viestin per\u00e4ss\u00e4 on toisen mallin luonnos vastaukseksi "

@@ -533,6 +533,20 @@ class YhdistelmaTesti(Tilapainen):
         self.assertIn("| 3.0 |", teksti)
         self.assertRegex(teksti, r"(?m)^\| c \|.*\| - \|$")
 
+    def test_mediaaniaika_ohittaa_aikakatkaisun_ja_virheen(self):
+        # sama saanto kuin mallivertailu.pisteet: vain vastatut rivit (myos tyhja vastaus) menevat mediaaniin
+        k = it.lue_kysymykset()["kysymykset"]
+        rivit = [{"malli": "a", "kysymys": k[0]["id"], "vastaus": "", "sekuntia": 2.0},
+                 {"malli": "a", "kysymys": k[1]["id"], "vastaus": "", "sekuntia": 4.0},
+                 {"malli": "a", "kysymys": k[2]["id"], "virhe": "Aikakatkaisu", "aikaraja": True, "sekuntia": 360.0},
+                 {"malli": "a", "kysymys": k[3]["id"], "virhe": "ei vastauksia", "aikaraja": True, "sekuntia": 361.0},
+                 {"malli": "a", "kysymys": k[4]["id"], "virhe": "HTTPError", "sekuntia": 500.0},
+                 {"malli": "b", "kysymys": k[0]["id"], "virhe": "Aikakatkaisu", "aikaraja": True, "sekuntia": 360.0}]
+        tulos = it.pisteet(rivit)
+        self.assertEqual(tulos["a"]["mediaani_s"], 3.0)
+        self.assertEqual(tulos["a"]["luokat"]["aikaraja"], 2)
+        self.assertIsNone(tulos["b"]["mediaani_s"])
+
 
 class YhdistelmaKomentoriviTesti(KomentoriviTesti):
     def test_arvio_ja_ilman_vahvistusta_ei_kutsuja(self):

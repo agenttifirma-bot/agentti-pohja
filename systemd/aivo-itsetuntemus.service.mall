@@ -20,7 +20,10 @@ Environment=AIVO_OPENROUTER_MALLIT=qwen/qwen3-235b-a22b-2507
 # Kuluraja 1 USD toteutunutta kulua per ajo (koodin yla-raja, suurempi arvo hylataan). Yhteinen paivakatto 10 EUR/vrk
 # tarkistetaan jokaisessa kutsussa (openrouter_kulut.kutsu), ja kulut kirjataan tehtavalla aivo-itsetuntemus.
 ExecStart=/usr/bin/python3 -B -m aivo.mallivertailu itse-viikko --ulos /var/lib/aivo-itsetuntemus/vastaukset --tiivistelma /var/lib/aivo-itsetuntemus/tiivistelma --raja 1.0
-TimeoutStartSec=90min
+# Aikaraja: pahin tapaus on 2 kutsua (paamalli + tarkastaja) x 33 kysymysta x 360 s (kuljettimen aikaraja,
+# mallivertailu.VERTAILU_AIKARAJA_S) = 23 760 s = 396 min, kun molemmat mallit ovat ajattelevia. 420 min jattaa
+# varaa tiivistelmalle. Kuluraja (--raja 1.0) ja paivakatto katkaisevat ajon ennen tata, jos kulu tayttyy.
+TimeoutStartSec=420min
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
