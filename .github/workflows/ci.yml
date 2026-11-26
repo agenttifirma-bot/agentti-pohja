@@ -23,7 +23,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Testit
-        run: python -m unittest discover -s . -t . -p 'test_*.py' -v
+        run: python tools/ci_testit.py
 
       - name: Kuiva-ajo (ei verkkoa)
         run: python -m agentti --tila "$RUNNER_TEMP/tila"
@@ -59,7 +59,7 @@ jobs:
           python-version: "3.13"
 
       - name: Testit
-        run: python -m unittest discover -s . -t . -p 'test_*.py' -v
+        run: python tools/ci_testit.py
 
       - name: Kuiva-ajo (ei verkkoa)
         run: python -m agentti --tila "$RUNNER_TEMP/tila"

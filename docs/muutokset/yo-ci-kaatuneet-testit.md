@@ -1,0 +1,1 @@
+- ci: Testit-vaihe ajetaan skriptillä tools/ci_testit.py, joka tulostaa jokaisesta kaatuneesta testistä annotaation (`::error`, testin tunnus ja poikkeuksen tyyppi, enintään 30). Syy: Actions-loki palauttaa ilman tunnusta HTTP 403, mutta check-runin annotaatiot ovat luettavissa ilman tunnusta.
