@@ -1,10 +1,11 @@
 # SearXNG hakukontissa (pohja). Asennus: /etc/systemd/system/searxng.service. Ohje: docs/aivo-hakukontti.md.
 # Kuuntelee vain 127.0.0.1:8888. Granian ei kirjoita paasylokia oletuksena (ei hakulausekkeita journaldiin).
-# Palomuuri on pakollinen: ilman nftables-palvelua (kill switch) SearXNG ei kaynnisty, ja palomuurin pysaytys pysayttaa myos taman.
+# Palomuuri ja VPN ovat pakollisia: ilman nftables-palvelua (kill switch) ja wg-quick@wg0:aa SearXNG ei kaynnisty, ja
+# kummankin pysaytys pysayttaa myos taman.
 [Unit]
 Description=SearXNG (hakukontti, vain silmukkaosoite, ulosmeno Torin kautta)
-Requires=nftables.service
-After=network-online.target nftables.service tor@default.service
+Requires=nftables.service wg-quick@wg0.service
+After=network-online.target nftables.service wg-quick@wg0.service tor@default.service
 Wants=tor@default.service
 
 [Service]
