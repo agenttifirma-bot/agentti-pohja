@@ -81,6 +81,8 @@ Ota ensin snapshot, jos asennat konttiin. Käyttäjänimet ovat ehdotus.
 
 4. **Chat-palvelu.** Lisää olemassa olevan `aivo-chat.service`-tiedoston `ExecStart`-riville `--yksityinen-data /var/lib/aivo-yksityinen/chat --yksityinen-muisti /var/lib/aivo-yksityinen/muisti --ehdotukset /var/lib/aivo-yksityinen/ehdotukset --ydinohjeet /var/lib/aivo-yksityinen/ydinohjeet`, aseta `User=aivo-yksityinen` (säilytä `SupplementaryGroups=aivo-tyokalu-socket`, jotta työkalutilan socket pysyy käytettävänä) ja lisää `ReadOnlyPaths=/var/lib/aivo-yksityinen/ydinohjeet`. Palvelu voi silloin lukea ohjeita mutta ei kirjoittaa niitä; vain `hyvaksy`-komento kirjoittaa.
 
+   **Huomautus:** Tällä rivillä hyväksyntä chat-sivulla ei toimi (katso `docs/aivo-chat.md`, Kirjoitusoikeus). Asetus on Tonyn avoin päätös.
+
 5. **Varmuuskopio.** `/var/lib/aivo-yksityinen` saa mennä Driveen vain salattuna (rclone crypt, A715–A718). Älä lisää sitä salaamattomaan varmuuskopioon.
 
 6. **Todennus** (ei vielä tehty, odottaa Tonya ja riippumatonta tarkastajaa):
