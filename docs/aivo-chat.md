@@ -191,6 +191,8 @@ Työkalutilan keskustelut tiivistetään kirjastoon, jotta Aivo muistaa ne 40 vi
 
 Tiivistelmät tallentuvat kansioon `/var/lib/aivo/tiivistelmat` (0700, tiedostot 0600) ja luettelo tiedostoon `/var/lib/aivo/indeksi/indeksi.json`. Tonyn lainaukset on erotettu mallin tulkinnasta. Lainaus tarkistetaan sanasta sanaan Tonyn viestistä, ja virheellinen lainaus poistetaan. Uudet kohdat ovat aina tilassa `ehdotus`, ja vain Tonyn korjaus (`python3 -m aivo.tiivistelma`) vahvistaa ne. Chat liittää tiivistelmät työkalutilan kehotteeseen muun muistin rinnalle, enintään 60 kt, mutta vain kun Tony kytkee sen erikseen päälle: chatin käynnistysasetus `--tiivistelmat-kaytossa` (tai ympäristömuuttuja `AIVO_TIIVISTELMAT_KAYTOSSA=1`). Oletuksena kytkentä on pois, eikä kansion olemassaolo kytke sitä. Osuvimmat ja uusimmat tulevat ensin. Yksityinen tila ei saa niitä koskaan.
 
+Kun tiivistelmät ovat päällä, chat myös hakee Tonyn viestin sanoilla työkalualueen hakuindeksistä (`/var/lib/aivo/indeksi/tiivistelmat.sqlite`) ja liittää osumat kehotteen ensimmäiseksi muistiosaksi lähdeviitteineen. Tiivistysajo päivittää indeksin. Tarkemmin ja käyttöönotto: `docs/aivo-yksityinen.md`, kohta Muistihaku.
+
 Ota ensin snapshot kontista 122. Ajastin ei asennu itsestään: tämä on ohje, jonka Tony ajaa.
 
 1. **Yhteys.** Avaa isännällä (Proxmox) kontin pääte ja varmista, että olet kontissa 122:
@@ -330,6 +332,44 @@ Ota ensin snapshot kontista 122.
 
    Odotettu tulos: seuraavan vastauksen kehotteessa ei ole kalenteriosiota, eikä Aivo tiedä menoja.
 
+## Agenttidata-kopio kehotteeseen (Tony tekee kontissa 122)
+
+Aivo voi lukea agenttidata-kloonista (`/var/lib/aivo/agenttidata`, ohje `docs/agenttidata.md` askel 8) kolme tiedostoa: `kompassi.md`, `faktat.md` ja `pohdinta-vastaukset.md`. Ne tulevat kehotteeseen omana osionaan `AGENTTIDATA`, jonka otsikossa näkyvät lähde ja kopion aika. Asetus on oletuksena pois päältä.
+
+- Mukana ovat molemmat tilat: työkalutila ja yksityinen tila (A1015).
+- Pohdinta-vastauksista tulee vain loppu: enintään 60 viimeistä A-merkintää. Yksityisessä tilassa osuus on pienempi (kehotteen raja on 16 000 merkkiä), joten mukana on vain muutama tuorein merkintä (23.11.2026 datalla kuusi). Osion otsikko kertoo todellisen määrän.
+- `tulokset/` ja `tehtavat/` eivät tule kehotteeseen.
+- Osio mahtuu samaan muistirajaan kuin kirjasto. Kirjastolle jää loput, joten kehotteen kokonaiskoko ei kasva.
+- Kopion aika on viimeisimmän haun aika (`.git/FETCH_HEAD`). Jos hakua ei ole tehty, aika on tiedostojen muutosaika. Jos kopio on yli 24 tuntia vanha, osioon tulee varoitus. Varoitus tulee myös, jos haku onnistui mutta työpuu ei päivittynyt (`FETCH_HEAD` ja `HEAD` eroavat, esim. `pull --ff-only` epäonnistui).
+- Aivo lukee kopiota vain palvelun omana käyttäjänä. Mikään reitti ei kirjoita kopioon. Palvelu ei käynnisty, jos kopion kansio on kirjaston, keskustelujen, tiivistelmien tai yksityisten kansioiden kanssa päällekkäin.
+- Vain tavalliset tiedostot kloonin sisällä luetaan: ei `.git`-kansiota eikä linkkejä kloonin ulkopuolelle.
+
+1. **Kytke päälle.** Avaa drop-in:
+
+   ```
+   systemctl edit aivo-chat
+   ```
+
+   Lisää muokkaukseen palveluosion alle rivi `Environment=AIVO_AGENTTIDATA=/var/lib/aivo/agenttidata`. Käynnistä palvelu uudelleen ja tarkista, että asetus näkyy:
+
+   ```
+   systemctl restart aivo-chat
+   systemctl show aivo-chat -p Environment --no-pager | tr ' ' '\n' | grep AIVO_AGENTTIDATA
+   systemctl is-active aivo-chat
+   ```
+
+   Odotettu tulos: rivi `AIVO_AGENTTIDATA=/var/lib/aivo/agenttidata` ja `active`. `ReadWritePaths` ei muutu.
+
+2. **Tarkistus.** Kysy chatissa (työkalutila): "Mikä on tuorein A-päätös?".
+
+   Odotettu tulos: Aivo kertoo pohdinta-vastausten viimeisen A-merkinnän ja viittaa lähteeseen `agenttidata/pohdinta-vastaukset.md`. Vertaa:
+
+   ```
+   grep -oE '\*\*A[0-9]+' /var/lib/aivo/agenttidata/pohdinta-vastaukset.md | tail -1
+   ```
+
+3. **Poiskytkentä.** Poista rivi drop-inistä (`systemctl edit aivo-chat`) ja käynnistä chat uudelleen.
+
 ## Ydinohjeiden ehdotukset chat-sivulla (A1018)
 
 Yksityisen tilan ydinohjemuutoksen voi hyväksyä tai hylätä myös chat-sivulla. Päätteen komento (`python3 -m aivo.yksityinen hyvaksy TUNNUS`) toimii edelleen.
@@ -360,7 +400,7 @@ Keskustelun pitää olla yksityisen tilan keskustelu. Työkalutilan keskustelull
 
 **Ehdotuksen pituus.** Ehdotus on ydinohjetiedoston koko uusi sisältö, ja vastauksen enimmäispituus on `MAX_TOKENIA` = 700 tokenia. Rajaa ei nosteta, koska ydinohjeiden yläraja (20 000 merkkiä, noin 7 000 tokenia) ei ehtisi i5-8400:lla vastausajan sisällä. Kehote pyytää siksi pitämään ehdotuksen enintään 1 200 merkissä ja ehdottamaan pidemmän tiedoston sijaan uutta lyhyttä tiedostoa. Jos vastaus katkeaa ennen sulkevaa `[[/EHDOTUS]]`-merkintää, mitään ei tallenneta ja vastauksessa näkyy `[ehdotusta ei tallennettu: vastaus katkesi]`. Jos sulkeva merkintä on, mutta tiedostonimi ei kelpaa, vain ehdotuslohko korvataan tekstillä `[ehdotusta ei tallennettu: virheellinen tiedostonimi]`, ja lohkon jälkeinen teksti näkyy ennallaan. Hyväksyntä- ja hylkäysreitti palauttavat tilan 400, jos tunnus ei ole merkkijono.
 
-**Kehotteen taustapää.** Paikallisella mallilla kehote kertoo, että malli ajetaan Tonyn omalla koneella. OpenRouter-taustapäällä kehote kertoo, että käytössä on avoin malli OpenRouterin kautta nollasäilytyksellä (ZDR) ja että ulos lähtee vain kulloinenkin kehote (`aivo/yksityinen_or.py`, `KEHOTE`).
+**Kehotteen taustapää.** Paikallisella mallilla kehote kertoo, että malli ajetaan Tonyn omalla koneella. OpenRouter-taustapäällä kehote kertoo, että käytössä on avoin malli OpenRouterin kautta nollasäilytyksellä (ZDR) ja että koko kehote (ydinohjeet, muisti, agenttidata ja keskustelu) lähtee jokaisella viestillä OpenRouterille. ZDR-tilassa sitä ei tallenneta eikä käytetä koulutukseen, ja muisti ja keskustelut tallennetaan Tonyn omalle palvelimelle (`aivo/yksityinen_or.py`, `KEHOTE`). Kehotteen koko seuraa mallin kontekstia (A1106), joten suurella mallilla kehote voi sisältää lähes koko muistin.
 
 ## Luovutus yksityisestä tilasta työkalutilaan
 
@@ -396,7 +436,7 @@ Reitit (kirjautuminen, `Host`, `X-Aivo` ja sama alkuperä tarkistetaan kuten mui
 | `GET /api/luovutetut?keskustelu=ID` | yksityinen | loki |
 | `POST /api/luovutus/uusi` `{keskustelu, indeksi}` | yksityinen | ehdotus keskustelun viestistä |
 | `POST /api/luovutus/muokkaa` `{keskustelu, tunnus, teksti}` | yksityinen | uusi teksti ja uusi sha8 |
-| `POST /api/luovutus/hyvaksy` `{keskustelu, tunnus, vahvistus}` | yksityinen | vahvistus täsmälleen `kyllä <sha8>` |
+| `POST /api/luovutus/hyvaksy` `{keskustelu, tunnus, vahvistus, lisavahvistus?}` | yksityinen | vahvistus täsmälleen `kyllä <sha8>`; vuotovartijan tulos ”kysy” vaatii lisäksi `lisavahvistus` = `tarkistin kohdat <sha8>`, tulos ”estä” palauttaa aina 409 |
 | `POST /api/luovutus/hylkaa` `{keskustelu, tunnus}` | yksityinen | siirto kansioon `hylatyt/` |
 | `GET /api/saapuneet?keskustelu=ID` | työkalu | käsittelemättömät luovutukset |
 | `POST /api/saapuneet/kasitelty` `{keskustelu, tunnus}` | työkalu | siirto kansioon `saapuneet/kasitellyt/` |
@@ -404,6 +444,104 @@ Reitit (kirjautuminen, `Host`, `X-Aivo` ja sama alkuperä tarkistetaan kuten mui
 Väärän tilan keskustelulle reitit vastaavat 404. Tunnus on aina 12 heksamerkkiä, joten polkuja (`../`) ei hyväksytä. Kaikki teksti lisätään sivulle `textContent`- tai `value`-ominaisuudella.
 
 **Käyttöönotto.** Kansio luodaan automaattisesti yksityisen datan viereen (`--luovutukset` tai `AIVO_LUOVUTUKSET` vaihtaa polun). Jos palvelu ei saa luoda sitä, luo se itse: `sudo install -d -m 700 -o aivo-yksityinen -g aivo-yksityinen /var/lib/aivo-yksityinen/luovutukset`. Chat-palvelun käyttäjällä pitää olla kirjoitusoikeus kirjastoon, kuten päätöskirjauksessakin.
+
+### Vuotovartija (A1040, kohta 4)
+
+Ennen kuin Tony hyväksyy luovutuksen, teksti tarkistetaan kahdella tavalla (`aivo/vartija.py`). Vartija ei koskaan muuta tekstiä. Tarkistuksista syntyy yksi kolmesta lopputuloksesta (alla), ja selvä salaisuus estää hyväksynnän (Tonyn päätös A1096, 25.11.2026).
+
+- **Mekaaninen esitarkistus** tehdään aina palvelimella ilman verkkoa: sähköpostiosoitteet, puhelinnumerot, IPv4-osoitteet (myös nollilla täytetty muoto, esim. `010.001.002.003`) ja IPv6-osoitteet (myös `::`-lyhennetty muoto, vyöhyketunnus ja IPv4-upotettu muoto, esim. `::ffff:a.b.c.d`; luokittelu `ipaddress`-moduulilla), tailnet-nimet (`*.ts.net`, `tail…`), henkilötunnukset (myös pienillä kirjaimilla), IBAN-tilinumerot kaikista maista (maan pituus ja mod 97 -tarkiste, myös pienillä kirjaimilla), yksityisavainten otsikot (SSH, PKCS#8 ja PGP:n `PRIVATE KEY BLOCK`), SSH-julkisavaimet (`ssh-ed25519`/`ssh-rsa`), yleiset API-avainten muodot (`sk-`, `ghp_`, `gho_`, `github_pat_`, `xoxb-`, `AKIA`, `tskey-`, `AIza`, `sk_live_`, `rk_live_`, `glpat-`, `hf_` ja JWT eli kolme base64url-osaa `eyJ`-alulla), pitkä satunnainen arvo avainsanan (key, token, secret, salasana) jälkeen sekä Tonyn ylläpitämät listat. Listat ovat kansiossa `luovutukset/vartija/` (`--vartija-listat` tai `AIVO_VARTIJA_LISTAT` vaihtaa polun; luovutuspaketin koukku ja hyväksyntä käyttävät samaa polkua): `nimet.txt` (henkilönimet) ja `avainsanat.txt`, yksi rivi kerrallaan, `#`-rivit ovat kommentteja. Nimi osuu myös taivutettuna, kun alku on sama (Maija → Maijalle).
+- **Vartijamalli** (rooli `vartija`) tarkistaa tekstin vain OpenRouter-taustapäällä. Malli on `AIVO_YKSITYINEN_ROOLIT`-asetuksen `vartija:<malli>` tai sallittujen mallien listan ensimmäinen. Kutsu kulkee samaa reittiä kuin yksityisen tilan vastaukset (`yksityinen_or._kysy_viestit`): avoin malli, ZDR-runko, yhteinen päiväkatto ja kulukirjaus. Malli palauttaa JSON-listan epäilyttävistä kohdista syineen (henkilö, paikka, tavoite, kokonaiskuva). Loopback-taustapäällä mallia ei käytetä, koska teksti ei muuten lähtisi palvelimelta.
+
+**Mittaus synteettisellä aineistolla.** `python3 -m aivo.vartija_aineisto --ulos HAKEMISTO` kirjoittaa 110 keksittyä tekstiä (50 turvallista, 50 arkaluonteista ja 10 vaikeaa tapausta, 200–500 sanaa) totuustiedostoineen. Aineisto on toistettava siemenluvulla (oletus 413). Sähköpostit ovat vain verkkotunnuksissa example.com, example.org ja test.org, IP-osoitteet vain dokumentaatioalueilta, henkilötunnukset 1800-luvulta, ja henkilöt ja paikat ovat paikkamerkkejä. `python3 -m aivo.vartija_mittaus [--esimerkit]` ajaa mekaanisen tarkistuksen aineistoa vastaan ja tulostaa tyypeittäin osumat, ohitukset ja väärät hälytykset. Mittaus ei käytä verkkoa eikä mallia.
+
+Tarkistus käynnistyy, kun ehdotus tallennetaan (lohko tai painike) ja kun Tony muokkaa tekstiä. Mallin tulos tallentuu erilliseen tiedostoon `luovutukset/vartija/<tunnus>.json` (0600), ja se sidotaan tekstin sha256-tiivisteeseen. Muokatun tekstin tarkistus tehdään uudelleen, eikä vanhaa tulosta näytetä eikä käytetä.
+
+**Kolme lopputulosta** (`vartija.paatos`):
+
+| Tulos | Milloin | Hyväksyntä |
+|---|---|---|
+| estä | mekaaninen osuma: SSH-yksityis- tai julkisavain, API-avain, pitkä satunnainen arvo avainsanan jälkeen, henkilötunnus, IBAN-tilinumero, tailnet-nimi tai yksityinen IP-osoite (RFC 1918 -alueet 10/8, 172.16/12 ja 192.168/16, Tailscalen CGNAT-alue 100.64/10 ja IPv6-alue fd7a:115c:a1e0::/48, link-local 169.254/16 sekä IPv6:n fc00::/7, fe80::/10 ja fec0::/10; myös lyhennettynä, kuten `fd7a:115c:a1e0::1`, ja IPv6:n sisään upotettuna) | ei mahdollinen; Tony muokkaa tekstiä, ja muokattu teksti tarkistetaan uudelleen. Estoa ei voi ohittaa. |
+| kysy | muu mekaaninen osuma (sähköposti, puhelinnumero, muu IP-osoite kuten dokumentaatio-, loopback- tai julkinen osoite, nimi- tai avainsanalista), vartijamallin arvio ”suuri”, tai vartijamalli ei tarkistanut tekstiä (ei käytössä, kesken, virhe, kelvoton vastaus tai arvio puuttuu) | vaatii erillisen vahvistuksen, jossa merkityt kohdat näkyvät: `lisavahvistus` = `tarkistin kohdat <sha8>` |
+| turvallinen | ei mekaanisia osumia ja vartijamallin arvio ”ei” tai ”pieni” | kuten ennen: `kyllä <sha8>` |
+
+Vartijamallin arvio ”suuri” muuttuu estoksi vasta, kun synteettinen mittaus (tehtävä 25-45) näyttää väärien hälytysten osuuden ja Tony päättää. Loopback-taustapäällä vartijamallia ei käytetä, joten siellä jokainen luovutus on vähintään ”kysy”.
+
+**Palvelin päättää.** Lopputulos lasketaan uudelleen hyväksyntähetkellä (`luovutus.hyvaksy`, luovutuslukon alla) samasta tekstistä, joka luovutetaan, ja mallin tulos kelpaa vain saman sha:n tekstille. Mekaaninen esto lasketaan hyväksynnässä aina itse, joten kutsujan antama tarkistus ei voi muuttaa estoa kysyksi tai turvalliseksi. Päätös käyttää kaikkia mekaanisia osumia, ei vain näytettäviä 50 ensimmäistä. Estetty tai vahvistamaton hyväksyntä palauttaa 409 ja kentän `vartija` = `{tulos, syyt}`. Syyt ovat tyyppejä (esim. ”API-avain”), eivät tekstin sisältöä. Lokiin ei kirjoiteta mitään, koska mitään ei luovutettu.
+
+Hyväksyntälaatikko näyttää lopputuloksen ja syyt tyyppeinä sekä merkinnät korostettuina (`textContent` ja `<mark>`-elementit). ”Estä”-tuloksella lähetyspainike on pois käytöstä, kunnes tekstiä muokataan. ”Kysy”-tuloksella ensimmäisen vahvistuksen jälkeen avautuu toinen ikkuna, jossa merkityt kohdat näkyvät. Jos vartija ei vastaa, vastaus ei kelpaa tai mallia ei ole, laatikossa lukee "Vartija ei tarkistanut" ja syy, ja tulos on ”kysy”.
+
+`GET /api/luovutus` palauttaa kentän `vartija`: `mekaaniset` (lista), `malli` (`tila`: `tarkistettu`, `kesken` tai `ei-tarkistanut`, `syy`, `merkinnat`, `arvio`, jos malli antoi sen), `nimilista` ja `avainsanoja` (listojen pituudet) sekä `tulos` (`turvallinen`, `kysy` tai `esta`) ja `syyt` (tyypit). `POST /api/luovutus/muokkaa` palauttaa saman kentän muokatusta tekstistä.
+
+## Luovutuspaketti: monta palaa, yksi hyväksyntä
+
+Iso työ voidaan luovuttaa pilkottuna pakettina (`aivo/luovutuspaketti.py`). Yksittäisen luovutuksen sha-sidonta ja `hyvaksy_ehdotus` pysyvät ennallaan.
+
+**Merkintä.** Aivon yksityisen tilan vastauksessa:
+
+```
+[[LUOVUTUSPAKETTI nimi]]
+[[PALA 1]] teksti [[/PALA]]
+[[PALA 2]] teksti [[/PALA]]
+[[/LUOVUTUSPAKETTI]]
+```
+
+Paketissa on 1–20 palaa (numerot 1–99, ei toistoja), yhteensä enintään 40 000 merkkiä. Nimi on 1–80 merkkiä kirjaimia, numeroita, välilyöntejä ja merkkejä `.,:()-`. Palvelin tallentaa paketin yksityiseen kansioon `<luovutukset>/paketit/` (0700, tiedostot 0600) ja palauttaa tunnuksen kentässä `paketit`. Katkennut tai tyhjä paketti ei tallennu. Paketti käsitellään ennen `[[LUOVUTUS]]`-lohkoja, joten paketin sisällä oleva teksti ei synny yksittäiseksi luovutukseksi.
+
+**Sha.** Paketin sha256 lasketaan koko paketista: nimi, jatkettava paketti sekä jokaisen palan numero ja teksti. Lähetys vaatii vahvistuksen `kyllä <sha8>` tästä tiivisteestä.
+
+**Vuotovartija.** Jokainen pala kulkee koukun `vartija_koukku` kautta, ja koukku käyttää yksittäisen luovutuksen mekaanista tarkistusta (`aivo/vartija.py`). Estotyyppi (sama lista kuin yllä) antaa palalle `sallittu=False`, ja merkintä kertoo tyypin. Muuten pala on ”kysy” (`sallittu=None`), koska vartijamalli ei tarkista paketin paloja. Estetty pala estää koko paketin lähetyksen, kunnes Tony poistaa palan. Lähetyshetkellä estotyypit lasketaan uudelleen samoista teksteistä Tonyn listojen kanssa, eikä palan vartija voi ohittaa niitä. Jos yksikin pala on ”kysy”, hyväksyntä vaatii lisävahvistuksen `tarkistin kohdat <sha8>` paketin sha:sta. Mikään lisäpala ei lähde automaattisesti, koska mikään pala ei saa tilaa `sallittu=True` ilman vartijamallia. Koukku ei koskaan palauta arvoa `True`, ja testi varmistaa sen (`aivo/test_luovutuspaketti.py`, KoukkuJaListatTesti). Koukku ja hyväksyntä lukevat Tonyn listat samasta paikasta kuin chat (`--vartija-listat` tai `AIVO_VARTIJA_LISTAT`, oletus `luovutukset/vartija/`).
+
+**Laatikko.** Kaikki palat näkyvät allekkain vartijan merkintöineen. Painikkeet:
+
+- "Poista pala n" poistaa yksittäisen palan. Paketti saa uuden sha:n, joten vanha vahvistus ei enää kelpaa (409). Pyynnössä on mukana Tonyn näkemä sha8, joten vanhentunut näkymä ei voi poistaa väärää palaa. Viimeistä palaa ei voi poistaa; silloin paketti hylätään.
+- "Lähetä paketti" kysyy vahvistuksen ja lähettää `kyllä <sha8>` koko paketista.
+- "Hylkää paketti" siirtää paketin kansioon `paketit/hylatyt/`. Mitään ei poisteta.
+
+**Hyväksytty paketti.** Jokainen pala menee kirjaston kansioon `saapuneet/` omana tiedostonaan. Palan tunnus johdetaan paketin tunnuksesta ja palan numerosta, joten sama pala ei voi lähteä kahdesti. Tekstin ensimmäisellä rivillä ovat paketin tunnus ja palan numero:
+
+```
+<!-- luovutuspaketti tunnus=<paketti> pala=<n> nimi=<nimi> -->
+```
+
+Järjestys on sama kuin yksittäisessä luovutuksessa: lokirivit yksityiseen lokiin, tiedostot kirjastoon ja yksi julkaisu. Jos julkaisu epäonnistuu, kaikki paketin tiedostot poistetaan ja paketti jää odottamaan. Onnistuneen julkaisun jälkeen paketti siirtyy kansioon `paketit/hyvaksytyt/`.
+
+**Paluu.** Asetus `AIVO_TULOS_REPO` (tai `--tulos-repo`) kertoo Aivon yksityisen tulosrepon polun tai kloonin. Palan n tulos on tiedosto `<tulosrepo>/<pakettitunnus>/pala-<n>.md`. Kun tulos ilmestyy, yksityisen tilan keskusteluun tulee merkintä `[Paketin X pala n valmis]` ja painike "Näytä tulos". Kukin tulos ilmoitetaan kerran (kirjanpito `paketit/paluut.json`). Symlinkkejä ei seurata, ja tulos saa olla enintään 50 000 tavua. Vain yksityinen tila lukee tulosrepoa. Palvelu ei käynnisty, jos tulosrepo on kirjaston, työkalutilan datan tai tiivistelmien sisällä tai niiden yläpuolella. Mallin vastauksessa oleva matkittu paluumerkintä neutraloidaan.
+
+**Lisäpalat.** Hyväksyttyä pakettia voi jatkaa lohkolla `[[LISAPALA <pakettitunnus>]] teksti [[/LISAPALA]]`. Numerot jatkuvat paketin suurimmasta numerosta.
+
+- `AIVO_LISAPALAT=kysy` (oletus): lisäpalat tallentuvat uudeksi paketiksi, joka vaatii oman hyväksynnän.
+- `AIVO_LISAPALAT=automaattinen`: lisäpalat lähtevät ilman painallusta vain, jos vuotovartija on hyväksynyt jokaisen palan. Muuten ne jäävät odottamaan hyväksyntää. Automaattisesta lähetyksestä kirjataan yhteenveto Tonylle (`paketit/automaattiset.jsonl` ja keskustelu). Ilman vartijaa mikään ei lähde automaattisesti. Arvon vaihto on Tonyn päätös.
+
+Reitit (kaikki vain yksityinen tila; työkalutilan keskustelulle 404):
+
+| Reitti | Kuvaus |
+|---|---|
+| `GET /api/paketit?keskustelu=ID` | odottavat paketit: tunnus, nimi, sha8, palojen määrä |
+| `GET /api/paketti?keskustelu=ID&tunnus=T` | paketin palat, vartijan merkinnät ja sha8 |
+| `POST /api/paketti/poista-pala` `{keskustelu, tunnus, pala, sha8}` | palan poisto, uusi sha8 |
+| `POST /api/paketti/hyvaksy` `{keskustelu, tunnus, vahvistus, lisavahvistus?}` | vahvistus täsmälleen `kyllä <sha8>`; ”kysy”-palat vaativat `lisavahvistus` = `tarkistin kohdat <sha8>`, estetty pala palauttaa aina 409 |
+| `POST /api/paketti/hylkaa` `{keskustelu, tunnus}` | siirto kansioon `paketit/hylatyt/` |
+| `GET /api/paluut?keskustelu=ID` | uudet tulokset ja merkinnät |
+| `GET /api/paketti/tulos?keskustelu=ID&tunnus=T&pala=N` | hyväksytyn palan tulos tulosreposta |
+
+## Palaute ja korjaukset yksityisessä tilassa
+
+Yksityisen tilan jokaisen Aivon vastauksen alla on painikkeet **Hyvä** ja **Väärin**. Väärin-painike avaa luokkavalinnan ja tekstikentän korjaukselle (enintään 2 000 merkkiä). Luokat ovat kiinteät: oma rakenne ja toiminta, väärä tieto, muistin tai lähteiden käyttö, pyynnön tai ohjeen noudattaminen, kieli ja muoto sekä muu.
+
+**Tallennus.** Palaute tallentuu yksityiseen kansioon `/var/lib/aivo-yksityinen/korjaukset` (0700) tiedostoon `korjaukset.jsonl` (0600). Rivit vain lisätään, mitään ei muuteta eikä poisteta. Vastauksen alku (200 merkkiä) otetaan palvelimen tallentamasta historiasta, ei selaimen lähettämänä. Palvelin ei kirjoita palautteen sisältöä lokiin, ja virheviesteissä on vain syy.
+
+**Kehote.** Seuraavan viestin kehotteessa korjaukset ovat MUISTI-osiossa omana tiedostonaan `tonyn-korjaukset` (data, ei ohjeita). Osioon valitaan enintään 8 korjausta ja 3 000 merkkiä: ensin viestiin osuvimmat (sama sananalkuhaku kuin muistitiedostoissa), sitten uusimmat. Osion koko vähennetään muistin rajasta. Tonyn tekstistä neutraloidaan palvelimen merkintöjen ja lohkomerkintöjen matkinta.
+
+**Toistuva korjaus → ehdotus.** Kun samassa luokassa on vähintään kaksi käsittelemätöntä korjausta eri vastauksiin, palvelin lisää osioon merkinnän `TOISTUVA KORJAUS` ja tiedostonimen `korjaukset-<luokka>.md`. Kehotteen sääntö 11 pyytää Aivoa silloin ehdottamaan sääntöä nykyisellä `[[EHDOTUS]]`-mekanismilla. Ehdotus näkyy tavallisena ydinohje-ehdotuksena, ja Tony hyväksyy (`kyllä <sha8>`) tai hylkää sen painikkeella. Mikään korjaus tai mallin teksti ei hyväksy ehdotusta. Kun ehdotus odottaa, samaa merkintää ei toisteta. Kun Tony hyväksyy tai hylkää tiedoston `korjaukset-<luokka>.md` ehdotuksen, luokan korjaukset merkitään käsitellyiksi. Ne näkyvät kehotteessa edelleen, mutta uusi merkintä tulee vasta kahdesta uudesta korjauksesta.
+
+| Reitti | Tila | Kuvaus |
+|---|---|---|
+| `POST /api/palaute` `{keskustelu, indeksi, arvio: "hyva"}` | yksityinen | hyvä-arvio Aivon vastaukseen |
+| `POST /api/palaute` `{keskustelu, indeksi, arvio: "vaarin", luokka, korjaus}` | yksityinen | korjaus Aivon vastaukseen |
+
+Indeksin pitää osoittaa Aivon vastaukseen. Työkalutilan keskustelulle reitti vastaa 404.
+
+**Käyttöönotto.** Kansio ja tiedosto luodaan käynnistyksessä yksityisen datan viereen (`--korjaukset` tai `AIVO_KORJAUKSET` vaihtaa polun). Käynnistys avaa tiedoston samoin liputuksin kuin tallennus, joten kirjoituseste näkyy heti palvelun käynnistyessä eikä vasta ensimmäisessä painalluksessa. Jos palvelu ei käynnisty ja journalissa on `korjaustiedostoa ei voi avata` tai `yksityista kansiota ei voi luoda`, luo kansio itse: `sudo install -d -m 700 -o aivo-yksityinen -g aivo-yksityinen /var/lib/aivo-yksityinen/korjaukset` ja tarkista, että yksikön `ReadWritePaths` kattaa sen.
 
 ## Asennuksen tilatarkistus (vain luku)
 
@@ -428,6 +566,8 @@ VIKA avain /etc/aivo/chat-salasana: puuttuu
 
 Valinnat `--koodi` (oletus `/opt/agentti-pohja`) ja `--portti` (oletus 8780) vaihtavat polun ja portin.
 
+**Päivitys: aja tarkistus sekä ennen päivitystä että sen jälkeen.** Komento tarkistaa myös tiivistyksen kansiot `chat`, `tiivistelmat` ja `indeksi` kummankin alueen juuressa (`--yksityinen-juuri`, oletus `/var/lib/aivo-yksityinen`, ja `--tyokalu-juuri`, oletus `/var/lib/aivo`). Kansion pitää olla hakemisto, eikä ryhmällä tai muilla saa olla siihen oikeuksia. Puuttuvasta kansiosta tulostetaan korjauskomento `install -d -m 700 -o <omistaja> -g <omistaja> <polku>`. Omistaja luetaan alueen juuresta. Jos juurikin puuttuu, komennossa lukee `<omistaja>`, koska käyttäjänimi on vielä avoin päätös. Tarkistus ei luo eikä muuta mitään, eikä se avaa kansioiden tiedostoja. Jos yksityisen alueen juuri kuuluu eri käyttäjälle kuin komennon ajaja, rivi on `ei oikeutta tarkistaa (PermissionError)`.
+
 ## OpenRouter-kulut chat-sivulla
 
 Yläpalkissa on pieni teksti, esimerkiksi "Tänään 0,42 € / 10 €". Luku on Aivon OpenRouter-kulujen summa kuluvalta vuorokaudelta (Europe/Helsinki), ja 10 € on päiväkatto (A963, A1005). Kun kulusta on käytetty 80 % katosta, teksti muuttuu varoitusväriseksi. Teksti päivittyy, kun sivu avataan ja kun vastaus on tullut. Tekstin painallus avaa keskusteluun erittelyn:
@@ -449,7 +589,7 @@ Sivu näyttää kaiken `textContent`-ominaisuudella, ei HTML:nä.
 ## Testit
 
 ```
-python3 -m unittest aivo.test_chat aivo.test_tiivista aivo.test_kalenteri_kytkenta aivo.test_yksityinen_hyvaksynta aivo.test_luovutus aivo.test_tarkista_asennus aivo.test_kulunakyma
+python3 -m unittest aivo.test_chat aivo.test_tiivista aivo.test_kalenteri_kytkenta aivo.test_yksityinen_hyvaksynta aivo.test_luovutus aivo.test_vartija aivo.test_vartija_paatos aivo.test_tarkista_asennus aivo.test_kulunakyma
 ```
 
 Testit kattavat salasanan tiivisteen ja lukituksen, osoite- ja Host-rajat, CSRF-suojan, muistin lukemisen (ei linkkejä kirjaston ulkopuolelle), lähdeviitteiden tarkistuksen, päätöksen kirjaamisen sanasta sanaan, GitHub-pushin eston ja sen, että Claude-kutsu ei käytä työkaluja eikä välittäjiä.

@@ -3,13 +3,15 @@ import builtins
 import http.client
 import io
 import os
+import pwd
+import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 from unittest import mock
 
-from aivo import tarkista_asennus as t
+from aivo import tarkista_asennus as t, tiivista_tyokalu, tiivista_yksityinen, tiivistelma
 
 SHA = "a" * 40
 
@@ -38,6 +40,7 @@ class AvainFixture(unittest.TestCase):
         kw.setdefault("ajuri", ajuri_ok)
         kw.setdefault("hae", http_ok)
         kw.setdefault("avaimet", (self.avain,))
+        kw.setdefault("alueet", ())
         rc = t.main(argv, tulosta=rivit.append, **kw)
         return rc, rivit
 
@@ -128,7 +131,7 @@ class TestAvain(AvainFixture):
         rivit = []
         with mock.patch.object(t.os, "stat", side_effect=PermissionError("salaisuus")), \
                 mock.patch.object(t, "tarkista_moduulit", return_value=(True, "ok")):
-            rc = t.main([SHA], ajuri=ajuri_ok, hae=http_ok, avaimet=("/etc/aivo/x",),
+            rc = t.main([SHA], ajuri=ajuri_ok, hae=http_ok, avaimet=("/etc/aivo/x",), alueet=(),
                         tulosta=rivit.append)
         self.assertEqual(rc, 1)
         self.assertIn("VIKA avain /etc/aivo/x: ei oikeutta tarkistaa (PermissionError)", rivit)
@@ -183,7 +186,7 @@ class TestModuulit(unittest.TestCase):
         self.puu(**{"aivo.tiivistelma": "def rikki(:\n"})
         rivit = []
         rc = t.main([SHA, "--koodi", self.koodi], ajuri=ajuri_ok, hae=http_ok,
-                    avaimet=(), tulosta=rivit.append)
+                    avaimet=(), alueet=(), tulosta=rivit.append)
         self.assertEqual(rc, 1)
         self.assertTrue(any(r.startswith("VIKA moduulit") and "SyntaxError" in r for r in rivit))
 
@@ -308,6 +311,135 @@ class TestAvainPolut(AvainFixture):
 
     def test_ok_nayttaa_oikeudet(self):
         self.assertEqual(t.tarkista_avain(self.avain), (True, "oikeudet 600"))
+
+
+class TestTiivistysKansiot(unittest.TestCase):
+    """Tilapaishakemisto: molemmat alueet, kansiot TIIVISTYS_ALIKANSIOT-vakiosta. Mitaan ei luoda eika muuteta."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.yks = os.path.join(self.tmp.name, "aivo-yksityinen")
+        self.tyo = os.path.join(self.tmp.name, "aivo")
+        for juuri in (self.yks, self.tyo):
+            os.mkdir(juuri, 0o700)
+            for k in tiivistelma.TIIVISTYS_ALIKANSIOT:
+                os.mkdir(os.path.join(juuri, k), 0o700)
+        self.omistaja = pwd.getpwuid(os.geteuid()).pw_name
+        self.alueet = t.oletusalueet(self.yks, self.tyo)
+
+    def aja(self, alueet=None):
+        rivit = []
+        with mock.patch.object(t, "tarkista_moduulit", return_value=(True, "3 moduulia")):
+            rc = t.main([SHA], ajuri=ajuri_ok, hae=http_ok, avaimet=(), tulosta=rivit.append,
+                        alueet=self.alueet if alueet is None else alueet)
+        return rc, [r for r in rivit if " kansio " in r]
+
+    def test_nimet_tulevat_tiivistysmoduulien_yhteisesta_vakiosta(self):
+        self.assertIs(tiivista_tyokalu.KAYTETYT_ALIKANSIOT, tiivistelma.TIIVISTYS_ALIKANSIOT)
+        self.assertIs(tiivista_yksityinen.KAYTETYT_ALIKANSIOT, tiivistelma.TIIVISTYS_ALIKANSIOT)
+        self.assertEqual([a.nimi for a in self.alueet], ["yksityinen", "tyokalu"])
+
+    def test_kaikki_kunnossa(self):
+        rc, rivit = self.aja()
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(rivit), 2 * len(tiivistelma.TIIVISTYS_ALIKANSIOT))
+        self.assertTrue(all(r.startswith("OK   kansio ") and "oikeudet 700" in r for r in rivit), rivit)
+        self.assertIn("OK   kansio yksityinen/chat: hakemisto, oikeudet 700 (%s/chat)" % self.yks, rivit)
+
+    def test_kansio_puuttuu_antaa_vihjeen_eika_luo_mitaan(self):
+        polku = os.path.join(self.tyo, "indeksi")
+        os.rmdir(polku)
+        rc, rivit = self.aja()
+        self.assertEqual(rc, 1)
+        odotettu = "VIKA kansio tyokalu/indeksi: puuttuu; korjaus: install -d -m 700 -o %s -g %s %s" % (
+            self.omistaja, self.omistaja, polku)
+        self.assertIn(odotettu, rivit)
+        self.assertEqual(sum(r.startswith("VIKA") for r in rivit), 1)
+        self.assertFalse(os.path.exists(polku))
+
+    def test_tiedosto_kansion_paikalla(self):
+        polku = os.path.join(self.yks, "tiivistelmat")
+        os.rmdir(polku)
+        with open(polku, "w") as f:
+            f.write("x")
+        ok, syy = t.tarkista_kansio(self.alueet[0], "tiivistelmat")
+        self.assertFalse(ok)
+        self.assertIn("ei ole hakemisto", syy)
+
+    def test_linkki_kansion_paikalla(self):
+        polku = os.path.join(self.yks, "chat")
+        os.rmdir(polku)
+        os.symlink(self.tmp.name, polku)
+        ok, syy = t.tarkista_kansio(self.alueet[0], "chat")
+        self.assertFalse(ok)
+        self.assertIn("linkki", syy)
+
+    def test_liian_avoimet_oikeudet_eivat_muutu(self):
+        polku = os.path.join(self.tyo, "chat")
+        for tila in (0o750, 0o701, 0o710, 0o777):
+            os.chmod(polku, tila)
+            ok, syy = t.tarkista_kansio(self.alueet[1], "chat")
+            self.assertFalse(ok, oct(tila))
+            self.assertIn("oikeudet %o" % tila, syy)
+            self.assertIn("chmod 700 %s" % polku, syy)
+            self.assertEqual(stat.S_IMODE(os.lstat(polku).st_mode), tila)
+
+    def test_tiukempi_kuin_700_kelpaa(self):
+        os.chmod(os.path.join(self.tyo, "chat"), 0o500)
+        self.addCleanup(os.chmod, os.path.join(self.tyo, "chat"), 0o700)
+        self.assertTrue(t.tarkista_kansio(self.alueet[1], "chat")[0])
+
+    def test_juuri_puuttuu(self):
+        juuri = os.path.join(self.tmp.name, "ei-ole")
+        alueet = t.oletusalueet(juuri, self.tyo)
+        rc, rivit = self.aja(alueet)
+        self.assertEqual(rc, 1)
+        yks = [r for r in rivit if "yksityinen/" in r]
+        self.assertEqual(len(yks), len(tiivistelma.TIIVISTYS_ALIKANSIOT))
+        for r in yks:
+            self.assertTrue(r.startswith("VIKA"), r)
+            self.assertIn("alueen juuri %s puuttuu" % juuri, r)
+            self.assertIn("install -d -m 700 -o <omistaja> -g <omistaja> %s/" % juuri, r)
+            self.assertIn("avoin paatos", r)
+        self.assertFalse(os.path.exists(juuri))
+
+    def test_tuntematon_uid_numerona(self):
+        os.rmdir(os.path.join(self.yks, "chat"))
+        with mock.patch.object(t.pwd, "getpwuid", side_effect=KeyError("x")):
+            ok, syy = t.tarkista_kansio(self.alueet[0], "chat")
+        self.assertFalse(ok)
+        self.assertIn("-o %d -g %d " % (os.geteuid(), os.geteuid()), syy)
+
+    def test_ei_oikeutta_ei_kaada(self):
+        with mock.patch.object(t.os, "lstat", side_effect=PermissionError("salaisuus")):
+            ok, syy = t.tarkista_kansio(self.alueet[0], "chat")
+        self.assertFalse(ok)
+        self.assertIn("PermissionError", syy)
+        self.assertNotIn("salaisuus", syy)
+
+    def test_kansioiden_sisaltoa_ei_lueta(self):
+        with open(os.path.join(self.yks, "chat", "k.jsonl"), "w") as f:
+            f.write("KANARIA-EI-SAA-NAKYA")
+        kielto = AssertionError("sisaltoa ei saa lukea")
+        with mock.patch.object(builtins, "open", side_effect=kielto), \
+                mock.patch.object(os, "open", side_effect=kielto), \
+                mock.patch.object(os, "listdir", side_effect=kielto), \
+                mock.patch.object(os, "scandir", side_effect=kielto):
+            tulokset = [t.tarkista_kansio(a, k) for a in self.alueet for k in tiivistelma.TIIVISTYS_ALIKANSIOT]
+        self.assertTrue(all(ok for ok, _ in tulokset), tulokset)
+        self.assertNotIn("KANARIA", repr(tulokset))
+
+    def test_komentorivin_juuret(self):
+        os.rmdir(os.path.join(self.yks, "indeksi"))
+        rivit = []
+        with mock.patch.object(t, "tarkista_moduulit", return_value=(True, "3 moduulia")):
+            rc = t.main([SHA, "--yksityinen-juuri", self.yks, "--tyokalu-juuri", self.tyo], ajuri=ajuri_ok,
+                        hae=http_ok, avaimet=(), tulosta=rivit.append)
+        self.assertEqual(rc, 1)
+        viat = [r for r in rivit if r.startswith("VIKA")]
+        self.assertEqual(len(viat), 1)
+        self.assertTrue(viat[0].startswith("VIKA kansio yksityinen/indeksi: puuttuu; korjaus: install -d"), viat)
 
 
 class TestOhje(unittest.TestCase):

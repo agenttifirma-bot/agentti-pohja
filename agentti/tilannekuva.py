@@ -32,7 +32,7 @@ SALAISUUDET = [
     re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
     re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{30,}\b"),
     re.compile(r"(?i)(api[_-]?key|token|secret|password|bearer)\s*[:=]\s*\S{8,}"),
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"),
 ]
 
 

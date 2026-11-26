@@ -1,0 +1,1 @@
+- aivo: vuotovartija luovutuksille (mekaaninen esitarkistus ja vartijamalli ZDR-rungolla, merkinnät hyväksyntälaatikossa, "Vartija ei tarkistanut" näkyvästi; teksti ja sha-sidonta ennallaan)

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 ALKU = "[[TYOKALU"
 LOPPU = "]]"
 NIMET = ("lue", "kirjoita", "listaa", "valmis")
+VERKKONIMET = ("hae", "sivu")     # vain, kun tehtavalla on hakuistunto (aivo.verkkohaku hakuvalittajan kautta)
 RAJA_VASTAUS = 400_000    # merkkia; sita pidemman vastauksen lohkoa ei jasenneta
 
 
