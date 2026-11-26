@@ -5,7 +5,10 @@ raja pois -mutaatio ei jaa ikuiseen silmukkaan vaan kaataa testin.
 """
 import json
 import os
+import fcntl
 import tempfile
+import threading
+import time
 import unittest
 
 from aivo.agentti import polut, silmukka
@@ -162,8 +165,11 @@ class SilmukkaTesti(unittest.TestCase):
         os.mkdir(os.path.join(self.juuri, "ala"))
         for i in range(polut.RAJA_TIEDOSTOT + 5):
             nimi = ".kirj-%d.tmp" % (1000 + i)
-            with open(os.path.join(self.juuri, nimi if i % 2 else "ala/" + nimi), "w") as f:
+            polku = os.path.join(self.juuri, nimi if i % 2 else "ala/" + nimi)
+            with open(polku, "w") as f:
                 f.write("x")
+            vanha = time.time() - polut.VALIAIKAINEN_ARMO_S - 60    # kaatuneen ajon jaannos (ei lukkoa)
+            os.utime(polku, (vanha, vanha))
         # ilman siivousta kansio on "taynna"
         self.assertGreater(polut.mittaa_kansio(self.juuri)[0], polut.RAJA_TIEDOSTOT)
         t, _ = self.aja([lohko("kirjoita", polku="uusi.md", sisalto="a"), lohko("valmis", raportti="ok")])
@@ -188,6 +194,79 @@ class SilmukkaTesti(unittest.TestCase):
             self.assertEqual(polut.siivoa_valiaikaiset(self.juuri), 0)
             self.assertTrue(os.path.exists(kohde))
 
+    def _valiaik(self, nimi, ika_s=0):
+        polku = os.path.join(self.juuri, nimi)
+        with open(polku, "w") as f:
+            f.write("x")
+        if ika_s:
+            t = time.time() - ika_s
+            os.utime(polku, (t, t))
+        return polku
+
+    def test_siivous_jattaa_lukitun_ja_tuoreen_tiedoston(self):
+        armo_yli = polut.VALIAIKAINEN_ARMO_S + 60
+        lukittu = self._valiaik(".kirj-1-2-%s.tmp" % ("ab" * 8), ika_s=armo_yli)
+        tuore = self._valiaik(".kirj-3-4-%s.tmp" % ("cd" * 8))
+        tuore_vanha_muoto = self._valiaik(".kirj-5.tmp")
+        with open(lukittu, "rb") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)    # rinnakkainen kirjoitus kesken
+            self.assertEqual(polut.siivoa_valiaikaiset(self.juuri), 0)
+        for polku in (lukittu, tuore, tuore_vanha_muoto):
+            self.assertTrue(os.path.exists(polku), polku)
+        self.assertEqual(polut.siivoa_valiaikaiset(self.juuri), 1)   # lukko vapautui
+        self.assertFalse(os.path.exists(lukittu))
+
+    def test_siivous_poistaa_lukitsemattomat_jaannokset(self):
+        armo_yli = polut.VALIAIKAINEN_ARMO_S + 60
+        uusi = self._valiaik(".kirj-1-2-%s.tmp" % ("ab" * 8), ika_s=armo_yli)
+        vanha_muoto = self._valiaik(".kirj-7.tmp", ika_s=armo_yli)
+        tulevaisuus = self._valiaik(".kirj-3-4-%s.tmp" % ("ef" * 8), ika_s=-armo_yli)
+        self.assertEqual(polut.siivoa_valiaikaiset(self.juuri), 3)
+        for polku in (uusi, vanha_muoto, tulevaisuus):
+            self.assertFalse(os.path.exists(polku), polku)
+
+    def test_siivous_ei_poista_lukittua_vanhaakaan(self):
+        vanha = self._valiaik(".kirj-1-2-%s.tmp" % ("ab" * 8), ika_s=polut.VALIAIKAINEN_IKA_S + 60)
+        with open(vanha, "rb") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertEqual(polut.siivoa_valiaikaiset(self.juuri), 0)
+        self.assertTrue(os.path.exists(vanha))
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root ohittaa tiedosto-oikeudet")
+    def test_siivous_kun_lukkoa_ei_voi_tarkistaa(self):
+        armo_yli = polut.VALIAIKAINEN_ARMO_S + 60
+        tuore = self._valiaik(".kirj-1-2-%s.tmp" % ("ab" * 8), ika_s=armo_yli)
+        vanha = self._valiaik(".kirj-3-4-%s.tmp" % ("cd" * 8), ika_s=polut.VALIAIKAINEN_IKA_S + 60)
+        for polku in (tuore, vanha):
+            os.chmod(polku, 0)                      # avaus epaonnistuu (PermissionError)
+        self.assertEqual(polut.siivoa_valiaikaiset(self.juuri), 1)   # ei kaadu
+        self.assertTrue(os.path.exists(tuore))
+        self.assertFalse(os.path.exists(vanha))
+
+    def test_siivous_rinnakkain_kirjoitusten_kanssa(self):
+        from aivo.agentti import tyokalut
+        tulokset = []
+        seis = threading.Event()
+
+        def siivoa():
+            while not seis.is_set():
+                polut.siivoa_valiaikaiset(self.juuri)
+
+        def kirjoita(i):
+            for j in range(20):
+                tulokset.append(tyokalut.suorita(self.juuri, "kirjoita", {"polku": "k%d/t%02d.md" % (i % 2, j), "sisalto": "x"}))
+
+        siivooja = threading.Thread(target=siivoa)
+        siivooja.start()
+        kirjoittajat = [threading.Thread(target=kirjoita, args=(i,)) for i in range(4)]
+        for t in kirjoittajat:
+            t.start()
+        for t in kirjoittajat:
+            t.join()
+        seis.set()
+        siivooja.join()
+        self.assertEqual(len(tulokset), 80)
+        self.assertEqual([t.teksti for t in tulokset if not t.ok], [])
 
 if __name__ == "__main__":
     unittest.main()

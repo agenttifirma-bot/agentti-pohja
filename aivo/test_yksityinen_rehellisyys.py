@@ -14,7 +14,7 @@ from aivo import openrouter_kulut as ok, yksityinen, yksityinen_or as yo
 MALLI = "meta-llama/llama-3.3-70b-instruct"
 AVAIN = "sk-testi-" + "x" * 30          # keksitty, ei oikea avain
 NYT = datetime(2026, 11, 19, 12, 0, tzinfo=ok.TZ)
-EI_TYOKALUJA = "T\u00e4ss\u00e4 tilassa sinulla ei ole ty\u00f6kaluja, verkkoa eik\u00e4 taustaprosesseja."
+EI_TYOKALUJA = "Sinulla ei ole verkkoa etk\u00e4 voi ajaa ohjelmia itse. Voit ehdottaa agenttiteht\u00e4v\u00e4\u00e4 s\u00e4\u00e4nn\u00f6n 8 mukaisesti."
 EI_LUPAUKSIA = "\u00c4l\u00e4 koskaan sano aloittavasi, suorittavasi tai jatkavasi teht\u00e4v\u00e4\u00e4 my\u00f6hemmin, \u00e4l\u00e4k\u00e4 arvioi kestoa."
 
 
@@ -98,11 +98,12 @@ class Saanto2Testi(Taustapaat):
 
 
 class HistoriarajaTesti(Taustapaat):
-    def test_openrouter_vie_40_viestia(self):
-        v = self.openrouter(historia(60))
-        self.assertEqual(len(v), 1 + 40)
+    def test_openrouter_vie_historiarajan_verran_viesteja(self):
+        n = yo.HISTORIA_YLARAJA + 20
+        v = self.openrouter(historia(n))
+        self.assertEqual(len(v), 1 + yo.HISTORIA_YLARAJA)
         self.assertEqual(v[1]["content"], "viesti 20")
-        self.assertEqual(v[-1]["content"], "viesti 59")
+        self.assertEqual(v[-1]["content"], "viesti %d" % (n - 1))
 
     def test_paikallinen_vie_12_viestia(self):
         v = self.paikallinen(historia(60))
@@ -111,7 +112,7 @@ class HistoriarajaTesti(Taustapaat):
 
     def test_vakiot(self):
         self.assertEqual(yksityinen.HISTORIA_YLARAJA, 12)
-        self.assertEqual(yo.HISTORIA_YLARAJA, 40)
+        self.assertEqual(yo.HISTORIA_YLARAJA, 200)      # A1106; varsinainen raja on mallin konteksti
 
     def test_ensimmainen_viesti_mukana_openrouterissa_20_vaihdon_jalkeen(self):
         """Tehtava annettiin keskustelun alussa: se on yha mallin nakyvissa 20 vaihdon (40 viestin) jalkeen."""

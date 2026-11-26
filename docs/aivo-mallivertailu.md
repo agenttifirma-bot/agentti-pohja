@@ -35,7 +35,10 @@ Tehtävät ovat tavallisia ja sallittuja pyyntöjä: päätösapu, suunnitelma, 
 ## Turvarajat
 
 - Jokainen kutsu kulkee `openrouter_kulut.kutsu`n kautta: yhteinen päiväkatto, ZDR ja `data_collection=deny` pakotettuina sekä kulukirjaus. Kuljetin on tuotannon `yksityinen_or.tee_kuljetin`.
+- Kuljettimen aikaraja on `VERTAILU_AIKARAJA_S` = `yksityinen_or.CHAT_AIKARAJA_S` (360 s), sama kuin tuotannon chatissa samalla 8 000 tokenin vastausrajalla. Hidas ajatteleva malli tarvitsee 8 000 tokeniin noin 320 s, joten kuljettimen oletus 120 s katkaisi sen, vaikka OpenRouter laskutti kutsun silti. Raja on yläraja: nopea malli ei odota sitä.
+- Aikakatkaisu (`yksityinen_or.Aikakatkaisu` tai `TimeoutError`) on oma luokkansa ”aikaraja”. Rivillä on `virhe` (tyypin nimi) ja `aikaraja: true`, lokirivi on muotoa `aikaraja (360 s)`, ja yhteenvedossa on kenttä `aikaraja`. Pisteytyksessä aikakatkaisu ei ole nolla: se jää pois keskiarvoista, ja taulukossa on sarake ”Aikaraja” (aikakatkaisut / kutsut). Muu virhe on edelleen 0 pistettä. Pysähtymissäännöt eivät muutu: aikakatkaisu on virhe, joten kaksi peräkkäistä ohittaa mallin.
 - Vain `EHDOKKAAT`-listan mallit kelpaavat. `AVOIMET_MALLIT`-listan mallit ajetaan lipulla `yksityinen_chat=True` kuten tuotannossa. Listan ulkopuoliset avoimen painoston mallit ajetaan ilman lippua, koska data on synteettistä. ZDR ja `deny` ovat silti pakotettuja.
+- Ajatteleville malleille (`AJATTELEVAT_MALLIT`) vastausraja on tuotannon 8 000 tokenia, koska päättely kuluttaa samaa rajaa (ks. docs/aivo-itsetuntemus.md, ”Ajattelevat mallit”). Tyhjä vastaus on oma luokkansa ”ei vastausta”: se ei saa nollaa, se jää pois keskiarvoista ja tuomaripaketista, ja taulukossa on sarake ”Ei vastausta” (tyhjät / kutsut).
 - Kuluraja on 3 $ koko ajolle (OpenRouterin ilmoittama `usage.cost`). Malli ohitetaan kahden peräkkäisen virheen jälkeen, ja koko ajo pysähtyy kuuden virheen jälkeen. Syy: kirjanpito kirjaa epäonnistuneen kutsun varovaisena 0,50 $:n kuluna.
 
 ## Ajo kontissa 122
@@ -69,7 +72,18 @@ runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -B -m aivo.malliver
 
 Kenttä `pysahtyi` on `null`, kun ajo meni loppuun. Muut arvot ovat `kuluraja`, `paivakatto` (yhteinen päiväkatto täyttyi) ja `virheita`. Kansioon syntyvät tiedostot `vastaukset.jsonl` (yksi rivi per kutsu) ja `ajo.json` (yhteenveto). Komento `paketti` tulostaa rivin `naytteita N`.
 
-**Kesto.** Ajo tekee enintään 9 × 28 × 2 = 504 kutsua peräkkäin. Kutsun aikaraja on 120 sekuntia. Arvio on noin 1,5–3 tuntia, jos vastaus kestää keskimäärin 10–20 sekuntia. Tätä ei ole mitattu, koska työkalua ei ole vielä ajettu oikeaa rajapintaa vastaan. Pahimmassa tapauksessa (jokainen kutsu aikarajaan) ajo kestäisi kauemmin, mutta virheraja pysäyttää sen kuuden virheen jälkeen. Aja komento esimerkiksi `tmux`- tai `screen`-istunnossa, jotta yhteyden katkeaminen ei keskeytä sitä.
+**Kesto.** Ajo tekee enintään 9 × 28 × 2 = 504 kutsua peräkkäin. Kutsun aikaraja on 360 sekuntia (`VERTAILU_AIKARAJA_S`). Arvio on noin 1,5–3 tuntia, jos vastaus kestää keskimäärin 10–20 sekuntia. Tätä ei ole mitattu, koska työkalua ei ole vielä ajettu oikeaa rajapintaa vastaan. Pahimmassa tapauksessa (jokainen kutsu aikarajaan) ajo kestäisi kauemmin, mutta virheraja pysäyttää sen kuuden virheen jälkeen (enintään noin 36 minuuttia aikakatkaisuja). Aja pitkä ajo taustapalveluna (alla), jotta yhteyden katkeaminen ei keskeytä sitä.
+
+**Pitkä ajo taustapalveluna** (root-käyttäjänä kontissa 122). `systemd-run` ilman valitsimia `--wait` ja `--pipe` käynnistää ajon kertaluonteisena palveluna ja palaa heti. `--pipe` ei toimi `pct enter` -istunnossa (paluukoodi 208/STDIN). `PYTHONUNBUFFERED=1` kirjoittaa jokaisen lokirivin lokiin heti eikä vasta puskurin täyttyessä. `PYTHONDONTWRITEBYTECODE=1` vastaa valitsinta `-B`.
+
+```
+systemd-run --unit=aivo-mallivertailu-ajo -p User=aivo -p Group=aivo -p WorkingDirectory=/opt/agentti-pohja \
+  -p "Environment=PYTHONPATH=/opt/agentti-pohja PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1" \
+  /usr/bin/python3 -m aivo.mallivertailu aja --ulos /var/lib/aivo-yksityinen/mallivertailu
+journalctl -u aivo-mallivertailu-ajo -f
+```
+
+Ajo on valmis, kun lokissa on yhteenvedon JSON-rivi ja systemd:n rivi `Deactivated successfully` (paluuarvo 0) tai `Failed with result 'exit-code'` (paluuarvo 1). Epäonnistunut yksikkö jää listaan: ennen uutta ajoa samalla nimellä aja `systemctl reset-failed aivo-mallivertailu-ajo`.
 
 **Kulut.** Arvioitu yläraja on noin 2,3 $ (ZDR-endpointtien kalleimmilla hinnoilla ja 700 tokenin vastauksilla). Arvio on aiempi 360 kutsun yläraja 1,6 $ skaalattuna 504 kutsuun. Uusien tehtävien kehotteet ovat keskimäärin samaa kokoa kuin vanhojen (noin 4 100 merkkiä, vanhoilla noin 4 000). Kova raja on 3 $, eikä sitä ole nostettu. Ajo pysähtyy ennen rajaa, joten ylitys jättäisi viimeisen mallin kesken eikä maksaisi enempää. Kutsut kirjataan samaan kulukirjanpitoon ja samaan päiväkattoon kuin tuotannon chat. Jos päiväkatto täyttyy, ajo pysähtyy, ja myös chat on silloin katossa saman päivän loppuun.
 
@@ -81,4 +95,4 @@ Tuomari (Opus) saa vain tiedoston `tuomari_syote.jsonl` ja palauttaa tiedoston `
 runuser -u aivo -- env PYTHONPATH=/opt/agentti-pohja python3 -B -m aivo.mallivertailu taulukko --ulos /var/lib/aivo-yksityinen/mallivertailu --tuomari /var/lib/aivo-yksityinen/mallivertailu/tuomari_pisteet.json
 ```
 
-Tuloste sisältää taulukon (kokonaispisteet, osa-alueet mukaan lukien Pilkkominen ja Ohjeiden kunnioitus, $ / 100 viestiä, vastausajan mediaani) ja kolmen parhaan mallin vastaukset kolmeen samaan tehtävään kirjaimin A–C. Kirjainten avain on tiedostossa `sokko_avain.json`.
+Tuloste sisältää taulukon (kokonaispisteet, osa-alueet mukaan lukien Pilkkominen ja Ohjeiden kunnioitus, Ei vastausta, Aikaraja, $ / 100 viestiä, vastausajan mediaani) ja kolmen parhaan mallin vastaukset kolmeen samaan tehtävään kirjaimin A–C. Kirjainten avain on tiedostossa `sokko_avain.json`.

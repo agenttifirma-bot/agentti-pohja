@@ -1,0 +1,2 @@
+- aivo: yksityisen tilan OpenRouter-taustapään muisti- ja historiaraja seuraa mallin kontekstia (aivo/kontekstiraja.py, A1106); vastausvaraus 8 000 tokenia ja 10 % marginaali, kehotteen koko ja arvioitu hinta journaliin ja kulunäkymään, paikallisen taustapään rajat ennallaan (RAJATTU)
+- aivo: kokooman #448 yhdistäminen kontekstirajaan: Tonyn korjaukset kuuluvat mallikohtaiseen muistirajaan, ja itsetarkistuksen kehote rajataan samalla mallikohtaisella historiarajalla kuin vastaus (pienempi tarkastajamalli rajaa)

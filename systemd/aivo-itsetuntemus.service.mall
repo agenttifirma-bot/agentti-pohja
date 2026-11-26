@@ -1,0 +1,45 @@
+# Aivon itsetuntemuksen testisarja viikoittain (kontti 122). Kopioi: /etc/systemd/system/aivo-itsetuntemus.service.
+# Ohje: docs/aivo-itsetuntemus.md, osio "Viikoittainen ajo". Ajastin: aivo-itsetuntemus.timer.
+# Mallit: samat arvot kuin aivo-chat.servicessa (paamalli = AIVO_OPENROUTER_MALLIT:n ensimmainen, tarkastaja =
+# AIVO_YKSITYINEN_ROOLIT:n rooli tarkastaja; ilman roolia paamalli). Tarkista ohjeen askeleella 1 ennen asennusta.
+[Unit]
+Description=Aivo: itsetuntemuksen testisarja viikoittain (tuotannon mallit, enintaan 1 USD)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=aivo
+Group=aivo
+UMask=0077
+WorkingDirectory=/opt/agentti-pohja
+Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/opt/agentti-pohja
+Environment=AIVO_OPENROUTER_MALLIT=qwen/qwen3-235b-a22b-2507
+# Jos aivo-chat kayttaa tarkastajaa, poista risuaita ja kopioi sama arvo:
+#Environment=AIVO_YKSITYINEN_ROOLIT=tarkastaja:qwen/qwen3-235b-a22b-2507
+# Kuluraja 1 USD toteutunutta kulua per ajo (koodin yla-raja, suurempi arvo hylataan). Yhteinen paivakatto 10 EUR/vrk
+# tarkistetaan jokaisessa kutsussa (openrouter_kulut.kutsu), ja kulut kirjataan tehtavalla aivo-itsetuntemus.
+ExecStart=/usr/bin/python3 -B -m aivo.mallivertailu itse-viikko --ulos /var/lib/aivo-itsetuntemus/vastaukset --tiivistelma /var/lib/aivo-itsetuntemus/tiivistelma --raja 1.0
+# Aikaraja: pahin tapaus on 2 kutsua (paamalli + tarkastaja) x 33 kysymysta x 360 s (kuljettimen aikaraja,
+# mallivertailu.VERTAILU_AIKARAJA_S) = 23 760 s = 396 min, kun molemmat mallit ovat ajattelevia. 420 min jattaa
+# varaa tiivistelmalle. Kuluraja (--raja 1.0) ja paivakatto katkaisevat ajon ennen tata, jos kulu tayttyy.
+TimeoutStartSec=420min
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+# Kirjoitus: oma kansio ja kulukirjanpito samassa kansiossa kuin aivo-chat.servicella (ei tmpfs-liitoksia, ks.
+# virheloki 25.11.2026: sticky-tmpfs esti kirjanpidon avauksen). Avain luetaan /var/lib/aivo-yksityinen:sta (vain luku).
+ReadWritePaths=/var/lib/aivo-itsetuntemus /var/lib/claude-jono
+# Muisti ja keskustelut eivat ole tarpeen: Aivon kirjasto, tyokalutila ja agentit eivat nay.
+InaccessiblePaths=-/var/lib/aivo -/var/lib/aivo-tyokalu -/var/lib/aivo-agentit
+MemoryMax=512M
+CPUQuota=50%
