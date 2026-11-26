@@ -113,6 +113,17 @@ def on_todennettu(teksti):
     return any(not TODENNETTU_TYHJA_RE.match(m.group(1)) for m in TODENNETTU_RE.finditer(teksti or ""))
 
 
+# Raportti, joka itse ilmoittaa rivin alussa "Tila: KESKEN" (myos lihavoituna), ei ole VALMIS vaikka todennusrivi olisi.
+# Lainaukset (>), sisennetyt rivit ja koodilohkot eivat laukaise.
+KESKEN_ILMOITUS_RE = re.compile(r"^[ ]{0,3}(?:(?:\*\*|__)[ \t]*)?Tila[ \t]*:[ \t]*(?:\*\*|__)?[ \t]*KESKEN\b", re.IGNORECASE | re.MULTILINE)
+KOODILOHKO_RE = re.compile(r"^[ ]{0,3}((?P<merkki>[`~])(?P=merkki){2,}).*?(?:^[ ]{0,3}\1(?P=merkki)*[ \t]*$|\Z)", re.MULTILINE | re.DOTALL)
+
+
+def ilmoittaa_kesken(teksti):
+    """True, jos raportti ilmoittaa itse rivin alussa 'Tila: KESKEN' (koodilohkojen ja lainausten ulkopuolella)."""
+    return bool(KESKEN_ILMOITUS_RE.search(KOODILOHKO_RE.sub("", teksti or "")))
+
+
 class JonoVirhe(RuntimeError):
     pass
 
@@ -520,7 +531,7 @@ def julkaise_opit(repo, teksti):
 
 def claude_komento(kehote, env, malli=None):
     """malli = opus | sonnet (claudejono.malli); None = Clauden oma oletus (vanha toiminta)."""
-    kom = [env.get("CLAUDEJONO_CLAUDE", "claude"), "-p", kehote, "--output-format", "json",
+    kom = [env.get("CLAUDEJONO_CLAUDE", "claude"), "-p", kehote, "--output-format", "stream-json", "--verbose",
            "--max-turns", str(max_kierrokset(env, malli))]
     if malli:
         if malli not in mallit.CLAUDE_MALLIT:
@@ -572,14 +583,83 @@ def luo_kaistan_tyohak(tyohak, kaista, env):
     return h
 
 
-def tulkitse(stdout, koodi):
-    """(ok, teksti) claude -p --output-format json -tulosteesta. Lukukelvoton tuloste = epaonnistui."""
+RAPORTTI_OTSIKKO = "## Tonylle opittavaa"
+
+
+def _on_json_olio(teksti):
     try:
-        d = json.loads(stdout)
-    except (ValueError, TypeError):
+        return isinstance(json.loads(teksti), dict)
+    except ValueError:
+        return False
+
+
+def _raportti_kelpaa(teksti, viimeinen=True):
+    """Loppuraportti: sisaltaa lopetusotsikon, tai on JSON-olio (itsesuunnittelun vastaus).
+    JSON-olio kelpaa vain, jos se on paaagentin viimeinen tekstiviesti (viimeinen=True): istunnon jatkuessa se oli valivaihe."""
+    if RAPORTTI_OTSIKKO in teksti:
+        return True
+    return viimeinen and _on_json_olio(teksti)
+
+
+def _paaagentin_viestit(stdout):
+    """Paaagentin (parent_tool_use_id puuttuu tai null) assistant-viestit stream-json-tulosteesta jarjestyksessa:
+    lista (teksti, onko_tyokutsu). Claude Code voi lahettaa yhden viestin lohkot (text, tool_use) erillisina
+    tapahtumina samalla message.id:lla, joten ne ryhmitellaan id:n mukaan (sama tapa kuin _etsi_raportti)."""
+    viestit = {}   # avain -> (tekstiosat, onko tyokutsu); dict sailyttaa ensiesiintymisjarjestyksen
+    for n, rivi in enumerate(str(stdout).splitlines()):
+        try:
+            o = json.loads(rivi)
+        except ValueError:
+            continue
+        if not isinstance(o, dict) or o.get("type") != "assistant":
+            continue
+        if o.get("parent_tool_use_id") is not None:
+            continue   # alitehtavan (aliagentin) viesti, ei paaagentin loppuraportti
+        viesti = o.get("message")
+        sisalto = viesti.get("content") if isinstance(viesti, dict) else None
+        if not isinstance(sisalto, list):
+            continue
+        osat = [b.get("text") for b in sisalto if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)]
+        tyokutsu = any(isinstance(b, dict) and b.get("type") == "tool_use" for b in sisalto)
+        mid = viesti.get("id")
+        avain = ("id", mid) if isinstance(mid, str) and mid else ("rivi", n)   # ilman id:ta rivi on oma viestinsa
+        vanhat_o, vanha_t = viestit.get(avain, ([], False))
+        viestit[avain] = (vanhat_o + osat, vanha_t or tyokutsu)
+    return [("\n".join(osat).strip(), tyokutsu) for osat, tyokutsu in viestit.values()]
+
+
+def _viimeinen_raportti(stdout):
+    """Viimeinen paaagentin assistant-tekstiviesti stream-json-tulosteesta, joka on loppuraportti; muuten None.
+    Tausta: taustatehtavan ilmoitus raportin jalkeen tuottaa lyhyen jalkiviestin, joka korvasi raportin result-kentassa.
+    Jos agentti kutsui raportin jalkeen tyokalua (jatkoi tyota), raportti on vanhentunut ja palautetaan None, jolloin
+    teksti tulee result-kentasta (sama saanto kuin _etsi_raportti). Raportin omassa viestissa saa olla tyokutsu."""
+    viestit = _paaagentin_viestit(stdout)
+    tekstilliset = [i for i, (teksti, _) in enumerate(viestit) if teksti]
+    viimeinen_i = tekstilliset[-1] if tekstilliset else -1
+    loyto = None
+    vanhentunut = False
+    for i, (teksti, tyokutsu) in enumerate(viestit):
+        if teksti and _raportti_kelpaa(teksti, viimeinen=(i == viimeinen_i)):
+            loyto, vanhentunut = teksti, False
+        elif tyokutsu:
+            vanhentunut = True
+    return None if vanhentunut else loyto
+
+
+def tulkitse(stdout, koodi):
+    """(ok, teksti) claude -p -tulosteesta (stream-json tai vanha yksittainen json). Lukukelvoton tuloste = epaonnistui.
+
+    ok ja virhetila tulevat loppuoliosta (type=result) kuten ennen. Teksti on viimeinen loppuraportti-viesti, jos sellainen
+    on; muuten result-kentta."""
+    d = kulutus.tulosolio(stdout)
+    if d is None:
         return False, f"lukukelvoton tuloste (koodi {koodi})"
     teksti = d.get("result") if isinstance(d.get("result"), str) else ""
     ok = koodi == 0 and d.get("is_error") is not True and d.get("subtype", "success") == "success"
+    if ok:
+        raportti = _viimeinen_raportti(stdout)
+        if raportti:
+            teksti = raportti
     if not ok and not teksti:
         teksti = f"claude epaonnistui (subtype: {d.get('subtype', '?')})"
     return ok, teksti
@@ -673,7 +753,8 @@ def palauta_raportti(teksti, stdout, koti):
     if not koti or RAPORTTI_OTSIKKO_RE.search(teksti or ""):
         return teksti
     try:
-        istunto = json.loads(stdout).get("session_id")
+        d = kulutus.tulosolio(stdout)   # stream-json: viimeinen result-tapahtuma; vanha yksittainen JSON kelpaa myos
+        istunto = d.get("session_id") if isinstance(d, dict) else None
         if not isinstance(istunto, str) or not ISTUNTO_RE.match(istunto):
             return teksti
         data = _lue_istuntoloki(koti, istunto)
@@ -982,11 +1063,8 @@ RAJA_RE = re.compile(r"usage limit|limit reached|rate.?limit|too many requests|\
 
 def mittarit(stdout):
     """Claude-ajon luvut tulosteesta (arvio tilauksen kulutuksesta): kierrokset ja API-kustannuksen arvo. Lukukelvoton -> tyhja."""
-    try:
-        d = json.loads(stdout)
-    except (ValueError, TypeError):
-        return {}
-    if not isinstance(d, dict):
+    d = kulutus.tulosolio(stdout)
+    if d is None:
         return {}
     ulos = {}
     for avain, nimi in (("num_turns", "kierrokset"), ("total_cost_usd", "arvo_usd"), ("duration_api_ms", "api_ms")):
@@ -1433,7 +1511,7 @@ def aja(repo, tyohak, env=None, suorita=subprocess.run, laheta=None, kaista=1, l
                 return f"claude-jono: {t.name} KAYTTORAJA, kaistat tauolla {tauko // 60} min{leima}"
         with git_lukko(tila) as odotus2:
             # Todennusportti koskee Claude-reitin tyota (koodi, PR:t); OpenRouter-rutiini (tiivistelmat, luokittelu) ei tuota todennusrivia.
-            tila_nimi = "KESKEN" if ok and m.reitti == "claude" and not on_todennettu(teksti) else ("VALMIS" if ok else "EPAONNISTUI")
+            tila_nimi = "KESKEN" if ok and m.reitti == "claude" and (not on_todennettu(teksti) or ilmoittaa_kesken(teksti)) else ("VALMIS" if ok else "EPAONNISTUI")
             ohitetut = []
             docs = poimi_docs_ulos(cwd, repo, env, ohitetut=ohitetut) if m.reitti == "claude" else []
             if ohitetut and tila_nimi == "VALMIS":

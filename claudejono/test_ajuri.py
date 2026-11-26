@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from claudejono import ajuri
+from claudejono import ajuri, kulutus
 
 
 def git(hak, *a):
@@ -229,6 +229,108 @@ class Tulkinta(unittest.TestCase):
         self.assertFalse(ajuri.tulkitse(json.dumps({"subtype": "success", "result": "x"}), 2)[0])
 
 
+def _virta(*rivit):
+    return "\n".join(json.dumps(r) for r in rivit) + "\n"
+
+
+def _viesti(teksti):
+    return {"type": "assistant", "message": {"content": [{"type": "text", "text": teksti}]}}
+
+
+class TulkintaVirta(unittest.TestCase):
+    RAPORTTI = "# Raportti\n\nTehty, PR #262 auki.\n\n## Tonylle opittavaa\nJotain."
+    LOPPU = {"type": "result", "subtype": "success", "is_error": False, "result": "Ilmoitus koskee vanhaa monitoria."}
+
+    def test_raportti_ja_lyhyt_jalkiviesti_valitaan_raportti(self):
+        ulos = _virta({"type": "system"}, _viesti(self.RAPORTTI), _viesti("Ilmoitus koskee vanhaa monitoria."), self.LOPPU)
+        self.assertEqual(ajuri.tulkitse(ulos, 0), (True, self.RAPORTTI))
+
+    def test_yksi_viesti_toiminta_ennallaan(self):
+        loppu = dict(self.LOPPU, result="vastaus")
+        self.assertEqual(ajuri.tulkitse(_virta(_viesti("vastaus"), loppu), 0), (True, "vastaus"))
+        # vanha yksittainen json-tuloste toimii edelleen
+        self.assertEqual(ajuri.tulkitse(json.dumps(loppu), 0), (True, "vastaus"))
+        # itsesuunnittelun JSON-olio kelpaa raportiksi
+        vastaus = '{"tehtavat": []}'
+        self.assertEqual(ajuri.tulkitse(_virta(_viesti(vastaus), self.LOPPU), 0), (True, vastaus))
+
+    def test_vanha_valivaiheen_json_ei_kelpaa_istunnon_jatkuttua(self):
+        vastaus = '{"tehtavat": []}'
+        ulos = _virta(_viesti(vastaus), _viesti("ok"), self.LOPPU)
+        self.assertIsNone(ajuri._viimeinen_raportti(ulos))
+        self.assertEqual(ajuri.tulkitse(ulos, 0), (True, self.LOPPU["result"]))   # paluu result-kenttaan
+        # otsikollinen raportti sailyy, vaikka valissa oli JSON ja perassa jalkiviesti
+        ulos = _virta(_viesti(self.RAPORTTI), _viesti(vastaus), _viesti("ok"), self.LOPPU)
+        self.assertEqual(ajuri._viimeinen_raportti(ulos), self.RAPORTTI)
+        # JSON viimeisena paaagentin viestina voittaa edelleen aiemman raportin
+        self.assertEqual(ajuri._viimeinen_raportti(_virta(_viesti(self.RAPORTTI), _viesti(vastaus))), vastaus)
+
+    def test_alitehtavan_viestit_suodatetaan(self):
+        ali = dict(_viesti(self.RAPORTTI + " ALI"), parent_tool_use_id="toolu_1")
+        self.assertIsNone(ajuri._viimeinen_raportti(_virta(ali)))
+        # alitehtavan viesti ei syrjayta paaagentin raporttia eika tee JSONista valivaihetta
+        ulos = _virta(_viesti('{"a": 1}'), ali, self.LOPPU)
+        self.assertEqual(ajuri._viimeinen_raportti(ulos), '{"a": 1}')
+        ulos = _virta(_viesti(self.RAPORTTI), ali, dict(_viesti("jalki"), parent_tool_use_id="toolu_2"), self.LOPPU)
+        self.assertEqual(ajuri._viimeinen_raportti(ulos), self.RAPORTTI)
+        self.assertEqual(ajuri._viimeinen_raportti(_virta(dict(_viesti(self.RAPORTTI), parent_tool_use_id=None))), self.RAPORTTI)
+
+    def test_raportti_jonka_jalkeen_tyokutsuja_on_vanhentunut(self):
+        """#453-katselmointi: raportti (Todennettu), sitten testit (tyokutsut), lopuksi viesti ilman todennusta -> ei VALMIS."""
+        raportti = "Tehty.\nTodennettu k\u00e4yt\u00f6ss\u00e4: testit OK\n\n## Tonylle opittavaa\nasia"
+        tyokutsu = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]}}
+        tulos = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "FAILED"}]}}
+        loppu = dict(self.LOPPU, result="Testit kaatuivat, ei todennettu.")
+        ulos = _virta(_viesti(raportti), tyokutsu, tulos, _viesti("Testit kaatuivat, ei todennettu."), loppu)
+        self.assertIsNone(ajuri._viimeinen_raportti(ulos))
+        ok, teksti = ajuri.tulkitse(ulos, 0)
+        self.assertEqual((ok, teksti), (True, "Testit kaatuivat, ei todennettu."))
+        self.assertFalse(ajuri.on_todennettu(teksti))
+        # sama ilman loppuviestia: pelkka tyokutsu raportin jalkeen riittaa vanhentamaan
+        self.assertIsNone(ajuri._viimeinen_raportti(_virta(_viesti(raportti), tyokutsu, self.LOPPU)))
+        # tyokutsu ennen raporttia ei vanhenna sita
+        self.assertEqual(ajuri._viimeinen_raportti(_virta(tyokutsu, _viesti(raportti), self.LOPPU)), raportti)
+
+    def test_raportin_oma_tyokutsu_samalla_message_idlla_ei_vanhenna(self):
+        """Raportin viestissa saa olla tyokutsu (taustatehtavan kaynnistys), myos erillisena tapahtumana samalla id:lla."""
+        teksti = {"type": "assistant", "message": {"id": "msg_1", "content": [{"type": "text", "text": self.RAPORTTI}]}}
+        kutsu = {"type": "assistant", "message": {"id": "msg_1", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]}}
+        self.assertEqual(ajuri._viimeinen_raportti(_virta(teksti, kutsu, self.LOPPU)), self.RAPORTTI)
+        # eri id:lla tuleva tyokutsu on jatkotyota
+        kutsu2 = dict(kutsu, message=dict(kutsu["message"], id="msg_2"))
+        self.assertIsNone(ajuri._viimeinen_raportti(_virta(teksti, kutsu2, self.LOPPU)))
+        # alitehtavan tyokutsu ei vanhenna paaagentin raporttia
+        ali = dict(kutsu2, parent_tool_use_id="toolu_9")
+        self.assertEqual(ajuri._viimeinen_raportti(_virta(teksti, ali, self.LOPPU)), self.RAPORTTI)
+
+    def test_lukukelvoton_virta_epaonnistuu(self):
+        self.assertFalse(ajuri.tulkitse("roskaa\nvaan roskaa\n", 0)[0])
+        self.assertFalse(ajuri.tulkitse(_virta(_viesti(self.RAPORTTI)), 0)[0])   # ei loppuoliota
+        virhe = dict(self.LOPPU, subtype="error_max_turns", is_error=True)
+        ok, teksti = ajuri.tulkitse(_virta(_viesti(self.RAPORTTI), virhe), 1)
+        self.assertFalse(ok)                                                       # virhetila ei muutu
+        self.assertEqual(teksti, "Ilmoitus koskee vanhaa monitoria.")
+
+    def test_kulutusluvut_luetaan_virran_loppuoliosta(self):
+        loppu = dict(self.LOPPU, total_cost_usd=0.5, usage={"input_tokens": 3})
+        self.assertEqual(kulutus.claude_luvut(_virta(_viesti("x"), loppu)), {"tokenit_in": 3, "usd": 0.5})
+
+    def test_kaistalokin_mittarit_luetaan_virrasta(self):
+        loppu = dict(self.LOPPU, num_turns=4, total_cost_usd=0.5, duration_api_ms=900)
+        odotus = {"kierrokset": 4, "arvo_usd": 0.5, "api_ms": 900}
+        self.assertEqual(ajuri.mittarit(_virta(_viesti("x"), loppu)), odotus)
+        self.assertEqual(ajuri.mittarit(json.dumps(loppu)), odotus)
+        self.assertEqual(ajuri.mittarit("ei jsonia"), {})
+
+    def test_bytes_tuloste_luetaan_kuten_ennen(self):
+        # vanha json.loads hyvaksyi bytesit; monirivinen virta ja yksittainen JSON bytes-muodossa
+        loppu = dict(self.LOPPU, total_cost_usd=0.5, usage={"input_tokens": 3})
+        odotus = {"tokenit_in": 3, "usd": 0.5}
+        self.assertEqual(kulutus.claude_luvut(_virta(_viesti("x"), loppu).encode()), odotus)
+        self.assertEqual(kulutus.claude_luvut(json.dumps(loppu).encode()), odotus)
+        self.assertEqual(kulutus.claude_luvut(b"\xff\xfe"), {"jasennysvirhe": "ei_tulosta"})   # #283: virhe nakyviin, ei hiljaa tyhja
+
+
 class Komento(unittest.TestCase):
     def test_lupatila_vain_jos_asetettu(self):
         self.assertNotIn("--permission-mode", ajuri.claude_komento("k", {}))
@@ -443,6 +545,18 @@ class Itsesuunnittelu(Pohja):
         v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli("{}", kutsut), nyt=self.nyt())
         self.assertIn("paivaraja", v)
         self.assertEqual(kutsut, [])
+
+    def test_jalkiviesti_suunnitelman_perassa_ei_luo_tehtavia(self):
+        # #264: suunnitelma + jalkiviesti ("ok") on valivaihe; tehtavia ei luoda aiemmasta JSON-viestista (turvaraja, fail closed)
+        vastaus = json.dumps({"tehtavat": [{"nimi": "korjaa-x", "sisalto": "# X\n\nTavoite: yllapito"}], "tonylle": ""})
+        ulos = _virta(_viesti(vastaus), _viesti("ok"),
+                      {"type": "result", "subtype": "success", "is_error": False, "result": "ok"})
+
+        def f(kom, **kw):
+            return subprocess.CompletedProcess(kom, 0, ulos, "")
+        v = ajuri.suunnittele(self.repo, self.tmp, {}, f, nyt=self.nyt())
+        self.assertIn("ei tuottanut", v)
+        self.assertNotIn("claude-jono/tehtavat/2026-10-30-01-auto-korjaa-x.md", self.origin_tiedostot())
 
     def test_virheellinen_json_ei_luo_mitaan(self):
         v = ajuri.suunnittele(self.repo, self.tmp, {}, self.malli("ei jsonia"), nyt=self.nyt())
@@ -1173,6 +1287,34 @@ class TestRaportinPalautus(Pohja):
         self.assertEqual(ajuri.palauta_raportti("x", json.dumps({"session_id": "../../etc/passwd"}), self.tmp), "x")
         self.assertEqual(ajuri.palauta_raportti("x", self.stdout(), None), "x")
 
+    def stream_stdout(self, teksti="jalkikommentti"):
+        """Oikea claude_komento-muoto (--output-format stream-json --verbose): JSON-rivit, istunto init- ja result-tapahtumissa."""
+        rivit = [{"type": "system", "subtype": "init", "session_id": self.ISTUNTO, "tools": []},
+                 {"type": "assistant", "session_id": self.ISTUNTO, "parent_tool_use_id": None,
+                  "message": {"id": "msg_1", "role": "assistant", "content": [{"type": "text", "text": teksti}]}},
+                 {"type": "result", "subtype": "success", "is_error": False, "result": teksti, "session_id": self.ISTUNTO}]
+        return "\n".join(json.dumps(r) for r in rivit) + "\n"
+
+    def test_stream_json_tulosteesta_palautus_toimii(self):
+        self.loki([self.viesti(self.RAPORTTI), self.viesti("jalkikommentti")])
+        komento = ajuri.claude_komento("k", {})
+        self.assertEqual(komento[komento.index("--output-format") + 1], "stream-json")   # fixture vastaa ajurin muotoa
+        t = ajuri.palauta_raportti("jalkikommentti", self.stream_stdout(), self.tmp / "koti")
+        self.assertTrue(t.startswith(self.RAPORTTI))
+        self.assertIn("[AJURI: raportti palautettu", t)
+
+    def test_stream_json_vanhentunut_raportti_ei_palaudu(self):
+        """Raportin jalkeen tyokutsu: tulkitse antaa loppuviestin, eika palautus tuo vanhentunutta raporttia takaisin."""
+        self.loki([self.viesti(self.RAPORTTI), self.tyokutsu(), self.viesti("ei todennettu")])
+        t = ajuri.palauta_raportti("ei todennettu", self.stream_stdout("ei todennettu"), self.tmp / "koti")
+        self.assertEqual(t, "ei todennettu")
+        self.assertFalse(ajuri.on_todennettu(t))
+
+    def test_stream_json_ilman_result_tapahtumaa_jattaa_tekstin(self):
+        self.loki([self.viesti(self.RAPORTTI)])
+        rivi = json.dumps({"type": "system", "subtype": "init", "session_id": self.ISTUNTO})
+        self.assertEqual(ajuri.palauta_raportti("x", rivi + "\n", self.tmp / "koti"), "x")
+
     def test_rivi_jossa_u2028_ei_katkea(self):
         raportti = self.RAPORTTI + "\u2028lisaa\u0085viela\u2029"
         self.loki([self.viesti(raportti)])        # json.dumps escapoi U+2028; kirjoita raakana
@@ -1421,6 +1563,45 @@ class TulosPortti(Pohja):
         for arvo in ("", "-", "  \u2013 ", "TBD", "ei mit\u00e4\u00e4n"):
             with self.subTest(arvo=arvo):
                 self.assertFalse(ajuri.on_todennettu(f"raportti\nTodennettu k\u00e4yt\u00f6ss\u00e4: {arvo}\n"))
+
+    def test_oma_kesken_ilmoitus_voittaa_todennusrivin(self):
+        teksti = ("Commit kaatui.\n\n# Raportti\n\n**Tila: KESKEN.** Muutos tehty, PR puuttuu.\n\n"
+                  "Todennettu k\u00e4yt\u00f6ss\u00e4: testit 5/5 l\u00e4pi")
+        viesti, tiedosto = self.aja_tuloksella(teksti)
+        self.assertIn("KESKEN", viesti)
+        self.assertIn("- Tila: KESKEN", tiedosto)
+        self.assertNotIn("- Tila: VALMIS", tiedosto)
+
+    def test_tavallinen_valmis_pysyy_valmiina(self):
+        viesti, tiedosto = self.aja_tuloksella("Tehty.\n\nTodennettu k\u00e4yt\u00f6ss\u00e4: 12/12 l\u00e4pi")
+        self.assertIn("- Tila: VALMIS", tiedosto)
+
+    def test_ilmoittaa_kesken_tunnistus(self):
+        self.assertTrue(ajuri.ilmoittaa_kesken("a\nTila: KESKEN\n"))
+        self.assertTrue(ajuri.ilmoittaa_kesken("a\n**Tila: KESKEN.** loput"))
+        self.assertTrue(ajuri.ilmoittaa_kesken("a\n**Tila:** KESKEN"))
+        self.assertFalse(ajuri.ilmoittaa_kesken("Esimerkki:\n```\nTila: KESKEN\n```\nTila: VALMIS"))
+        self.assertFalse(ajuri.ilmoittaa_kesken("~~~\n**Tila: KESKEN.**\n~~~"))
+        self.assertFalse(ajuri.ilmoittaa_kesken("> Tila: KESKEN"))
+        self.assertFalse(ajuri.ilmoittaa_kesken("Tulos 13-07 sanoi Tila: KESKEN, mutta nyt valmis"))
+        # sisennys: 4+ valilyontia tai sarkain on sisennetty koodilohko, ei ilmoitus
+        self.assertFalse(ajuri.ilmoittaa_kesken("    Tila: KESKEN"))
+        self.assertFalse(ajuri.ilmoittaa_kesken("\tTila: KESKEN"))
+        self.assertFalse(ajuri.ilmoittaa_kesken("    **Tila: KESKEN**"))
+        self.assertTrue(ajuri.ilmoittaa_kesken("   Tila: KESKEN"))
+        self.assertTrue(ajuri.ilmoittaa_kesken("   **Tila: KESKEN**"))
+        # aidat: sulkeva aita on samaa merkkia, eika infotekstillinen rivi sulje lohkoa
+        self.assertFalse(ajuri.ilmoittaa_kesken("```\nx\n```~~\nTila: KESKEN"))
+        self.assertFalse(ajuri.ilmoittaa_kesken("```\nx\n~~~\nTila: KESKEN"))
+        self.assertTrue(ajuri.ilmoittaa_kesken("```\nx\n```\nTila: KESKEN"))
+        self.assertTrue(ajuri.ilmoittaa_kesken("~~~\nx\n~~~~\nTila: KESKEN"))
+        self.assertFalse(ajuri.ilmoittaa_kesken("- Tila: KESKEN (lainaus toisesta tuloksesta)"))
+        self.assertFalse(ajuri.ilmoittaa_kesken("Tila: KESKENERAINEN"))
+        self.assertFalse(ajuri.ilmoittaa_kesken(""))
+
+    def test_lainattu_kesken_koodilohkossa_on_valmis(self):
+        viesti, tiedosto = self.aja_tuloksella("Tehty.\n\n```\nTila: KESKEN\n```\n\nTodennettu k\u00e4yt\u00f6ss\u00e4: 12/12 l\u00e4pi")
+        self.assertIn("- Tila: VALMIS", tiedosto)
 
     def test_oikea_rivi_on_valmis(self):
         viesti, tiedosto = self.aja_tuloksella("Tehty.\n\nTodennettu k\u00e4yt\u00f6ss\u00e4: ajettu oikeaa kohdetta vastaan, 12/12 l\u00e4pi")
