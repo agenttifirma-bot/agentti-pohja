@@ -319,7 +319,7 @@ class Ajo(Pohja):
         """Kokooma (#295 + #201): kaksi eri hylkaysreittia samalla kierroksella; kumpikaan ei ylikirjoita toisen
         hylkayslistaa, molemmat tulokset julkaistaan ja kelvollinen tehtava ajetaan."""
         tavoite_rivi = "Tavoite: yllapito\n"
-        self.lisaa_tehtava("2026-11-09-01-a.md", KELVOLLINEN, raaka=True)   # ei Tavoite-riviä -> tavoiteportti
+        self.lisaa_tehtava("2026-11-09-01-a.md", KELVOLLINEN, raaka=True)   # ei Tavoite-riviae -> tavoiteportti
         self.lisaa_tehtava("2026-11-09-02-b.md", tavoite_rivi + "# T\n\nHyoty: x\nPisteet: hyoty 4, varmuus 4, vaiva 1 h\nValmis kun: y\n",
                            raaka=True)   # Todennus-rivi puuttuu -> tehtavatarkastus
         self.lisaa_tehtava("2026-11-09-03-c.md", tavoite_rivi + KELVOLLINEN, raaka=True)
