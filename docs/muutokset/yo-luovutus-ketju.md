@@ -1,0 +1,1 @@
+- aivo: luovutuspaketin koko kierros -testi (aivo/test_luovutus_ketju.py): lohko, sha-sidottu hyväksyntä, saapuneet, työkalutilan näkymä, tulosrepo ja lue_tulos yhtenä ketjuna sekä chatin reittien kautta; saumavirheitä ei löytynyt, joten tuotantokoodi on ennallaan.
