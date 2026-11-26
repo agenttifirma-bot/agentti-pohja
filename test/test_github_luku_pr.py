@@ -164,5 +164,81 @@ class PrTilaTesti(unittest.TestCase):
         self.assertIn("ei katselmointeja", "\n".join(rivit))
 
 
+class GitKarkiTesti(unittest.TestCase):
+    """PR:n karki voi vaihtua API-haun ja git-haun valissa (tulos 2026-11-23-10, PR #401)."""
+
+    def setUp(self):
+        t = tempfile.TemporaryDirectory()
+        self.addCleanup(t.cleanup)
+        self.hak = os.path.join(t.name, "valimuisti")
+        self.polku = os.path.join(t.name, "luku.token")
+
+    def aja(self, tynka, git_karki):
+        return g.pr_tila("o/r", 22, hak=self.hak, avaa=tynka, polku=self.polku, git_karki=git_karki)
+
+    def test_haettu_rivi_kertoo_lahteen(self):
+        t = Tynka()
+        rivit, _ = self.aja(t, None)
+        self.assertRegex(rivit[2], r"^haettu: \d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC, lahde: UUSI$")
+        rivit, _ = self.aja(t, None)
+        self.assertTrue(rivit[2].endswith("lahde: VALIMUISTI"))
+        rivit, _ = self.aja(Tynka(jaljella=3), None)
+        self.assertTrue(rivit[3].endswith("lahde: VANHA"), rivit)
+
+    def test_sama_karki(self):
+        rivit, _ = self.aja(Tynka(), lambda repo, nro: "a" * 40)
+        self.assertIn("git: refs/pull/22/head @ aaaaaaa (sama)", rivit)
+        self.assertFalse(any(r.startswith("VAROITUS") for r in rivit))
+
+    def test_eri_karki_nostaa_varoituksen(self):
+        rivit, _ = self.aja(Tynka(), lambda repo, nro: "c" * 40)
+        varoitus = [r for r in rivit if r.startswith("VAROITUS")]
+        self.assertEqual(len(varoitus), 1)
+        self.assertIn("ccccccc", varoitus[0])
+        self.assertIn("aaaaaaa", varoitus[0])
+
+    def test_vanha_valimuisti_ja_uusi_git_karki(self):
+        t = Tynka()
+        self.aja(t, None)
+        rivit, tilat = self.aja(Tynka(jaljella=3), lambda repo, nro: "c" * 40)
+        self.assertEqual(tilat, ["VANHA"] * 3)
+        self.assertTrue(any(r.startswith("VAROITUS") for r in rivit))
+
+    def test_git_karki_ei_saatu(self):
+        rivit, _ = self.aja(Tynka(), lambda repo, nro: None)
+        self.assertTrue(any("ei saatu" in r for r in rivit))
+
+    def test_ls_remote_karki_jasentaa(self):
+        kutsut = []
+
+        def ajo(args, **kw):
+            kutsut.append((args, kw))
+            return mock.Mock(returncode=0, stdout="%s\trefs/pull/22/head\n" % ("d" * 40))
+        self.assertEqual(g.ls_remote_karki("o/r", 22, ajo=ajo), "d" * 40)
+        args, kw = kutsut[0]
+        self.assertEqual(args, ["git", "ls-remote", "https://github.com/o/r", "refs/pull/22/head"])
+        self.assertEqual(kw["env"]["GIT_TERMINAL_PROMPT"], "0")
+        self.assertIn("timeout", kw)
+
+    def test_ls_remote_karki_virheet(self):
+        self.assertIsNone(g.ls_remote_karki("o/r", 22, ajo=lambda a, **k: mock.Mock(returncode=128, stdout="")))
+        self.assertIsNone(g.ls_remote_karki("o/r", 22, ajo=lambda a, **k: mock.Mock(returncode=0, stdout="")))
+        self.assertIsNone(g.ls_remote_karki("o/r", 22, ajo=lambda a, **k: mock.Mock(returncode=0, stdout="xyz\n")))
+
+        def kaatuu(a, **k):
+            raise g.subprocess.TimeoutExpired(a, 20)
+        self.assertIsNone(g.ls_remote_karki("o/r", 22, ajo=kaatuu))
+
+    def test_main_kayttaa_git_vertailua(self):
+        saatu = {}
+
+        def pr_tila(repo, nro, **kw):
+            saatu.update(kw)
+            return ["ok"], []
+        with mock.patch.object(g, "pr_tila", pr_tila):
+            self.assertEqual(g.main(["pr", "o/r", "22"]), 0)
+        self.assertIs(saatu.get("git_karki"), g.ls_remote_karki)
+
+
 if __name__ == "__main__":
     unittest.main()
