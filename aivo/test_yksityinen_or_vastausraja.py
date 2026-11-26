@@ -95,8 +95,11 @@ class RajaTesti(Pohja):
 
     def test_mallivertailu_kayttaa_omaa_rajaa(self):
         lahde = Path(mallivertailu.__file__).read_text(encoding="utf-8")
-        self.assertIn("max_tokens=MAX_TOKENIA", lahde)
+        self.assertIn("max_tokens=vastausraja(malli, MAX_TOKENIA)", lahde)
         self.assertNotIn("max_tokens=yksityinen_or.MAX_TOKENIA", lahde)
+        # ajatteleva malli saa tuotannon rajan (paattely kuluttaa samaa rajaa), muut vertailun oman 700
+        self.assertEqual(mallivertailu.vastausraja("qwen/qwen3.5-397b-a17b", mallivertailu.MAX_TOKENIA), 8_000)
+        self.assertEqual(mallivertailu.vastausraja(mallivertailu.NYKYINEN, mallivertailu.MAX_TOKENIA), 700)
 
     def test_varaus_ei_riipu_max_tokensista(self):
         """Varaus on kiintea VARAUS_USD (0,50 USD); 8 000 tokenin pyynto varaa saman verran kuin ennen."""

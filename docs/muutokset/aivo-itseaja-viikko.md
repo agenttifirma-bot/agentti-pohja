@@ -1,0 +1,1 @@
+- aivo-itsetuntemus: viikoittainen ajo tuotannon malleilla (itse-viikko, systemd/aivo-itsetuntemus.*.mall, raja 1 USD/ajo, tiivistelmä luvuin ja muutos edelliseen viikkoon), jotta laadun heikkeneminen näkyy viikon sisällä (RAJATTU: uusi ajastettu kulu)

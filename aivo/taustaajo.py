@@ -81,6 +81,7 @@ SYYT = {
     "paivaraja": "p\u00e4iv\u00e4n taustaty\u00f6raja on t\u00e4ynn\u00e4",
     "kulukatto": "OpenRouterin p\u00e4iv\u00e4katto on t\u00e4ynn\u00e4",
     "malli": "malli ei vastannut",
+    "katkesi": "vastaus katkesi pituusrajaan ennen teksti\u00e4 (malli k\u00e4ytti rajan p\u00e4\u00e4ttelyyn)",
     "keskeytyi": "edellinen ajo keskeytyi",
     "virheellinen": "ty\u00f6n tiedot eiv\u00e4t kelpaa",
 }
@@ -396,6 +397,8 @@ def _syy(e):
         return "aikaraja"
     if _on_kulukatto(e):
         return "kulukatto"
+    if type(e).__name__ == "VastausKatkesi":                 # yksityinen_or.VastausKatkesi (tuodaan vain ajossa)
+        return "katkesi"
     return "malli"
 
 
