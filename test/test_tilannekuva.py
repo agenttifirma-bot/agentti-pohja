@@ -22,7 +22,7 @@ def hae_tekoinen(url):
 class SiivousTesti(unittest.TestCase):
     def test_salaisuudet_poistetaan(self):
         for arvo in ("sk-" + "or-v1-abcdefghijklmnopqrstu", "ghp_" + "a" * 30, "github_pat_" + "B" * 30,
-                     "123456789:" + "A" * 35, "api_key = abcdefgh12345", "-----BEGIN RSA PRIVATE KEY-----"):
+                     "123456789:" + "A" * 35, "api_key = abcdefgh12345", "-----BEGIN RSA PRIVATE KEY-----", "-----BEGIN PGP PRIVATE KEY BLOCK-----"):
             ulos = tk.siivoa("rivi " + arvo + " loppu")
             self.assertIn("[poistettu]", ulos, arvo)
             self.assertNotIn(arvo, ulos)

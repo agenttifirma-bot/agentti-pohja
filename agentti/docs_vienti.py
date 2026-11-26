@@ -71,20 +71,24 @@ AVAIN_MUOTOISET = [
     re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),
     re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
     re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{30,}\b"),
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+    # PEM (RSA, OPENSSH, EC ...) ja PGP:n "PRIVATE KEY BLOCK" (tarkastus 26.11.2026).
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"),
 ]
 PEM_ALKU = AVAIN_MUOTOISET[-1]
 # Yksityisen avaimen runko ilman BEGIN/END-rivia (avain jakautuu merkintojen rajalle tai otsake katkeaa):
 # vahintaan RUNKO_MIN_RIVEJA perakkaista rivia, joissa on vain 40-80 base64-merkkia (+ enintaan kaksi =-merkkia).
-# Pelkat heksarivit (esim. git-tiivisteiden lista) eivat yksinaan riita: jaksossa pitaa olla ainakin yksi ei-heksarivi.
-RUNKO_RIVI = re.compile(r"[ \t>]*([A-Za-z0-9+/]{40,80}={0,2})[ \t]*\r?")
+# Tyhjat rivit runkorivien valissa eivat katkaise jaksoa, ja rivin alussa saa olla sisennys, lainausmerkki > ja
+# listamerkki (- * +), koska merkinnat ovat Markdown-listoja. Pelkat heksarivit (esim. git-tiivisteiden lista) eivat
+# yksinaan riita: jaksossa pitaa olla ainakin yksi ei-heksarivi.
+RUNKO_RIVI = re.compile(r"[ \t>]*(?:[-*+][ \t]+)?([A-Za-z0-9+/]{40,80}={0,2})[ \t]*\r?")
+TYHJA_RIVI = re.compile(r"[ \t>]*\r?")
 HEKSA = re.compile(r"[0-9A-Fa-f]+")
 RUNKO_MIN_RIVEJA = 3
 # Pohdinta-vastausten merkinnan alku (sama kuin aivo/agenttidata_kehote.py:n MERKINTA_RE); tavuversio vaatii rivinvaihdon eteen.
 MERKINTA_RE = re.compile(r"(?m)^[ \t]*[-*][ \t]+\*\*A[0-9]{1,6}\b")
 MERKINTA_RE_B = re.compile(rb"\n([ \t]*[-*][ \t]+\*\*A[0-9]{1,6}\b)")
 # Merkintakohtaisessa poistossa myos yksityisen avaimen loppurivi (jos otsake jaisi eri osaan).
-PEM_LOPPU = re.compile(r"-----END [A-Z ]*PRIVATE KEY-----")
+PEM_LOPPU = re.compile(r"-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----")
 ALKU_POIS = "[alku j\u00e4tetty pois: %d tavua]\n"
 MERKINTA_POIS = "[merkint\u00e4 poistettu: avaimen muotoinen merkkijono]\n"
 IPV4 = re.compile(r"(?<![0-9.])(?:\d{1,3}\.){3}\d{1,3}(?![0-9])")
@@ -119,10 +123,13 @@ def osoite_sallittu(osoite, isanta):
 
 
 def avaimen_runko(teksti):
-    """Onko tekstissa yksityisen avaimen runko: RUNKO_MIN_RIVEJA perakkaista base64-rivia, joista ainakin yksi ei ole pelkkaa heksaa."""
+    """Onko tekstissa yksityisen avaimen runko: RUNKO_MIN_RIVEJA perakkaista base64-rivia (tyhjat rivit valissa sallitaan),
+    joista ainakin yksi ei ole pelkkaa heksaa."""
     jakso, kaikki_heksaa = 0, True
     for rivi in teksti.split("\n"):
         m = RUNKO_RIVI.fullmatch(rivi)
+        if not m and TYHJA_RIVI.fullmatch(rivi):
+            continue
         if not m:
             jakso, kaikki_heksaa = 0, True
             continue

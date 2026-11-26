@@ -27,6 +27,12 @@ def testiavain(tavuja=1200, laji="RSA"):
     return "-----BEGIN %s PRIVATE KEY-----" % laji, rungot, "-----END %s PRIVATE KEY-----" % laji
 
 
+def testi_pgp(tavuja=1200):
+    """PGP-muotoinen yksityisen avaimen lohko satunnaistavuista (ei oikea avain): (alku, runkorivit, loppu)."""
+    alku, rungot, _ = testiavain(tavuja)
+    return "-----BEGIN PGP PRIVATE KEY BLOCK-----", rungot, "-----END PGP PRIVATE KEY BLOCK-----"
+
+
 def ip(a, b, c, d):
     """Yksityisen alueen osoite ilman kirjaimellista osoitetta lahdekoodissa (test_repo kieltaa sisaverkon osoitteet tiedostoissa)."""
     return str(ipaddress.IPv4Address(bytes([a, b, c, d])))
@@ -369,6 +375,66 @@ class Siivous(Pohja):
         self.assertFalse(dv.avaimen_runko("\n".join(r[:30] + " " + r[30:] for r in rungot[:5])))
         sha = ["%040x" % (i * 0x9E3779B97F4A7C15 + 12345) for i in range(1, 6)]
         self.assertFalse(dv.avaimen_runko("\n".join(sha)))                              # git-tiivisteiden lista ei ole avain
+
+    def test_runkotunnistus_tyhjat_rivit_ja_listamerkit(self):
+        # Tarkastus 26.11.2026: tyhja rivi runkorivien valissa tai listamerkki rivin alussa ei saa piilottaa runkoa.
+        _, rungot, _ = testiavain()
+        self.assertTrue(dv.avaimen_runko("\n\n".join(rungot[:3])))
+        self.assertTrue(dv.avaimen_runko("\r\n \r\n".join(rungot[:3])))                  # tyhja rivi, jossa valilyonti ja CRLF
+        self.assertTrue(dv.avaimen_runko("\n".join("- " + r for r in rungot[:3])))
+        self.assertTrue(dv.avaimen_runko("\n\n".join("  * " + r for r in rungot[:3])))
+        self.assertTrue(dv.avaimen_runko("> - " + rungot[0] + "\n>\n> - " + rungot[1] + "\n> - " + rungot[2]))
+        self.assertFalse(dv.avaimen_runko("\n\n\n".join(rungot[:2])))                     # kaksi rivia ei riita
+        self.assertFalse(dv.avaimen_runko(rungot[0] + "\n\nteksti\n\n" + rungot[1] + "\n" + rungot[2]))  # teksti katkaisee
+        self.assertFalse(dv.avaimen_runko("\n".join("-" + r[:39] for r in rungot[:5])))
+        sha = ["- %040x" % (i * 0x9E3779B97F4A7C15 + 12345) for i in range(1, 6)]
+        self.assertFalse(dv.avaimen_runko("\n\n".join(sha)))                              # tiivistelista listana
+
+    def test_pgp_otsake_ja_lopetusrivi_tunnistetaan(self):
+        alku, _, loppu = testi_pgp()
+        self.assertTrue(dv.avainmuotoinen("teksti " + alku))
+        self.assertTrue(dv.PEM_ALKU.search(alku))
+        self.assertTrue(dv.PEM_LOPPU.search(loppu))
+        self.assertIn("[poistettu]", dv.siivoa(alku))
+
+    def test_pgp_avain_jaettuna_kahteen_merkintaan(self):
+        # Otsake ja kaksi runkorivia (ei riita runkotunnistukseen yksinaan) yhdessa merkinnassa, loput seuraavassa.
+        alku, rungot, loppu = testi_pgp()
+        teksti = ("- **A1** ok\n- **A2** " + alku + "\n\n" + rungot[0] + "\n" + rungot[1] + "\n- **A3** "
+                  + rungot[2] + "\n=AbCd\n" + loppu + "\n- **A4** ok\n")
+        _, ohitetut, t = self.pohdinta(teksti)
+        self.assertEqual(ohitetut, [("pohdinta-vastaukset.md", "merkinta poistettu (2)")])
+        for r in rungot[:3]:
+            self.assertNotIn(r, t)
+        self.assertNotIn("PGP", t)
+        self.assertIn("- **A1** ok", t)
+        self.assertIn("- **A4** ok", t)
+
+    def test_pgp_lopetusrivi_ilman_otsaketta_poistaa_edellisen(self):
+        _, rungot, loppu = testi_pgp()
+        teksti = ("- **A1** ok\n- **A2** katkennut\n" + rungot[0] + "\n" + rungot[1] + "\n- **A3** " + rungot[2] + "\n"
+                  + loppu + "\n- **A4** ok\n")
+        _, ohitetut, t = self.pohdinta(teksti)
+        self.assertEqual(ohitetut, [("pohdinta-vastaukset.md", "merkinta poistettu (2)")])
+        for r in rungot[:3]:
+            self.assertNotIn(r, t)
+        self.assertIn("- **A4** ok", t)
+
+    def test_pgp_avain_tuloksessa_ohittaa_tiedoston(self):
+        alku, rungot, loppu = testi_pgp()
+        self.kirjoita("tulokset/a.md", "raportti\n" + alku + "\n\n" + rungot[0] + "\n")
+        kopioitu, ohitetut = dv.valmista(self.lahde, self.tyo, False)
+        self.assertEqual((kopioitu, ohitetut), (0, [("tulokset/a.md", "avaimen muotoinen merkkijono")]))
+
+    def test_runko_tyhjin_rivein_ja_listamerkein_poistaa_merkinnan(self):
+        _, rungot, _ = testiavain()
+        for erotin, etu in (("\n\n", ""), ("\n", "- "), ("\n\n", "  - ")):
+            with self.subTest(erotin=erotin, etu=etu):
+                runko = erotin.join(etu + r for r in rungot[2:6])
+                _, ohitetut, t = self.pohdinta("- **A1** ok\n- **A2** katkennut\n" + runko + "\n- **A3** ok\n")
+                self.assertEqual(ohitetut, [("pohdinta-vastaukset.md", "merkinta poistettu (1)")])
+                self.assertEiRunkoa(t, rungot[2:6])
+                self.assertIn("- **A3** ok", t)
 
     def test_lopputarkistus_ohittaa_tiedoston_jos_runko_jaa(self):
         _, rungot, _ = testiavain()
