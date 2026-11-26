@@ -486,7 +486,7 @@ def tarkastajan_lahderaja(tarkastaja: str) -> int:
     """Tarkastajan lahteiden merkkiraja: tarkastajamallin syoteraja (kontekstiraja.syote_merkit, vastaukselle
     itsetarkistus.TARKISTUS_MAX_TOKENIA, sama kiintea varaus kuin chatissa) - tarkastajan ohje, vastaus ja rakenne."""
     syote = kontekstiraja.syote_merkit(tarkastaja, itsetarkistus.TARKISTUS_MAX_TOKENIA, _VARAUS_USD)
-    kiintea = (len(itsetarkistus.TARKASTAJA_OHJE) + itsetarkistus.VASTAUS_MAX_MERKKIA + 2 * kontekstiraja.VIESTI_LISA
+    kiintea = (itsetarkistus.TARKASTAJA_OHJE_MAX_MERKKIA + itsetarkistus.VASTAUS_MAX_MERKKIA + 2 * kontekstiraja.VIESTI_LISA
                + kontekstiraja.JARJESTELMA_LISA)
     return max(0, syote - kiintea)
 
