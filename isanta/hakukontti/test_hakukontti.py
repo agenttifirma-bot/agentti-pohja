@@ -346,6 +346,62 @@ class OhjeTesti(unittest.TestCase):
         self.assertEqual(int(m.group(1)), len(v4))
         self.assertEqual(m.group(2), str(v4[0]))
 
+    def komento(self, alku):
+        osumat = [(k.strip(), o) for k, o in self.lohkot if k.startswith(alku)]
+        self.assertEqual(len(osumat), 1, alku)
+        return osumat[0]
+
+    def aja_bash(self, komento, ymparisto):
+        env = dict(os.environ, **ymparisto)
+        r = subprocess.run(["bash", "-o", "pipefail", "-c", komento], capture_output=True, text=True, env=env,
+                           timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        return r.stdout.strip()
+
+    def test_kielletyt4_sed_tulostaa_pohjan_alueet(self):
+        # Ohjeen sed-komento ajetaan pohjaa vasten: tuloste on samat alueet samassa jarjestyksessa (maaran tarkistaa
+        # test_kiellettyjen_alueiden_maara_ohjeessa_vastaa_pohjaa).
+        koodi, _ = self.komento("KIELLETYT4=$(sed -n")
+        self.assertIn("/root/hakukontti/nftables.conf", koodi)
+        tulos = self.aja_bash(koodi.replace("/root/hakukontti/nftables.conf", os.path.join(TAMA, "nftables.conf")),
+                              {})
+        pohja = maaritelma(aktiiviset(lue("nftables.conf")), "KIELLETYT4")
+        self.assertEqual([ipaddress.ip_network(a) for a in tulos.split(",")], pohja)
+
+    def test_lahi4_ohittaa_oletusreitin(self):
+        # Proxmoxin ifupdown2 merkitsee oletusreitin proto kernel, jolloin `default` paatyisi nft-joukkoon.
+        koodi, _ = self.komento("LAHI4=$(ip -4 route show proto kernel")
+        reitit = ("default via 192.0.2.1 dev vmbr0 proto kernel onlink\n"
+                  "192.0.2.0/24 dev vmbr0 proto kernel scope link src 192.0.2.10\n"
+                  "198.51.100.0/24 dev vmbr1 proto kernel scope link src 198.51.100.1\n"
+                  "192.0.2.0/24 dev vmbr2 proto kernel scope link src 192.0.2.11\n")
+        koodi = koodi.replace("ip -4 route show proto kernel", "printf '%s' \"$REITIT\"", 1)
+        self.assertEqual(self.aja_bash(koodi, {"REITIT": reitit}), "192.0.2.0/24,198.51.100.0/24")
+
+    def test_lahiverkot_ilman_paallekkaisia(self):
+        # 169.254.0.0/16 lisataan aina, ja se voi tulla myos reittitaulusta: sama tai sisakkainen aliverkko vain kerran.
+        koodi, odotettu = self.komento("LAHIVERKOT=$(")
+        cg = ip4(100, 64, 0, 0) + "/10"
+        k10 = ip4(10, 0, 0, 0) + "/8"
+        tapaukset = (
+            ("192.0.2.0/24,169.254.0.0/16", cg, cg + ",169.254.0.0/16,192.0.2.0/24"),
+            ("169.254.10.0/24,192.0.2.0/24", "", "169.254.0.0/16,192.0.2.0/24"),
+            ("192.0.2.0/24", "", "169.254.0.0/16,192.0.2.0/24"),
+            (k10 + "," + ip4(10, 1, 0, 0) + "/16", cg, k10 + "," + cg + ",169.254.0.0/16"),
+        )
+        for lahi4, ts10, oikea in tapaukset:
+            tulos = self.aja_bash(koodi, {"LAHI4": lahi4, "TS10": ts10})
+            self.assertEqual(tulos, oikea, (lahi4, ts10))
+            verkot = [ipaddress.ip_network(v) for v in tulos.split(",")]
+            for i, a in enumerate(verkot):
+                for b in verkot[i + 1:]:
+                    self.assertFalse(a.overlaps(b), (str(a), str(b)))
+            # Estettavat osoitteet eivat vahene: jokainen syote on tuloksen sisalla.
+            for syote in [s for s in (lahi4 + "," + ts10).split(",") if s] + ["169.254.0.0/16"]:
+                n = ipaddress.ip_network(syote)
+                self.assertTrue(any(n.subnet_of(v) for v in verkot), syote)
+        self.assertIn("169.254.0.0/16", odotettu)
+
     def test_tor_udp_esto_tarkistetaan(self):
         komennot = {k.strip(): o for k, o in self.lohkot}
         udp = [k for k in komennot if "--reuid=debian-tor" in k and "SOCK_DGRAM" in k]

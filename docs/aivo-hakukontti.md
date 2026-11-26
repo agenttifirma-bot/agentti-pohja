@@ -109,9 +109,9 @@ Odotettu: `VAPAA`. Jos tulos on `VARATTU`, kokeile seuraavaa osoitetta: `IP123=$
 Lähiverkot, joihin hakukontista ei saa ottaa yhteyttä: kaikki isännän suoraan liitetyt aliverkot ja Tailscalen osoitealue (laskettu isännän Tailscale-osoitteesta).
 
 ```bash
-LAHI4=$(ip -4 route show proto kernel | awk '{print $1}' | sort -u | paste -sd, -); echo "$LAHI4"
+LAHI4=$(ip -4 route show proto kernel | awk '$1 ~ /^[0-9.]+\/[0-9]+$/ {print $1}' | sort -u | paste -sd, -); echo "$LAHI4"
 ```
-Odotettu: pilkuin eroteltu lista aliverkkoja (vähintään kotiverkko).
+Odotettu: pilkuin eroteltu lista aliverkkoja (vähintään kotiverkko), ei sanaa `default`. Suodatin ottaa vain aliverkkomuotoiset rivit, koska oletusreitti voi olla merkitty `proto kernel` (esim. Proxmoxin ifupdown2), ja `default` kaataisi palomuurin tarkistuksen.
 
 ```bash
 TS10=$(python3 -c 'import ipaddress,sys; print(ipaddress.ip_network(sys.argv[1] + "/10", strict=False))' "$(tailscale ip -4 | head -n 1)"); echo "$TS10"
@@ -119,9 +119,9 @@ TS10=$(python3 -c 'import ipaddress,sys; print(ipaddress.ip_network(sys.argv[1] 
 Odotettu: yksi aliverkko, jonka etuliite on `/10`. Jos isännällä ei ole Tailscalea, komento antaa virheen: aseta silloin `TS10=` (tyhjä) ja jatka.
 
 ```bash
-LAHIVERKOT=$(printf '%s\n' "$LAHI4" "$TS10" 169.254.0.0/16 | grep -v '^$' | paste -sd, -); echo "$LAHIVERKOT"
+LAHIVERKOT=$(printf '%s\n' "$LAHI4" "$TS10" 169.254.0.0/16 | tr , '\n' | grep -v '^$' | python3 -c 'import ipaddress,sys; print(",".join(str(n) for n in ipaddress.collapse_addresses(ipaddress.ip_network(r.strip()) for r in sys.stdin)))'); echo "$LAHIVERKOT"
 ```
-Odotettu: edellisten yhdistelmä pilkuin eroteltuna ja lopussa linkkipaikallinen alue `169.254.0.0/16`.
+Odotettu: edellisten yhdistelmä pilkuin eroteltuna ja osoitejärjestyksessä, mukana linkkipaikallinen alue `169.254.0.0/16`. Sama tai sisäkkäinen aliverkko näkyy vain kerran (`collapse_addresses` yhdistää ne), koska `169.254.0.0/16` voi tulla myös reittitaulusta. Estettävät osoitteet eivät muutu. Virhe `does not appear to be an IPv4 or IPv6 network` tarkoittaa, että jokin edellisistä muuttujista on väärin: pysähdy.
 
 ## 2. Pohjatiedostot isännälle (isäntä)
 
