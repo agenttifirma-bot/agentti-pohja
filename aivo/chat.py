@@ -538,12 +538,49 @@ document.getElementById('tila').onchange=e=>{if(e.target.value==='tyokalu'&&!con
 let lahetyksessa=false;
 document.getElementById('teksti').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&e.keyCode!==229){e.preventDefault();document.getElementById('lomake').requestSubmit();}});
 document.getElementById('teksti').addEventListener('input',laskuri);
+const ODOTUS_MS=45000,KYSELY_MS=3000,KYSELY_YLARAJA_MS=900000,KYSELY_VIRHEET=20,VIELA='Aivo vastaa viel\u00e4\u2026';
+function nuku(ms){return new Promise(f=>setTimeout(f,ms));}
+async function viimeisin(k,ms){const ac=new AbortController(),t=setTimeout(()=>ac.abort(),ms||10000);
+ try{const r=await fetch('/api/viimeisin?keskustelu='+q(k),{headers:H,signal:ac.signal});return r.ok?await r.json():null;}finally{clearTimeout(t);}}
+// Yhteys katkesi tai venyi: palvelin tallentaa vastauksen keskusteluun ennen lahetysta, joten haetaan se sielta.
+// alku = keskustelun pituus ennen lahetysta (estaa vanhan vastauksen naytamisen; tuntematon alku -> ei hyvaksyta,
+// mutta jos viimeisin Tonyn viesti vastaa lahetettya, tila 'tuntematon': kehotetaan lataamaan sivu, ei lahettamaan uudelleen).
+// Pysahtyy, kun ohjaus.valmis, ylarajaan tai kun KYSELY_VIRHEET perakkaista hakua epaonnistuu (verkko poikki).
+async function seuraa(k,s,alku,ohjaus,ac){const raja=Date.now()+KYSELY_YLARAJA_MS;let vapaana=0,virheet=0;
+ while(!ohjaus.valmis&&Date.now()<raja){await nuku(KYSELY_MS);if(ohjaus.valmis)return null;
+  let j=null;try{j=await viimeisin(k);}catch(z){}
+  if(!j){if(++virheet>=KYSELY_VIRHEET){ohjaus.valmis=true;ac.abort();return {tila:'ei-yhteytta'};}continue;}virheet=0;
+  const oma=alku>=0&&j.tony&&Number.isInteger(j.tony.indeksi)&&j.tony.indeksi>=alku&&j.tony.teksti===s.trim();
+  if(oma&&j.vastaus&&typeof j.vastaus.teksti==='string'){ohjaus.valmis=true;ac.abort();return {tila:'valmis',tony:j.tony.indeksi,v:j.vastaus};}
+  vapaana=j.kesken?0:vapaana+1;
+  if(vapaana>=2){ohjaus.valmis=true;ac.abort();
+   return {tila:oma?'ei-vastausta':(alku<0&&j.tony&&j.tony.teksti===s.trim()?'tuntematon':'ei-perilla')};}}
+ if(ohjaus.valmis)return null;ohjaus.valmis=true;ac.abort();return {tila:'aikaraja'};}
+function naytaHaettu(odota,oma,s,h){
+ if(!h||h.tila!=='valmis'){odota.textContent=!h||h.tila==='aikaraja'?'Vastaus ei n\u00e4y viel\u00e4. Kokeile hetken p\u00e4\u00e4st\u00e4 uudelleen.'
+   :(h.tila==='ei-vastausta'?'Virhe: vastausta ei saatu valmiiksi. Kokeile uudelleen.':(h.tila==='ei-yhteytta'?'Yhteysvirhe: palvelimeen ei saada yhteytt\u00e4. Vastaus voi olla tallessa keskustelussa.'
+   :(h.tila==='tuntematon'?'Yhteys katkesi. Vastaus voi olla tallessa keskustelussa: lataa sivu ennen kuin l\u00e4het\u00e4t uudelleen.':'Yhteysvirhe: viesti ei mennyt perille.')));alas();return;}
+ odota.textContent=h.v.teksti;const t=document.createElement('span');t.className='mallinimi';
+ t.textContent='Yhteys katkesi kesken; vastaus haettiin keskustelusta.'+(typeof h.v.malli==='string'?' Malli: '+h.v.malli:'');odota.appendChild(t);
+ tonyn[h.tony]=s;painike(oma,h.tony);
+ if(nyt==='yksityinen'){luovuta(oma,h.tony);luovuta(odota,h.v.indeksi);palaute(odota,h.v.indeksi);}
+ if(syvKaytossa)syvenna(odota,h.v.indeksi,false);alas();}
 async function laheta(s){if(pituus(s)>RAJA){lisaa('aivo',ylipitka(pituus(s)));return;}if(lahetyksessa)return;lahetyksessa=true;lukitse();
  try{if(!kid)await aloita();if(!kid)return;
-  const oma=lisaa('tony',s);const odota=lisaa('aivo','\u2026');
-  try{const r=await fetch('/api/viesti',{method:'POST',headers:H,body:JSON.stringify(mallikentta({keskustelu:kid,teksti:s}))});
-   if(r.status===401){location.href='/kirjaudu';return;}
-   const j=await r.json();
+  const oma=lisaa('tony',s);const odota=lisaa('aivo','\u2026');const k=kid;
+  let alku=-1;try{const x=await viimeisin(k,5000);if(x&&Number.isInteger(x.pituus))alku=x.pituus;}catch(z){}
+  const ac=new AbortController(),ohjaus={valmis:false};let haku=null;
+  const ajastin=setTimeout(()=>{if(ohjaus.valmis)return;odota.textContent=VIELA;haku=haku||seuraa(k,s,alku,ohjaus,ac);},ODOTUS_MS);
+  let r=null,j=null;
+  try{r=await fetch('/api/viesti',{method:'POST',headers:H,signal:ac.signal,body:JSON.stringify(mallikentta({keskustelu:k,teksti:s}))});
+   if(r.status===401){ohjaus.valmis=true;clearTimeout(ajastin);location.href='/kirjaudu';return;}
+   j=await r.json();}
+  catch(x){r=null;}
+  clearTimeout(ajastin);
+  if(r===null||j===null||typeof j!=='object'){if(!ohjaus.valmis||haku){odota.textContent=VIELA;alas();
+    naytaHaettu(odota,oma,s,await (haku||seuraa(k,s,alku,ohjaus,ac)));}return;}
+  ohjaus.valmis=true;
+  try{
    if(!r.ok)odota.textContent='Virhe: '+(j.virhe||r.status);
    else if(j.vastaus)odota.textContent=j.vastaus;
    else if(Array.isArray(j.valinnat)||Array.isArray(j.ehdotukset)||Array.isArray(j.agentit)||Number.isInteger(j.paatosehdotus))odota.hidden=true;
@@ -1660,6 +1697,17 @@ def tee_kasittelija(tila):
             pass
 
         def _laheta(self, koodi, runko, tyyppi="application/json; charset=utf-8", lisaa=()):
+            try:
+                self._laheta_suoraan(koodi, runko, tyyppi, lisaa)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as e:
+                # selain tai valityspalvelin (tailscale serve) sulki yhteyden ennen vastausta; mahdollinen vastaus on
+                # jo tallennettu keskusteluun ja selain hakee sen reitilta /api/viimeisin. Yksi rivi, ei tracebackia.
+                self.close_connection = True
+                polku = urllib.parse.urlsplit(self.path or "").path[:80]
+                print("aivo-chat: yhteys katkesi ennen vastausta (%s %s, tila %s, %s)"
+                      % (self.command, ascii(polku), koodi, type(e).__name__), file=sys.stderr, flush=True)
+
+        def _laheta_suoraan(self, koodi, runko, tyyppi, lisaa):
             b = runko if isinstance(runko, bytes) else runko.encode("utf-8")
             self.send_response(koodi)
             self.send_header("Content-Type", tyyppi)
@@ -1734,6 +1782,8 @@ def tee_kasittelija(tila):
                         return self._ehdotus(kysely)
                     if osat.path == "/api/tausta":
                         return self._tausta(kysely)
+                    if osat.path == "/api/viimeisin":
+                        return self._viimeisin(kysely)
                     if osat.path == "/api/mallit":
                         vastaus = {"mallit": list(tila.or_mallit)}
                         if tila.or_mallit:            # yhdistelmat vain OpenRouter-taustapaalla
@@ -2138,6 +2188,27 @@ def tee_kasittelija(tila):
                        if i >= int(alkaen) and v.get("rooli") == "aivo" and isinstance(v.get("tausta"), str)
                        and isinstance(v.get("teksti"), str)]
             return self._json(200, {"viestit": viestit, "pituus": len(historia)})
+
+        def _viimeisin(self, d):
+            """Keskustelun viimeisin Tonyn viesti ja sen jalkeinen Aivon vastaus (ei taustaviestia) seka tieto, onko
+            saman tilan vastaus kesken. Selain kayttaa tata, kun /api/viesti-yhteys katkeaa tai venyy (BrokenPipe
+            valityspalvelimen aikarajassa): vastaus on tallennettu keskusteluun ennen lahetysta. Vain luku."""
+            kid = d.get("keskustelu")
+            valittu, ks = tila.tila_ja_kasittelija(kid)
+            historia = ks.lue(kid)                  # tarkistaa tunnisteen (ChatVirhe -> 400)
+            lukko = tila.yks_vastauslukko if valittu == "yksityinen" else tila.vastauslukko
+            tulos = {"pituus": len(historia), "kesken": lukko.locked(), "tony": None, "vastaus": None}
+            i = max((n for n, v in enumerate(historia) if v.get("rooli") == "tony"), default=None)
+            if i is not None:
+                tulos["tony"] = {"indeksi": i, "teksti": historia[i].get("teksti", "")}
+                for n in range(i + 1, len(historia)):
+                    v = historia[n]
+                    if v.get("rooli") == "aivo" and not isinstance(v.get("tausta"), str) and isinstance(v.get("teksti"), str):
+                        tulos["vastaus"] = {"indeksi": n, "teksti": v["teksti"]}
+                        if isinstance(v.get("malli"), str):
+                            tulos["vastaus"]["malli"] = v["malli"]
+                        break
+            return self._json(200, tulos)
 
         def _ehdotukset(self, d):
             if not self._yks_keskustelu(d):
