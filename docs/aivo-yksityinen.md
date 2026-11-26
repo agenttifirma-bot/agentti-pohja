@@ -227,6 +227,24 @@ OpenRouter-taustapään pahin tapaus: historia 80 000 merkkiä (40 viestiä), mu
 
 Kehotteen sääntö 2 kertoo mallille, että keskustelun aiemmat viestit ovat käytettävissä, ja sääntö 6 kieltää lupaamasta taustatyötä tai arvioimasta kestoa: yksityisessä tilassa ei ole työkaluja, verkkoa eikä taustaprosesseja.
 
+## Paikallisen vartijamallin kehote ja arviointi (valmiina, ei kytketty)
+
+Pieni paikallinen malli (3–4B, llama-server loopbackissa) arvioi vain kontekstiriskin. Muodolliset tiedot (sähköpostit, puhelinnumerot, IP-osoitteet, henkilötunnukset, IBAN, avaimet) hoitaa mekaaninen tarkistus, ja ne näkyvät mallille paikkamerkkeinä.
+
+- `aivo/vartija_kehote.py`: englanninkielinen kehote, kuusi keksittyä suomenkielistä esimerkkiä (myös kiertoilmaus, kokonaiskuva ja injektio), vastaus `{"riski": "ei"|"pieni"|"suuri", "syy": enintään 15 sanaa}`. Pyyntö käyttää llama-serverin `response_format`-kenttää JSON-skeemalla ja lämpötilaa 0. Vastaus tarkistetaan silti: kelvoton JSON, ylimääräinen avain, tuntematon riski tai liian pitkä syy antaa tilan `ei-tarkistanut`.
+- Kutsu menee vain osoitteeseen, jonka `yksityinen.sallittu_malli_osoite` hyväksyy. Välityspalvelinasetukset ohitetaan, eikä uudelleenohjauksia seurata.
+- `aivo/vartija_arvio.py`: arviointiajuri. Se tarkistaa ensin `/health`-osoitteen. Jos malli ei vastaa, ajuri kertoo sen ja lopettaa paluukoodilla 2 kutsumatta mitään. Muuten se lähettää aineiston tekstit ja tulostaa osuvuuden, väärät hälytykset, suurten riskien ohitukset ja sekaannustaulun.
+
+Ajo kontissa, kun mallipalvelu on käynnissä:
+
+```
+python3 -m aivo.vartija_arvio                       # oletusaineisto aivo/testidata/vartija_kehote_arvio.json
+python3 -m aivo.vartija_arvio --kahdesti --tulos /tmp/vartija-arvio.json
+python3 -m aivo.vartija_arvio --aineisto muu.json --tyypeista
+```
+
+`--kahdesti` ajaa jokaisen tekstin toiseen kertaan käännetyllä esimerkkijärjestyksellä ja laskee erimieliset. `--tyypeista` johtaa odotuksen totuustiedon `tyypit`-listasta kaksiarvoisesti (tyhjä = ei riskiä). Kytkentä vuotovartijaan on oma muutoksensa.
+
 ## Mallin valinta (OpenRouter-taustapää)
 
 OpenRouter-taustapäässä mallin voi valita keskustelukohtaisesti. Sallitut mallit annetaan palvelun asetuksena:
