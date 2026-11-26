@@ -526,10 +526,12 @@ def _raportti_kelpaa(teksti, viimeinen=True):
     return viimeinen and _on_json_olio(teksti)
 
 
-def _paaagentin_tekstit(stdout):
-    """Paaagentin (parent_tool_use_id puuttuu tai null) assistant-tekstiviestit stream-json-tulosteesta jarjestyksessa."""
-    tekstit = []
-    for rivi in str(stdout).splitlines():
+def _paaagentin_viestit(stdout):
+    """Paaagentin (parent_tool_use_id puuttuu tai null) assistant-viestit stream-json-tulosteesta jarjestyksessa:
+    lista (teksti, onko_tyokutsu). Claude Code voi lahettaa yhden viestin lohkot (text, tool_use) erillisina
+    tapahtumina samalla message.id:lla, joten ne ryhmitellaan id:n mukaan (sama tapa kuin _etsi_raportti)."""
+    viestit = {}   # avain -> (tekstiosat, onko tyokutsu); dict sailyttaa ensiesiintymisjarjestyksen
+    for n, rivi in enumerate(str(stdout).splitlines()):
         try:
             o = json.loads(rivi)
         except ValueError:
@@ -543,21 +545,30 @@ def _paaagentin_tekstit(stdout):
         if not isinstance(sisalto, list):
             continue
         osat = [b.get("text") for b in sisalto if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)]
-        teksti = "\n".join(osat).strip()
-        if teksti:
-            tekstit.append(teksti)
-    return tekstit
+        tyokutsu = any(isinstance(b, dict) and b.get("type") == "tool_use" for b in sisalto)
+        mid = viesti.get("id")
+        avain = ("id", mid) if isinstance(mid, str) and mid else ("rivi", n)   # ilman id:ta rivi on oma viestinsa
+        vanhat_o, vanha_t = viestit.get(avain, ([], False))
+        viestit[avain] = (vanhat_o + osat, vanha_t or tyokutsu)
+    return [("\n".join(osat).strip(), tyokutsu) for osat, tyokutsu in viestit.values()]
 
 
 def _viimeinen_raportti(stdout):
     """Viimeinen paaagentin assistant-tekstiviesti stream-json-tulosteesta, joka on loppuraportti; muuten None.
-    Tausta: taustatehtavan ilmoitus raportin jalkeen tuottaa lyhyen jalkiviestin, joka korvasi raportin result-kentassa."""
-    tekstit = _paaagentin_tekstit(stdout)
+    Tausta: taustatehtavan ilmoitus raportin jalkeen tuottaa lyhyen jalkiviestin, joka korvasi raportin result-kentassa.
+    Jos agentti kutsui raportin jalkeen tyokalua (jatkoi tyota), raportti on vanhentunut ja palautetaan None, jolloin
+    teksti tulee result-kentasta (sama saanto kuin _etsi_raportti). Raportin omassa viestissa saa olla tyokutsu."""
+    viestit = _paaagentin_viestit(stdout)
+    tekstilliset = [i for i, (teksti, _) in enumerate(viestit) if teksti]
+    viimeinen_i = tekstilliset[-1] if tekstilliset else -1
     loyto = None
-    for i, teksti in enumerate(tekstit):
-        if _raportti_kelpaa(teksti, viimeinen=(i == len(tekstit) - 1)):
-            loyto = teksti
-    return loyto
+    vanhentunut = False
+    for i, (teksti, tyokutsu) in enumerate(viestit):
+        if teksti and _raportti_kelpaa(teksti, viimeinen=(i == viimeinen_i)):
+            loyto, vanhentunut = teksti, False
+        elif tyokutsu:
+            vanhentunut = True
+    return None if vanhentunut else loyto
 
 
 def tulkitse(stdout, koodi):
@@ -667,7 +678,8 @@ def palauta_raportti(teksti, stdout, koti):
     if not koti or RAPORTTI_OTSIKKO_RE.search(teksti or ""):
         return teksti
     try:
-        istunto = json.loads(stdout).get("session_id")
+        d = kulutus.tulosolio(stdout)   # stream-json: viimeinen result-tapahtuma; vanha yksittainen JSON kelpaa myos
+        istunto = d.get("session_id") if isinstance(d, dict) else None
         if not isinstance(istunto, str) or not ISTUNTO_RE.match(istunto):
             return teksti
         data = _lue_istuntoloki(koti, istunto)
