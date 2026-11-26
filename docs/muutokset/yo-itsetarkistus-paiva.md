@@ -1,0 +1,1 @@
+- aivo-itsetarkistus: tarkastajan kehotteeseen tämä päivä ja kellonaika (Europe/Helsinki) sekä ohjeet osiokohtaisista päivämääristä ja epävarmaksi merkityistä kohdista, jotta tarkastaja ei merkitse tämän päivän päivämäärää tulevaksi eikä lue tiedoston alun päivämäärää osion päivämäärän sijaan; lähderajan varaus laskee päivärivin mukaan (TARKASTAJA_OHJE_MAX_MERKKIA).

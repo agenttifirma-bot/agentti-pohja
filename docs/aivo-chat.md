@@ -586,6 +586,18 @@ Sivu näyttää kaiken `textContent`-ominaisuudella, ei HTML:nä.
 
 **Oikeudet.** Chat-palvelun käyttäjän pitää pystyä lukemaan kirjanpito. Yksityisen tilan OpenRouter-taustapää kirjoittaa samaan tiedostoon, joten oikeus on jo olemassa, jos taustapää on käytössä.
 
+## Pitkä vastaus ja katkennut yhteys
+
+Yksityisen tilan vastaus voi kestää useita minuutteja (vastaus, itsetarkistus ja korjaus). Selaimen pyyntö kulkee `tailscale serve` -välityspalvelimen kautta (siksi palvelu näkee yhteyden osoitteesta `127.0.0.1`). Jos välityspalvelin tai puhelimen selain katkaisee yhteyden ennen vastausta, vastaus ei katoa:
+
+- Palvelin tallentaa vastauksen keskusteluun ennen kuin se lähetetään selaimelle, ja vastauslukko vapautuu normaalisti.
+- Katkos kirjataan journaliin yhdellä rivillä ilman tracebackia, esimerkiksi `aivo-chat: yhteys katkesi ennen vastausta (POST '/api/viesti', tila 200, BrokenPipeError)`. Rivillä ei ole viestien sisältöä.
+- Selain näyttää 45 sekunnin jälkeen tekstin "Aivo vastaa vielä…" ja hakee keskustelun tilaa kolmen sekunnin välein reitiltä `GET /api/viimeisin?keskustelu=…` (vain luku: viimeisin Tonyn viesti, sen jälkeinen vastaus ja tieto, onko vastaus kesken). Haku alkaa heti, jos yhteys katkeaa aiemmin. Kun vastaus löytyy, se näytetään merkinnällä "Yhteys katkesi kesken; vastaus haettiin keskustelusta." Haku lopetetaan 15 minuutin jälkeen tai kun 20 peräkkäistä hakua epäonnistuu (verkko poikki). Jos keskustelun pituutta ei saatu ennen lähetystä, haettua vastausta ei näytetä, jotta aiemman samanlaisen viestin vastaus ei näy uutena.
+- Uutta viestiä ei voi lähettää haun aikana, joten "edellinen vastaus on kesken" -virhettä ei tule.
+- Haettuna vastauksena näytetään teksti ja malli. Valintanapit ja päätösehdotuksen kortti tulevat vain suorassa vastauksessa; ydinohje-ehdotukset näkyvät edelleen odottavien listassa.
+
+Aikarajoja tai kutsurajoja ei muutettu. `tailscale serve` -välityspalvelimen omaa aikarajaa ei ole dokumentoitu. Sen voi mitata kontissa 122 esimerkiksi hitaalla testipalvelimella toisessa portissa.
+
 ## Testit
 
 ```

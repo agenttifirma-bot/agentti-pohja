@@ -56,7 +56,11 @@ Saannot (koodi on laki):
     pienimman mukana olevan mallin konteksti, ja roolisyotteelle varataan YHDISTELMA_LISAVARAUS. Kehotteen arvioitu
     ylin hinta pidetaan enintaan kiintean varauksen (openrouter_kulut.VARAUS_USD) suuruisena. Jokaisesta kutsusta
     stderriin (journal) kehotteen koko merkkeina ja tokeneina, arvioitu hinta ja toteutuneet tokenit (ei sisaltoa).
-    Paikallisen taustapaan rajat (yksityinen.MUISTI_YLARAJA ym.) eivat muutu."""
+    Paikallisen taustapaan rajat (yksityinen.MUISTI_YLARAJA ym.) eivat muutu.
+  * Muistin enimmaiskoko (A1123): muistiosio on enintaan MUISTI_MAX_OLETUS (40 000) merkkia tai asetuksen
+    AIVO_YKSITYINEN_MUISTI_MAX arvo (MUISTI_MAX_ALARAJA-MUISTI_MAX_YLARAJA). muistin_merkkiraja = min(kontekstiraja,
+    asetus), joten asetus voi vain pienentaa kehotetta. Tarkastajan lahteet rajataan samaan kokoon (tarkastajan_lahderaja).
+    Toteutuneen kutsun lokiin kirjataan myos usage.prompt_tokens_details.cached_tokens (tarjoajan valimuisti)."""
 from __future__ import annotations
 
 import json
@@ -108,6 +112,14 @@ YHDISTELMA_LISAVARAUS = 2 * yhdistelma.VASTAUS_MAX_MERKKIA + 1_000
 # Kehotteen arvioitu ylin hinta enintaan kulukatkaisimen kiintea varaus (luetaan, ei muuteta).
 VARAUS_USD_ARVIO = float(openrouter_kulut.VARAUS_USD)
 _VARAUS_USD = VARAUS_USD_ARVIO
+
+# Yksityisen tilan muistiosion enimmaiskoko merkkeina (Tonyn paatos A1123). Kontekstiraja (A1106) taytti ison mallin
+# kehotteen noin 210 000 merkkiin (noin 0,18 USD viestilta); muistihaku (#449) liittaa kysymykseen osuvat kohdat erikseen,
+# joten koko muistia ei tarvitse lahettaa joka viestissa. Asetus (AIVO_YKSITYINEN_MUISTI_MAX) voi vain pienentaa
+# kehotetta: muistin_merkkiraja palauttaa min(kontekstiraja, asetus). Sama raja koskee tarkastajan lahteita.
+MUISTI_MAX_OLETUS = 40_000
+MUISTI_MAX_ALARAJA = 4_000
+MUISTI_MAX_YLARAJA = 1_000_000
 
 TIIVISTYS_TEHTAVA = "aivo-yksityinen-tiivistys"
 # Tiivistys palauttaa JSON:n (enintaan tiivistelma.MAX_KOHDAT kohtaa, tulkinta enintaan 300 merkkia). 700 tokenia
@@ -318,6 +330,14 @@ def loki_toteutunut(malli: str, data: Any) -> None:
     for avain in ("prompt_tokens", "completion_tokens"):
         if isinstance(u.get(avain), int) and not isinstance(u.get(avain), bool):
             osat.append("%s=%d" % (avain, u[avain]))
+    # tarjoajan valimuisti (prompt caching): OpenRouter ilmoittaa valimuistista luetut syotetokenit kentassa
+    # usage.prompt_tokens_details.cached_tokens (ja kirjoitetut kentassa cache_write_tokens, jos tarjoaja kertoo ne)
+    tiedot = u.get("prompt_tokens_details")
+    if isinstance(tiedot, Mapping):
+        for avain in ("cached_tokens", "cache_write_tokens"):
+            arvo = tiedot.get(avain)
+            if isinstance(arvo, int) and not isinstance(arvo, bool):
+                osat.append("%s=%d" % (avain, arvo))
     if isinstance(u.get("cost"), (int, float)) and not isinstance(u.get("cost"), bool):
         osat.append("cost=%.4f USD" % u["cost"])
     if osat:
@@ -336,9 +356,25 @@ def historian_merkkiraja(mallit: Any, muisti: str, ohjeet: str, historia: list[d
                - viesteja * per_viesti)
 
 
-def muistin_merkkiraja(mallit: Any, ohjeet: str, historia: list[dict[str, Any]], lisavaraus_merkit: int = 0) -> int:
-    """Muistiosion merkkiraja (kirjasto, agenttidata ja tiivistelmat yhteensa) OpenRouter-taustapaalla. Historialle
-    jaa aina vahintaan kontekstiraja.HISTORIA_VAHIMMAISOSUUS jaljella olevasta tilasta."""
+def tarkista_muisti_max(arvo: Any) -> int:
+    """AIVO_YKSITYINEN_MUISTI_MAX: puuttuva tai tyhja -> MUISTI_MAX_OLETUS. Kokonaisluku valilla
+    MUISTI_MAX_ALARAJA-MUISTI_MAX_YLARAJA; muu arvo nostaa YksityinenVirhe (palvelu ei kaynnisty)."""
+    if arvo is None or (isinstance(arvo, str) and not arvo.strip()):
+        return MUISTI_MAX_OLETUS
+    if isinstance(arvo, bool):
+        raise YksityinenVirhe("yksityisen tilan muistin enimm\u00e4iskoko ei ole kokonaisluku")
+    try:
+        n = int(str(arvo).strip())
+    except ValueError:
+        raise YksityinenVirhe("yksityisen tilan muistin enimm\u00e4iskoko ei ole kokonaisluku") from None
+    if not MUISTI_MAX_ALARAJA <= n <= MUISTI_MAX_YLARAJA:
+        raise YksityinenVirhe("yksityisen tilan muistin enimm\u00e4iskoko pit\u00e4\u00e4 olla %d-%d merkki\u00e4"
+                              % (MUISTI_MAX_ALARAJA, MUISTI_MAX_YLARAJA))
+    return n
+
+
+def muistin_kontekstiraja(mallit: Any, ohjeet: str, historia: list[dict[str, Any]], lisavaraus_merkit: int = 0) -> int:
+    """Muistiosion merkkiraja mallin kontekstin mukaan (A1106) ilman muistin enimmaiskokoa."""
     viimeiset = historia[-HISTORIA_YLARAJA:]
     per_viesti = kontekstiraja.VIESTI_LISA + len(yksityinen.LYHENNETTY % 10 ** 7)     # sama kuin historian_merkkiraja
     tarve = sum(len(str(v.get("teksti", ""))) + per_viesti for v in viimeiset)
@@ -348,6 +384,14 @@ def muistin_merkkiraja(mallit: Any, ohjeet: str, historia: list[dict[str, Any]],
     suojattu += (tony[-1] if tony else 0) * per_viesti      # vanhemmista jaa ainakin rakenne ja lyhennysmerkinta
     kiintea = len(KEHOTE) + len(ohjeet or "(ei ydinohjeita)\n")
     return kontekstiraja.muistiraja(mallit, MAX_TOKENIA, kiintea, tarve, lisavaraus_merkit, _VARAUS_USD, suojattu)
+
+
+def muistin_merkkiraja(mallit: Any, ohjeet: str, historia: list[dict[str, Any]], lisavaraus_merkit: int = 0,
+                       muisti_max: int = MUISTI_MAX_OLETUS) -> int:
+    """Muistiosion merkkiraja (kirjasto, agenttidata, korjaukset, hakuosumat ja tiivistelmat yhteensa)
+    OpenRouter-taustapaalla: min(kontekstiraja, muisti_max). Historialle jaa aina vahintaan
+    kontekstiraja.HISTORIA_VAHIMMAISOSUUS jaljella olevasta tilasta. Asetus voi vain pienentaa rajaa."""
+    return min(muistin_kontekstiraja(mallit, ohjeet, historia, lisavaraus_merkit), max(0, int(muisti_max)))
 
 
 def yhdistelman_mallit(malli: str, roolit: Mapping[str, str] | None) -> list[str]:
@@ -482,13 +526,26 @@ def kysy_taustatyo(
         return teksti + "\n\n" + TAUSTA_KATKENNUT_HUOMAUTUS
     return teksti
 
-def tarkastajan_lahderaja(tarkastaja: str) -> int:
+# Tarkastajan lahteiden kiintea osa muistin lisaksi: keskustelun viimeiset viestit (itsetarkistus.lahteet), otsikot
+# ja rajamerkit. Kehotteen alku (KEHOTE ja ydinohjeet) lisataan kutsussa ohjeiden todellisen pituuden mukaan.
+LAHTEET_KESKUSTELU_MAX = (itsetarkistus.VIIMEINEN_VIESTI_MAX_MERKKIA
+                          + (itsetarkistus.HISTORIA_VIESTEJA - 1) * (itsetarkistus.HISTORIA_VIESTI_MAX_MERKKIA + 8)
+                          + 2_000)
+
+
+def tarkastajan_lahderaja(tarkastaja: str, muisti_max: int | None = None, ohjeet: str = "") -> int:
     """Tarkastajan lahteiden merkkiraja: tarkastajamallin syoteraja (kontekstiraja.syote_merkit, vastaukselle
-    itsetarkistus.TARKISTUS_MAX_TOKENIA, sama kiintea varaus kuin chatissa) - tarkastajan ohje, vastaus ja rakenne."""
+    itsetarkistus.TARKISTUS_MAX_TOKENIA, sama kiintea varaus kuin chatissa) - tarkastajan ohje, vastaus ja rakenne.
+    `muisti_max` (A1123) rajaa lahteet samaan muistin enimmaiskokoon: muisti + kehotteen alku + keskustelun
+    viimeiset viestit. Asetus voi vain pienentaa rajaa."""
     syote = kontekstiraja.syote_merkit(tarkastaja, itsetarkistus.TARKISTUS_MAX_TOKENIA, _VARAUS_USD)
-    kiintea = (len(itsetarkistus.TARKASTAJA_OHJE) + itsetarkistus.VASTAUS_MAX_MERKKIA + 2 * kontekstiraja.VIESTI_LISA
+    kiintea = (itsetarkistus.TARKASTAJA_OHJE_MAX_MERKKIA + itsetarkistus.VASTAUS_MAX_MERKKIA + 2 * kontekstiraja.VIESTI_LISA
                + kontekstiraja.JARJESTELMA_LISA)
-    return max(0, syote - kiintea)
+    raja = max(0, syote - kiintea)
+    if muisti_max is not None:
+        alku = len(KEHOTE) + len(ohjeet or "(ei ydinohjeita)\n") + kontekstiraja.JARJESTELMA_LISA
+        raja = min(raja, max(0, int(muisti_max)) + alku + LAHTEET_KESKUSTELU_MAX)
+    return raja
 
 
 def korjauksen_raja(vastaaja: str) -> int:
@@ -505,6 +562,7 @@ def tarkista_vastaus(
     vastaaja: str,
     tarkastaja: str | None = None,
     kaytetyt: int = 1,
+    muisti_max: int | None = None,
     avain_tiedosto: str = OLETUS_AVAIN,
     kulutila: str | None = None,
     avaa: Callable[..., Any] | None = None,
@@ -527,4 +585,5 @@ def tarkista_vastaus(
                              max_tokens=max_tokens, ylaraja_s=ylaraja, aikaraja_s=aikaraja_s,
                              tehtava=TARKISTUS_TEHTAVA)
     return itsetarkistus.aja(vastaus, viestit, kysy, tarkastaja=tarkastaja, vastaaja=vastaaja, kaytetyt=kaytetyt,
-                             lahteet_raja=tarkastajan_lahderaja(tarkastaja), korjaus_raja=korjauksen_raja(vastaaja))
+                             lahteet_raja=tarkastajan_lahderaja(tarkastaja, muisti_max, ohjeet),
+                             korjaus_raja=korjauksen_raja(vastaaja))

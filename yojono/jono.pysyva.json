@@ -1,6 +1,7 @@
 {
   "paivakatto": 5.0,
   "kuukausikatto": 100.0,
+  "pysaytetty": "llm-stopcheck ja evalkit pysaytetty, A1049, 22.11. Niiden tehtavat poistettu jonosta; historia tila.jsonissa ja raporteissa ennallaan.",
   "tehtavat": [
     {
       "id": "katselmointi-agentti-pohja",
@@ -50,14 +51,6 @@
       "toisto_pv": 3
     },
     {
-      "id": "kehitys-testit-llm-stopcheck",
-      "tyyppi": "kehitys",
-      "repo": "llm-stopcheck",
-      "aihe": "testit",
-      "budjetti": 1.2,
-      "toisto_pv": 4
-    },
-    {
       "id": "kehitys-testit-mcp-model-router",
       "tyyppi": "kehitys",
       "repo": "mcp-model-router",
@@ -74,24 +67,9 @@
       "toisto_pv": 5
     },
     {
-      "id": "kehitys-testit-evalkit",
-      "tyyppi": "kehitys",
-      "repo": "evalkit",
-      "aihe": "testit",
-      "budjetti": 1.2,
-      "toisto_pv": 5
-    },
-    {
       "id": "katselmointi-mcp-model-router",
       "tyyppi": "katselmointi",
       "repo": "mcp-model-router",
-      "budjetti": 2.0,
-      "toisto_pv": 7
-    },
-    {
-      "id": "katselmointi-llm-stopcheck",
-      "tyyppi": "katselmointi",
-      "repo": "llm-stopcheck",
       "budjetti": 2.0,
       "toisto_pv": 7
     },
@@ -106,14 +84,6 @@
       "id": "kehitys-readme-mcp-model-router",
       "tyyppi": "kehitys",
       "repo": "mcp-model-router",
-      "aihe": "readme",
-      "budjetti": 1.0,
-      "toisto_pv": 7
-    },
-    {
-      "id": "kehitys-readme-llm-stopcheck",
-      "tyyppi": "kehitys",
-      "repo": "llm-stopcheck",
       "aihe": "readme",
       "budjetti": 1.0,
       "toisto_pv": 7
@@ -138,14 +108,6 @@
       "id": "kehitys-riippuvuudet-mcp-model-router",
       "tyyppi": "kehitys",
       "repo": "mcp-model-router",
-      "aihe": "riippuvuudet",
-      "budjetti": 1.0,
-      "toisto_pv": 7
-    },
-    {
-      "id": "kehitys-riippuvuudet-llm-stopcheck",
-      "tyyppi": "kehitys",
-      "repo": "llm-stopcheck",
       "aihe": "riippuvuudet",
       "budjetti": 1.0,
       "toisto_pv": 7
