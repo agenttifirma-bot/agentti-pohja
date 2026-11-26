@@ -31,8 +31,12 @@ class LuovutusPohja(Pohja):
         t = luovutus.tallenna_ehdotus(self.tila.luovutukset, teksti, "lohko")
         return t, yksityinen.sha(teksti)[:8]
 
-    def hyvaksy_l(self, kid, t, vahvistus):
-        return self.pyynto("POST", "/api/luovutus/hyvaksy", {"keskustelu": kid, "tunnus": t, "vahvistus": vahvistus})
+    def hyvaksy_l(self, kid, t, vahvistus, lisa=True):
+        """lisa=True: mukana vuotovartijan "kysy"-lisavahvistus samasta sha8:sta (ilman mallia tulos on aina kysy)."""
+        d = {"keskustelu": kid, "tunnus": t, "vahvistus": vahvistus}
+        if lisa and isinstance(vahvistus, str):
+            d["lisavahvistus"] = "tarkistin kohdat " + vahvistus[-8:]
+        return self.pyynto("POST", "/api/luovutus/hyvaksy", d)
 
     def odottavat_l(self, kid):
         s, d = self.pyynto("GET", "/api/luovutukset?keskustelu=" + kid)
@@ -165,7 +169,8 @@ class HyvaksyntaTesti(LuovutusPohja):
         def kaatuu(*a, **k):
             raise yksityinen.YksityinenVirhe("push-osoite ei ole sallittu")
         with self.assertRaises(yksityinen.YksityinenVirhe):
-            luovutus.hyvaksy(self.tila.luovutukset, t, "kyll\u00e4 " + s8, self.tila.kirjasto, julkaise=kaatuu)
+            luovutus.hyvaksy(self.tila.luovutukset, t, "kyll\u00e4 " + s8, self.tila.kirjasto, julkaise=kaatuu,
+                             lisavahvistus="tarkistin kohdat " + s8)
         self.assertEqual(self.saapuneet_tiedostot(), [])
         self.assertEqual([e["tulos"] for e in luovutus.lue_loki(self.tila.luovutukset)], ["virhe: YksityinenVirhe"])
         self.assertEqual(luovutus.listaa_ehdotukset(self.tila.luovutukset), [t])
@@ -256,7 +261,7 @@ class RajatTesti(LuovutusPohja):
             teksti = ("%d" % i) * 7000
             t = luovutus.tallenna_ehdotus(self.tila.luovutukset, teksti, "lohko")
             luovutus.hyvaksy(self.tila.luovutukset, t, "kyll\u00e4 " + yksityinen.sha(teksti)[:8], self.tila.kirjasto,
-                             julkaise=lambda *a, **k: "ei-gitissa")
+                             julkaise=lambda *a, **k: "ei-gitissa", lisavahvistus="tarkistin kohdat " + yksityinen.sha(teksti)[:8])
         k = luovutus.saapuneet_kehote(self.tila.kirjasto)
         self.assertLessEqual(len(k.encode("utf-8")), luovutus.SAAPUNEET_YLARAJA + 1000)
         self.assertIn("ei n\u00e4ytetty", k)

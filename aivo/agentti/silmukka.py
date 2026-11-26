@@ -58,8 +58,11 @@ def _avain(kutsu):
         return (kutsu.nimi, repr(sorted(kutsu.arg)))
 
 
-def aja(malli, tehtava, juuri, askelraja=OLETUS_ASKELRAJA, aikaraja_s=OLETUS_AIKARAJA_S, nyt=time.monotonic):
-    """Ajaa silmukan tyokansiossa `juuri`. Palauttaa Tulos-olion; ei nosta poikkeusta mallin takia."""
+def aja(malli, tehtava, juuri, askelraja=OLETUS_ASKELRAJA, aikaraja_s=OLETUS_AIKARAJA_S, nyt=time.monotonic,
+        verkko=None):
+    """Ajaa silmukan tyokansiossa `juuri`. Palauttaa Tulos-olion; ei nosta poikkeusta mallin takia.
+    `verkko` = hakuistunto (tyokalut hae ja sivu) tai None, jolloin ne eivat ole sallittuja nimia."""
+    sallitut = protokolla.NIMET + (protokolla.VERKKONIMET if verkko is not None else ())
     alku = nyt()
     loki = []
     viestit = [{"role": "user", "content": tehtava}]
@@ -86,7 +89,7 @@ def aja(malli, tehtava, juuri, askelraja=OLETUS_ASKELRAJA, aikaraja_s=OLETUS_AIK
             return lopeta(VIRHE, "mallikutsu epaonnistui (" + type(e).__name__ + ")", askelia=askelia)
         askelia += 1
         viestit.append({"role": "assistant", "content": vastaus if isinstance(vastaus, str) else ""})
-        j = protokolla.jasenna(vastaus)
+        j = protokolla.jasenna(vastaus, sallitut)
         if j.kutsu is None:
             syy = j.virhe or "vastauksessa ei ollut tyokalulohkoa; kutsu tyokalua tai valmis"
             loki.append(Lokirivi(askelia, "-", False, syy[:RAJA_LOKI_SELITE]))
@@ -100,7 +103,7 @@ def aja(malli, tehtava, juuri, askelraja=OLETUS_ASKELRAJA, aikaraja_s=OLETUS_AIK
         if toistoja >= TOISTO_RAJA:
             loki.append(Lokirivi(askelia, j.kutsu.nimi, False, "toisto: sama kutsu %d kertaa" % toistoja))
             return lopeta(RAJA, "toisto", askelia=askelia)
-        t = tyokalut.suorita(juuri, j.kutsu.nimi, j.kutsu.arg)
+        t = tyokalut.suorita(juuri, j.kutsu.nimi, j.kutsu.arg, verkko=verkko)
         if t.valmis and t.ok:
             loki.append(Lokirivi(askelia, j.kutsu.nimi, True, "raportti %d merkkia" % len(t.teksti)))
             return lopeta(VALMIS, "", t.teksti, askelia)

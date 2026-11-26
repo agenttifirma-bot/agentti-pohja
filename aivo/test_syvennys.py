@@ -327,7 +327,12 @@ class RakenneTesti(unittest.TestCase):
     def test_vain_syvennys_kirjoittaa_tyon(self):
         kutsujat = sorted(p.name for p in AIVO.glob("*.py") if not p.name.startswith("test_")
                           and re.search(r"\bkirjoita_tyo\(", p.read_text(encoding="utf-8")))
-        self.assertEqual(kutsujat, ["syvennys.py", "taustaajo.py"])
+        # Verkkohaku (#443) on toinen kirjoittaja: oma vartija ja Tonyn vahvistus, vain tyyppi="haku".
+        self.assertEqual(kutsujat, ["hakukytkenta.py", "syvennys.py", "taustaajo.py"])
+        hk = (AIVO / "hakukytkenta.py").read_text(encoding="utf-8")
+        kutsut = [hk[m.start():m.start() + 200] for m in re.finditer(r"\bkirjoita_tyo\(", hk)]
+        self.assertTrue(kutsut)
+        self.assertTrue(all('tyyppi="haku"' in k for k in kutsut), kutsut)
         ch = (AIVO / "chat.py").read_text(encoding="utf-8")
         self.assertEqual(ch.count("syvennys.kaynnista("), 1)
 

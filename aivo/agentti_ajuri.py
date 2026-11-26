@@ -22,6 +22,11 @@ Pyynnon muoto (JSON-olio, muut kentat hylataan):
   `liitteet` ja `keskustelu` ovat valinnaisia. Liitteille patevat tyokalun `kirjoita` polku-, paate- ja kokosaannot.
 
 Lokiin (stdout -> journald) kirjoitetaan vain tunnus, tila, luvut ja virheen tyyppi, ei koskaan tehtavan sisaltoa.
+
+Verkkohaku (A1101, valinnainen): jos palvelulla on --haku-osoite (tai AIVO_HAKU_OSOITE), lapsiprosessi saa
+hakuasetuksen ja agentin tekija tyokalut hae ja sivu (aivo.verkkohaku hakuvalittajan kautta). Avain on tiedostossa
+--haku-avain (oletus <perus>/haku-avain, 0600, palvelun kayttajan oma; Tony luo). Hakuloki (aika, tunnus, tila)
+kirjoitetaan kansioon <perus>/hakuloki (0700, 30 paivaa). Lausekkeet ja osoitteet nakyvat tuloksen kentassa verkko.
 """
 import argparse
 import fcntl
@@ -43,6 +48,8 @@ KASITELLYT = "kasitellyt"
 TYO = "tyo"
 TULOKSET = "tulokset"
 LUKKO = "ajuri.lukko"
+HAKUAVAIN = "haku-avain"
+HAKULOKI = "hakuloki"
 
 PROSESSIN_AIKARAJA_S = malli.AIKARAJA_S + 60   # agenttiytimen aikaraja + vara aliprosessin kaynnistykseen
 ODOTUS_S = 10                                   # jonon tarkistusvali, kun jono on tyhja
@@ -57,7 +64,7 @@ TILAT = (malli.VALMIS, malli.KESKEN, malli.KESKEYTETTY, malli.VIRHE)
 SYY_AIKARAJA = "aikaraja: aliprosessi lopetettu"
 SYY_PYSAHTYI = "ajuri pysahtyi kesken tehtavan"
 KENTAT = ("versio", "tunnus", "keskustelu", "tila", "syy", "raportti", "tarkastus", "tiedostot", "kutsuja",
-          "askelia", "kesto_s", "kulu_eur", "kulu_tuntematon", "mallit", "rajat", "loki", "valmistui")
+          "askelia", "kesto_s", "kulu_eur", "kulu_tuntematon", "mallit", "rajat", "loki", "verkko", "valmistui")
 
 
 class SyoteVirhe(Exception):
@@ -323,7 +330,7 @@ def perustulos(tunnus, keskustelu, tila, syy, mallit, kutsuja=0, kulu_tuntematon
     return {"versio": VERSIO, "tunnus": tunnus, "keskustelu": keskustelu, "tila": tila, "syy": syy,
             "raportti": "", "tarkastus": {}, "tiedostot": [], "kutsuja": kutsuja, "askelia": 0, "kesto_s": 0.0,
             "kulu_eur": 0.0, "kulu_tuntematon": kulu_tuntematon, "mallit": dict(mallit or {}),
-            "rajat": dict(malli.RAJAT), "loki": [], "valmistui": ""}
+            "rajat": dict(malli.RAJAT), "loki": [], "verkko": {}, "valmistui": ""}
 
 
 def kirjoita_tulos(perus, tunnus, tulos):
@@ -370,8 +377,20 @@ def palauta_keskeneraiset(perus, mallit):
 
 # ------------------------------------------------------------------------------------------------- ajo
 
-def lapsikomento(juuri, roolit):
-    return [sys.executable, "-m", "aivo.agentti_ajuri", "lapsi", "--juuri", juuri, "--roolit", roolit]
+def lapsikomento(juuri, roolit, haku_osoite=""):
+    k = [sys.executable, "-m", "aivo.agentti_ajuri", "lapsi", "--juuri", juuri, "--roolit", roolit]
+    if haku_osoite:
+        k += ["--haku-osoite", haku_osoite]
+    return k
+
+
+def hakuasetus(juuri, haku_osoite, haku_avain=None):
+    """Lapsen hakuasetus malli.aja-funktiolle tai None. Perus paatellaan tyokansiosta (<perus>/tyo/<tunnus>)."""
+    if not haku_osoite:
+        return None
+    perus = os.path.dirname(os.path.dirname(os.path.abspath(juuri)))
+    return {"osoite": haku_osoite, "avain": haku_avain or os.path.join(perus, HAKUAVAIN),
+            "loki": os.path.join(perus, HAKULOKI), "tunnus": os.path.basename(os.path.abspath(juuri))}
 
 
 def _roolit_teksti(mallit):
@@ -399,7 +418,7 @@ def aja_aliprosessina(komento, teksti, aikaraja_s):
     return d, ""
 
 
-def aja_seuraava(perus, roolit, komento=None, aikaraja_s=PROSESSIN_AIKARAJA_S, kello=time.monotonic):
+def aja_seuraava(perus, roolit, komento=None, aikaraja_s=PROSESSIN_AIKARAJA_S, kello=time.monotonic, haku_osoite=""):
     """Ajaa jonon vanhimman pyynnon. Palauttaa tulos-sanakirjan tai None, jos jono on tyhja.
 
     `komento` ja `aikaraja_s` ovat testeja varten; aikaraja voi vain pienentya (enintaan PROSESSIN_AIKARAJA_S).
@@ -437,7 +456,8 @@ def aja_seuraava(perus, roolit, komento=None, aikaraja_s=PROSESSIN_AIKARAJA_S, k
         tulos = perustulos(tunnus, keskustelu, malli.VIRHE, "tyokansiota ei voi luoda (%s)" % type(e).__name__,
                            mallit)
     else:
-        d, syy = aja_aliprosessina(komento or lapsikomento(juuri, _roolit_teksti(mallit)), teksti, aikaraja_s)
+        d, syy = aja_aliprosessina(komento or lapsikomento(juuri, _roolit_teksti(mallit), haku_osoite), teksti,
+                                   aikaraja_s)
         if d is None:
             tila = malli.KESKEYTETTY if syy == SYY_AIKARAJA else malli.VIRHE
             tulos = perustulos(tunnus, keskustelu, tila, syy, mallit, kulu_tuntematon=True)
@@ -462,7 +482,7 @@ def aja_seuraava(perus, roolit, komento=None, aikaraja_s=PROSESSIN_AIKARAJA_S, k
     return tulos
 
 
-def palvelu(perus, roolit, odotus_s=ODOTUS_S, kierroksia=None, kulutila=None):
+def palvelu(perus, roolit, odotus_s=ODOTUS_S, kierroksia=None, kulutila=None, haku_osoite=""):
     """Pitkaikainen silmukka: yksi tehtava kerrallaan. `kierroksia` ja `kulutila` ovat testeja varten."""
     mallit = malli.tarkista_roolit(roolit)
     virheet = tarkista_kansiot(perus) + tarkista_kulukirjanpito(kulutila)
@@ -482,20 +502,20 @@ def palvelu(perus, roolit, odotus_s=ODOTUS_S, kierroksia=None, kulutila=None):
                 if kelvottomat:
                     loki("jonossa %d tiedostoa, joiden nimi ei kelpaa (ohitetaan)" % kelvottomat)
                 nahty_kelvottomia = kelvottomat
-            if aja_seuraava(perus, mallit) is None:
+            if aja_seuraava(perus, mallit, haku_osoite=haku_osoite) is None:
                 time.sleep(odotus_s)
         return 0
     finally:
         lukko.vapauta()
 
 
-def lapsi(juuri, roolit, syote=None, **kw):
+def lapsi(juuri, roolit, syote=None, haku_osoite="", **kw):
     """Aliprosessin runko: lukee {"teksti"} syotteesta, ajaa agentin ja palauttaa tuloksen sanakirjana."""
     data = json.load(syote if syote is not None else sys.stdin)
     teksti = data["teksti"] if isinstance(data, dict) and isinstance(data.get("teksti"), str) else ""
     if not teksti:
         return perustulos("", "", malli.VIRHE, "tehtavan teksti puuttuu", {})
-    return malli.aja(teksti, juuri, roolit, **kw).sanakirja()
+    return malli.aja(teksti, juuri, roolit, haku=hakuasetus(juuri, haku_osoite), **kw).sanakirja()
 
 
 def main(argv=None):
@@ -504,16 +524,19 @@ def main(argv=None):
     p = ali.add_parser("palvelu", help="lue jonoa ja aja tehtavat yksi kerrallaan")
     p.add_argument("--perus", default=OLETUS_PERUS)
     p.add_argument("--roolit", required=True, help="malli tai suunnittelija:m,tekija:m,tarkastaja:m")
+    p.add_argument("--haku-osoite", default=os.environ.get("AIVO_HAKU_OSOITE", ""),
+                   help="hakuvalittajan osoite http://isanta:portti; tyhja = ei verkkotyokaluja (oletus)")
     t = ali.add_parser("tarkista", help="tarkista kansioiden oikeudet ja rooliasetus")
     t.add_argument("--perus", default=OLETUS_PERUS)
     t.add_argument("--roolit")
     c = ali.add_parser("lapsi", help="sisainen: yhden tehtavan aliprosessi")
     c.add_argument("--juuri", required=True)
     c.add_argument("--roolit", required=True)
+    c.add_argument("--haku-osoite", default="")
     a = ap.parse_args(argv)
     try:
         if a.komento == "lapsi":
-            print(json.dumps(lapsi(a.juuri, a.roolit), ensure_ascii=True))
+            print(json.dumps(lapsi(a.juuri, a.roolit, haku_osoite=a.haku_osoite), ensure_ascii=True))
             return 0
         if a.komento == "tarkista":
             virheet = tarkista_kansiot(a.perus) + tarkista_kulukirjanpito()
@@ -526,7 +549,7 @@ def main(argv=None):
                 print("VIRHE " + v)
             print("OK" if not virheet else "VIRHEITA %d" % len(virheet))
             return 0 if not virheet else 1
-        return palvelu(a.perus, a.roolit)
+        return palvelu(a.perus, a.roolit, haku_osoite=a.haku_osoite)
     except malli.AgenttiVirhe as e:
         loki("asetusvirhe: %s" % e)
         return 2

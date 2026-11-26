@@ -14,7 +14,8 @@ KIELLETYT_MODUULIT = {"urllib", "socket", "http", "subprocess", "ssl", "ftplib",
                       "xmlrpc", "asyncio", "multiprocessing", "ctypes", "importlib", "requests", "pty"}
 # Ainoa agenttimoduuli, joka saa tuoda aivo-paketin moduuleja (mallikytkenta, A1072). Muut agenttimoduulit
 # (tyokalut, polut, protokolla, silmukka) eivat tuo mitaan aivo-paketista.
-YLATASON_TUONNIT = {"malli.py": {"openrouter_kulut", "yksityinen_or"}}
+# A1101: malli.py saa lisaksi verkkohaku-moduulin (ainoa verkkoreitti hakuvalittajaan); tyokalut.py ei tuo sita.
+YLATASON_TUONNIT = {"malli.py": {"openrouter_kulut", "yksityinen_or", "verkkohaku"}}
 KIELLETYT_OS = {"system", "popen", "fork", "forkpty", "execv", "execve", "execvp", "execl", "execle",
                 "execlp", "spawnl", "spawnv", "spawnlp", "spawnvp", "posix_spawn", "remove", "rmdir",
                 "removedirs"}
@@ -77,6 +78,8 @@ class RakenneTesti(unittest.TestCase):
     def test_tyokalut_ja_nimet_vastaavat_toisiaan(self):
         from aivo.agentti import protokolla
         self.assertEqual(set(tyokalut.TYOKALUT), set(protokolla.NIMET))
+        self.assertEqual(set(tyokalut.VERKKOTYOKALUT), set(protokolla.VERKKONIMET))
+        self.assertFalse(set(protokolla.VERKKONIMET) & set(protokolla.NIMET))
 
 
 class TyokaluTesti(unittest.TestCase):
