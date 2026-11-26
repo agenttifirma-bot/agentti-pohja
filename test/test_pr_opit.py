@@ -171,10 +171,13 @@ class MainTesti(unittest.TestCase):
             self.assertFalse(os.path.exists(polku))
 
     def test_kommenttien_hakuvirhe_ei_kirjoita_tiedostoa(self):
+        # tuore paivamaara: kiintea 2026-10-27 putosi aikaikkunasta, jolloin kommentteja ei haettu lainkaan (aikapommi)
+        tuore = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
         def kommentit_rikki(url):
             if "/issues/" in url:
                 raise OSError("kommentit")
-            return feikki({"evalkit": [pr(1, "yojono: testit evalkit")]})(url)
+            return feikki({"evalkit": [pr(1, "yojono: testit evalkit", luotu=tuore, suljettu=tuore)]})(url)
         with tempfile.TemporaryDirectory() as d:
             polku = os.path.join(d, "opit.md")
             self.assertEqual(self.aja(["--kirjoita", polku], kommentit_rikki)[0], 1)

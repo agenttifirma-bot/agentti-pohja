@@ -1394,7 +1394,7 @@ class Tila:
                  agentit=None, agenttitehtavat=None, itsetarkistus=None, tarkista_yks=None,
                  tausta_jono=None, tausta_paivaraja=None, syvennykset=None, korjauskansio=None,
                  vartija_kysy=None, vartija_listat=None, tulos_repo=None, haku_jono=None, haku_odottavat=None,
-                 lisapalat=luovutuspaketti.LISAPALAT_OLETUS, muisti_max=None):
+                 muisti_max=None, lisapalat=luovutuspaketti.LISAPALAT_OLETUS):
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
         self.kulutila = or_kulutila               # None = openrouter_kulut.OLETUS_TILA (yhteinen kirjanpito)
