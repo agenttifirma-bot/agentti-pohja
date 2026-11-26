@@ -60,7 +60,14 @@ Saannot (koodi on laki):
   * Muistin enimmaiskoko (A1123): muistiosio on enintaan MUISTI_MAX_OLETUS (40 000) merkkia tai asetuksen
     AIVO_YKSITYINEN_MUISTI_MAX arvo (MUISTI_MAX_ALARAJA-MUISTI_MAX_YLARAJA). muistin_merkkiraja = min(kontekstiraja,
     asetus), joten asetus voi vain pienentaa kehotetta. Tarkastajan lahteet rajataan samaan kokoon (tarkastajan_lahderaja).
-    Toteutuneen kutsun lokiin kirjataan myos usage.prompt_tokens_details.cached_tokens (tarjoajan valimuisti)."""
+    Toteutuneen kutsun lokiin kirjataan myos usage.prompt_tokens_details.cached_tokens (tarjoajan valimuisti).
+  * Paattelyn ylaraja (PAATTELY_MAX_OLETUS 2 000, asetus AIVO_YKSITYINEN_PAATTELY_MAX 0-6 000): _kysy_viestit lisaa
+    kutsuun reasoning.max_tokens (ja exclude), jos malli on taulukossa PAATTELY_TUKI. Raja on aina pienempi kuin
+    max_tokens, joten vastaukselle jaa tilaa. Muut mallit kutsutaan ilman parametria. Sama raja koskee chattia,
+    yhdistelman osakutsuja, vartijaa seka itsetarkistuksen tarkastajaa ja korjausta. Yhden mallin chat tekee enintaan
+    yhden uusinnan ilman paattelya (uusinnan_parametri), jos vastaus katkeaa silti ennen tekstia; uusinta kulkee saman
+    openrouter_kulut.kutsu-reitin kautta (paivakatto) ja lasketaan kutsurajaan (Vastausteksti.kutsuja ->
+    itsetarkistuksen `kaytetyt`). Tiivistys ja taustaajo eivat muutu."""
 from __future__ import annotations
 
 import json
@@ -120,6 +127,42 @@ _VARAUS_USD = VARAUS_USD_ARVIO
 MUISTI_MAX_OLETUS = 40_000
 MUISTI_MAX_ALARAJA = 4_000
 MUISTI_MAX_YLARAJA = 1_000_000
+
+# Paattelyn ylaraja (reasoning). Ajatteleva malli jakaa max_tokens-rajan paattelyn ja vastauksen kesken; kontin 122
+# loki 26.11.2026: qwen3.8-2.4t-a95b kaytti koko 8 000 tokenin rajan paattelyyn (completion_tokens=8000,
+# cost=0.0834 USD), eika vastausta tullut. Siksi kutsuun lisataan reasoning.max_tokens (asetus
+# AIVO_YKSITYINEN_PAATTELY_MAX, oletus 2 000, sallittu 0-6 000; 0 = reasoning-parametria ei laheteta).
+# Raja on aina pienempi kuin max_tokens: vastaukselle jaa vahintaan min(PAATTELY_VASTAUSVARA, max_tokens // 2) tokenia.
+PAATTELY_MAX_OLETUS = 2_000
+PAATTELY_MAX_YLARAJA = 6_000
+PAATTELY_VASTAUSVARA = 2_000
+# Lahde: OpenRouter, docs/use-cases/reasoning-tokens ja mallilista GET /api/v1/models (kentat
+# supported_parameters ja reasoning), luettu 26.11.2026. Mukana vain AVOIMET_MALLIT, joiden supported_parameters
+# sisaltaa "reasoning". Arvo: (pakollinen, tuetut effort-tasot tai None = mallitieto ei kerro tasoja).
+#   * Dokumentaation mukaan malli, joka tukee vain effort-tasoja, muuntaa reasoning.max_tokens-arvon tasoksi
+#     (osuus max_tokens-rajasta; low noin 20 %, medium 50 %, xhigh 95 %). qwen3.8-2.4t-a95b:n oletus on xhigh.
+#   * Qwen-malleille reasoning.max_tokens valitetaan thinking_budget-arvona "joillakin malleilla". Etta jokainen
+#     listan Qwen-malli noudattaa rajaa, on ARVAUS; uusinta (alla) kattaa tapauksen, jossa raja ei pida.
+#   * Listan ulkopuolinen malli (esim. meta-llama/llama-4-maverick, ei "reasoning"-parametria) kutsutaan ilman
+#     reasoning-parametria.
+PAATTELY_TUKI: dict[str, tuple[bool, tuple[str, ...] | None]] = {
+    "deepseek/deepseek-chat-v3.1": (False, None),
+    "deepseek/deepseek-r1-0528": (True, None),
+    "mistralai/mistral-small-2603": (False, ("high", "none")),
+    "qwen/qwen3-14b": (False, None),
+    "qwen/qwen3-235b-a22b-thinking-2507": (True, None),
+    "qwen/qwen3-30b-a3b": (False, None),
+    "qwen/qwen3-32b": (False, None),
+    "qwen/qwen3.5-122b-a10b": (False, None),
+    "qwen/qwen3.5-27b": (False, None),
+    "qwen/qwen3.5-35b-a3b": (False, None),
+    "qwen/qwen3.5-397b-a17b": (False, None),
+    "qwen/qwen3.5-9b": (False, None),
+    "qwen/qwen3.6-27b": (False, None),
+    "qwen/qwen3.6-35b-a3b": (False, None),
+    "qwen/qwen3.8-2.4t-a95b": (True, ("xhigh", "medium", "low")),
+    "qwen/qwen3.8-27b": (False, ("xhigh", "medium", "low", "none")),
+}
 
 TIIVISTYS_TEHTAVA = "aivo-yksityinen-tiivistys"
 # Tiivistys palauttaa JSON:n (enintaan tiivistelma.MAX_KOHDAT kohtaa, tulkinta enintaan 300 merkkia). 700 tokenia
@@ -276,48 +319,76 @@ def _kysy_viestit(
     ylaraja_s: float = VASTAUS_AIKARAJA_S,
     huomauta_katkeamisesta: bool = False,
     tehtava: str = TEHTAVA,
+    paattely_max: int = PAATTELY_MAX_OLETUS,
+    uusinta: Callable[[], bool] | None = None,
     **lisa: Any,
 ) -> str:
     """Yksi kutsu valmiilla viestilistalla. Ainoa reitti, jota kysy_openrouterilta ja yhdistelmat kayttavat.
     `huomauta_katkeamisesta`: vain yhden mallin chat (kysy_openrouterilta). Yhdistelman osakutsujen (reititin,
-    luokittelu) vastauksia jasennetaan, joten niihin ei lisata huomautusta."""
+    luokittelu) vastauksia jasennetaan, joten niihin ei lisata huomautusta.
+    `paattely_max`: paattelyn ylaraja (paattelyraja, paattelyparametri); koskee kaikkia taman funktion kutsuja.
+    `uusinta`: jos vastaus katkeaa paattelyyn ennen tekstia, yksi uusintakutsu uusinnan_parametri-asetuksella, mutta
+    vain jos `uusinta()` palauttaa True (kutsija laskee kutsurajan). Uusinta kulkee saman openrouter_kulut.kutsu-reitin
+    kautta, joten paivakatto tarkistetaan ennen sita. None = ei uusintaa."""
     tarkista_malli(malli)
     avain = lue_avain(avain_tiedosto)                     # ennen varausta: puuttuva avain ei jata varausta
     laheta = tee_kuljetin(avain, avaa, aikaraja_s, ylaraja_s=ylaraja_s)
     tokenit = MAX_TOKENIA if max_tokens is None else max(1, min(int(max_tokens), MAX_TOKENIA))
     tokenit = min(tokenit, kontekstiraja.vastausvaraus(malli, MAX_TOKENIA))   # pieni konteksti: vastaus ei vie kaikkea
-    loki_kehote(malli, viestit, tokenit)
-    try:
-        data = openrouter_kulut.kutsu(
-            malli, viestit, laheta, tehtava=tehtava, nyt=nyt, tila=kulutila, ilmoita=ilmoita,
-            max_tokens=tokenit, temperature=0.3, stream=False, usage={"include": True},
-            **{**lisa, "yksityinen_chat": True})
-    except openrouter_kulut.KutsuEstetty:
-        raise yhdistelma.Katkaisu("OpenRouterin p\u00e4iv\u00e4katto on t\u00e4ynn\u00e4 tai kulukirjanpito ei kelpaa; kutsua ei tehty") from None
-    except openrouter_kulut.ZdrVirhe:
-        raise YksityinenVirhe("ZDR-s\u00e4\u00e4nt\u00f6 est\u00e4\u00e4 pyynn\u00f6n; kutsua ei tehty") from None
-    loki_toteutunut(malli, data)
+    paattely = paattelyparametri(malli, paattelyraja(malli, tokenit, paattely_max))
+    loki_kehote(malli, viestit, tokenit, paattely["max_tokens"] if paattely else 0)
+
+    def kutsu(reasoning: dict[str, Any] | None) -> Mapping[str, Any]:
+        try:
+            vastaus = openrouter_kulut.kutsu(
+                malli, viestit, laheta, tehtava=tehtava, nyt=nyt, tila=kulutila, ilmoita=ilmoita,
+                max_tokens=tokenit, temperature=0.3, stream=False, usage={"include": True},
+                **{**lisa, **({"reasoning": reasoning} if reasoning else {}), "yksityinen_chat": True})
+        except openrouter_kulut.KutsuEstetty:
+            raise yhdistelma.Katkaisu("OpenRouterin p\u00e4iv\u00e4katto on t\u00e4ynn\u00e4 tai kulukirjanpito ei kelpaa; kutsua ei tehty") from None
+        except openrouter_kulut.ZdrVirhe:
+            raise YksityinenVirhe("ZDR-s\u00e4\u00e4nt\u00f6 est\u00e4\u00e4 pyynn\u00f6n; kutsua ei tehty") from None
+        loki_toteutunut(malli, vastaus)
+        return vastaus
+
+    data = kutsu(paattely)
     try:
         teksti = vastauksen_teksti(data)
     except VastausKatkesi:
-        print("yksityinen_or: vastaus katkesi pituusrajaan ennen tekstia (max_tokens=%d)" % tokenit, file=sys.stderr)
-        raise
+        print("yksityinen_or: vastaus katkesi pituusrajaan ennen tekstia (max_tokens=%d, paattely enintaan %d)"
+              % (tokenit, paattely["max_tokens"] if paattely else 0), file=sys.stderr)
+        uusi = uusinnan_parametri(malli) if paattely else None
+        if uusi is None or uusinta is None:
+            raise
+        if not uusinta():
+            print("yksityinen_or: uusintaa ei tehty (kutsuraja)", file=sys.stderr)
+            raise
+        print("yksityinen_or: uusinta kerran ilman paattelya (reasoning %s), malli %s"
+              % (",".join("%s=%s" % kv for kv in sorted(uusi.items()) if kv[0] != "exclude"), str(malli)[:100]),
+              file=sys.stderr)
+        data = kutsu(uusi)
+        try:
+            teksti = vastauksen_teksti(data)
+        except VastausKatkesi:
+            print("yksityinen_or: uusintakin katkesi pituusrajaan ennen tekstia", file=sys.stderr)
+            raise
     if huomauta_katkeamisesta and katkesi_pituusrajaan(data):
         print("yksityinen_or: vastaus katkesi pituusrajaan (max_tokens=%d)" % tokenit, file=sys.stderr)
         return teksti + "\n\n" + KATKENNUT_HUOMAUTUS
     return teksti
 
 
-def loki_kehote(malli: str, viestit: list[dict[str, Any]], max_tokens: int) -> dict[str, Any]:
-    """Kirjaa stderriin (journal) kehotteen koon ja arvioidun hinnan ennen kutsua. Ei sisaltoa: vain luvut ja malli."""
+def loki_kehote(malli: str, viestit: list[dict[str, Any]], max_tokens: int, paattely: int = 0) -> dict[str, Any]:
+    """Kirjaa stderriin (journal) kehotteen koon ja arvioidun hinnan ennen kutsua. Ei sisaltoa: vain luvut ja malli.
+    `paattely`: kutsun reasoning.max_tokens (0 = reasoning-parametria ei lahetetty)."""
     merkit = kontekstiraja.viestien_merkit(viestit)
     tiedot = {"merkit": merkit, "tokenit_arvio": kontekstiraja.arvioi_tokenit(merkit),
               "syoteraja_tokenit": kontekstiraja.syote_tokenit(malli, MAX_TOKENIA, _VARAUS_USD),
-              "konteksti": kontekstiraja.konteksti(malli), "max_tokens": int(max_tokens)}
+              "konteksti": kontekstiraja.konteksti(malli), "max_tokens": int(max_tokens), "paattely": int(paattely)}
     tiedot["usd_arvio"] = kontekstiraja.arvioi_usd(malli, tiedot["tokenit_arvio"], tiedot["max_tokens"])
     print("yksityinen_or: kehote %(merkit)d merkkia, arvio %(tokenit_arvio)d tokenia (syoteraja %(syoteraja_tokenit)d, "
-          "konteksti %(konteksti)d, vastaus enintaan %(max_tokens)d), arvioitu hinta enintaan %(usd_arvio).4f USD"
-          % tiedot + ", malli " + str(malli)[:100], file=sys.stderr)
+          "konteksti %(konteksti)d, vastaus enintaan %(max_tokens)d, paattely enintaan %(paattely)d), arvioitu hinta "
+          "enintaan %(usd_arvio).4f USD" % tiedot + ", malli " + str(malli)[:100], file=sys.stderr)
     return tiedot
 
 
@@ -373,6 +444,71 @@ def tarkista_muisti_max(arvo: Any) -> int:
     return n
 
 
+def tarkista_paattely_max(arvo: Any) -> int:
+    """AIVO_YKSITYINEN_PAATTELY_MAX: puuttuva tai tyhja -> PAATTELY_MAX_OLETUS. Kokonaisluku 0-PAATTELY_MAX_YLARAJA
+    (0 = reasoning-parametria ei laheteta); muu arvo nostaa YksityinenVirhe (palvelu ei kaynnisty)."""
+    if arvo is None or (isinstance(arvo, str) and not arvo.strip()):
+        return PAATTELY_MAX_OLETUS
+    if isinstance(arvo, bool):
+        raise YksityinenVirhe("yksityisen tilan p\u00e4\u00e4ttelyn yl\u00e4raja ei ole kokonaisluku")
+    try:
+        n = int(str(arvo).strip())
+    except ValueError:
+        raise YksityinenVirhe("yksityisen tilan p\u00e4\u00e4ttelyn yl\u00e4raja ei ole kokonaisluku") from None
+    if not 0 <= n <= PAATTELY_MAX_YLARAJA:
+        raise YksityinenVirhe("yksityisen tilan p\u00e4\u00e4ttelyn yl\u00e4raja pit\u00e4\u00e4 olla 0-%d tokenia"
+                              % PAATTELY_MAX_YLARAJA)
+    return n
+
+
+def paattelyraja(malli: str, max_tokens: int, paattely_max: int = PAATTELY_MAX_OLETUS) -> int:
+    """Paattelyn tokenraja kutsulle: 0, jos asetus on 0 tai malli ei tue reasoning-parametria (PAATTELY_TUKI).
+    Muuten min(asetus, max_tokens - vastausvara), jossa vastausvara = max(1, min(PAATTELY_VASTAUSVARA, max_tokens // 2)).
+    Tulos on aina pienempi kuin max_tokens."""
+    asetus = max(0, min(int(paattely_max), PAATTELY_MAX_YLARAJA))
+    if asetus == 0 or malli not in PAATTELY_TUKI:
+        return 0
+    tokenit = max(0, int(max_tokens))
+    vara = max(1, min(PAATTELY_VASTAUSVARA, tokenit // 2))
+    return max(0, min(asetus, tokenit - vara))
+
+
+def paattelyparametri(malli: str, raja: int) -> dict[str, Any] | None:
+    """reasoning-kentta: {"max_tokens": raja, "exclude": True} tai None (raja 0 tai malli ei tue parametria).
+    exclude: paattelyn tekstia ei palauteta (Chat Completions; sita ei kayteta, eika se kuulu vastaukseen)."""
+    if raja < 1 or malli not in PAATTELY_TUKI:
+        return None
+    return {"max_tokens": int(raja), "exclude": True}
+
+
+def uusinnan_parametri(malli: str) -> dict[str, Any] | None:
+    """Uusintakutsun reasoning-kentta, kun vastaus katkesi paattelyyn: paattely pois, jos malli sallii
+    (effort "none" tai enabled False), pakollisella mallilla effort "low", jos malli kertoo tukevansa sita.
+    None = uusinnasta ei olisi apua (malli ei tue parametria, tai paattely on pakollinen ilman tasoja)."""
+    tuki = PAATTELY_TUKI.get(malli)
+    if tuki is None:
+        return None
+    pakollinen, tasot = tuki
+    if not pakollinen:
+        if tasot is not None and "none" in tasot:
+            return {"effort": "none", "exclude": True}
+        return {"enabled": False}
+    if tasot is not None and "low" in tasot:
+        return {"effort": "low", "exclude": True}
+    return None
+
+
+class Vastausteksti(str):
+    """Chatin vastaus (str) ja taman viestin mallikutsujen maara (`kutsuja`, uusinta mukaan lukien). Chat antaa
+    maaran itsetarkistukselle, jotta kutsuraja yhdistelma.MAX_KUTSUT_VIESTI koskee summaa."""
+    kutsuja: int = 1
+
+    def __new__(cls, teksti: str, kutsuja: int = 1) -> "Vastausteksti":
+        olio = super().__new__(cls, teksti)
+        olio.kutsuja = int(kutsuja)
+        return olio
+
+
 def muistin_kontekstiraja(mallit: Any, ohjeet: str, historia: list[dict[str, Any]], lisavaraus_merkit: int = 0) -> int:
     """Muistiosion merkkiraja mallin kontekstin mukaan (A1106) ilman muistin enimmaiskokoa."""
     viimeiset = historia[-HISTORIA_YLARAJA:]
@@ -421,14 +557,26 @@ def kysy_openrouterilta(
     avaa: Callable[..., Any] | None = None,
     nyt: Callable[[], datetime] | None = None,
     ilmoita: Callable[[str], Any] | None = None,
+    paattely_max: int = PAATTELY_MAX_OLETUS,
     **lisa: Any,
-) -> str:
-    """Yksityisen tilan vastaus OpenRouterin avoimelta mallilta. Nostaa aina YksityinenVirhe (turvallinen viesti)."""
+) -> "Vastausteksti":
+    """Yksityisen tilan vastaus OpenRouterin avoimelta mallilta. Nostaa aina YksityinenVirhe (turvallinen viesti).
+    Jos vastaus katkeaa paattelyyn ennen tekstia, tehdaan enintaan yksi uusinta (_kysy_viestit), kun kutsuraja
+    yhdistelma.MAX_KUTSUT_VIESTI sallii. Paluuarvon `kutsuja` kertoo tehtyjen kutsujen maaran (itsetarkistukselle)."""
     tarkista_malli(malli)
     viestit = yksityinen.muodosta_viestit(muisti, historia, ohjeet, KEHOTE, HISTORIA_YLARAJA,
                                          historian_merkkiraja(malli, muisti, ohjeet, historia))
-    return _kysy_viestit(malli, viestit, avain_tiedosto=avain_tiedosto, kulutila=kulutila, avaa=avaa, nyt=nyt,
-                         ilmoita=ilmoita, ylaraja_s=CHAT_AIKARAJA_S, huomauta_katkeamisesta=True, **lisa)
+    kutsuja = [1]
+
+    def uusinta() -> bool:
+        if kutsuja[0] >= 2 or kutsuja[0] + 1 > yhdistelma.MAX_KUTSUT_VIESTI:     # kerran ja vain kerran
+            return False
+        kutsuja[0] += 1
+        return True
+    teksti = _kysy_viestit(malli, viestit, avain_tiedosto=avain_tiedosto, kulutila=kulutila, avaa=avaa, nyt=nyt,
+                           ilmoita=ilmoita, ylaraja_s=CHAT_AIKARAJA_S, huomauta_katkeamisesta=True,
+                           paattely_max=paattely_max, uusinta=uusinta, **lisa)
+    return Vastausteksti(teksti, kutsuja[0])
 
 
 def kysy_yhdistelmalla(
@@ -567,6 +715,7 @@ def tarkista_vastaus(
     kulutila: str | None = None,
     avaa: Callable[..., Any] | None = None,
     nyt: Callable[[], datetime] | None = None,
+    paattely_max: int = PAATTELY_MAX_OLETUS,
 ) -> "itsetarkistus.Tulos":
     """Itsetarkistus (itsetarkistus.aja) samalla kehotteella, jolla vastaus syntyi. `tarkastaja` puuttuu ->
     vastaajan malli. Molemmat mallit tarkistetaan avoin_malli()-funktiolla ennen kutsua. Kutsun virheet eivat nouse:
@@ -583,7 +732,7 @@ def tarkista_vastaus(
         ylaraja = VASTAUS_AIKARAJA_S if max_tokens is not None else CHAT_AIKARAJA_S     # korjaus: kuten chat
         return _kysy_viestit(m, v, avain_tiedosto=avain_tiedosto, kulutila=kulutila, avaa=avaa, nyt=nyt,
                              max_tokens=max_tokens, ylaraja_s=ylaraja, aikaraja_s=aikaraja_s,
-                             tehtava=TARKISTUS_TEHTAVA)
+                             tehtava=TARKISTUS_TEHTAVA, paattely_max=paattely_max)    # ei uusintaa: kutsuraja itsetarkistuksessa
     return itsetarkistus.aja(vastaus, viestit, kysy, tarkastaja=tarkastaja, vastaaja=vastaaja, kaytetyt=kaytetyt,
                              lahteet_raja=tarkastajan_lahderaja(tarkastaja, muisti_max, ohjeet),
                              korjaus_raja=korjauksen_raja(vastaaja))
