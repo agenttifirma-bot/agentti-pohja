@@ -335,6 +335,17 @@ class OhjeTesti(unittest.TestCase):
         self.assertTrue(any(k.startswith("KIELLETYT4=$(sed -n") for k in komennot))
         self.assertTrue(any("/etc/pve/firewall/123.fw" in k and '"$KIELLETYT4"' in k for k in komennot))
 
+    def test_kiellettyjen_alueiden_maara_ohjeessa_vastaa_pohjaa(self):
+        # Ohjeen Odotettu-rivi kertoo alueiden maaran; asentaja pysahtyy, jos tulos poikkeaa (tarkastus 26.11.2026).
+        v4 = maaritelma(aktiiviset(lue("nftables.conf")), "KIELLETYT4")
+        komennot = {k.strip(): o for k, o in self.lohkot}
+        luku = [k for k in komennot if k.startswith("KIELLETYT4=$(sed -n")]
+        self.assertEqual(len(luku), 1)
+        m = re.search(r"jossa on (\d+) aluetta ja ensimm\u00e4isen\u00e4 `([^`]+)`", komennot[luku[0]])
+        self.assertIsNotNone(m, komennot[luku[0]])
+        self.assertEqual(int(m.group(1)), len(v4))
+        self.assertEqual(m.group(2), str(v4[0]))
+
     def test_tor_udp_esto_tarkistetaan(self):
         komennot = {k.strip(): o for k, o in self.lohkot}
         udp = [k for k in komennot if "--reuid=debian-tor" in k and "SOCK_DGRAM" in k]
