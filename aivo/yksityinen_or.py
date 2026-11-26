@@ -60,7 +60,12 @@ Saannot (koodi on laki):
   * Muistin enimmaiskoko (A1123): muistiosio on enintaan MUISTI_MAX_OLETUS (40 000) merkkia tai asetuksen
     AIVO_YKSITYINEN_MUISTI_MAX arvo (MUISTI_MAX_ALARAJA-MUISTI_MAX_YLARAJA). muistin_merkkiraja = min(kontekstiraja,
     asetus), joten asetus voi vain pienentaa kehotetta. Tarkastajan lahteet rajataan samaan kokoon (tarkastajan_lahderaja).
-    Toteutuneen kutsun lokiin kirjataan myos usage.prompt_tokens_details.cached_tokens (tarjoajan valimuisti)."""
+    Toteutuneen kutsun lokiin kirjataan myos usage.prompt_tokens_details.cached_tokens (tarjoajan valimuisti).
+  * Epaonnistunut kutsu (_kysy_viestit): stderriin (journal) yksi rivi `yksityinen_or: virhe tehtava .., malli ..,
+    luokka .., http .., koodi .., kesto .. s` (loki_virhe). Virheen vapaata tekstia ei kirjata, koska se voi sisaltaa
+    kehotteen osia; OpenRouterin error.code tai -type kirjataan vain siistittyna lyhyena tunnisteena. Virheluokat
+    (HttpVirhe, YhteysVirhe, PalveluVirhe, TyhjaVastaus, Aikakatkaisu, VastausKatkesi) ovat YksityinenVirheen
+    aliluokkia, ja niiden viestit ovat samat kuin ennen."""
 from __future__ import annotations
 
 import json
@@ -68,6 +73,7 @@ import os
 import re
 import stat
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -146,12 +152,71 @@ avoin_malli = openrouter_kulut.avoin_malli
 
 class VastausKatkesi(YksityinenVirhe):
     """Vastaus katkesi pituusrajaan ennen yhtaan vastaustekstia (finish_reason "length", tyhja content)."""
+    syy = "vastaus katkesi pituusrajaan"
 
 
 class Aikakatkaisu(YksityinenVirhe):
     """Mallipalvelu ei vastannut kuljettimen aikarajassa (TimeoutError, myos URLError(reason=TimeoutError) yhteyden
     avauksessa). Aliluokka, jotta mallivertailu erottaa aikakatkaisun muista virheista; muut kutsujat nakevat sen
     YksityinenVirheena kuten ennen (sama viesti)."""
+    syy = "aikaraja: mallipalvelu ei vastannut ajoissa"
+
+
+# Virheen luokittelu journaliin ja itsetarkistuksen merkintaan. Aliluokkien viestit ovat samat kuin ennen, joten
+# kutsujat, jotka nayttavat str(e):n, eivat muutu. Attribuutit: `syy` (lyhyt teksti, ei sisaltoa), `http`
+# (HTTP-tila tai None), `koodi` (OpenRouterin error.code tai -type, siistitty, tai None) ja `tilapainen`
+# (uusintayritys voi auttaa: HTTP 408/429/5xx, katkennut yhteys tai palvelun virhe vastauksen rungossa).
+_KOODI_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,40}$")
+
+
+def _siisti_koodi(arvo: Any) -> str | None:
+    if isinstance(arvo, bool):
+        return None
+    if isinstance(arvo, int):
+        return str(arvo)
+    if isinstance(arvo, str) and _KOODI_RE.fullmatch(arvo):
+        return arvo
+    return None
+
+
+def _virheen_koodi(data: Any) -> str | None:
+    """OpenRouterin virherungon {"error": {"code": .., "type": ..}} koodi tai tyyppi. Ei viestia eika metadataa."""
+    virhe = data.get("error") if isinstance(data, Mapping) else None
+    if not isinstance(virhe, Mapping):
+        return None
+    return _siisti_koodi(virhe.get("code")) or _siisti_koodi(virhe.get("type"))
+
+
+class HttpVirhe(YksityinenVirhe):
+    """Mallipalvelu vastasi HTTP-virheella. Viesti on sama kuin ennen ("mallipalvelu hylkasi pyynnon (HTTP n)")."""
+
+    def __init__(self, http: int, koodi: str | None = None) -> None:
+        super().__init__("mallipalvelu hylkasi pyynnon (HTTP %s)" % http)
+        self.http = http
+        self.koodi = koodi
+        self.tilapainen = http in (408, 429) or http >= 500
+        self.syy = "palvelu ei vastannut (HTTP %s)" % http if self.tilapainen else "palvelu hylk\u00e4si pyynn\u00f6n (HTTP %s)" % http
+
+
+class YhteysVirhe(YksityinenVirhe):
+    """Yhteys katkesi tai vastaus ei ollut JSONia (muu OSError tai ValueError kuin aikakatkaisu)."""
+    tilapainen = True
+    syy = "yhteys mallipalveluun katkesi"
+
+
+class PalveluVirhe(YksityinenVirhe):
+    """HTTP 200, mutta rungossa on virhe eika vastausta (OpenRouter: palveluntarjoaja epaonnistui vastauksen aikana)."""
+    tilapainen = True
+
+    def __init__(self, viesti: str, koodi: str | None = None) -> None:
+        super().__init__(viesti)
+        self.koodi = koodi
+        self.syy = "palvelu palautti virheen" + (" (koodi %s)" % koodi if koodi else "")
+
+
+class TyhjaVastaus(YksityinenVirhe):
+    """Vastauksessa ei ollut tekstia (tyhja tai puuttuva content ilman pituusrajaa)."""
+    syy = "vastaus oli tyhj\u00e4"
 
 
 def vastauksen_teksti(data: Any) -> str:
@@ -162,13 +227,27 @@ def vastauksen_teksti(data: Any) -> str:
     except (KeyError, IndexError, TypeError):
         teksti = None
         if not katkesi_pituusrajaan(data):
-            raise YksityinenVirhe("OpenRouterin vastauksessa ei ollut tekstia") from None
+            koodi = _virheen_koodi(data)
+            if koodi is not None or (isinstance(data, Mapping) and isinstance(data.get("error"), Mapping)):
+                raise PalveluVirhe("OpenRouterin vastauksessa ei ollut tekstia", koodi) from None
+            raise TyhjaVastaus("OpenRouterin vastauksessa ei ollut tekstia") from None
     if teksti is None or (isinstance(teksti, str) and not teksti.strip()):
         if katkesi_pituusrajaan(data):
             raise VastausKatkesi(KATKESI_TYHJANA)
+        valinta = _valinta(data)
+        if isinstance(valinta.get("error"), Mapping):
+            raise PalveluVirhe("OpenRouter antoi tyhjan vastauksen", _virheen_koodi(valinta))
     if not isinstance(teksti, str) or not teksti.strip():
-        raise YksityinenVirhe("OpenRouter antoi tyhjan vastauksen")
+        raise TyhjaVastaus("OpenRouter antoi tyhjan vastauksen")
     return teksti.strip()
+
+
+def _valinta(data: Any) -> Mapping[str, Any]:
+    try:
+        v = data["choices"][0]
+    except (KeyError, IndexError, TypeError):
+        return {}
+    return v if isinstance(v, Mapping) else {}
 
 
 def tarkista_malli(malli: Any) -> str:
@@ -230,6 +309,14 @@ def _zdr_kunnossa(runko: Any) -> bool:
     return isinstance(prov, Mapping) and prov.get("zdr") is True and prov.get("data_collection") == "deny"
 
 
+def _http_virheen_koodi(e: Any) -> str | None:
+    """HTTP-virherungon error.code tai -type (enintaan 64 kt luetaan). Viestia ei lueta talteen."""
+    try:
+        return _virheen_koodi(json.loads(e.read(65_536)))
+    except Exception:  # noqa: BLE001 - runko puuttuu tai ei ole JSONia: koodia ei ole
+        return None
+
+
 def tee_kuljetin(avain: str, avaa: Callable[..., Any] | None = None,
                  aikaraja_s: float | None = None,
                  ylaraja_s: float = VASTAUS_AIKARAJA_S) -> Callable[[dict[str, Any]], Mapping[str, Any]]:
@@ -250,12 +337,13 @@ def tee_kuljetin(avain: str, avaa: Callable[..., Any] | None = None,
             with avaa(pyynto, timeout=aikaraja) as r:
                 data = json.loads(r.read(MAX_VASTAUS_TAVUA))
         except urllib.error.HTTPError as e:
+            koodi = _http_virheen_koodi(e)
             e.close()                               # vapauttaa virhevastauksen socketin
-            raise YksityinenVirhe("mallipalvelu hylkasi pyynnon (HTTP %s)" % e.code) from None
+            raise HttpVirhe(e.code, koodi) from None
         except (OSError, ValueError) as e:
             if isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError):
                 raise Aikakatkaisu("mallipalvelu ei vastannut (%s)" % type(e).__name__) from None
-            raise YksityinenVirhe("mallipalvelu ei vastannut (%s)" % type(e).__name__) from None
+            raise YhteysVirhe("mallipalvelu ei vastannut (%s)" % type(e).__name__) from None
         if not isinstance(data, Mapping):
             raise YksityinenVirhe("OpenRouter antoi odottamattoman vastauksen")
         return data
@@ -287,20 +375,25 @@ def _kysy_viestit(
     tokenit = MAX_TOKENIA if max_tokens is None else max(1, min(int(max_tokens), MAX_TOKENIA))
     tokenit = min(tokenit, kontekstiraja.vastausvaraus(malli, MAX_TOKENIA))   # pieni konteksti: vastaus ei vie kaikkea
     loki_kehote(malli, viestit, tokenit)
+    alku = time.monotonic()
     try:
-        data = openrouter_kulut.kutsu(
-            malli, viestit, laheta, tehtava=tehtava, nyt=nyt, tila=kulutila, ilmoita=ilmoita,
-            max_tokens=tokenit, temperature=0.3, stream=False, usage={"include": True},
-            **{**lisa, "yksityinen_chat": True})
-    except openrouter_kulut.KutsuEstetty:
-        raise yhdistelma.Katkaisu("OpenRouterin p\u00e4iv\u00e4katto on t\u00e4ynn\u00e4 tai kulukirjanpito ei kelpaa; kutsua ei tehty") from None
-    except openrouter_kulut.ZdrVirhe:
-        raise YksityinenVirhe("ZDR-s\u00e4\u00e4nt\u00f6 est\u00e4\u00e4 pyynn\u00f6n; kutsua ei tehty") from None
-    loki_toteutunut(malli, data)
-    try:
-        teksti = vastauksen_teksti(data)
-    except VastausKatkesi:
-        print("yksityinen_or: vastaus katkesi pituusrajaan ennen tekstia (max_tokens=%d)" % tokenit, file=sys.stderr)
+        try:
+            data = openrouter_kulut.kutsu(
+                malli, viestit, laheta, tehtava=tehtava, nyt=nyt, tila=kulutila, ilmoita=ilmoita,
+                max_tokens=tokenit, temperature=0.3, stream=False, usage={"include": True},
+                **{**lisa, "yksityinen_chat": True})
+        except openrouter_kulut.KutsuEstetty:
+            raise yhdistelma.Katkaisu("OpenRouterin p\u00e4iv\u00e4katto on t\u00e4ynn\u00e4 tai kulukirjanpito ei kelpaa; kutsua ei tehty") from None
+        except openrouter_kulut.ZdrVirhe:
+            raise YksityinenVirhe("ZDR-s\u00e4\u00e4nt\u00f6 est\u00e4\u00e4 pyynn\u00f6n; kutsua ei tehty") from None
+        loki_toteutunut(malli, data)
+        try:
+            teksti = vastauksen_teksti(data)
+        except VastausKatkesi:
+            print("yksityinen_or: vastaus katkesi pituusrajaan ennen tekstia (max_tokens=%d)" % tokenit, file=sys.stderr)
+            raise
+    except YksityinenVirhe as e:
+        loki_virhe(tehtava, malli, e, time.monotonic() - alku)
         raise
     if huomauta_katkeamisesta and katkesi_pituusrajaan(data):
         print("yksityinen_or: vastaus katkesi pituusrajaan (max_tokens=%d)" % tokenit, file=sys.stderr)
@@ -319,6 +412,18 @@ def loki_kehote(malli: str, viestit: list[dict[str, Any]], max_tokens: int) -> d
           "konteksti %(konteksti)d, vastaus enintaan %(max_tokens)d), arvioitu hinta enintaan %(usd_arvio).4f USD"
           % tiedot + ", malli " + str(malli)[:100], file=sys.stderr)
     return tiedot
+
+
+def loki_virhe(tehtava: str, malli: str, e: BaseException, kesto_s: float) -> None:
+    """Kirjaa stderriin (journal) yhden rivin epaonnistuneesta mallikutsusta: tehtava, malli, poikkeuksen luokka,
+    HTTP-tila ja OpenRouterin virhekoodi (jos saatavilla) seka kesto. Ei virheen tekstia, koska se voi sisaltaa
+    kehotteen osia."""
+    http = getattr(e, "http", None)
+    koodi = _siisti_koodi(getattr(e, "koodi", None))
+    print("yksityinen_or: virhe tehtava %s, malli %s, luokka %s, http %s, koodi %s, kesto %.1f s"
+          % (str(tehtava)[:60], str(malli)[:100], type(e).__name__,
+             http if isinstance(http, int) and not isinstance(http, bool) else "-", koodi or "-",
+             max(0.0, float(kesto_s))), file=sys.stderr)
 
 
 def loki_toteutunut(malli: str, data: Any) -> None:
