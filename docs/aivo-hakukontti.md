@@ -23,8 +23,8 @@ Osoitteita ei ole repossa. Ohje selvittää ne komennoilla ja kirjoittaa ne tied
 
 ## Periaatteet
 
-- **Kill switch:** jos Tor ei ole ylhäällä, haku epäonnistuu. Käyttäjät `searxng`, `aivo-haku` ja `_apt` pääsevät vain silmukkaosoitteen Tor-porttiin. Vain `debian-tor` saa ottaa yhteyden internetiin. Nimipalvelua (portti 53) ei sallita kenellekään.
-- **Ei yksityisiin osoitteisiin:** ulosmeno kaikkiin yksityisiin ja erikoisosoitteisiin on estetty kaikilta käyttäjiltä, myös rootilta ja `debian-tor`ilta. Alueet ovat `nftables.conf`:n määrittelyissä `KIELLETYT4` (RFC 1918 -alueet, CGNAT/tailnet, linkkipaikallinen, silmukka muualle kuin `lo`-liitäntään, `0.0.0.0/8`, monilähetys ja varatut) ja `KIELLETYT6` (ULA, linkkipaikallinen, silmukka, IPv4-mapatut, NAT64 ja monilähetys). Ne kattavat myös reitittimen takana olevat yksityiset verkot. IPv6-ulosmeno on estetty kokonaan (Tor käyttää IPv4:ää), koska reitittimen jakama IPv6-etuliite antaisi lähiverkon laitteille globaaleja osoitteita, joita yksityisten alueiden lista ei kata. Lisäksi estetään asennuksessa lasketut `LAHIVERKOT4`. Ainoa poikkeus on vastausliikenne kontille 122 hakuvälittäjän portista 8890, ja vain jo avatussa yhteydessä. IPv6-naapurinhaun ICMPv6-viestit sallitaan, koska IPv6 ei toimi ilman niitä.
+- **Kill switch:** jos Tor ei ole ylhäällä, haku epäonnistuu. Käyttäjät `searxng`, `aivo-haku` ja `_apt` pääsevät vain silmukkaosoitteen Tor-porttiin. Vain `debian-tor` saa ottaa yhteyden internetiin, ja vain TCP:llä, koska Tor ei tarvitse UDP:tä. Nimipalvelua (portti 53) ei sallita kenellekään, ei myöskään UDP:llä `debian-tor`ille.
+- **Ei yksityisiin osoitteisiin:** ulosmeno kaikkiin yksityisiin ja erikoisosoitteisiin on estetty kaikilta käyttäjiltä, myös rootilta ja `debian-tor`ilta. Alueet ovat `nftables.conf`:n määrittelyissä `KIELLETYT4` (RFC 1918 -alueet, CGNAT/tailnet, linkkipaikallinen, silmukka muualle kuin `lo`-liitäntään, `0.0.0.0/8`, IETF-protokollatehtävien alue `192.0.0.0/24`, suorituskykytestien alue `198.18.0.0/15`, monilähetys ja varatut) ja `KIELLETYT6` (ULA, linkkipaikallinen, silmukka, IPv4-mapatut, NAT64 ja monilähetys). Ne kattavat myös reitittimen takana olevat yksityiset verkot. IPv6-ulosmeno on estetty kokonaan (Tor käyttää IPv4:ää), koska reitittimen jakama IPv6-etuliite antaisi lähiverkon laitteille globaaleja osoitteita, joita yksityisten alueiden lista ei kata. Lisäksi estetään asennuksessa lasketut `LAHIVERKOT4`. Ainoa poikkeus on vastausliikenne kontille 122 hakuvälittäjän portista 8890, ja vain jo avatussa yhteydessä. IPv6-naapurinhaun ICMPv6-viestit sallitaan, koska IPv6 ei toimi ilman niitä.
 - **Tor ei avaa sisäisiä osoitteita:** `torrc`:ssä `ClientRejectInternalAddresses 1` ja `ClientDNSRejectInternalAddresses 1`. SOCKS-pyyntö yksityiseen osoitteeseen tai nimeen, joka ratkeaa yksityiseksi, hylätään jo Torissa.
 - **SearXNG vain Torin kautta:** kaikki ulosmeno kulkee `socks5h://127.0.0.1:9050`:n kautta. Palomuuri sallii käyttäjälle `searxng` vain silmukan Tor-portin, ja yksikön `IPAddressDeny=any` + `IPAddressAllow=localhost` on toinen kerros.
 - **Ei suoraa ulosmenoa:** alkuasennuksen jälkeen myös pakettipäivitykset kulkevat Torin kautta (`apt-transport-tor`, lähteet `tor+https://`). Vain `tor`, `apt-transport-tor` ja `nftables` asennetaan suoraan, ennen kuin kontissa on mitään hakuihin liittyvää.
@@ -401,12 +401,17 @@ pct exec 123 -- setpriv --reuid=searxng --regid=searxng --init-groups curl -sS -
 ```
 Odotettu: `Could not resolve host` ja paluuarvo `6` (tai aikakatkaisu, paluuarvo `28`). Ei HTML:ää.
 
-Testi 3. Suora yhteys on estetty käyttäjältä `aivo-haku`.
+Testi 3. Suora yhteys on estetty käyttäjältä `aivo-haku`, eikä `debian-tor` voi lähettää UDP:tä.
 
 ```bash
 pct exec 123 -- setpriv --reuid=aivo-haku --regid=aivo-haku --init-groups curl -sS -m 10 https://example.com; echo "paluuarvo $?"
 ```
 Odotettu: kuten testissä 2.
+
+```bash
+pct exec 123 -- setpriv --reuid=debian-tor --regid=debian-tor --init-groups python3 -c 'import socket; s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.sendto(b"x", ("9.9.9.9", 53)); print("UDP_LAHTI")'; echo "paluuarvo $?"
+```
+Odotettu: `PermissionError: [Errno 1] Operation not permitted` ja paluuarvo `1`. Palomuuri hylkää UDP-paketin jo lähettäessä. Tuloste `UDP_LAHTI` tarkoittaa, että Tor-käyttäjä pääsee ulos UDP:llä: pysähdy.
 
 Testi 4. Kontista ei pääse lähiverkkoon (esim. kotireitittimen hallintasivu yhdyskäytävän osoitteessa). Tarkistus tehdään Tor-käyttäjänä, rootina ja Torin SOCKS-portin kautta.
 
