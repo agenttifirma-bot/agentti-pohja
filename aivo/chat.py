@@ -1293,23 +1293,35 @@ def kirjaa_muistihaku(tilan_nimi, tiedostot):
     print("muistihaku %s: %d osumaa" % (tilan_nimi, len(tiedostot)), file=sys.stderr, flush=True)
 
 
+def kirjaa_muistin_koko(merkit, raja, kontekstin_raja, muisti_max):
+    """Journaliin muistiosion koko ja raja merkkeina (A1123). Ei sisaltoa eika tiedostonimia."""
+    print("yksityinen muisti: %d merkkia, raja %d (kontekstiraja %d, asetus %d)"
+          % (merkit, raja, kontekstin_raja, muisti_max), file=sys.stderr, flush=True)
+
+
 def yksityinen_muisti(tila, teksti, historia, ohjeet, malli, yh):
     """Yksityisen tilan muistiosio: agenttidata, kirjasto ja tiivistelmat. Palauttaa (muisti, tiedostot).
 
     Paikallinen taustapaa (malli None): kiintea yksityinen.MUISTI_YLARAJA (ennallaan). OpenRouter-taustapaa: raja
-    mallin kontekstin mukaan (yksityinen_or.muistin_merkkiraja, A1106), ja historialle jaa aina vahintaan
-    kontekstiraja.HISTORIA_VAHIMMAISOSUUS. Tayttojarjestys: hakuosumat (yksityisen alueen FTS5-indeksista Tonyn viestin
-    sanoilla, enintaan neljannes muistirajasta), agenttidata (tuoreimmat paatokset ensin, enintaan puolet), Tonyn
-    korjaukset (enintaan korjaukset.KEHOTE_YLARAJA, #444), kirjasto (kysymykseen osuvat ensin, sitten tuoreimmat,
-    sitten vanhemmat), tiivistelmat (60 kt raja, A983, hakuosumat mukaan luettuina). Hakuosumien tiivistelmia ei
-    toisteta tiivistelmien osiossa."""
+    mallin kontekstin mukaan (yksityinen_or.muistin_merkkiraja, A1106), enintaan muistin enimmaiskoko
+    (tila.muisti_max, AIVO_YKSITYINEN_MUISTI_MAX, oletus 40 000 merkkia, A1123), ja historialle jaa aina vahintaan
+    kontekstiraja.HISTORIA_VAHIMMAISOSUUS. Ydinohjeet ja saannot ovat muistiosion edella omassa osiossaan eivatka kuulu
+    tahan rajaan. Tayttojarjestys (A1123): hakuosumat (yksityisen alueen FTS5-indeksista Tonyn viestin sanoilla,
+    enintaan neljannes muistirajasta), Tonyn korjaukset (enintaan korjaukset.KEHOTE_YLARAJA, #444), agenttidata
+    (tuoreimmat paatokset ensin, enintaan puolet), kirjasto (kysymykseen osuvat ensin, sitten tuoreimmat, sitten
+    vanhemmat), tiivistelmat (60 kt raja, A983, hakuosumat mukaan luettuina; OpenRouterilla oma varaus ennen
+    kirjastoa). Korjaukset ovat ennen paatoksia, koska ne oikaisevat aiempia virheita ja ovat lyhyita: iso agenttidata
+    ei saa syrjayttaa niita pienella rajalla. Hakuosumien tiivistelmia ei toisteta tiivistelmien osiossa.
+    OpenRouterilla journaliin muistin koko ja raja (ei sisaltoa)."""
     if malli:
         lisa = yksityinen_or.yhdistelman_lisavaraus(yh)
         if getattr(tila, "tarkista_yks", None) is not None:      # itsetarkistuksen korjauskutsun lisasyote
             lisa = max(lisa, itsetarkistus.KORJAUS_LISAVARAUS)
-        raja = yksityinen_or.muistin_merkkiraja(
+        kontekstin_raja = yksityinen_or.muistin_kontekstiraja(
             yksityinen_or.yhdistelman_mallit(malli, tila.roolit if yh != yhdistelma.OLETUS else None), ohjeet, historia,
             lisa)
+        muisti_max = getattr(tila, "muisti_max", yksityinen_or.MUISTI_MAX_OLETUS)
+        raja = min(kontekstin_raja, muisti_max)          # = yksityinen_or.muistin_merkkiraja; asetus vain pienentaa
         merkintoja, ad_tiedosto = agenttidata_kehote.MERKINTOJA_MAKSIMI, raja // 4   # paatoksille enemman tilaa
     else:
         raja = yksityinen.MUISTI_YLARAJA
@@ -1326,20 +1338,21 @@ def yksityinen_muisti(tila, teksti, historia, ohjeet, malli, yh):
     # OpenRouter: tiivistelmille varataan oma osuus ennen kirjastoa, jotta iso kirjasto ei syrjayta niita kokonaan
     tiiv_varaus = min(tiivistelmat_kehote.YLARAJA_TAVUA, raja // 10) if (malli and tila.yks_tiivistelmat) else 0
     tiiv_varaus = max(0, tiiv_varaus - len(haku))
-    ad, ad_tiedostot = agenttidata_kehote.muodosta(tila.agenttidata, RAJA, raja // 2, ad_tiedosto, merkintoja=merkintoja)
     try:           # Tonyn korjaukset: osuvimmat ja uusimmat, enintaan korjaukset.KEHOTE_YLARAJA merkkia (#444)
         kor, kor_tiedostot = korjaukset.kehoteosio(
             tila.korjaukset, teksti, RAJA, tila.odottavat_ehdotustiedostot(),
-            ylaraja=min(korjaukset.KEHOTE_YLARAJA, max(0, raja - len(haku) - len(ad))))
+            ylaraja=min(korjaukset.KEHOTE_YLARAJA, max(0, raja - len(haku))))
     except (ChatVirhe, OSError):
         kor, kor_tiedostot = "", []      # osio jaa pois, keskustelu jatkuu (ei sisaltoa lokiin)
+    ad, ad_tiedostot = agenttidata_kehote.muodosta(tila.agenttidata, RAJA, min(raja // 2, max(0, raja - len(haku) - len(kor))),
+                                                   ad_tiedosto, merkintoja=merkintoja)
     muisti, tiedostot = lue_muisti(tila.yks_muisti, max(0, raja - len(haku) - len(ad) - len(kor) - tiiv_varaus),
                                    raja // 4, teksti,
                                    tuoreet_ensin=bool(malli), laske_otsikot=bool(malli))
-    if kor:        # korjaukset mahtuvat samaan muistirajaan
-        muisti, tiedostot = kor + muisti, kor_tiedostot + tiedostot
     if ad:         # agenttidata mahtuu samaan muistirajaan: kirjastolle jaa loput (A1015)
         muisti, tiedostot = ad + muisti, ad_tiedostot + tiedostot
+    if kor:        # korjaukset mahtuvat samaan muistirajaan; ennen paatoksia (A1123)
+        muisti, tiedostot = kor + muisti, kor_tiedostot + tiedostot
     if haku:       # ensimmainen muistiosa
         muisti, tiedostot = haku + muisti, haku_tiedostot + tiedostot
     if tila.yks_tiivistelmat:     # yksityisen alueen tiivistelmat, sama mekanismi ja 60 kt raja kuin tyokalutilassa
@@ -1352,6 +1365,8 @@ def yksityinen_muisti(tila, teksti, historia, ohjeet, malli, yh):
         if tiiv:
             muisti += tiiv + RAJA + "\n"
             tiedostot = tiedostot + tiiv_tiedostot
+    if malli:
+        kirjaa_muistin_koko(len(muisti), raja, kontekstin_raja, muisti_max)
     return muisti, tiedostot
 
 
@@ -1379,7 +1394,7 @@ class Tila:
                  agentit=None, agenttitehtavat=None, itsetarkistus=None, tarkista_yks=None,
                  tausta_jono=None, tausta_paivaraja=None, syvennykset=None, korjauskansio=None,
                  vartija_kysy=None, vartija_listat=None, tulos_repo=None, haku_jono=None, haku_odottavat=None,
-                 lisapalat=luovutuspaketti.LISAPALAT_OLETUS):
+                 muisti_max=None, lisapalat=luovutuspaketti.LISAPALAT_OLETUS):
         self.tiiviste = tiiviste
         self.kirjasto = kirjasto
         self.kulutila = or_kulutila               # None = openrouter_kulut.OLETUS_TILA (yhteinen kirjanpito)
@@ -1469,6 +1484,8 @@ class Tila:
             raise ChatVirhe("usean mallin yhdistelm\u00e4 vaatii yksityisen tilan ja OpenRouter-taustap\u00e4\u00e4n")
         # Itsetarkistus (aivo/itsetarkistus.py): vain yksityinen tila ja OpenRouter-taustapaa. Oletus pois.
         self.itsetarkistus = tarkista_itsetarkistus(itsetarkistus)
+        # muistin enimmaiskoko (A1123): vain pienentaa OpenRouter-kehotetta; virheellinen arvo estaa kaynnistyksen
+        self.muisti_max = yksityinen_or.tarkista_muisti_max(muisti_max)
         self.tarkista_yks = None
         if self.itsetarkistus:
             if not yks_data or self.taustapaa != "openrouter":
@@ -1476,7 +1493,7 @@ class Tila:
             self.tarkista_yks = tarkista_yks or (
                 lambda muisti, historia, ohjeet, vastaus, vastaaja, kaytetyt: yksityinen_or.tarkista_vastaus(
                     muisti, historia, ohjeet, vastaus, vastaaja=vastaaja, tarkastaja=self.roolit.get("tarkastaja"),
-                    kaytetyt=kaytetyt, avain_tiedosto=or_avain, kulutila=or_kulutila))
+                    kaytetyt=kaytetyt, muisti_max=self.muisti_max, avain_tiedosto=or_avain, kulutila=or_kulutila))
         self.tausta_jono = None                   # taustaajon jono (0700); None = Syvenna-painike pois kaytosta
         self.tausta_paivaraja = taustaajo.PAIVARAJA
         self.tausta_ajattelija = None             # taustaajon ajattelijamalli (rooli ajattelija), vain naytto
@@ -2725,6 +2742,9 @@ def main(argv=None):
     ap.add_argument("--yksityinen-itsetarkistus", default=os.environ.get("AIVO_YKSITYINEN_ITSETARKISTUS", ""),
                     help="paalla: tarkastajamalli vertaa faktoja sisaltavan vastauksen kehotteen faktoihin ja vastaaja "
                          "voi korjata kerran (vain OpenRouter-taustapaa; kuluttaa yhteista paivakattoa). Oletus pois")
+    ap.add_argument("--yksityinen-muisti-max", default=os.environ.get("AIVO_YKSITYINEN_MUISTI_MAX"),
+                    help="yksityisen tilan muistiosion enimmaiskoko merkkeina (4000-1000000, oletus 40000; vain "
+                         "OpenRouter-taustapaa, voi vain pienentaa kehotetta, koskee myos itsetarkistuksen lahteita)")
     ap.add_argument("--korjaukset", default=os.environ.get("AIVO_KORJAUKSET"),
                     help="Tonyn palautteen kansio (oletus: yksityisen datan vieressa korjaukset/)")
     ap.add_argument("--agentit", default=os.environ.get("AIVO_AGENTIT", ""),
@@ -2762,7 +2782,8 @@ def main(argv=None):
                     agenttidata=a.agenttidata or None, agentit=a.agentit or None,
                     itsetarkistus=a.yksityinen_itsetarkistus,
                     tausta_jono=a.tausta_jono or None, tausta_paivaraja=a.tausta_paivaraja,
-                    korjauskansio=a.korjaukset, haku_jono=a.haku_jono or None)
+                    korjauskansio=a.korjaukset, haku_jono=a.haku_jono or None,
+                    muisti_max=a.yksityinen_muisti_max)
         tila.kulut_kerroin = lue_kulukerroin(a.kulut_kerroin)
         palvelin = kaynnista(a.osoite, a.portti, tila)
     except ChatVirhe as e:
