@@ -210,8 +210,15 @@ class RajatTesti(LuovutusPohja):
     def test_polkujen_ohitus_tunnuksessa_estyy_numerotunnuksella(self):
         # Pakotettu pelkista numeroista koostuva tunnus: t.upper() == t, joten isojen kirjainten tapaus jaa pois.
         fake = mock.Mock(token_hex=lambda n: "444444444444")
-        with mock.patch.object(luovutus, "secrets", fake):
+        tunnukset, alkup = [], self.ehdota_luovutus
+
+        def ehdota(*a, **k):
+            r = alkup(*a, **k)
+            tunnukset.append(r[0])
+            return r
+        with mock.patch.object(luovutus, "secrets", fake), mock.patch.object(self, "ehdota_luovutus", ehdota):
             self.test_polkujen_ohitus_tunnuksessa_estyy()
+        self.assertEqual(tunnukset, ["444444444444"])   # testi todella ajettiin numerotunnuksella
 
     def test_tyokalutila_ei_nae_luovutusehdotuksia_eika_reitteja(self):
         tkid = self.uusi("tyokalu")

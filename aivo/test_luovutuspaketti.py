@@ -426,8 +426,16 @@ class RajatTesti(PakettiPohja):
     def test_polkujen_ohitus_estetty_numerotunnuksella(self):
         # Pakotettu pelkista numeroista koostuva tunnus: t.upper() == t, joten isojen kirjainten tapaus jaa pois.
         fake = mock.Mock(token_hex=lambda n: "444444444444")
-        with mock.patch.object(luovutus, "secrets", fake), mock.patch.object(lp, "secrets", fake):
+        tunnukset, alkup = [], self.paketti
+
+        def paketti(*a, **k):
+            r = alkup(*a, **k)
+            tunnukset.append(r[1])
+            return r
+        with mock.patch.object(luovutus, "secrets", fake), mock.patch.object(lp, "secrets", fake), \
+                mock.patch.object(self, "paketti", paketti):
             self.test_polkujen_ohitus_estetty()
+        self.assertEqual(tunnukset, ["444444444444"])   # testi todella ajettiin numerotunnuksella
 
     def test_palan_numero_vain_ascii_numeroina(self):
         # "\u00b2".isdigit() on tosi, mutta int() kaatuu: palvelin katkaisi yhteyden ja poikkeusteksti meni stderriin
