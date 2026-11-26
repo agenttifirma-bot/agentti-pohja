@@ -147,6 +147,11 @@ class SelainRakenneTesti(unittest.TestCase):
         # lahetyksessa vapautuu vasta finallyssa, kun haku on valmis: Tony ei saa 429:aa kesken haun
         self.assertLess(self.laheta.index("await (haku||seuraa("), self.laheta.index("finally{lahetyksessa=false;"))
 
+    def test_tuntematon_alku_kehottaa_lataamaan_sivun(self):
+        self.assertIn("alku<0&&j.tony&&j.tony.teksti===s.trim()?'tuntematon':'ei-perilla'", self.seuraa)
+        nayta = self.h[self.h.index("function naytaHaettu("):self.h.index("async function laheta(")]
+        self.assertIn("h.tila==='tuntematon'?'Yhteys katkesi. Vastaus voi olla tallessa keskustelussa: lataa sivu", nayta)
+
     def test_ei_innerhtml(self):
         self.assertNotIn("innerHTML", self.h)
 
@@ -210,7 +215,14 @@ class SelainAjoTesti(Pohja):
         kid = self.uusi()
         self.assertEqual(self.pyynto("POST", "/api/viesti", {"keskustelu": kid, "teksti": "sama"})[0], 200)
         self.assertEqual(self.aja(kid, "ei-lahetysta", 2)["h"], {"tila": "ei-perilla"})
-        self.assertEqual(self.aja(kid, "ei-lahetysta", -1)["h"], {"tila": "ei-perilla"})   # alku tuntematon
+        # alku tuntematon (alkuhaku epaonnistui) ja viimeisin Tonyn viesti vastaa lahetettya: vastaus voi olla
+        # tallessa, joten selain kehottaa lataamaan sivun eika vaita, ettei viesti mennyt perille
+        self.assertEqual(self.aja(kid, "ei-lahetysta", -1)["h"], {"tila": "tuntematon"})
+
+    def test_tuntematon_alku_eri_viesti_ei_perilla(self):
+        kid = self.uusi()
+        self.assertEqual(self.pyynto("POST", "/api/viesti", {"keskustelu": kid, "teksti": "muu"})[0], 200)
+        self.assertEqual(self.aja(kid, "ei-lahetysta", -1)["h"], {"tila": "ei-perilla"})
 
     def test_verkko_poikki_lopettaa_kyselyn(self):
         s = socket.socket()

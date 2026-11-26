@@ -543,7 +543,8 @@ function nuku(ms){return new Promise(f=>setTimeout(f,ms));}
 async function viimeisin(k,ms){const ac=new AbortController(),t=setTimeout(()=>ac.abort(),ms||10000);
  try{const r=await fetch('/api/viimeisin?keskustelu='+q(k),{headers:H,signal:ac.signal});return r.ok?await r.json():null;}finally{clearTimeout(t);}}
 // Yhteys katkesi tai venyi: palvelin tallentaa vastauksen keskusteluun ennen lahetysta, joten haetaan se sielta.
-// alku = keskustelun pituus ennen lahetysta (estaa vanhan vastauksen naytamisen; tuntematon alku -> ei hyvaksyta).
+// alku = keskustelun pituus ennen lahetysta (estaa vanhan vastauksen naytamisen; tuntematon alku -> ei hyvaksyta,
+// mutta jos viimeisin Tonyn viesti vastaa lahetettya, tila 'tuntematon': kehotetaan lataamaan sivu, ei lahettamaan uudelleen).
 // Pysahtyy, kun ohjaus.valmis, ylarajaan tai kun KYSELY_VIRHEET perakkaista hakua epaonnistuu (verkko poikki).
 async function seuraa(k,s,alku,ohjaus,ac){const raja=Date.now()+KYSELY_YLARAJA_MS;let vapaana=0,virheet=0;
  while(!ohjaus.valmis&&Date.now()<raja){await nuku(KYSELY_MS);if(ohjaus.valmis)return null;
@@ -552,11 +553,13 @@ async function seuraa(k,s,alku,ohjaus,ac){const raja=Date.now()+KYSELY_YLARAJA_M
   const oma=alku>=0&&j.tony&&Number.isInteger(j.tony.indeksi)&&j.tony.indeksi>=alku&&j.tony.teksti===s.trim();
   if(oma&&j.vastaus&&typeof j.vastaus.teksti==='string'){ohjaus.valmis=true;ac.abort();return {tila:'valmis',tony:j.tony.indeksi,v:j.vastaus};}
   vapaana=j.kesken?0:vapaana+1;
-  if(vapaana>=2){ohjaus.valmis=true;ac.abort();return {tila:oma?'ei-vastausta':'ei-perilla'};}}
+  if(vapaana>=2){ohjaus.valmis=true;ac.abort();
+   return {tila:oma?'ei-vastausta':(alku<0&&j.tony&&j.tony.teksti===s.trim()?'tuntematon':'ei-perilla')};}}
  if(ohjaus.valmis)return null;ohjaus.valmis=true;ac.abort();return {tila:'aikaraja'};}
 function naytaHaettu(odota,oma,s,h){
  if(!h||h.tila!=='valmis'){odota.textContent=!h||h.tila==='aikaraja'?'Vastaus ei n\u00e4y viel\u00e4. Kokeile hetken p\u00e4\u00e4st\u00e4 uudelleen.'
-   :(h.tila==='ei-vastausta'?'Virhe: vastausta ei saatu valmiiksi. Kokeile uudelleen.':(h.tila==='ei-yhteytta'?'Yhteysvirhe: palvelimeen ei saada yhteytt\u00e4. Vastaus voi olla tallessa keskustelussa.':'Yhteysvirhe: viesti ei mennyt perille.'));alas();return;}
+   :(h.tila==='ei-vastausta'?'Virhe: vastausta ei saatu valmiiksi. Kokeile uudelleen.':(h.tila==='ei-yhteytta'?'Yhteysvirhe: palvelimeen ei saada yhteytt\u00e4. Vastaus voi olla tallessa keskustelussa.'
+   :(h.tila==='tuntematon'?'Yhteys katkesi. Vastaus voi olla tallessa keskustelussa: lataa sivu ennen kuin l\u00e4het\u00e4t uudelleen.':'Yhteysvirhe: viesti ei mennyt perille.')));alas();return;}
  odota.textContent=h.v.teksti;const t=document.createElement('span');t.className='mallinimi';
  t.textContent='Yhteys katkesi kesken; vastaus haettiin keskustelusta.'+(typeof h.v.malli==='string'?' Malli: '+h.v.malli:'');odota.appendChild(t);
  tonyn[h.tony]=s;painike(oma,h.tony);
