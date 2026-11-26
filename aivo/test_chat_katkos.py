@@ -167,9 +167,15 @@ const fs=require('fs');
 eval(fs.readFileSync(process.argv[7],'utf8'));
 (async()=>{const ohjaus={valmis:false},ac=new AbortController();
  let lahetys=null;
- if(skenaario==='katkos'){const p=new AbortController();setTimeout(()=>p.abort(),300);
-  lahetys=fetch('/api/viesti',{method:'POST',headers:H,signal:p.signal,body:JSON.stringify({keskustelu:kid,teksti:'uusi kysymys'})}).then(()=>'ok',e=>e.name);}
- const h=await seuraa(kid,skenaario==='katkos'?'uusi kysymys':'sama',Number(alku),ohjaus,ac);
+ // Ajoitus ei riipu koneen nopeudesta: 'katkos' keskeyttaa POSTin vasta, kun testi kirjoittaa rivin stdiniin
+ // (palvelin on todistetusti tallentanut viestin), ja selain aloittaa haun vasta katkoksen jalkeen kuten sivulla.
+ // 'katkos-ennen' keskeyttaa POSTin ennen lahetysta: palvelin ei saa viestia.
+ if(skenaario==='katkos'||skenaario==='katkos-ennen'){const p=new AbortController();
+  if(skenaario==='katkos-ennen')p.abort();
+  lahetys=fetch('/api/viesti',{method:'POST',headers:H,signal:p.signal,body:JSON.stringify({keskustelu:kid,teksti:'uusi kysymys'})}).then(()=>'ok',e=>e.name);
+  if(skenaario==='katkos'){await new Promise(f=>process.stdin.once('data',f));process.stdin.pause();p.abort();}
+  await lahetys;if(skenaario==='katkos')console.log('katkaistu');}
+ const h=await seuraa(kid,skenaario.startsWith('katkos')?'uusi kysymys':'sama',Number(alku),ohjaus,ac);
  console.log(JSON.stringify({h:h,post:lahetys?await lahetys:null}));})();
 """
 
@@ -196,20 +202,72 @@ class SelainAjoTesti(Pohja):
     def aja(self, kid, skenaario, alku, base=None):
         base = base or "http://%s:%d" % (LOOP, self.srv.server_address[1])
         r = subprocess.run(["node", self.ajuri, base, self.ev, kid, skenaario, str(alku), self.funktiot],
-                           capture_output=True, text=True, timeout=60)
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr[-500:])
         return json.loads(r.stdout.strip().splitlines()[-1])
 
+    def aja_katkos(self, kid, tallennettu):
+        """Skenaario 'katkos' ilman kiinteita viiveita: POST keskeytetaan vasta, kun palvelin on asettanut
+        tallennettu-tapahtuman. Lukeminen on aikarajattu, ettei jumittunut Node pysayta testisarjaa."""
+        base = "http://%s:%d" % (LOOP, self.srv.server_address[1])
+        p = subprocess.Popen(["node", self.ajuri, base, self.ev, kid, "katkos", "0", self.funktiot],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            self.assertTrue(tallennettu.wait(30), "palvelin ei saanut viestia")
+            ulos, virhe = p.communicate("katkaise\n", timeout=60)
+        finally:
+            if p.poll() is None:
+                p.kill()
+                p.communicate()
+        self.assertEqual(p.returncode, 0, virhe[-500:])
+        rivit = ulos.strip().splitlines()
+        self.assertIn("katkaistu", rivit)
+        return json.loads(rivit[-1])
+
     def test_katkennut_post_ja_haku_loytaa_vastauksen(self):
+        """Haku nakee ensin vahintaan kaksi kertaa tilan kesken=True ja vasta sitten vastauksen: seuraa() ei saa
+        paatella 'ei-vastausta', kun vastaus on viela tekeilla (vapaana nollautuu kesken-tilassa)."""
+        tallennettu, vapauta = threading.Event(), threading.Event()
+        self.addCleanup(vapauta.set)                   # odottava kysy_yks vapautuu myos, jos testi kaatuu
+        self.addCleanup(tallennettu.set)
+        kesken = []                                    # lukon tila jokaisessa katkoksen jalkeisessa haussa
+        kid = self.uusi()
+        lue = self.tila.yks.lue
+
+        def laskeva_lue(*a, **kw):
+            # tallennettu asetetaan kysy_yks:ssa, jonka ajan POST-saie odottaa: taman jalkeen lue()-kutsut
+            # tulevat vain /api/viimeisin-hauista. Seuraa() on perakkainen, joten kun kolmas haku alkaa,
+            # kaksi ensimmaista on jo saanut vastauksen tilassa kesken=True.
+            if tallennettu.is_set() and not vapauta.is_set():
+                kesken.append(self.tila.yks_vastauslukko.locked())
+                if len(kesken) >= 3:
+                    vapauta.set()
+            return lue(*a, **kw)
+        self.tila.yks.lue = laskeva_lue
+
         def hidas(*a, **kw):
-            time.sleep(1.5)
+            # kysy_yks kutsutaan vasta, kun Tonyn viesti on tallessa ja vastauslukko varattu
+            if [v["rooli"] for v in lue(kid)] == ["tony"]:
+                tallennettu.set()
+            vapauta.wait(30)
             return "valmis vastaus"
         self.tila.kysy_yks = hidas
-        kid = self.uusi()
         with contextlib.redirect_stderr(io.StringIO()):
-            t = self.aja(kid, "katkos", 0)
+            t = self.aja_katkos(kid, tallennettu)
+        self.assertEqual(kesken[:2], [True, True])
         self.assertEqual(t["post"], "AbortError")
         self.assertEqual(t["h"], {"tila": "valmis", "tony": 0, "v": {"indeksi": 1, "teksti": "valmis vastaus"}})
+
+    def test_post_keskeytyy_ennen_vastaanottoa_ei_perilla(self):
+        kutsut = []
+        self.tila.kysy_yks = lambda *a, **kw: kutsut.append(1) or "ei pitaisi tulla"
+        kid = self.uusi()
+        with contextlib.redirect_stderr(io.StringIO()):
+            t = self.aja(kid, "katkos-ennen", 0)
+        self.assertEqual(t["post"], "AbortError")
+        self.assertEqual(t["h"], {"tila": "ei-perilla"})
+        self.assertEqual(kutsut, [])
+        self.assertEqual(self.tila.yks.lue(kid), [])
 
     def test_vanhaa_samaa_vastausta_ei_nayteta(self):
         kid = self.uusi()
