@@ -214,6 +214,22 @@ class AjuriYhteysTesti(Pohja):
         (self.repo / ajuri.JONO / "tulokset" / polut[0].name).write_text("x")
         self.assertEqual(ajuri.luo_ehkaisytehtavat(self.repo, self.tmp, nyt), [])
 
+    def test_ehkaisytehtava_lapaisee_tavoiteportin_ja_tehtavatarkastuksen(self):
+        # Katselmointi #451: ilman Tavoite-rivia tavoite.luokittele hylkasi jokaisen ehkaisytehtavan pysyvasti.
+        from claudejono import tavoite
+        self.kirjoita_loki(VANHA + uusi(pvm="8.11.2026") + uusi(pvm="12.11.2026", otsikko="b"))
+        nyt = datetime.datetime(2026, 11, 13, 10, 0).astimezone()
+        polut = ajuri.luo_ehkaisytehtavat(self.repo, self.tmp, nyt)
+        self.assertEqual(len(polut), 1)
+        p = polut[0]
+        self.assertTrue(tavoite.pakollinen(p.name))
+        self.assertEqual(tavoite.luokittele(p), (tavoite.YLLAPITO, ""))
+        self.assertEqual(ajuri.tarkista_tehtava(p.name, p.read_text(encoding="utf-8")), [])
+        self.assertEqual(ajuri.silmukka.tarkista_tehtava(p.read_text(encoding="utf-8"))[0], "ok")
+        self.assertEqual(tavoite.valitse([(p, None)], 1, 2), [p])   # kaista ottaa tehtavan, ei ohita
+        self.assertTrue(ajuri.ajurin_kirjoittama(p))   # julkaise()-viesti on AJURIN_TEHTAVAVIESTIT-listassa
+        self.assertIsNone(ajuri.tehtavan_prioriteetti(p))
+
     def test_ehkaisytehtavien_enimmaismaara_ja_paivaraja(self):
         # kolme luokkaa toistuu; avoimia saa olla enintaan EHKAISY_AVOIMIA_MAX ja uusia enintaan yksi per ajo
         loki = VANHA

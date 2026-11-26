@@ -1,5 +1,7 @@
 # Siirrä toistuvan virheen ehkäisy ohjeesta koodiin (juurisyy {luokka}: {luokan_nimi})
 
+Tavoite: yllapito
+Mittari: virhemittari
 Pisteet: hyöty 4, varmuus 3, vaiva 2 h
 Suunta: jatkoa (kompassi: sama virhe ei saa toistua, ehkäisy koodiin)
 Hyöty: sama juurisyy ei toistu, koska tarkistus ei enää riipu siitä, että joku muistaa lukea ohjeen.

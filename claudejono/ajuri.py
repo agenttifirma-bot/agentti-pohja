@@ -360,11 +360,11 @@ def tehtavan_kaista(polku, kaistoja=KAISTOJA_MAX):
 PRIORITEETTI_RE = re.compile(r"^[ \t#*_>-]*PRIORITEETTI[ \t]+(\d{1,3})\b", re.MULTILINE)
 
 
-AJURIN_TEHTAVAVIESTIT = ("claude-jono: itsesuunnittelu", "claude-jono: toistuva tehtava")   # ajurin omat julkaise()-viestit tehtavatiedostoille
+AJURIN_TEHTAVAVIESTIT = ("claude-jono: itsesuunnittelu", "claude-jono: toistuva tehtava", "claude-jono: ehkaisy koodiin")   # ajurin omat julkaise()-viestit tehtavatiedostoille
 
 
 def ajurin_kirjoittama(polku):
-    """Onko ajuri (itsesuunnittelu tai toistuva tehtava) kirjoittanut tiedoston? Kirjoittaja luetaan gitista: tiedoston lisanneen
+    """Onko ajuri (itsesuunnittelu, toistuva tehtava tai ehkaisytehtava) kirjoittanut tiedoston? Kirjoittaja luetaan gitista: tiedoston lisanneen
     commitin viesti on ajurin oma. Tiedoston nimi ei ratkaise. Gitin virhe tulkitaan ajurin tiedostoksi (turvallinen suunta:
     prioriteettia ei huomioida). Git-historiaton (ei commitoitu) tiedosto ei ole ajurin."""
     p = Path(polku)
@@ -1439,7 +1439,7 @@ def luo_ehkaisytehtavat(repo, tyohak, nyt=None):
                      + sisalto.rstrip() + "\n", encoding="utf-8")
         polut.append(p)
     if polut:
-        julkaise(repo, polut, "claude-jono: ehkaisy koodiin " + ", ".join(p.name for p in polut))
+        julkaise(repo, polut, AJURIN_TEHTAVAVIESTIT[2] + " " + ", ".join(p.name for p in polut))
     return polut
 
 
