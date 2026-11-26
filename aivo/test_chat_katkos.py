@@ -167,8 +167,13 @@ const fs=require('fs');
 eval(fs.readFileSync(process.argv[7],'utf8'));
 (async()=>{const ohjaus={valmis:false},ac=new AbortController();
  let lahetys=null;
- if(skenaario==='katkos'){const p=new AbortController();setTimeout(()=>p.abort(),300);
-  lahetys=fetch('/api/viesti',{method:'POST',headers:H,signal:p.signal,body:JSON.stringify({keskustelu:kid,teksti:'uusi kysymys'})}).then(()=>'ok',e=>e.name);}
+ if(skenaario==='katkos'){const p=new AbortController();
+  lahetys=fetch('/api/viesti',{method:'POST',headers:H,signal:p.signal,body:JSON.stringify({keskustelu:kid,teksti:'uusi kysymys'})}).then(()=>'ok',e=>e.name);
+  // Yhteys katkaistaan vasta, kun palvelin on ottanut viestin vastaan (vastaus kesken). Kiintea 300 ms:n katkaisu
+  // ehti hitaalla CI-koneella ennen kuin POST lahti, jolloin viestia ei ollut palvelimella (CI 26.11.2026, test (3.11)).
+  const raja=Date.now()+10000;
+  while(Date.now()<raja){let j=null;try{j=await viimeisin(kid);}catch(z){}if(j&&j.kesken)break;await nuku(20);}
+  p.abort();}
  const h=await seuraa(kid,skenaario==='katkos'?'uusi kysymys':'sama',Number(alku),ohjaus,ac);
  console.log(JSON.stringify({h:h,post:lahetys?await lahetys:null}));})();
 """

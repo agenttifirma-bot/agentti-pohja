@@ -54,7 +54,7 @@ class PaaohjelmaTesti(unittest.TestCase):
             self.assertNotIn("SALAINEN", r)
         self.assertNotIn("SALAINEN", p.stdout)
         # -v-loki sailyy ennallaan.
-        self.assertIn("test_ok (test_koe.T.test_ok)", p.stderr)
+        self.assertIn("test_ok (test_koe.T", p.stderr)  # 3.10: "(test_koe.T)", 3.11+: "(test_koe.T.test_ok)"
         self.assertIn("FAILED", p.stderr)
 
     def test_vihrea_ei_annotaatioita_paluuarvo_0(self):
