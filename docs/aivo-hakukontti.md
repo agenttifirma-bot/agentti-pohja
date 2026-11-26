@@ -17,7 +17,7 @@ Pohjat ovat hakemistossa `isanta/hakukontti/`:
 | `torrc` | kontti: `/etc/tor/torrc` | Tor pelkkänä asiakkaana, SOCKS vain silmukkaosoitteeseen, piirien eristys |
 | `nftables.conf` | kontti: `/etc/nftables.conf` | Palomuuri ja kill switch käyttäjäkohtaisesti, Tor vain `wg0`:n kautta |
 | `wg0.conf.esimerkki` | ei asenneta | Esimerkkipohja WireGuard-asetuksesta ilman avaimia (dokumentaatio-osoitteet) |
-| `wg_asetus.py` | isäntä: `/root/hakukontti/wg_asetus.py` | Tarkistaa `wg0.conf`:n, poistaa DNS-rivin ja IPv6-osoitteet ja tuottaa palomuurin osoitteet tulostamatta avaimia |
+| `wg_asetus.py` | isäntä: `/root/hakukontti/wg_asetus.py` | Tarkistaa `wg0.conf`:n, poistaa DNS-rivin ja IPv6-osoitteet, lisää keepalive-rivin ja tuottaa palomuurin osoitteet tulostamatta avaimia |
 | `wg-quick-hakukontti.conf` | kontti: `/etc/systemd/system/wg-quick@wg0.service.d/hakukontti.conf` | WireGuard vasta palomuurin jälkeen |
 | `tor-hakukontti.conf` | kontti: `/etc/systemd/system/tor@default.service.d/hakukontti.conf` | Tor vasta palomuurin ja WireGuardin jälkeen |
 | `isanta-nat.nft.mall` | isäntä: `/etc/aivo-hakuverkko.nft` | Isännän taulu `inet aivo_hakuverkko`: kontista ulos vain UDP WireGuard-palvelimelle |
@@ -74,6 +74,8 @@ pve-firewall status
 Odotettu: `Status: enabled/running` tai `Status: disabled/running`. Jos tila on `disabled`, Proxmox-palomuuri (kohta 9) ei vaikuta, ja suoja on kontin oma nftables. **Älä kytke Proxmox-palomuuria päälle tämän ohjeen takia**, koska se vaikuttaa koko isäntään. Päätös on erillinen.
 
 ## 1. Osoitteet ja asetukset komennoilla (isäntä)
+
+**Huom. (v3):** tämä osio kuvaa alkuperäisen kotiverkkomallin. Käytössä on sisäinen silta isännän NAT:n takana (kontti 122 saa osoitteensa DHCP:llä). Aja osoitteet, isännän taulu (`isanta-nat.nft.mall`, asennus `wg_asetus.py isanta`), asennusikkuna ja kontin luonti asennuslistan v3 kohdista 12–22d, älä tästä osiosta.
 
 Kontti 122 on ainoa sallittu asiakas. Sen osoite ja verkkoasetukset luetaan sen omista asetuksista.
 
@@ -150,7 +152,7 @@ mkdir -p /root/hakukontti && for f in torrc nftables.conf searxng-settings.yml s
 ```
 Odotettu: kymmenen tiedostoa, ei yhtään `PUUTTUU`-riviä.
 
-VPN-palvelun WireGuard-tiedosto (Linux, yksi palvelin) tuodaan isännälle tiedostoksi `/root/hakukontti/vpn-alkuperainen.conf` (tila 600) esimerkiksi `scp`:llä. Tiedostoa ei avata näytölle. Seuraava komento kirjoittaa siitä version ilman DNS-riviä ja IPv6-osoitteita. Se tulostaa vain palvelimen osoitteen ja portin.
+VPN-palvelun WireGuard-tiedosto (Linux, yksi palvelin) tuodaan isännälle tiedostoksi `/root/hakukontti/vpn-alkuperainen.conf` (tila 600) esimerkiksi `scp`:llä. Tiedostoa ei avata näytölle. Seuraava komento kirjoittaa siitä version ilman DNS-riviä ja IPv6-osoitteita ja lisää `PersistentKeepalive = 25`, jotta tunneli kättelee heti noston jälkeen ja isännän NAT-tila pysyy auki. Se tulostaa vain palvelimen osoitteen ja portin.
 
 ```bash
 python3 -I /root/hakukontti/wg_asetus.py siivoa /root/hakukontti/vpn-alkuperainen.conf /root/hakukontti/wg0.conf
@@ -163,6 +165,8 @@ printf 'define CT122 = %s\ndefine LAHIVERKOT4 = { %s }\n' "$IP122" "$LAHIVERKOT"
 Odotettu: neljä `define`-riviä: kontin 122 osoite, lähiverkot, `WG_PALVELIN` ja `WG_PORTTI`.
 
 ## 3. Kontin luonti (isäntä)
+
+**Huom. (v3):** tämä osio kuvaa alkuperäisen kotiverkkomallin. Käytössä on sisäinen silta isännän NAT:n takana (kontti 122 saa osoitteensa DHCP:llä). Aja osoitteet, isännän taulu (`isanta-nat.nft.mall`, asennus `wg_asetus.py isanta`), asennusikkuna ja kontin luonti asennuslistan v3 kohdista 12–22d, älä tästä osiosta.
 
 ```bash
 pveam update
@@ -289,7 +293,7 @@ Odotettu: viesti symbolisen linkin luonnista, ei virhettä. Virhe `RTNETLINK ans
 ```bash
 pct exec 123 -- sh -c 'wg show wg0 fwmark; wg show wg0 latest-handshakes | awk "{print (\$2 > 0) ? \"KATTELY_OK\" : \"EI_KATTELYA\"}"'
 ```
-Odotettu: `0xca6c` ja `KATTELY_OK`. Jos tulos on `EI_KATTELYA`, odota 10 sekuntia ja aja uudelleen. Toistuva `EI_KATTELYA` tarkoittaa, että isännän tai kontin palomuuri estää WireGuardin tai avain on väärä: pysähdy.
+Odotettu: `0xca6c` ja `KATTELY_OK`. Jos tulos on `EI_KATTELYA`, odota 30 sekuntia ja aja uudelleen (keepalive 25 s). Toistuva `EI_KATTELYA` tarkoittaa, että isännän tai kontin palomuuri estää WireGuardin tai avain on väärä: pysähdy.
 
 ```bash
 pct push 123 /root/hakukontti/torrc /etc/tor/torrc --perms 0644
@@ -389,7 +393,7 @@ SearXNG vaatii palomuurin (`Requires=nftables.service`): jos sääntöjen lataus
 ```bash
 pct exec 123 -- systemctl is-enabled nftables
 ```
-Odotettu: `enabled`. Jos tulos on muu, pysähdy. `Requires=` käynnistää palomuurin palvelun mukana, mutta Tor ja muut palvelut eivät vaadi sitä, joten ilman `enabled`-tilaa kontti voi käynnistyä ilman kill switchiä. Huomaa myös: jos säännöt poistetaan käsin (`nft flush ruleset`), `nftables.service` pysyy aktiivisena, eikä systemd pysäytä palvelua. Sääntöjä ei siksi poisteta käsin palveluiden ollessa käynnissä.
+Odotettu: `enabled`. Jos tulos on muu, pysähdy. `Requires=` käynnistää palomuurin palvelun mukana (myös Tor ja WireGuard vaativat sen lisäosiensa kautta), mutta muut kontin palvelut eivät vaadi sitä, joten ilman `enabled`-tilaa kontti voi käynnistyä ilman kill switchiä. Huomaa myös: jos säännöt poistetaan käsin (`nft flush ruleset`), `nftables.service` pysyy aktiivisena, eikä systemd pysäytä palvelua. Sääntöjä ei siksi poisteta käsin palveluiden ollessa käynnissä.
 
 ```bash
 pct exec 123 -- systemctl enable --now searxng

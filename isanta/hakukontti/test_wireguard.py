@@ -95,6 +95,10 @@ class WgAsetusTesti(unittest.TestCase):
         self.assertNotIn("::", puhdas)
         self.assertIn(YKSITYINEN, puhdas)
         self.assertIn("AllowedIPs = 0.0.0.0/0", puhdas)
+        # Keepalive lisataan [Peer]-osioon kerran (kattely heti noston jalkeen), eika toista kertaa uudelleen ajettaessa.
+        self.assertEqual(puhdas.count("PersistentKeepalive = 25"), 1)
+        self.assertGreater(puhdas.index("PersistentKeepalive"), puhdas.index("[Peer]"))
+        self.assertEqual(wg.siivoa(puhdas), puhdas)
         self.assertEqual(self.virhe(MULLVAD_TYYPPI), "dns_rivi")
 
     def test_cli_ei_tulosta_avainta(self):

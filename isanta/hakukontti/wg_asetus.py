@@ -8,8 +8,8 @@ kopioida komentoriville.
 Alikomennot:
   tarkista TIEDOSTO                 tarkistaa vaatimukset (yksi palvelin, IPv4-Endpoint, ei DNS:aa, ei IPv6:ta,
                                     ei komentokoukkuja, FwMark puuttuu tai on 51820). Paluuarvo 0 = OK, 1 = virhe.
-  siivoa SISAAN ULOS                kirjoittaa Mullvadin tiedostosta version ilman DNS-rivia ja IPv6-osoitteita
-                                    (tila 600). Ei tulosta sisaltoa.
+  siivoa SISAAN ULOS                kirjoittaa Mullvadin tiedostosta version ilman DNS-rivia ja IPv6-osoitteita ja
+                                    lisaa PersistentKeepalive = 25 (tila 600). Ei tulosta sisaltoa.
   nft TIEDOSTO                      tulostaa kontin palomuurin maarittelyt WG_PALVELIN ja WG_PORTTI.
   isanta TIEDOSTO --mall M --pohja P --asetukset A
                                     tulostaa isannan taulun (pohja M) taytettyna: osoitteet asetustiedostosta A,
@@ -22,6 +22,7 @@ import re
 import sys
 
 FWMARK = 51820
+KEEPALIVE = 25
 SALLITUT_INTERFACE = {"privatekey", "address", "listenport", "fwmark", "mtu", "table"}
 SALLITUT_PEER = {"publickey", "presharedkey", "allowedips", "endpoint", "persistentkeepalive"}
 KOUKUT = {"preup", "postup", "predown", "postdown", "saveconfig"}
@@ -121,8 +122,12 @@ def tarkista(teksti):
 
 
 def siivoa(teksti):
-    """Poistaa DNS-rivit ja IPv6-osoitteet (Address, AllowedIPs). Muut rivit sailyvat sellaisinaan."""
+    """Poistaa DNS-rivit ja IPv6-osoitteet (Address, AllowedIPs) ja lisaa [Peer]-osioon PersistentKeepalive = 25,
+    jos sita ei ole: tunneli kattelee heti noston jalkeen (tarkistettavissa ennen Torin kaynnistysta), ja isannan
+    NAT-tila pysyy auki. Muut rivit sailyvat sellaisinaan."""
     ulos = []
+    keepalive = any(r.split("#", 1)[0].split("=", 1)[0].strip().lower() == "persistentkeepalive"
+                    for r in teksti.splitlines() if "=" in r)
     for rivi in teksti.splitlines():
         puhdas = rivi.split("#", 1)[0].strip()
         avain = puhdas.split("=", 1)[0].strip().lower() if "=" in puhdas else ""
@@ -135,6 +140,8 @@ def siivoa(teksti):
                 continue
             rivi = "%s = %s" % (nimi, ", ".join(jaljella))
         ulos.append(rivi)
+        if not keepalive and puhdas.lower().replace(" ", "") == "[peer]":
+            ulos.append("PersistentKeepalive = %d" % KEEPALIVE)
     return "\n".join(ulos) + "\n"
 
 

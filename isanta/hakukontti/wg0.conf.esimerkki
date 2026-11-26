@@ -5,7 +5,7 @@
 # Vaatimukset (wg_asetus.py tarkista): yksi [Peer]; Endpoint on julkinen IPv4-osoite ja portti (ei nimi, koska
 # nimipalvelua ei sallita); AllowedIPs = 0.0.0.0/0; ei IPv6-osoitteita; ei DNS-rivia (Tor ratkaisee nimet itse);
 # ei PreUp/PostUp/PreDown/PostDown-komentoja; FwMark puuttuu tai on 51820 (palomuuri tunnistaa WireGuardin merkista).
-# wg_asetus.py siivoa poistaa VPN-palvelun tiedostosta DNS-rivin ja IPv6-osoitteet.
+# wg_asetus.py siivoa poistaa VPN-palvelun tiedostosta DNS-rivin ja IPv6-osoitteet ja lisaa PersistentKeepalive = 25.
 
 [Interface]
 PrivateKey = @YKSITYINEN_AVAIN@
@@ -15,3 +15,4 @@ Address = 192.0.2.2/32
 PublicKey = @PALVELIMEN_JULKINEN_AVAIN@
 AllowedIPs = 0.0.0.0/0
 Endpoint = 203.0.113.10:51820
+PersistentKeepalive = 25
