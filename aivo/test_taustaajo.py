@@ -242,6 +242,46 @@ class PaivarajaTesti(Pohja):
         self.assertEqual(self.kutsut, [])
 
 
+class PaivarajaNayttoTesti(Pohja):
+    """Tarkastajan loydos: chatin Syvenna-laskuri nayttaa saman paivarajan kuin ajuri soveltaa. Ajuri kirjoittaa
+    kayttamansa rajan tila.json:iin; chat lukee sen (ajurin_paivaraja). Ajurin oma tarkistus ei muutu."""
+
+    def setUp(self):
+        super().setUp()
+        ta.tarkista_kansio(self.jono, luo=True)
+
+    def test_ajo_kirjaa_rajan(self):
+        self.assertIsNone(ta.ajurin_paivaraja(self.jono))
+        self.aja(paivaraja=3)
+        self.assertEqual(ta.ajurin_paivaraja(self.jono), 3)
+        self.aja(paivaraja=ta.PAIVARAJA_MAX + 5)                     # ajuri rajaa ylarajaan
+        self.assertEqual(ta.ajurin_paivaraja(self.jono), ta.PAIVARAJA_MAX)
+
+    def test_kuiva_ajo_ei_kirjoita(self):
+        self.aja(paivaraja=3, kuiva=True)
+        self.assertIsNone(ta.ajurin_paivaraja(self.jono))
+
+    def test_raja_sailyy_paivan_vaihtuessa(self):
+        ta.kirjoita_tila(self.jono, {"versio": 1, "paiva": "2026-01-01", "ajettu": 4, "paivaraja": 4})
+        self.assertEqual(ta.lue_tila(self.jono, NYT),
+                         {"versio": 1, "paiva": ta._paiva(NYT), "ajettu": 0, "paivaraja": 4})
+
+    def test_kelvoton_arvo_ohitetaan(self):
+        for arvo in (0, -1, ta.PAIVARAJA_MAX + 1, True, "5", 2.0, None):
+            ta.kirjoita_tila(self.jono, {"versio": 1, "paiva": ta._paiva(NYT), "ajettu": 0, "paivaraja": arvo})
+            self.assertIsNone(ta.ajurin_paivaraja(self.jono), arvo)
+        (self.jono / ta.TILA_TIEDOSTO).write_text("{rikki")
+        self.assertIsNone(ta.ajurin_paivaraja(self.jono))
+
+    def test_ajuri_soveltaa_omaa_rajaansa(self):
+        """Tiedostoon kirjoitettu (esim. kasin nostettu) arvo ei nosta ajurin rajaa: aja() kayttaa parametriaan."""
+        ta.kirjoita_tila(self.jono, {"versio": 1, "paiva": ta._paiva(NYT), "ajettu": 1, "paivaraja": 9})
+        ta.kirjoita_tyo(self.jono, KID, TEHTAVA)
+        r = self.aja(paivaraja=1)
+        self.assertEqual((r["valmis"], r["epaonnistui"]), (0, 1))
+        self.assertEqual(ta.ajurin_paivaraja(self.jono), 1)
+
+
 class PuoliyoTesti(Pohja):
     """Ajo alkaa klo 23.55 (Europe/Helsinki) ja jatkuu yli puolenyon: jokainen mallikutsu vie 3 min seinakelloa."""
     ALKU = datetime(2026, 11, 22, 21, 55, tzinfo=timezone.utc)      # 23.55 Helsingissa (UTC+2)
@@ -263,7 +303,9 @@ class PuoliyoTesti(Pohja):
                       tulosta=self.rivit.append, **kw)
 
     def tila(self):
-        return json.loads((self.jono / ta.TILA_TIEDOSTO).read_text())
+        t = json.loads((self.jono / ta.TILA_TIEDOSTO).read_text())
+        t.pop("paivaraja", None)            # ajurin raja chatin naytolle (PaivarajaNayttoTesti)
+        return t
 
     def test_tyot_kirjautuvat_alkamispaivalle_eika_raja_tuplaannu(self):
         self.assertEqual((ta._paiva(self.ALKU), ta._paiva(self.ALKU + timedelta(minutes=6))),
