@@ -22,7 +22,8 @@ Saannot:
   * Kuluraja KULURAJA_USD koko ajolle (OpenRouterin ilmoittama usage.cost). Ajo pysahtyy ennen rajaa.
   * Epaonnistunut kutsu kirjataan kirjanpitoon varovaisena kuluna (0,50 $), joten malli ohitetaan kahden perakkaisen
     virheen jalkeen ja koko ajo pysahtyy MAX_VIRHEITA virheen jalkeen.
-  * Historia rajataan kuten tuotannon OpenRouter-taustapaassa: viimeiset yksityinen_or.HISTORIA_YLARAJA (40) viestia.
+  * Historia rajataan kuten tuotannon OpenRouter-taustapaassa: viimeiset yksityinen_or.HISTORIA_YLARAJA (200)
+    viestia; merkkiraja on kiintea HISTORIA_MERKIT_YLARAJA (tuotannossa mallin kontekstin mukaan, A1106).
     Muistitehtavien 23 viestin historia mahtuu rajaan kokonaan.
   * Pilkkomistehtavat: rakennusohje on rivien RAKENNUSOHJE ALKAA ja RAKENNUSOHJE PAATTYY valissa. Jos ohjeessa on
     keksityn taustan avainsana (nimi, paikka, tavoitesana) tai rajausriveja ei ole, tehtava saa 0 pistetta myos
