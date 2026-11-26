@@ -79,15 +79,18 @@ class PohjaTesti(unittest.TestCase):
             self.assertTrue(omat[0].startswith('oif "lo"'), omat[0])
         # Nimipalvelua ei sallita kenellekaan.
         self.assertNotRegex(teksti, r"dport\s+(\{[^}]*\b53\b|53\b)")
-        # Ainoa ehdoton ulos-sallinta eth0:aan on debian-torilla.
+        # eth0:aan sallitaan vain vastaukset kontille 122 ja ytimen WireGuard-liikenne VPN-palvelimelle.
         ulos = [r for r in rivit if 'oifname "eth0"' in r and r.endswith("accept")]
-        self.assertEqual(ulos, [VASTAUS_122, TOR_ULOS])
-        # debian-tor: vain TCP. Mikaan ulos-sallinta ei mainitse UDP:ta.
+        self.assertEqual(ulos, [VASTAUS_122, WG_ULOS])
+        # debian-tor: vain TCP ja vain wg0:n kautta. Ainoa UDP-sallinta on WireGuard (merkitty ytimen soketti).
         self.assertEqual([r for r in rivit if 'skuid "debian-tor"' in r], [TOR_ULOS])
         self.assertIn("meta l4proto tcp", TOR_ULOS)
+        self.assertIn('oifname "wg0"', TOR_ULOS)
         alku = rivit.index("chain output {")
         output = rivit[alku + 1:rivit.index("}", alku)]
-        self.assertEqual([r for r in output if "udp" in r and r.endswith("accept")], [])
+        self.assertEqual([r for r in output if "udp" in r and r.endswith("accept")], [WG_ULOS])
+        # Mikaan sallinta ei kayta wg0:aa muille kuin debian-torille.
+        self.assertEqual([r for r in output if "wg0" in r and r.endswith("accept")], [TOR_ULOS])
         self.assertIn('include "/etc/nftables.d/hakukontti-osoitteet.nft"', rivit)
 
     def test_systemd_yksikko(self):
@@ -118,7 +121,11 @@ def ip4(a, b, c, d):
 
 VASTAUS_122 = 'oifname "eth0" ip daddr $CT122 tcp sport 8890 ct state established accept'
 # Tor tarvitsee vain TCP:n: UDP (myos portti 53) ei saa paasta ulos debian-torinakaan (tarkastus 26.11.2026).
-TOR_ULOS = 'meta skuid "debian-tor" oifname "eth0" meta l4proto tcp accept'
+# Tor kulkee WireGuard-VPN:n (wg0) sisalla (A1119): debian-tor ei paase eth0:aan lainkaan.
+TOR_ULOS = 'meta skuid "debian-tor" oifname "wg0" meta l4proto tcp accept'
+# Ytimen WireGuard-soketti merkitsee pakettinsa (wg-quick fwmark 51820 = 0xca6c); vain VPN-palvelimen osoite ja portti.
+WG_ULOS = 'oifname "eth0" meta mark 0x0000ca6c ip daddr $WG_PALVELIN udp dport $WG_PORTTI accept'
+ETH0_ESTO = 'oifname "eth0" counter drop comment "eth0: vain WireGuard-palvelimelle"'
 ESTOT = ('ip daddr $KIELLETYT4 counter drop comment "yksityinen tai erikoisosoite"',
          'ip daddr $LAHIVERKOT4 counter drop comment "lahiverkko"',
          'ip6 daddr $KIELLETYT6 counter drop comment "yksityinen tai erikoisosoite"',
@@ -196,6 +203,11 @@ class YksityisetEstoTesti(unittest.TestCase):
         viimeinen = max(self.output.index(e) for e in ESTOT)
         self.assertGreater(self.output.index("ct state established,related accept"), viimeinen)
         self.assertGreater(self.output.index(TOR_ULOS), viimeinen)
+        # WireGuard sallitaan estojen jalkeen, ja muu eth0-liikenne estetaan ennen avattujen yhteyksien sallintaa,
+        # jotta wg0:n kadotessa vanhojen Tor-yhteyksien paketit eivat paase eth0:aan.
+        self.assertGreater(self.output.index(WG_ULOS), viimeinen)
+        self.assertEqual(self.output.index(ETH0_ESTO), self.output.index(WG_ULOS) + 1)
+        self.assertLess(self.output.index(ETH0_ESTO), self.output.index("ct state established,related accept"))
 
     def test_ipv6_ulosmeno_vain_silmukkaan_ja_naapurinhakuun(self):
         # Globaalit IPv6-osoitteet lahiverkossa (SLAAC) eivat ole KIELLETYT6:ssa, joten IPv6 estetaan kokonaan.
@@ -260,7 +272,8 @@ class NftSyntaksiTesti(unittest.TestCase):
         with tempfile.TemporaryDirectory() as hak:
             osoitteet = os.path.join(hak, "osoitteet.nft")
             with open(osoitteet, "w", encoding="utf-8") as f:
-                f.write("define CT122 = 198.51.100.7\ndefine LAHIVERKOT4 = { 203.0.113.0/24 }\n")
+                f.write("define CT122 = 198.51.100.7\ndefine LAHIVERKOT4 = { 203.0.113.0/24 }\n"
+                        "define WG_PALVELIN = 192.0.2.10\ndefine WG_PORTTI = 51820\n")
             teksti = teksti.replace("/etc/nftables.d/hakukontti-osoitteet.nft", osoitteet)
             for i, kayttaja in enumerate(("searxng", "aivo-haku", "_apt", "debian-tor", "root")):
                 teksti = teksti.replace('skuid "%s"' % kayttaja, "skuid %d" % (2000 + i))
@@ -293,7 +306,8 @@ class OhjeTesti(unittest.TestCase):
 
     def test_pohjat_mainittu_ja_olemassa(self):
         for nimi in ("torrc", "nftables.conf", "searxng-settings.yml", "searxng.service",
-                     "journald-hakukontti.conf", "mittaa_moottorit.py"):
+                     "journald-hakukontti.conf", "mittaa_moottorit.py", "wg0.conf.esimerkki", "wg_asetus.py",
+                     "wg-quick-hakukontti.conf", "tor-hakukontti.conf", "isanta-nat.nft.mall"):
             self.assertIn("`%s`" % nimi, self.teksti)
             self.assertTrue(os.path.exists(os.path.join(TAMA, nimi)), nimi)
 

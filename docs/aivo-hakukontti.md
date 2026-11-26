@@ -1,36 +1,49 @@
-# Aivon hakukontti: asennusohje (SearXNG + Tor + kill switch)
+# Aivon hakukontti: asennusohje (SearXNG + Tor WireGuard-VPN:n sisällä + kill switch)
 
 Tämä ohje asentaa erillisen hakukontin (CT123), jossa pyörivät SearXNG ja Tor. Kontissa ei ole yksityistä dataa. Myöhemmin (PR 2) samaan konttiin tulee hakuvälittäjä, joka on ainoa kontin ulkopuolelle näkyvä palvelu ja vain kontille 122.
 
-Pohja: suunnitelma `claude-jono/suunnitelmat/aivo-verkkohaku.md` (kohdat 2, 3 ja 10) ja Tonyn päätökset A1101 (25.11.2026).
+Pohja: suunnitelma `claude-jono/suunnitelmat/aivo-verkkohaku.md` (kohdat 2, 3 ja 10) ja Tonyn päätökset A1101 (25.11.2026), A1119 ja A1120 (26.11.2026).
 
-**RAJATTU:** ohje luo uuden kontin, uuden ulosmenoreitin (Tor) ja palomuurisäännöt. Tony tekee asennuksen itse.
+**Reitti (A1119):** hakukontti → WireGuard-VPN (`wg0`, maksullinen VPN-palvelu, A1120) → Tor → haku. Palvelimen yhteydestä näkyy vain salattu WireGuard-yhteys VPN-palvelimeen. VPN-palvelu näkee vain Tor-liikennettä, ei hakuja. Tor ei lähde koskaan suoraan kontin `eth0`-liitännästä.
+
+**RAJATTU:** ohje luo uuden kontin, uuden ulosmenoreitin (WireGuard ja Tor) ja palomuurisäännöt. Tony tekee asennuksen itse. Varsinainen asennuslista on docs-repossa (`claude-jono/suunnitelmat/verkkohaku-asennus-2611-v3.md`). Siinä kontti on isännän sisäisellä sillalla isännän NAT:n takana. Tämä ohje kuvaa periaatteet ja komennot.
 
 ## Mitä tiedostoja ohje käyttää
 
 Pohjat ovat hakemistossa `isanta/hakukontti/`:
 
-| Tiedosto | Asennuspaikka hakukontissa | Tarkoitus |
+| Tiedosto | Asennuspaikka | Tarkoitus |
 |---|---|---|
-| `torrc` | `/etc/tor/torrc` | Tor pelkkänä asiakkaana, SOCKS vain silmukkaosoitteeseen, piirien eristys |
-| `nftables.conf` | `/etc/nftables.conf` | Palomuuri ja kill switch käyttäjäkohtaisesti |
-| `searxng-settings.yml` | `/etc/searxng/settings.yml` | SearXNG vain silmukkaosoitteeseen, ulosmeno `socks5h`:lla Torin kautta |
-| `searxng.service` | `/etc/systemd/system/searxng.service` | SearXNG:n systemd-yksikkö kovennuksineen |
-| `journald-hakukontti.conf` | `/etc/systemd/journald.conf.d/hakukontti.conf` | Lokien säilytys 30 päivää |
-| `mittaa_moottorit.py` | `/usr/local/lib/hakukontti/mittaa_moottorit.py` | Moottorien esto- ja tulosmittaus Torin kautta |
+| `torrc` | kontti: `/etc/tor/torrc` | Tor pelkkänä asiakkaana, SOCKS vain silmukkaosoitteeseen, piirien eristys |
+| `nftables.conf` | kontti: `/etc/nftables.conf` | Palomuuri ja kill switch käyttäjäkohtaisesti, Tor vain `wg0`:n kautta |
+| `wg0.conf.esimerkki` | ei asenneta | Esimerkkipohja WireGuard-asetuksesta ilman avaimia (dokumentaatio-osoitteet) |
+| `wg_asetus.py` | isäntä: `/root/hakukontti/wg_asetus.py` | Tarkistaa `wg0.conf`:n, poistaa DNS-rivin ja IPv6-osoitteet, lisää keepalive-rivin ja tuottaa palomuurin osoitteet tulostamatta avaimia |
+| `wg-quick-hakukontti.conf` | kontti: `/etc/systemd/system/wg-quick@wg0.service.d/hakukontti.conf` | WireGuard vasta palomuurin jälkeen |
+| `tor-hakukontti.conf` | kontti: `/etc/systemd/system/tor@default.service.d/hakukontti.conf` | Tor vasta palomuurin ja WireGuardin jälkeen |
+| `isanta-nat.nft.mall` | isäntä: `/etc/aivo-hakuverkko.nft` | Isännän taulu `inet aivo_hakuverkko`: kontista ulos vain UDP WireGuard-palvelimelle |
+| `searxng-settings.yml` | kontti: `/etc/searxng/settings.yml` | SearXNG vain silmukkaosoitteeseen, ulosmeno `socks5h`:lla Torin kautta |
+| `searxng.service` | kontti: `/etc/systemd/system/searxng.service` | SearXNG:n systemd-yksikkö kovennuksineen |
+| `journald-hakukontti.conf` | kontti: `/etc/systemd/journald.conf.d/hakukontti.conf` | Lokien säilytys 30 päivää |
+| `mittaa_moottorit.py` | kontti: `/usr/local/lib/hakukontti/mittaa_moottorit.py` | Moottorien esto- ja tulosmittaus Torin kautta |
 
-Osoitteita ei ole repossa. Ohje selvittää ne komennoilla ja kirjoittaa ne tiedostoihin isännällä.
+Testit `test_wireguard.py`, `sim_kerrokset.sh` ja `sim_apu.py` ovat vain repossa. Niitä ei asenneta.
+
+Osoitteita ei ole repossa. Ohje selvittää ne komennoilla ja kirjoittaa ne tiedostoihin isännällä. WireGuard-palvelimen osoite ja portti luetaan `wg0.conf`:n `Endpoint`-riviltä, eikä niitä kirjoiteta käsin.
 
 ## Periaatteet
 
-- **Kill switch:** jos Tor ei ole ylhäällä, haku epäonnistuu. Käyttäjät `searxng`, `aivo-haku` ja `_apt` pääsevät vain silmukkaosoitteen Tor-porttiin. Vain `debian-tor` saa ottaa yhteyden internetiin, ja vain TCP:llä, koska Tor ei tarvitse UDP:tä. Nimipalvelua (portti 53) ei sallita kenellekään, ei myöskään UDP:llä `debian-tor`ille.
-- **Ei yksityisiin osoitteisiin:** ulosmeno kaikkiin yksityisiin ja erikoisosoitteisiin on estetty kaikilta käyttäjiltä, myös rootilta ja `debian-tor`ilta. Alueet ovat `nftables.conf`:n määrittelyissä `KIELLETYT4` (RFC 1918 -alueet, CGNAT/tailnet, linkkipaikallinen, silmukka muualle kuin `lo`-liitäntään, `0.0.0.0/8`, IETF-protokollatehtävien alue `192.0.0.0/24`, suorituskykytestien alue `198.18.0.0/15`, monilähetys ja varatut) ja `KIELLETYT6` (ULA, linkkipaikallinen, silmukka, IPv4-mapatut, NAT64 ja monilähetys). Ne kattavat myös reitittimen takana olevat yksityiset verkot. IPv6-ulosmeno on estetty kokonaan (Tor käyttää IPv4:ää), koska reitittimen jakama IPv6-etuliite antaisi lähiverkon laitteille globaaleja osoitteita, joita yksityisten alueiden lista ei kata. Lisäksi estetään asennuksessa lasketut `LAHIVERKOT4`. Ainoa poikkeus on vastausliikenne kontille 122 hakuvälittäjän portista 8890, ja vain jo avatussa yhteydessä. IPv6-naapurinhaun ICMPv6-viestit sallitaan, koska IPv6 ei toimi ilman niitä.
+- **Kill switch:** jos Tor tai WireGuard ei ole ylhäällä, haku epäonnistuu. Käyttäjät `searxng`, `aivo-haku` ja `_apt` pääsevät vain silmukkaosoitteen Tor-porttiin. Vain `debian-tor` saa ottaa yhteyden internetiin, ja vain `wg0`:n kautta TCP:llä, koska Tor ei tarvitse UDP:tä. Nimipalvelua (portti 53) ei sallita kenellekään, ei myöskään UDP:llä `debian-tor`ille.
+- **eth0:sta vain WireGuard:** kontin `eth0`:sta lähtee vain ytimen WireGuard-liikenne (UDP) VPN-palvelimen osoitteeseen ja porttiin sekä vastaukset kontille 122 hakuvälittäjän portista. WireGuard tunnistetaan pakettimerkistä (`fwmark` 51820 = `0xca6c`), jonka `wg-quick` asettaa. Merkin voi asettaa vain root, joten sovelluskäyttäjät eivät voi käyttää sääntöä. Muu `eth0`-liikenne hylätään ennen jo avattujen yhteyksien sallintaa. Jos `wg0` katoaa kesken Tor-yhteyden, vanhan yhteyden paketit eivät siis pääse `eth0`:aan. Jos `wg0` on alhaalla, mitään ei lähde ulos.
+- **Järjestys:** `nftables` → `wg-quick@wg0` → `tor@default` → `searxng` ja `aivo-haku`. Tor, SearXNG ja hakuvälittäjä vaativat sekä palomuurin että WireGuardin (`Requires=` ja `After=`). Palomuurin tai WireGuardin pysäytys pysäyttää myös ne.
+- **Ei yksityisiin osoitteisiin:** ulosmeno kaikkiin yksityisiin ja erikoisosoitteisiin on estetty kaikilta käyttäjiltä, myös rootilta ja `debian-tor`ilta. Alueet ovat `nftables.conf`:n määrittelyissä `KIELLETYT4` (RFC 1918 -alueet, CGNAT/tailnet, linkkipaikallinen, silmukka muualle kuin `lo`-liitäntään, `0.0.0.0/8`, IETF-protokollatehtävien alue `192.0.0.0/24`, suorituskykytestien alue `198.18.0.0/15`, monilähetys ja varatut) ja `KIELLETYT6` (ULA, linkkipaikallinen, silmukka, IPv4-mapatut, NAT64 ja monilähetys). Ne kattavat myös reitittimen takana olevat yksityiset verkot ja VPN-palvelun sisäisen nimipalvelimen. IPv6-ulosmeno on estetty kokonaan (Tor käyttää IPv4:ää), koska reitittimen jakama IPv6-etuliite antaisi lähiverkon laitteille globaaleja osoitteita, joita yksityisten alueiden lista ei kata. Siksi myös `wg0.conf`:sta poistetaan IPv6-osoitteet. Lisäksi estetään asennuksessa lasketut `LAHIVERKOT4`. Ainoa poikkeus on vastausliikenne kontille 122 hakuvälittäjän portista 8890, ja vain jo avatussa yhteydessä. IPv6-naapurinhaun ICMPv6-viestit sallitaan, koska IPv6 ei toimi ilman niitä.
+- **Isäntä toisena kerroksena:** isännän taulu `inet aivo_hakuverkko` (`isanta-nat.nft.mall`) päästää kontista ulos vain UDP:n WireGuard-palvelimelle. Pakettien lataus asennuksen aikana (TCP 80/443 ja nimipalvelu 9.9.9.9) sallitaan vain, kun kontin osoite on lisätty joukkoon `asennus`. Alkio vanhenee itsestään. Yleistä TCP:tä internetiin ei sallita.
 - **Tor ei avaa sisäisiä osoitteita:** `torrc`:ssä `ClientRejectInternalAddresses 1` ja `ClientDNSRejectInternalAddresses 1`. SOCKS-pyyntö yksityiseen osoitteeseen tai nimeen, joka ratkeaa yksityiseksi, hylätään jo Torissa.
 - **SearXNG vain Torin kautta:** kaikki ulosmeno kulkee `socks5h://127.0.0.1:9050`:n kautta. Palomuuri sallii käyttäjälle `searxng` vain silmukan Tor-portin, ja yksikön `IPAddressDeny=any` + `IPAddressAllow=localhost` on toinen kerros.
-- **Ei suoraa ulosmenoa:** alkuasennuksen jälkeen myös pakettipäivitykset kulkevat Torin kautta (`apt-transport-tor`, lähteet `tor+https://`). Vain `tor`, `apt-transport-tor` ja `nftables` asennetaan suoraan, ennen kuin kontissa on mitään hakuihin liittyvää.
+- **Ei suoraa ulosmenoa:** alkuasennuksen jälkeen myös pakettipäivitykset kulkevat Torin (ja siis VPN:n) kautta (`apt-transport-tor`, lähteet `tor+https://`). Vain `tor`, `apt-transport-tor`, `nftables` ja `wireguard-tools` asennetaan suoraan, ennen kuin kontissa on mitään hakuihin liittyvää.
+- **Nimipalvelu:** Tor ratkaisee nimet itse. Järjestelmän nimipalvelua käytetään vain alkuasennuksessa. `wg0.conf`:ssa ei ole DNS-riviä.
 - **Sisään vain kontista 122:** sekä kontin oma nftables että Proxmox-palomuuri sallivat vain kontin 122 hakuvälittäjän porttiin 8890.
 - **Ei sisältöä lokeihin:** SearXNG:n palvelin (Granian) ei kirjoita pääsylokia, Torissa on `SafeLogging 1`, ja journald säilyttää lokit 30 päivää.
-- **Avaimet:** SearXNG:n `secret_key` ja hakuvälittäjän jaettu avain luodaan komennoilla, jotka eivät tulosta niitä.
+- **Avaimet:** SearXNG:n `secret_key` ja hakuvälittäjän jaettu avain luodaan komennoilla, jotka eivät tulosta niitä. WireGuard-avain on vain VPN-palvelun tiedostossa, joka siirretään konttiin `pct push` -komennolla. `wg_asetus.py` ei tulosta avaimia.
 
 ## Komentojen käyttö
 
@@ -61,6 +74,8 @@ pve-firewall status
 Odotettu: `Status: enabled/running` tai `Status: disabled/running`. Jos tila on `disabled`, Proxmox-palomuuri (kohta 9) ei vaikuta, ja suoja on kontin oma nftables. **Älä kytke Proxmox-palomuuria päälle tämän ohjeen takia**, koska se vaikuttaa koko isäntään. Päätös on erillinen.
 
 ## 1. Osoitteet ja asetukset komennoilla (isäntä)
+
+**Huom. (v3):** tämä osio kuvaa alkuperäisen kotiverkkomallin. Käytössä on sisäinen silta isännän NAT:n takana (kontti 122 saa osoitteensa DHCP:llä). Aja osoitteet, isännän taulu (`isanta-nat.nft.mall`, asennus `wg_asetus.py isanta`), asennusikkuna ja kontin luonti asennuslistan v3 kohdista 12–22d, älä tästä osiosta.
 
 Kontti 122 on ainoa sallittu asiakas. Sen osoite ja verkkoasetukset luetaan sen omista asetuksista.
 
@@ -123,7 +138,7 @@ LAHIVERKOT=$(printf '%s\n' "$LAHI4" "$TS10" 169.254.0.0/16 | tr , '\n' | grep -v
 ```
 Odotettu: edellisten yhdistelmä pilkuin eroteltuna ja osoitejärjestyksessä, mukana linkkipaikallinen alue `169.254.0.0/16`. Sama tai sisäkkäinen aliverkko näkyy vain kerran (`collapse_addresses` yhdistää ne), koska `169.254.0.0/16` voi tulla myös reittitaulusta. Estettävät osoitteet eivät muutu. Virhe `does not appear to be an IPv4 or IPv6 network` tarkoittaa, että jokin edellisistä muuttujista on väärin: pysähdy.
 
-## 2. Pohjatiedostot isännälle (isäntä)
+## 2. Pohjatiedostot ja WireGuard-asetus isännälle (isäntä)
 
 Tiedostot haetaan agentscope-kontin (115) ajurikloonista, kun tämä muutos on yhdistetty päähaaraan.
 
@@ -133,16 +148,25 @@ pct exec 115 -- git -C /opt/agentti-pohja log -1 --format='%h %s' -- isanta/haku
 Odotettu: commit, jonka viesti mainitsee hakukontin. Jos tuloste on tyhjä, muutos ei ole vielä ajurikloonissa: pysähdy.
 
 ```bash
-mkdir -p /root/hakukontti && for f in torrc nftables.conf searxng-settings.yml searxng.service journald-hakukontti.conf mittaa_moottorit.py; do pct pull 115 "/opt/agentti-pohja/isanta/hakukontti/$f" "/root/hakukontti/$f" || echo "PUUTTUU $f"; done; ls /root/hakukontti
+mkdir -p /root/hakukontti && for f in torrc nftables.conf searxng-settings.yml searxng.service journald-hakukontti.conf mittaa_moottorit.py wg_asetus.py wg-quick-hakukontti.conf tor-hakukontti.conf isanta-nat.nft.mall; do pct pull 115 "/opt/agentti-pohja/isanta/hakukontti/$f" "/root/hakukontti/$f" || echo "PUUTTUU $f"; done; ls /root/hakukontti
 ```
-Odotettu: kuusi tiedostoa, ei yhtään `PUUTTUU`-riviä.
+Odotettu: kymmenen tiedostoa, ei yhtään `PUUTTUU`-riviä.
+
+VPN-palvelun WireGuard-tiedosto (Linux, yksi palvelin) tuodaan isännälle tiedostoksi `/root/hakukontti/vpn-alkuperainen.conf` (tila 600) esimerkiksi `scp`:llä. Tiedostoa ei avata näytölle. Seuraava komento kirjoittaa siitä version ilman DNS-riviä ja IPv6-osoitteita ja lisää `PersistentKeepalive = 25`, jotta tunneli kättelee heti noston jälkeen ja isännän NAT-tila pysyy auki. Se tulostaa vain palvelimen osoitteen ja portin.
 
 ```bash
-printf 'define CT122 = %s\ndefine LAHIVERKOT4 = { %s }\n' "$IP122" "$LAHIVERKOT" > /root/hakukontti/hakukontti-osoitteet.nft; cat /root/hakukontti/hakukontti-osoitteet.nft
+python3 -I /root/hakukontti/wg_asetus.py siivoa /root/hakukontti/vpn-alkuperainen.conf /root/hakukontti/wg0.conf
 ```
-Odotettu: kaksi `define`-riviä, joissa ovat kontin 122 osoite ja lähiverkot.
+Odotettu: `WG_ASETUS: SIIVOTTU palvelin` ja julkinen IPv4-osoite sekä `portti` ja numero. Virhe on muotoa `WG_ASETUS: VIRHE <tunniste>`: esimerkiksi `endpoint_ei_ipv4` tarkoittaa, että `Endpoint`-rivillä on nimi eikä osoite (valitse VPN-palvelun sivulla osoitemuoto), ja `peer_maara`, että tiedostossa on useampi palvelin.
+
+```bash
+printf 'define CT122 = %s\ndefine LAHIVERKOT4 = { %s }\n' "$IP122" "$LAHIVERKOT" > /root/hakukontti/hakukontti-osoitteet.nft && python3 -I /root/hakukontti/wg_asetus.py nft /root/hakukontti/wg0.conf >> /root/hakukontti/hakukontti-osoitteet.nft; cat /root/hakukontti/hakukontti-osoitteet.nft
+```
+Odotettu: neljä `define`-riviä: kontin 122 osoite, lähiverkot, `WG_PALVELIN` ja `WG_PORTTI`.
 
 ## 3. Kontin luonti (isäntä)
+
+**Huom. (v3):** tämä osio kuvaa alkuperäisen kotiverkkomallin. Käytössä on sisäinen silta isännän NAT:n takana (kontti 122 saa osoitteensa DHCP:llä). Aja osoitteet, isännän taulu (`isanta-nat.nft.mall`, asennus `wg_asetus.py isanta`), asennusikkuna ja kontin luonti asennuslistan v3 kohdista 12–22d, älä tästä osiosta.
 
 ```bash
 pveam update
@@ -174,9 +198,9 @@ pct start 123 && sleep 5 && pct exec 123 -- ip -4 -o addr show dev eth0
 ```
 Odotettu: rivi, jossa näkyy `$IP123`.
 
-## 4. Alkuasennus suoraan: vain Tor ja palomuuri (kontti)
+## 4. Alkuasennus suoraan: vain Tor, WireGuard-työkalut ja palomuuri (kontti)
 
-Tämä on ainoa vaihe, jossa kontti käyttää suoraa yhteyttä. Siinä ladataan vain Debian-paketit.
+Tämä on ainoa vaihe, jossa kontti käyttää suoraa yhteyttä. Siinä ladataan vain Debian-paketit. Palvelujen automaattinen käynnistys estetään asennuksen ajaksi, jotta Tor ei käynnisty ennen palomuuria ja VPN:ää.
 
 ```bash
 pct exec 123 -- apt-get update
@@ -184,11 +208,21 @@ pct exec 123 -- apt-get update
 Odotettu: lopussa `Reading package lists... Done` ilman `Err:`-rivejä.
 
 ```bash
-pct exec 123 -- env DEBIAN_FRONTEND=noninteractive apt-get install -y tor apt-transport-tor nftables
+pct exec 123 -- sh -c 'printf "#!/bin/sh\nexit 101\n" > /usr/sbin/policy-rc.d && chmod 0755 /usr/sbin/policy-rc.d && echo KAYNNISTYSESTO_PAALLA'
 ```
-Odotettu: asennus päättyy ilman virhettä.
+Odotettu: `KAYNNISTYSESTO_PAALLA`.
 
-## 5. Käyttäjät ja Tor (kontti)
+```bash
+pct exec 123 -- env DEBIAN_FRONTEND=noninteractive apt-get install -y tor apt-transport-tor nftables wireguard-tools
+```
+Odotettu: asennus päättyy ilman virhettä. Rivejä `invoke-rc.d: policy-rc.d denied execution of start` voi tulla: se on oikein.
+
+```bash
+pct exec 123 -- rm /usr/sbin/policy-rc.d && pct exec 123 -- systemctl is-active tor@default
+```
+Odotettu: `inactive`. Jos tulee `active`, aja `pct exec 123 -- systemctl stop tor@default` ja jatka.
+
+## 5. Käyttäjät (kontti)
 
 ```bash
 pct exec 123 -- useradd --system --home-dir /usr/local/searxng --create-home --shell /usr/sbin/nologin searxng
@@ -198,7 +232,68 @@ Odotettu: ei tulostetta.
 ```bash
 pct exec 123 -- useradd --system --no-create-home --shell /usr/sbin/nologin --groups debian-tor aivo-haku
 ```
-Odotettu: ei tulostetta. Ryhmä `debian-tor` antaa hakuvälittäjälle (PR 2) luvan käyttää Torin hallintasokettia `/run/tor/control` ja lukea sen evästeen: välittäjä tarkistaa ennen jokaista pyyntöä, että Tor-piiri on ylhäällä, ja pyytää haulle uuden piirin. Ryhmä ei anna `debian-tor`-käyttäjän verkkooikeuksia, koska palomuuri tunnistaa käyttäjän (`skuid`), ei ryhmää. Riski: hallintasoketin kautta voi muuttaa Torin asetuksia. Palomuuri rajaa silti Torin ulosmenon internetiin ja sisääntulon porttiin 8890.
+Odotettu: ei tulostetta. Ryhmä `debian-tor` antaa hakuvälittäjälle (PR 2) luvan käyttää Torin hallintasokettia `/run/tor/control` ja lukea sen evästeen: välittäjä tarkistaa ennen jokaista pyyntöä, että Tor-piiri on ylhäällä, ja pyytää haulle uuden piirin. Ryhmä ei anna `debian-tor`-käyttäjän verkkooikeuksia, koska palomuuri tunnistaa käyttäjän (`skuid`), ei ryhmää. Riski: hallintasoketin kautta voi muuttaa Torin asetuksia. Palomuuri rajaa silti Torin ulosmenon `wg0`:n kautta internetiin ja sisääntulon porttiin 8890.
+
+## 6. Kill switch, WireGuard ja Tor (kontti)
+
+Palomuuri ladataan ensin, sitten WireGuard ja vasta sitten Tor.
+
+```bash
+pct exec 123 -- mkdir -p /etc/nftables.d
+```
+Odotettu: ei tulostetta.
+
+```bash
+pct push 123 /root/hakukontti/hakukontti-osoitteet.nft /etc/nftables.d/hakukontti-osoitteet.nft --perms 0644 && pct push 123 /root/hakukontti/nftables.conf /etc/nftables.conf --perms 0644
+```
+Odotettu: ei tulostetta.
+
+```bash
+pct exec 123 -- nft -c -f /etc/nftables.conf && echo SAANNOT_OK
+```
+Odotettu: `SAANNOT_OK`. Virhe `unknown user` tarkoittaa, että jokin käyttäjä (kohta 5) puuttuu. Virhe, jossa mainitaan `WG_PALVELIN`, tarkoittaa, että osoitetiedostosta puuttuu WireGuard-rivi (kohta 2).
+
+```bash
+pct exec 123 -- systemctl enable --now nftables
+```
+Odotettu: viesti symbolisen linkin luonnista, ei virhettä.
+
+```bash
+pct exec 123 -- nft -u list chain inet hakukontti output
+```
+Odotettu: ketju, jonka `policy drop` ja säännöt vastaavat tiedostoa `nftables.conf`. Mukana on rivi `oifname "eth0" meta mark 0x0000ca6c ip daddr` ja VPN-palvelimen osoite sekä rivi `meta skuid "debian-tor" oifname "wg0"`. Valitsin `-u` näyttää käyttäjät niminä. Ilman sitä `nft list` näyttää käyttäjänumeron (esim. `meta skuid 101`).
+
+```bash
+pct exec 123 -- sh -c 'nft list chain inet hakukontti output | grep -c "yksityinen tai erikoisosoite"'
+```
+Odotettu: `2` (IPv4- ja IPv6-esto ladattu).
+
+WireGuard-asetus siirretään konttiin. Isännän ytimessä pitää olla `wireguard`-moduuli ladattuna, koska unprivileged-kontti ei voi ladata moduuleja (asennuslista v3 tarkistaa sen).
+
+```bash
+pct exec 123 -- install -d -m 0700 -o root -g root /etc/wireguard && pct push 123 /root/hakukontti/wg0.conf /etc/wireguard/wg0.conf --perms 0600 && pct exec 123 -- stat -c '%a %U:%G %n' /etc/wireguard/wg0.conf
+```
+Odotettu: `600 root:root /etc/wireguard/wg0.conf`.
+
+```bash
+pct exec 123 -- mkdir -p /etc/systemd/system/wg-quick@wg0.service.d /etc/systemd/system/tor@default.service.d && pct push 123 /root/hakukontti/wg-quick-hakukontti.conf /etc/systemd/system/wg-quick@wg0.service.d/hakukontti.conf --perms 0644 && pct push 123 /root/hakukontti/tor-hakukontti.conf /etc/systemd/system/tor@default.service.d/hakukontti.conf --perms 0644 && pct exec 123 -- systemctl daemon-reload
+```
+Odotettu: ei tulostetta.
+
+```bash
+pct exec 123 -- systemctl show -p Requires --value tor@default
+```
+Odotettu: rivillä ovat ainakin `nftables.service` ja `wg-quick@wg0.service`.
+
+```bash
+pct exec 123 -- systemctl enable --now wg-quick@wg0
+```
+Odotettu: viesti symbolisen linkin luonnista, ei virhettä. Virhe `RTNETLINK answers: Not supported` tarkoittaa, että isännän `wireguard`-moduuli puuttuu.
+
+```bash
+pct exec 123 -- sh -c 'wg show wg0 fwmark; wg show wg0 latest-handshakes | awk "{print (\$2 > 0) ? \"KATTELY_OK\" : \"EI_KATTELYA\"}"'
+```
+Odotettu: `0xca6c` ja `KATTELY_OK`. Jos tulos on `EI_KATTELYA`, odota 30 sekuntia ja aja uudelleen (keepalive 25 s). Toistuva `EI_KATTELYA` tarkoittaa, että isännän tai kontin palomuuri estää WireGuardin tai avain on väärä: pysähdy.
 
 ```bash
 pct push 123 /root/hakukontti/torrc /etc/tor/torrc --perms 0644
@@ -218,39 +313,7 @@ Odotettu: ei tulostetta.
 ```bash
 sleep 30; pct exec 123 -- journalctl -u tor@default --since "-2 min" --no-pager | grep -c "Bootstrapped 100%"
 ```
-Odotettu: `1` tai suurempi. Jos tulos on `0`, odota hetki ja aja uudelleen. Jos palvelu ei käynnisty ja `systemctl status tor@default` näyttää `226/NAMESPACE`, pysähdy (kontin `nesting`-asetus).
-
-## 6. Kill switch päälle (kontti)
-
-```bash
-pct exec 123 -- mkdir -p /etc/nftables.d
-```
-Odotettu: ei tulostetta.
-
-```bash
-pct push 123 /root/hakukontti/hakukontti-osoitteet.nft /etc/nftables.d/hakukontti-osoitteet.nft --perms 0644 && pct push 123 /root/hakukontti/nftables.conf /etc/nftables.conf --perms 0644
-```
-Odotettu: ei tulostetta.
-
-```bash
-pct exec 123 -- nft -c -f /etc/nftables.conf && echo SAANNOT_OK
-```
-Odotettu: `SAANNOT_OK`. Virhe `unknown user` tarkoittaa, että jokin käyttäjä (kohta 5) puuttuu.
-
-```bash
-pct exec 123 -- systemctl enable --now nftables
-```
-Odotettu: viesti symbolisen linkin luonnista, ei virhettä.
-
-```bash
-pct exec 123 -- nft list chain inet hakukontti output
-```
-Odotettu: ketju, jonka `policy drop` ja säännöt vastaavat tiedostoa `nftables.conf`.
-
-```bash
-pct exec 123 -- sh -c 'nft list chain inet hakukontti output | grep -c "yksityinen tai erikoisosoite"'
-```
-Odotettu: `2` (IPv4- ja IPv6-esto ladattu).
+Odotettu: `1` tai suurempi (Tor muodosti yhteyden VPN:n kautta). Jos tulos on `0`, odota hetki ja aja uudelleen. Jos palvelu ei käynnisty ja `systemctl status tor@default` näyttää `226/NAMESPACE`, pysähdy (kontin `nesting`-asetus).
 
 ```bash
 pct exec 123 -- apt-get -o Acquire::http::Timeout=10 update
@@ -330,7 +393,7 @@ SearXNG vaatii palomuurin (`Requires=nftables.service`): jos sääntöjen lataus
 ```bash
 pct exec 123 -- systemctl is-enabled nftables
 ```
-Odotettu: `enabled`. Jos tulos on muu, pysähdy. `Requires=` käynnistää palomuurin palvelun mukana, mutta Tor ja muut palvelut eivät vaadi sitä, joten ilman `enabled`-tilaa kontti voi käynnistyä ilman kill switchiä. Huomaa myös: jos säännöt poistetaan käsin (`nft flush ruleset`), `nftables.service` pysyy aktiivisena, eikä systemd pysäytä palvelua. Sääntöjä ei siksi poisteta käsin palveluiden ollessa käynnissä.
+Odotettu: `enabled`. Jos tulos on muu, pysähdy. `Requires=` käynnistää palomuurin palvelun mukana (myös Tor ja WireGuard vaativat sen lisäosiensa kautta), mutta muut kontin palvelut eivät vaadi sitä, joten ilman `enabled`-tilaa kontti voi käynnistyä ilman kill switchiä. Huomaa myös: jos säännöt poistetaan käsin (`nft flush ruleset`), `nftables.service` pysyy aktiivisena, eikä systemd pysäytä palvelua. Sääntöjä ei siksi poisteta käsin palveluiden ollessa käynnissä.
 
 ```bash
 pct exec 123 -- systemctl enable --now searxng
@@ -394,6 +457,45 @@ pct exec 123 -- setpriv --reuid=searxng --regid=searxng --init-groups curl -sS -
 ```
 Odotettu: JSON, jossa on `"IsTor":true`.
 
+Testi 1b. Tor kulkee VPN:n kautta: Torin yhteydet lähtevät `wg0`:n osoitteesta, ja `eth0`:sta lähtee vain WireGuardin UDP-liikennettä VPN-palvelimelle.
+
+```bash
+pct exec 123 -- sh -c 'ss -tnpH state established | grep "\"tor\"" | awk "{print \$3}" | cut -d: -f1 | sort -u | while read a; do ip -o -4 addr show | awk -v a="$a" "\$4 ~ \"^\"a\"/\" {print \$2}"; done | sort -u'
+```
+Odotettu: vain `wg0`. Jos tulosteessa on `eth0`, Tor kiertää VPN:n: pysähdy.
+
+```bash
+pct exec 123 -- sh -c 'W=$(sed -n "s/^define WG_PALVELIN = //p" /etc/nftables.d/hakukontti-osoitteet.nft); P=$(sed -n "s/^define WG_PORTTI = //p" /etc/nftables.d/hakukontti-osoitteet.nft); timeout 40 tcpdump -ni eth0 -w /tmp/eth0.pcap "not arp and not icmp6 and not (udp and host $W and port $P) and not (tcp port 8890)" 2>/dev/null & sleep 2; setpriv --reuid=searxng --regid=searxng --init-groups curl -sS -m 30 -o /dev/null --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/api/ip; wait; tcpdump -nr /tmp/eth0.pcap 2>/dev/null | wc -l; rm -f /tmp/eth0.pcap'
+```
+Odotettu: `0`. Tor-haku tehtiin tallennuksen aikana, ja `eth0`:lla näkyi vain WireGuard-liikennettä (suodatin jättää sen pois). Luku on suurempi kuin `0`: pysähdy.
+
+Testi 1c. Kill switch VPN:lle: kun `wg0` on alhaalla, Tor ei saa yhteyttä eikä `eth0`:sta lähde mitään.
+
+```bash
+pct exec 123 -- ip link set wg0 down
+```
+Odotettu: ei tulostetta.
+
+```bash
+pct exec 123 -- sh -c 'timeout 40 tcpdump -ni eth0 -Q out -w /tmp/wgalas.pcap "not arp and not icmp6" 2>/dev/null & sleep 2; setpriv --reuid=searxng --regid=searxng --init-groups curl -sS -m 30 -o /dev/null --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/api/ip; echo "paluuarvo $?"; wait; tcpdump -nr /tmp/wgalas.pcap 2>/dev/null | wc -l; rm -f /tmp/wgalas.pcap'
+```
+Odotettu: `paluuarvo` ja jokin muu luku kuin `0` (esim. `97` tai `28`), ja viimeisellä rivillä `0`. Tor ei saa yhteyttä, eikä `eth0`:sta lähde pakettia. Tuloste `paluuarvo 0` tarkoittaa, että liikenne pääsi ulos jotain muuta reittiä: pysähdy.
+
+```bash
+pct exec 123 -- systemctl restart wg-quick@wg0
+```
+Odotettu: ei tulostetta. `ip link set wg0 up` ei palauta reittejä, joten tunneli käynnistetään uudelleen. Systemd käynnistää samalla uudelleen Torin, SearXNG:n ja hakuvälittäjän (`Requires=`). Odota noin 30 sekuntia.
+
+```bash
+pct exec 123 -- systemctl stop wg-quick@wg0 && pct exec 123 -- systemctl is-active tor@default searxng
+```
+Odotettu: kaksi riviä `inactive`. WireGuardin pysäytys pysäyttää Torin ja SearXNG:n.
+
+```bash
+pct exec 123 -- systemctl start searxng && pct exec 123 -- systemctl is-active wg-quick@wg0 tor@default searxng
+```
+Odotettu: kolme riviä `active`. SearXNG:n käynnistys käynnistää myös WireGuardin ja Torin.
+
 Testi 2. Suora yhteys on estetty käyttäjältä `searxng` (myös nimipalvelu).
 
 ```bash
@@ -455,14 +557,14 @@ pct exec 123 -- systemctl stop tor@default
 Odotettu: ei tulostetta.
 
 ```bash
-pct exec 123 -- sh -c 'sleep 30; timeout 60 tcpdump -ni eth0 -Q out -w /tmp/killswitch.pcap "udp or (ip6 and not icmp6) or (tcp[tcpflags] & tcp-syn != 0 and tcp[tcpflags] & tcp-ack == 0)" 2>/dev/null & sleep 2; curl -sS -m 50 "http://127.0.0.1:8888/search?q=photosynthesis&format=json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(\"tuloksia\", len(d[\"results\"]))"; wait'
+pct exec 123 -- sh -c 'P=$(sed -n "s/^define WG_PORTTI = //p" /etc/nftables.d/hakukontti-osoitteet.nft); sleep 30; timeout 60 tcpdump -ni eth0 -Q out -w /tmp/killswitch.pcap "(udp and not dst port $P) or (ip6 and not icmp6) or (tcp[tcpflags] & tcp-syn != 0 and tcp[tcpflags] & tcp-ack == 0)" 2>/dev/null & sleep 2; curl -sS -m 50 "http://127.0.0.1:8888/search?q=photosynthesis&format=json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(\"tuloksia\", len(d[\"results\"]))"; wait'
 ```
 Odotettu: `tuloksia 0` (kaikki moottorit vastaamattomina).
 
 ```bash
 pct exec 123 -- sh -c 'tcpdump -nr /tmp/killswitch.pcap 2>/dev/null | wc -l; rm -f /tmp/killswitch.pcap'
 ```
-Odotettu: `0` (yhtään uutta lähtevää yhteyttä ei syntynyt). Suodatin laskee vain uudet TCP-yhteydet (SYN), UDP:n ja IPv6:n, koska Torin pysäytyksen jälkeen vanhoista yhteyksistä voi vielä lähteä sulkupaketteja.
+Odotettu: `0` (yhtään uutta lähtevää yhteyttä ei syntynyt). Suodatin laskee vain uudet TCP-yhteydet (SYN), UDP:n ja IPv6:n, koska Torin pysäytyksen jälkeen vanhoista yhteyksistä voi vielä lähteä sulkupaketteja. WireGuardin oma UDP-liikenne VPN-palvelimen porttiin jätetään pois, koska tunneli pysyy ylhäällä.
 
 ```bash
 pct exec 123 -- systemctl start tor@default
@@ -546,6 +648,10 @@ SearXNG päivitetään käyttäjänä `searxng` `torsocks git pull` -komennolla 
 - **Piirien eristys hauissa:** SearXNG ei lähetä SOCKS-tunnusta, joten saman minuutin aikana tehdyt haut voivat kulkea samaa piiriä samaan hakukoneeseen (`IsolateDestAddr` erottaa eri kohteet, `MaxCircuitDirtiness 60` vaihtaa piirin minuutin välein). Hakukohtainen piiri tehdään PR 2:ssa: hakuvälittäjä pyytää ennen hakua uuden piirin hallintasoketin kautta (`SIGNAL NEWNYM`). Sivuhaut (`/sivu`) käyttävät `IsolateSOCKSAuth`-eristystä tehtävätunnuksella.
 - **Proxmox-palomuuri** vaikuttaa vain, jos se on päällä datacenter-tasolla. Ilman sitä suojana on kontin oma nftables. Kontin root voisi muuttaa sitä, mutta sovelluskäyttäjät eivät.
 - **Lähiverkkolista:** kaikki yksityiset alueet ovat pohjassa (`KIELLETYT4`, `KIELLETYT6`), joten myös reitittimen takana olevat yksityiset verkot on estetty. Asennuksessa laskettu `LAHIVERKOT4` estää lisäksi isännän suorat verkot, jos jokin niistä olisi julkinen. Jos isäntään lisätään uusi silta, aja kohdan 1 komennot ja päivitä `hakukontti-osoitteet.nft` ja `123.fw`.
+- **WireGuard ja palomuurin uudelleenlataus:** `wg-quick` lisää omat nft-sääntönsä (taulu `wg-quick-wg0`), ja `nftables.conf` alkaa rivillä `flush ruleset`. Palomuuri käynnistetään siksi uudelleen vain komennolla `systemctl restart nftables`, joka käynnistää uudelleen myös WireGuardin ja sen jälkeen Torin (`Requires=`). Älä käytä komentoa `systemctl reload nftables` tai `nft -f` käsin.
+- **VPN-palvelimen vaihto:** uusi `Endpoint`-osoite vaatii, että kohdan 2 osoitetiedosto ja isännän taulu (`/etc/aivo-hakuverkko.nft`) tehdään uudelleen `wg_asetus.py`:llä. Muuten palomuurit hylkäävät uuden palvelimen, eikä mitään lähde ulos.
+- **Isännän sillan sisäinen rajaus:** jos isännällä ei ole ladattuna `br_netfilter`-moduulia, isännän taulu ei näe sillan sisäistä liikennettä (kontti 122 → kontti 123). Sitä rajaavat kontin 123 oma nftables ja hakuvälittäjän osoitetarkistus.
+- **Tailscale rinnalla:** isännän Tailscale käyttää iptables-legacy-sääntöjä (`ts-forward`, `ts-postrouting`). Isännän nft-taulu ja legacy-säännöt ovat ytimessä erillisiä koukkuja. Paketti kulkee molempien läpi, ja kumpi tahansa voi hylätä sen. NAT tehdään yhteyttä kohti kerran. Tailscalen `MASQUERADE` koskee vain sen merkitsemiä paketteja (`0x40000`), ja isännän taulun `masquerade` vain kontin 123 osoitetta. Säännöt eivät siis ole päällekkäisiä. `test_wireguard.py` testaa tämän nimiavaruussimulaatiossa.
 - **Hakuvälittäjä** (portti 8890) tulee PR 2:ssa. Siihen asti portissa ei kuuntele mikään, ja testi 9 mittaa vain palomuurin.
 
 ## Peruminen
