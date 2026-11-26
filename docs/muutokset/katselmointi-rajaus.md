@@ -1,0 +1,1 @@
+- yojono: `katselmoi.sh` rajaa katselmoinnin muutoksiin edellisen onnistuneen katselmoinnin jälkeen (`yojono/rajaus.py`): katselmoija saa vain `git diff`in ja muuttuneiden tiedostojen listan, ja yli 150 000 tavun diffistä otetaan suurimmat muutokset rajan sisään (loput kirjataan raportin alkuun). Jos muutoksia ei ole, claudea ei kutsuta (kulu 0). Budjetti ei muutu. +13 testiä.
