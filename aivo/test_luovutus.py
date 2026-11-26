@@ -192,7 +192,9 @@ class RajatTesti(LuovutusPohja):
         t, s8 = self.ehdota_luovutus()
         ulkona = Path(self.tmp.name) / "ulkona.json"
         ulkona.write_text(json.dumps({"teksti": "x", "sha": yksityinen.sha("x")}))
-        for paha in ("../ulkona", "../../ulkona", "/etc/passwd", t + "/../" + t, t.upper(), "a" * 13, "", None, 5):
+        # t.upper() vain, jos tunnuksessa on kirjain (pelkista numeroista koostuva tunnus on sama isoilla kirjaimilla).
+        isot = (t.upper(),) if t.upper() != t else ()
+        for paha in ("../ulkona", "../../ulkona", "/etc/passwd", t + "/../" + t, "a" * 13, "", None, 5) + isot:
             self.assertIn(self.pyynto("GET", "/api/luovutus?keskustelu=%s&tunnus=%s" % (kid, paha))[0], (400,), paha)
             for polku, lisa in (("/api/luovutus/hyvaksy", {"vahvistus": "kyll\u00e4 " + s8}),
                                 ("/api/luovutus/muokkaa", {"teksti": "y"}), ("/api/luovutus/hylkaa", {})):

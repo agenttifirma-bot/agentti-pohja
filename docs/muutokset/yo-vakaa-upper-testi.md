@@ -1,0 +1,1 @@
+- testit: aivo/test_luovutus.py RajatTesti ohittaa t.upper()-tapauksen, kun tunnus on pelkkiä numeroita (muuten satunnainen kaatuminen noin 0,36 % ajoista)
