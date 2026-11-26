@@ -1,1 +1,0 @@
-- docs/aivo-yksityinen.md: kohtaan 4 huomautus, että ReadOnlyPaths-rivi estää hyväksynnän chat-sivulla (katso docs/aivo-chat.md, Kirjoitusoikeus); asennusohje ja yksiköt ennallaan, koska asetus on avoin päätös.
