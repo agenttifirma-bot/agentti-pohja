@@ -7,7 +7,7 @@ Tämä ohje on Tonylle. Rajattu ulkoinen mallipalvelu (A728). Tonyn sha-sidottu 
 ## Mitä muuttuu
 
 - Yksityisellä tilalla on kaksi taustapäätä. Oletus on edelleen paikallinen mallipalvelin (loopback). Uusi vaihtoehto on OpenRouterin avoin malli: `--yksityinen-taustapaa openrouter`.
-- Muisti, keskustelut, ydinohjeet ja ehdotukset tallennetaan kontissa 122. OpenRouterille lähtee jokaisella viestillä koko kehote: ydinohjeet, muisti (kirjasto, agenttidata, tiivistelmät ja muistihaun osumat) ja keskusteluhistoria. Kehotteen koko seuraa mallin kontekstia (A1106), joten suurella mallilla kehote voi sisältää lähes koko muistin. Itsetarkistus lähettää samat tiedot tarkastajamallille.
+- Muisti, keskustelut, ydinohjeet ja ehdotukset tallennetaan kontissa 122. OpenRouterille lähtee jokaisella viestillä koko kehote: ydinohjeet, muisti (kirjasto, agenttidata, tiivistelmät ja muistihaun osumat) ja keskusteluhistoria. Kehotteen koko seuraa mallin kontekstia (A1106), mutta muistiosio on enintään `AIVO_YKSITYINEN_MUISTI_MAX` merkkiä (oletus 40 000, A1123). Muistihaku liittää kysymykseen osuvat kohdat ensimmäisinä, joten koko muistia ei lähetetä joka viestissä. Itsetarkistus lähettää samat tiedot tarkastajamallille samalla rajalla.
 - Jokainen kutsu kulkee `openrouter_kulut.kutsu`n kautta. Se tarkistaa yhteisen päiväkatkaisimen (10 €/vrk, sama kirjanpito ja sama katto kuin ajurilla, #309; yksityisellä tilalla ei ole omaa kulutilaa), rakentaa pyynnön `openrouter_zdr.rakenna_runko`lla (ZDR ja `data_collection=deny` pakotettuina) ja kirjaa kulun. Kuljetin kieltäytyy lähettämästä, jos ZDR puuttuu rungosta.
 - Mallin pitää olla täsmälleen listalla `AVOIMET_MALLIT` tiedostossa `aivo/openrouter_zdr.py`. Lista on tarkka luettelo mallitunnisteista, ei etuliitteitä, ja jokaisen rivin kommentissa on mallin `hugging_face_id`. Suljetut mallit (esim. `qwen/qwen3.7-max`) ja kaikki liitteet (`:free`, `:batch`, `:online`, `:nitro` ja muut) hylätään. Oletusmallia ei ole.
 - Avain luetaan tiedostosta, jonka omistaa palvelun käyttäjä ja jonka oikeudet ovat 0600. Ympäristömuuttujaa ei lueta. Avain luetaan joka kutsulla, joten sen voi vaihtaa ilman uudelleenkäynnistystä.
@@ -37,6 +37,36 @@ Oletukset: yksi OpenRouter-kutsu per Tonyn viesti, keskustelu on 20 viestiä, ku
 | Llama 3.3 70B, raskas | 0,23 € | 6,76 € | 16,90 € |
 
 Historiaraja on nyt 40 viestiä (`yksityinen_or.HISTORIA_YLARAJA`, 19.11.2026). Taulukon 20 viestin keskustelussa koko keskustelu kulkee silloin mukana, ja syöte kasvaa keskustelun loppua kohti. Pahin yksittäinen kutsu (40 täyttä viestiä, muisti ja ydinohjeet täynnä) on noin 55 000–80 000 tokenia sisään, Qwenillä ZDR-ylärajalla noin 0,01–0,02 € kutsulta. Päiväkatto ei muutu.
+
+### Muistin enimmäiskoko ja kustannus (A1123, 26.11.2026)
+
+Kontekstiraja (A1106) täytti mallin `qwen/qwen3.8-2.4t-a95b` (konteksti 262 144 tokenia) kehotteen noin 210 000 merkkiin eli noin 84 000 tokeniin. Yksi viesti maksoi noin 0,18 USD ja itsetarkistuksen kanssa 0,20–0,27 USD (kontin 122 loki 26.11. klo 13.33–13.37).
+
+| Kehote | Merkkejä | Tokeneita (2,5 merkkiä/token) | Hinta viestiltä (sisään 2,0 ja ulos 6,0 USD/Mtok, vastaus 1 500 tokenia) |
+|---|---|---|---|
+| Ennen: kontekstiraja täynnä | 210 000 | 84 000 | noin 0,18 USD |
+| Jälkeen: muisti 40 000, lyhyt historia | 50 000–65 000 | 20 000–26 000 | noin 0,05–0,06 USD |
+
+Itsetarkistuksen tarkastaja saa lähteiksi enintään muistin enimmäiskoon, kehotteen alun ja keskustelun viimeiset viestit (enintään noin 38 000 merkkiä). Tavallisessa keskustelussa se on noin 50 000–60 000 merkkiä eli noin 0,05 USD. Korjauskutsu (vain epävarmoissa vastauksissa) maksaa saman verran kuin itse viesti. Arvio on ylähinnoilla. Toteutunut kulu näkyy journalissa ja kulunäkymässä.
+
+Asetus: `AIVO_YKSITYINEN_MUISTI_MAX=40000` (tai valitsin `--yksityinen-muisti-max`). Sallittu alue on 4 000–1 000 000 merkkiä. Asetus voi vain pienentää kehotetta: suurikaan arvo ei ylitä kontekstirajaa. Päiväkatto, kiinteä varaus ja kutsuraja eivät muutu.
+
+Huomio: raja koskee muistia, ei keskusteluhistoriaa. Historian raja seuraa edelleen mallin kontekstia, joten pitkä keskustelu voi kasvattaa kehotetta. Uusi keskustelu pitää kehotteen pienenä.
+
+### Välimuisti (prompt caching)
+
+OpenRouterin dokumentaation mukaan (https://openrouter.ai/docs/features/prompt-caching, luettu 26.11.2026):
+
+- Välimuistista luetut syötetokenit ilmoitetaan kentässä `usage.prompt_tokens_details.cached_tokens` ja kirjoitetut kentässä `usage.prompt_tokens_details.cache_write_tokens`. Jälkimmäinen tulee vain malleilta, joilla on erillinen välimuistiin kirjoittamisen hinta.
+- Osa tarjoajista käyttää välimuistia automaattisesti (esim. DeepSeek, Moonshot, OpenAI, Grok, Z.AI, Gemini). Alibaban Qwen-mallit vaativat erillisen `cache_control`-merkinnän viestin osaan. Muita avoimien mallien tarjoajia ei mainita.
+- Välimuistista luettu syöte maksaa tarjoajasta riippuen 0,1–0,5 kertaa normaalin syötehinnan.
+- OpenRouter ohjaa saman keskustelun samalle tarjoajalle (sticky routing), jotta välimuisti osuu. Avain on ensimmäisen järjestelmäviestin ja ensimmäisen käyttäjäviestin tiiviste.
+
+Mitä Aivo tekee:
+
+- Kehotteen alku pysyy samana viestistä toiseen: säännöt (`KEHOTE`) ja ydinohjeet ovat järjestelmäviestin alussa, ja vasta niiden jälkeen tulee muisti. Muistihaun osumat ja korjaukset vaihtuvat kysymyksen mukaan, joten välimuisti voi osua vain kehotteen alkuun (noin 5 000–25 000 merkkiä).
+- Journalin rivi `yksityinen_or: toteutunut …` näyttää kentät `cached_tokens` ja `cache_write_tokens`, kun OpenRouter ilmoittaa ne. Niistä näkee, käyttääkö valittu tarjoaja välimuistia.
+- `cache_control`-merkintää ei lisätä. Se muuttaisi pyynnön runkoa (`openrouter_zdr.rakenna_runko`), ja välimuistiin kirjoittaminen maksaa Alibaballa 1,25-kertaisesti. Jos Tony haluaa sen, se on erillinen päätös.
 
 ### Vastauksen pituusraja ja aikaraja (A1095, 25.11.2026)
 

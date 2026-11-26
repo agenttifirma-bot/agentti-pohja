@@ -179,7 +179,7 @@ class MuistiEiSyrjaytaHistoriaaTesti(unittest.TestCase):
 
     def test_lyhyt_historia_ei_vie_muistin_tilaa(self):
         h = historia(1, 10)
-        raja = yo.muistin_merkkiraja(ISO, "o", h)
+        raja = yo.muistin_kontekstiraja(ISO, "o", h)          # kontekstin laskenta ilman muistin enimmaiskokoa
         kaikki = kr.syote_merkit(ISO, yo.MAX_TOKENIA, VARAUS) - len(yo.KEHOTE) - len("o") - kr.JARJESTELMA_LISA
         per_viesti = kr.VIESTI_LISA + len(yksityinen.LYHENNETTY % 10 ** 7)     # sama kuin historian_merkkiraja
         self.assertEqual(kaikki - raja, len(h[0]["teksti"]) + per_viesti)
@@ -204,7 +204,7 @@ class ItsetarkistusRajaTesti(unittest.TestCase):
             return json.dumps(kohdat) if len(kutsut) == 1 else "korjattu vastaus"
         # muisti kuten chatissa itsetarkistuksen ollessa paalla: korjauksen lisasyotteelle varattu tila
         if muisti is None:
-            muisti = "m" * yo.muistin_merkkiraja(vastaaja, ohjeet, h, yo.itsetarkistus.KORJAUS_LISAVARAUS)
+            muisti = "m" * yo.muistin_kontekstiraja(vastaaja, ohjeet, h, yo.itsetarkistus.KORJAUS_LISAVARAUS)
         with unittest.mock.patch.object(yo, "_kysy_viestit", kysy):
             tulos = yo.tarkista_vastaus(muisti, h, ohjeet, self.PITKA_VASTAUS, vastaaja=vastaaja, tarkastaja=tarkastaja)
         return tulos, kutsut
@@ -233,7 +233,7 @@ class ItsetarkistusRajaTesti(unittest.TestCase):
             kutsut.append(m)
             return json.dumps([{"kohta": "2026", "syy": "ei tukea"}])
         h = historia(4, 1_000)
-        muisti = "m" * yo.muistin_merkkiraja(PIENI, "ohje", h)       # ei lisavarausta
+        muisti = "m" * yo.muistin_kontekstiraja(PIENI, "ohje", h)       # ei lisavarausta
         with unittest.mock.patch.object(yo, "_kysy_viestit", kysy):
             tulos = yo.tarkista_vastaus(muisti, h, "ohje", self.PITKA_VASTAUS, vastaaja=PIENI, tarkastaja=PIENI)
         self.assertEqual(kutsut, [PIENI])
@@ -309,7 +309,9 @@ class ChatMuistiTesti(unittest.TestCase):
         self.assertEqual(tiedostot[0], "osuma.md")
 
     def test_openrouter_vie_koko_muistin(self):
-        muisti, tiedostot = chat.yksityinen_muisti(self.tila(), "kissa", historia(1, 10), "o", ISO, yhdistelma.OLETUS)
+        tila = self.tila()
+        tila.muisti_max = yo.MUISTI_MAX_YLARAJA           # asetuksen ylaraja: kontekstiraja (A1106) ratkaisee
+        muisti, tiedostot = chat.yksityinen_muisti(tila, "kissa", historia(1, 10), "o", ISO, yhdistelma.OLETUS)
         self.assertEqual(len(tiedostot), 41)
         self.assertGreater(len(muisti), 320_000)
         self.assertEqual(tiedostot[0], "osuma.md")                    # muistihaun osuma ensin
