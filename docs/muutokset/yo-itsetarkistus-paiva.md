@@ -1,2 +1,1 @@
 - aivo-itsetarkistus: tarkastajan kehotteeseen tämä päivä ja kellonaika (Europe/Helsinki) sekä ohjeet osiokohtaisista päivämääristä ja epävarmaksi merkityistä kohdista, jotta tarkastaja ei merkitse tämän päivän päivämäärää tulevaksi eikä lue tiedoston alun päivämäärää osion päivämäärän sijaan; lähderajan varaus laskee päivärivin mukaan (TARKASTAJA_OHJE_MAX_MERKKIA).
-- test_pr_opit: kommenttien hakuvirhetesti käyttää tuoretta PR-päivämäärää; kiinteä 27.10. putosi 30 päivän ikkunasta 26.11. ja testi kaatui (aikapommi).
