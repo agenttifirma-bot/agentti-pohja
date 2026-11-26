@@ -368,7 +368,7 @@ Proxmox-palomuuri hakukontille: sisään vain kontista 122 porttiin 8890, ulos e
 ```bash
 KIELLETYT4=$(sed -n 's/^define KIELLETYT4 = { \(.*\) }$/\1/p' /root/hakukontti/nftables.conf | tr -d ' '); echo "$KIELLETYT4"
 ```
-Odotettu: pilkuin eroteltu lista, jossa on 9 aluetta ja ensimmäisenä `0.0.0.0/8`. Tyhjä tuloste: pysähdy.
+Odotettu: pilkuin eroteltu lista, jossa on 11 aluetta ja ensimmäisenä `0.0.0.0/8`. Tyhjä tuloste: pysähdy.
 
 ```bash
 test -e /etc/pve/firewall/123.fw && echo "ON JO" || printf '[OPTIONS]\nenable: 1\npolicy_in: DROP\npolicy_out: ACCEPT\nipfilter: 1\nlog_level_in: nolog\nlog_level_out: nolog\n\n[RULES]\nIN ACCEPT -source %s -p tcp -dport 8890 # hakuvalittaja vain kontille 122\nOUT DROP -dest %s # ei lahiverkkoihin eika tailnetiin\nOUT DROP -dest %s # ei yksityisiin eika erikoisosoitteisiin\nOUT DROP -dest fc00::/7 # ei paikallisia IPv6-osoitteita\n' "$IP122" "$LAHIVERKOT" "$KIELLETYT4" > /etc/pve/firewall/123.fw
