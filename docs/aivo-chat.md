@@ -191,6 +191,8 @@ Työkalutilan keskustelut tiivistetään kirjastoon, jotta Aivo muistaa ne 40 vi
 
 Tiivistelmät tallentuvat kansioon `/var/lib/aivo/tiivistelmat` (0700, tiedostot 0600) ja luettelo tiedostoon `/var/lib/aivo/indeksi/indeksi.json`. Tonyn lainaukset on erotettu mallin tulkinnasta. Lainaus tarkistetaan sanasta sanaan Tonyn viestistä, ja virheellinen lainaus poistetaan. Uudet kohdat ovat aina tilassa `ehdotus`, ja vain Tonyn korjaus (`python3 -m aivo.tiivistelma`) vahvistaa ne. Chat liittää tiivistelmät työkalutilan kehotteeseen muun muistin rinnalle, enintään 60 kt, mutta vain kun Tony kytkee sen erikseen päälle: chatin käynnistysasetus `--tiivistelmat-kaytossa` (tai ympäristömuuttuja `AIVO_TIIVISTELMAT_KAYTOSSA=1`). Oletuksena kytkentä on pois, eikä kansion olemassaolo kytke sitä. Osuvimmat ja uusimmat tulevat ensin. Yksityinen tila ei saa niitä koskaan.
 
+Kun tiivistelmät ovat päällä, chat myös hakee Tonyn viestin sanoilla työkalualueen hakuindeksistä (`/var/lib/aivo/indeksi/tiivistelmat.sqlite`) ja liittää osumat kehotteen ensimmäiseksi muistiosaksi lähdeviitteineen. Tiivistysajo päivittää indeksin. Tarkemmin ja käyttöönotto: `docs/aivo-yksityinen.md`, kohta Muistihaku.
+
 Ota ensin snapshot kontista 122. Ajastin ei asennu itsestään: tämä on ohje, jonka Tony ajaa.
 
 1. **Yhteys.** Avaa isännällä (Proxmox) kontin pääte ja varmista, että olet kontissa 122:
@@ -398,7 +400,7 @@ Keskustelun pitää olla yksityisen tilan keskustelu. Työkalutilan keskustelull
 
 **Ehdotuksen pituus.** Ehdotus on ydinohjetiedoston koko uusi sisältö, ja vastauksen enimmäispituus on `MAX_TOKENIA` = 700 tokenia. Rajaa ei nosteta, koska ydinohjeiden yläraja (20 000 merkkiä, noin 7 000 tokenia) ei ehtisi i5-8400:lla vastausajan sisällä. Kehote pyytää siksi pitämään ehdotuksen enintään 1 200 merkissä ja ehdottamaan pidemmän tiedoston sijaan uutta lyhyttä tiedostoa. Jos vastaus katkeaa ennen sulkevaa `[[/EHDOTUS]]`-merkintää, mitään ei tallenneta ja vastauksessa näkyy `[ehdotusta ei tallennettu: vastaus katkesi]`. Jos sulkeva merkintä on, mutta tiedostonimi ei kelpaa, vain ehdotuslohko korvataan tekstillä `[ehdotusta ei tallennettu: virheellinen tiedostonimi]`, ja lohkon jälkeinen teksti näkyy ennallaan. Hyväksyntä- ja hylkäysreitti palauttavat tilan 400, jos tunnus ei ole merkkijono.
 
-**Kehotteen taustapää.** Paikallisella mallilla kehote kertoo, että malli ajetaan Tonyn omalla koneella. OpenRouter-taustapäällä kehote kertoo, että käytössä on avoin malli OpenRouterin kautta nollasäilytyksellä (ZDR) ja että ulos lähtee vain kulloinenkin kehote (`aivo/yksityinen_or.py`, `KEHOTE`).
+**Kehotteen taustapää.** Paikallisella mallilla kehote kertoo, että malli ajetaan Tonyn omalla koneella. OpenRouter-taustapäällä kehote kertoo, että käytössä on avoin malli OpenRouterin kautta nollasäilytyksellä (ZDR) ja että koko kehote (ydinohjeet, muisti, agenttidata ja keskustelu) lähtee jokaisella viestillä OpenRouterille. ZDR-tilassa sitä ei tallenneta eikä käytetä koulutukseen, ja muisti ja keskustelut tallennetaan Tonyn omalle palvelimelle (`aivo/yksityinen_or.py`, `KEHOTE`). Kehotteen koko seuraa mallin kontekstia (A1106), joten suurella mallilla kehote voi sisältää lähes koko muistin.
 
 ## Luovutus yksityisestä tilasta työkalutilaan
 
@@ -521,6 +523,25 @@ Reitit (kaikki vain yksityinen tila; työkalutilan keskustelulle 404):
 | `POST /api/paketti/hylkaa` `{keskustelu, tunnus}` | siirto kansioon `paketit/hylatyt/` |
 | `GET /api/paluut?keskustelu=ID` | uudet tulokset ja merkinnät |
 | `GET /api/paketti/tulos?keskustelu=ID&tunnus=T&pala=N` | hyväksytyn palan tulos tulosreposta |
+
+## Palaute ja korjaukset yksityisessä tilassa
+
+Yksityisen tilan jokaisen Aivon vastauksen alla on painikkeet **Hyvä** ja **Väärin**. Väärin-painike avaa luokkavalinnan ja tekstikentän korjaukselle (enintään 2 000 merkkiä). Luokat ovat kiinteät: oma rakenne ja toiminta, väärä tieto, muistin tai lähteiden käyttö, pyynnön tai ohjeen noudattaminen, kieli ja muoto sekä muu.
+
+**Tallennus.** Palaute tallentuu yksityiseen kansioon `/var/lib/aivo-yksityinen/korjaukset` (0700) tiedostoon `korjaukset.jsonl` (0600). Rivit vain lisätään, mitään ei muuteta eikä poisteta. Vastauksen alku (200 merkkiä) otetaan palvelimen tallentamasta historiasta, ei selaimen lähettämänä. Palvelin ei kirjoita palautteen sisältöä lokiin, ja virheviesteissä on vain syy.
+
+**Kehote.** Seuraavan viestin kehotteessa korjaukset ovat MUISTI-osiossa omana tiedostonaan `tonyn-korjaukset` (data, ei ohjeita). Osioon valitaan enintään 8 korjausta ja 3 000 merkkiä: ensin viestiin osuvimmat (sama sananalkuhaku kuin muistitiedostoissa), sitten uusimmat. Osion koko vähennetään muistin rajasta. Tonyn tekstistä neutraloidaan palvelimen merkintöjen ja lohkomerkintöjen matkinta.
+
+**Toistuva korjaus → ehdotus.** Kun samassa luokassa on vähintään kaksi käsittelemätöntä korjausta eri vastauksiin, palvelin lisää osioon merkinnän `TOISTUVA KORJAUS` ja tiedostonimen `korjaukset-<luokka>.md`. Kehotteen sääntö 11 pyytää Aivoa silloin ehdottamaan sääntöä nykyisellä `[[EHDOTUS]]`-mekanismilla. Ehdotus näkyy tavallisena ydinohje-ehdotuksena, ja Tony hyväksyy (`kyllä <sha8>`) tai hylkää sen painikkeella. Mikään korjaus tai mallin teksti ei hyväksy ehdotusta. Kun ehdotus odottaa, samaa merkintää ei toisteta. Kun Tony hyväksyy tai hylkää tiedoston `korjaukset-<luokka>.md` ehdotuksen, luokan korjaukset merkitään käsitellyiksi. Ne näkyvät kehotteessa edelleen, mutta uusi merkintä tulee vasta kahdesta uudesta korjauksesta.
+
+| Reitti | Tila | Kuvaus |
+|---|---|---|
+| `POST /api/palaute` `{keskustelu, indeksi, arvio: "hyva"}` | yksityinen | hyvä-arvio Aivon vastaukseen |
+| `POST /api/palaute` `{keskustelu, indeksi, arvio: "vaarin", luokka, korjaus}` | yksityinen | korjaus Aivon vastaukseen |
+
+Indeksin pitää osoittaa Aivon vastaukseen. Työkalutilan keskustelulle reitti vastaa 404.
+
+**Käyttöönotto.** Kansio ja tiedosto luodaan käynnistyksessä yksityisen datan viereen (`--korjaukset` tai `AIVO_KORJAUKSET` vaihtaa polun). Käynnistys avaa tiedoston samoin liputuksin kuin tallennus, joten kirjoituseste näkyy heti palvelun käynnistyessä eikä vasta ensimmäisessä painalluksessa. Jos palvelu ei käynnisty ja journalissa on `korjaustiedostoa ei voi avata` tai `yksityista kansiota ei voi luoda`, luo kansio itse: `sudo install -d -m 700 -o aivo-yksityinen -g aivo-yksityinen /var/lib/aivo-yksityinen/korjaukset` ja tarkista, että yksikön `ReadWritePaths` kattaa sen.
 
 ## Asennuksen tilatarkistus (vain luku)
 
