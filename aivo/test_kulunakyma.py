@@ -9,7 +9,7 @@ import unittest.mock
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from aivo import chat, openrouter_kulut as ok
+from aivo import salasana_apu, chat, openrouter_kulut as ok
 
 SAL = "oikea-salasana-123"
 TS = ".ts" + ".net"
@@ -148,14 +148,14 @@ class YhteenvetoTesti(unittest.TestCase):
 
     def test_oletuskerroin_ja_asetus(self):
         self.assertEqual(chat.KULUT_KERROIN_OLETUS, "0.92")
-        self.assertEqual(chat.Tila(chat.tiivista_salasana(SAL), self.d, str(Path(self.d) / "data"), [TS]).kulut_kerroin,
+        self.assertEqual(chat.Tila(salasana_apu.tiiviste(SAL), self.d, str(Path(self.d) / "data"), [TS]).kulut_kerroin,
                          chat.lue_kulukerroin("0.92"))
         saatu = []
 
         def kaynnista(osoite, portti, tila):
             saatu.append(tila.kulut_kerroin)
             raise chat.ChatVirhe("testi pysayttaa")
-        with unittest.mock.patch.object(chat, "lue_tiiviste", return_value=chat.tiivista_salasana(SAL)), \
+        with unittest.mock.patch.object(chat, "lue_tiiviste", return_value=salasana_apu.tiiviste(SAL)), \
                 unittest.mock.patch.object(chat, "kaynnista", kaynnista), \
                 unittest.mock.patch("sys.stderr"):
             args = ["palvele", "--kirjasto", self.d, "--data", str(Path(self.d) / "data")]
@@ -176,7 +176,7 @@ class KulutReittiTesti(unittest.TestCase):
         (r / "kirjasto").mkdir()
         (r / "kulut").mkdir()
         cls.kulut = r / "kulut"
-        cls.tila = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "data"), [TS],
+        cls.tila = chat.Tila(salasana_apu.tiiviste(SAL), str(r / "kirjasto"), str(r / "data"), [TS],
                              kysy=lambda m, h: "x", or_kulutila=str(cls.kulut))
         cls.tila.kulut_kerroin = chat.lue_kulukerroin("0.9")
         cls.srv = chat.kaynnista(ip(127, 0, 0, 1), 0, cls.tila)

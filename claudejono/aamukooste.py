@@ -18,7 +18,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import aivo_arvio, ajuri, kaistamittaus, kulutus, tavoite, vaiteportti, varaus
+from yojono import ajuri as ajuri_yojono
+
+from . import aivo_arvio, ajuri, kaistamittaus, kulutus, tavoite, vaiteportti, valmis, varaus
 
 TZ = ZoneInfo("Europe/Helsinki")
 OLETUS_REPO = "/var/lib/claude-jono/docs"
@@ -68,7 +70,7 @@ def lue_tulokset(repo, alku, loppu):
     ulos = []
     if not hak.is_dir():
         return ulos
-    for p in sorted(hak.glob("*.md")):
+    for p in valmis.tulostiedostot(hak):   # sama suodatin kuin virhemittarilla: *.tarkastus.md ei ole jonotulos
         try:
             teksti = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -83,7 +85,9 @@ def lue_tulokset(repo, alku, loppu):
         if aika.tzinfo is None:
             aika = aika.replace(tzinfo=TZ)
         if alku <= aika <= loppu:
-            ulos.append({"nimi": p.name, "tila": t.group(1), "aika": aika, "teksti": teksti})
+            # A515-A516: VALMIS vaatii riippumattoman tarkastajan merkinnan (valmis.py); muuten KESKEN.
+            tila = valmis.tehokas_tila(t.group(1), teksti, valmis.lue_tarkastus(hak, p.name))
+            ulos.append({"nimi": p.name, "tila": tila, "ajurin_tila": t.group(1), "aika": aika, "teksti": teksti})
     return ulos
 
 
@@ -243,6 +247,50 @@ def kayttoonotto_ero_rivi(pohja=OLETUS_POHJA, yojono_ajuri=OLETUS_YOJONO_AJURI, 
         + "; p\u00e4ivit\u00e4 komennolla paivita-ajurit.sh"
 
 
+def skriptikopio_ero_rivi(pohja=OLETUS_POHJA, skriptit=None):
+    """Teksti, jos y\u00f6jonon oletuspolun skriptikopio eroaa k\u00e4ytt\u00f6\u00f6n otetun pohjan versiosta tai puuttuu; None, jos kaikki ovat samat.
+
+    Vertaa tavuja: jokaisen `yojono.ajuri.SKRIPTIT`-taulun oletuspolun tiedosto vs. `<pohja>/yojono/<nimi>`. Vain luku.
+    Rajoitus: palvelun ymp\u00e4rist\u00f6muuttujia (YOJONO_KEHITYS ym.) ei n\u00e4e t\u00e4st\u00e4 prosessista, joten vertailu koskee vain
+    oletuspolkuja; jos palvelu k\u00e4ytt\u00e4\u00e4 muuttujalla toista polkua, se j\u00e4\u00e4 vertaamatta. Lukuvirhe ei kaada koostetta:
+    vain virheen tyyppi n\u00e4kyy."""
+    try:
+        taulu = skriptit if skriptit is not None else [v[1] for v in ajuri_yojono.SKRIPTIT.values()]
+        eroavat, puuttuvat, virheet = [], [], []
+        for kopio in taulu:
+            nimi = Path(kopio).name
+            try:
+                if not Path(kopio).exists():
+                    puuttuvat.append(nimi)
+                elif Path(kopio).read_bytes() != (Path(pohja) / "yojono" / nimi).read_bytes():
+                    eroavat.append(nimi)
+            except Exception as virhe:   # esim. repon tiedosto puuttuu tai ei ole luettavissa: vain tyyppi
+                virheet.append(f"{nimi}: {type(virhe).__name__}")
+    except Exception as virhe:
+        return "y\u00f6jonon skriptikopioiden vertailu ei selvinnyt (" + type(virhe).__name__ + ")"
+    osat = []
+    if eroavat:
+        osat.append("y\u00f6jonon skriptikopio eroaa repon versiosta: " + ", ".join(eroavat) + " (kopioi /opt/yojono/:aan rootina)")
+    if puuttuvat:
+        osat.append("y\u00f6jonon skriptikopio puuttuu: " + ", ".join(puuttuvat))
+    if virheet:
+        osat.append("y\u00f6jonon skriptikopion vertailu ei selvinnyt (" + ", ".join(virheet) + ")")
+    return "; ".join(osat) or None
+
+
+def yhdista_erot(*lahteet):
+    """Ero-lahteiden tekstit yhdeksi riviksi; yksittainen virhe ei kaada muita."""
+    tekstit = []
+    for lahde in lahteet:
+        try:
+            t = lahde()
+        except Exception:
+            t = None
+        if t:
+            tekstit.append(t)
+    return "; ".join(tekstit) or None
+
+
 def keraa(repo, perus, nyt, hae=None, yksikot=None, ero=None, kaistavahti=None):
     """Kokoaa kooste-aineiston. `hae` = GitHub-haku (testeissa tekaistu), `yksikot` = failed-yksikoiden lahde,
     `ero` = kayttoonoton eron lahde (kutsuttava, palauttaa tekstin tai None; oletuksena ei hae mitaan),
@@ -252,7 +300,7 @@ def keraa(repo, perus, nyt, hae=None, yksikot=None, ero=None, kaistavahti=None):
     tulokset = lue_tulokset(repo, alku, nyt)
     opit = []
     for t in tulokset:
-        if t["tila"] == "VALMIS":
+        if t["ajurin_tila"] == "VALMIS":   # opit tulevat ajurin VALMIS-tuloksista, vaikka tarkastus puuttuu
             opit += [o for o in ajuri.suodata_opit(ajuri.poimi_uusi_oppi(t["teksti"]))[0] if not TYHJA_OPPI_RE.match(o)]
     prt = []
     for t in tulokset:
@@ -360,7 +408,10 @@ def rivit(t):
         paatos_osat.append(f"{len(avoimet)} avointa kohtaa tonylle.md:ss\u00e4 (muistutus p\u00e4ivitt\u00e4in): " + "; ".join(f"{a.day}.{a.month}. {o}".strip() for a, o in avoimet[:2]))
     paatokset = "P\u00e4\u00e4t\u00f6kset sinulle: " + ", ".join(paatos_osat) + "."
 
-    osat = [f"{len(t['tulokset'])} jonotulosta ({nimet['VALMIS']} valmis, {nimet['EPAONNISTUI']} ep\u00e4onnistui, {nimet['HYLATTY']} hyl\u00e4tty)"]
+    ilman = sum(1 for r in t["tulokset"] if r["tila"] == "KESKEN" and r.get("ajurin_tila") == "VALMIS")
+    ilman_osa = f" (heist\u00e4 {ilman} ilman tarkastajan merkint\u00e4\u00e4)" if ilman else ""
+    kesken_osa = f"{nimet['KESKEN']} kesken{ilman_osa}, " if nimet["KESKEN"] else ""
+    osat = [f"{len(t['tulokset'])} jonotulosta ({nimet['VALMIS']} valmis, {kesken_osa}{nimet['EPAONNISTUI']} ep\u00e4onnistui, {nimet['HYLATTY']} hyl\u00e4tty)"]
     if t["uudet_prt"]:
         nayta = ", ".join(t["uudet_prt"][:4]) + (f" (+{len(t['uudet_prt']) - 4})" if len(t["uudet_prt"]) > 4 else "")
         osat.append("PR:t " + nayta)
@@ -440,7 +491,7 @@ def main(argv=None):
     nyt = datetime.fromisoformat(a.nyt) if a.nyt else datetime.now(TZ)
     if nyt.tzinfo is None:
         nyt = nyt.replace(tzinfo=TZ)
-    teksti = muotoile(keraa(a.repo, a.yojono, nyt, ero=kayttoonotto_ero_rivi))
+    teksti = muotoile(keraa(a.repo, a.yojono, nyt, ero=lambda: yhdista_erot(kayttoonotto_ero_rivi, skriptikopio_ero_rivi)))
     print(teksti)
     if a.laheta:
         from yojono.ajuri import laheta_telegram

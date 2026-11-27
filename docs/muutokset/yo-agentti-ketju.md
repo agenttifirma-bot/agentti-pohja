@@ -1,0 +1,1 @@
+- aivo: uusi testi aivo/test_agentti_ketju.py ajaa agenttitehtävän koko ketjun ([[AGENTTI]]-lohko chatissa, käynnistys, ajurin aja_seuraava, malli.aja korvikemallilla, tulos chatin reiteillä) onnistumisen, tarkastajan hylkäyksen, korjauskierroksen, päiväkaton ja rikkinäisen kulukirjanpidon sekä vieraan keskustelun tapauksissa; moduulien saumoista ei löytynyt virheitä.

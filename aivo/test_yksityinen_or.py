@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
-from aivo import chat, openrouter_kulut as ok, openrouter_zdr, yksityinen, yksityinen_or as yo
+from aivo import salasana_apu, chat, openrouter_kulut as ok, openrouter_zdr, yksityinen, yksityinen_or as yo
 
 AIVO = Path(__file__).resolve().parent
 MALLI = "meta-llama/llama-3.3-70b-instruct"
@@ -273,23 +273,36 @@ class TyokalutilaTesti(Pohja):
         # mallivertailu.py: erillinen ajotyokalu synteettiselle datalle (Tony 19.11.2026), ei kytketty palveluun.
         sallitut = {"yksityinen_or.py", "openrouter_kulut.py", "openrouter_zdr.py", "chat.py", "mallivertailu.py"}
         # yksityisen alueen tiivistys saa tuoda vain yksityinen_or-moduulin (ZDR, avoin malli, katto), ei muuta
-        vain_yksityinen_or = {"tiivista_yksityinen.py"}
-        for p in sorted(AIVO.glob("*.py")):
-            if p.name.startswith("test_") or p.name in sallitut:
+        # taustaajo (ajattelija keskusteluun myohemmin, A1040) samoin: vain yksityinen_or.kysy_taustatyo
+        vain_yksityinen_or = {"tiivista_yksityinen.py", "taustaajo.py"}
+        # agenttiytimen mallikytkenta (A1072): saa tuoda tasan openrouter_kulut- ja yksityinen_or-moduulit, ei
+        # openrouter_zdr:aa. Polku on suhteellinen aivo/-kansioon, joten samanniminen tiedosto muualla ei paase lapi.
+        agentin_malli = {"agentti/malli.py": {"openrouter_kulut", "yksityinen_or"}}
+        tiedostot = sorted(AIVO.rglob("*.py"))     # myos alikansiot (aivo/agentti/)
+        self.assertTrue(set(agentin_malli) <= {p.relative_to(AIVO).as_posix() for p in tiedostot})
+        for p in tiedostot:
+            suht = p.relative_to(AIVO).as_posix()
+            if p.name.startswith("test_") or suht in sallitut:
                 continue
             for n in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
                 if isinstance(n, (ast.Import, ast.ImportFrom)):
                     nimet = [a.name for a in n.names] + [getattr(n, "module", "") or ""]
-                    self.assertFalse([x for x in nimet if "openrouter" in x], p.name)
+                    if suht in agentin_malli:
+                        osumat = {x for x in nimet if "openrouter" in x or "yksityinen_or" in x}
+                        self.assertLessEqual(osumat, agentin_malli[suht], suht)
+                        if osumat:
+                            self.assertEqual(getattr(n, "level", 0), 2, suht)     # vain "from .. import"
+                        continue
+                    self.assertFalse([x for x in nimet if "openrouter" in x], suht)
                     if p.name not in vain_yksityinen_or:
-                        self.assertFalse([x for x in nimet if "yksityinen_or" in x], p.name)
+                        self.assertFalse([x for x in nimet if "yksityinen_or" in x], suht)
 
     def test_tyokalutilan_viesti_ei_kutsu_openrouteria(self):
         r = self.d
         (r / "kirjasto").mkdir()
         (r / "kirjasto" / "faktat.md").write_text("fakta")
         kysytty = []
-        tila = chat.Tila(chat.tiivista_salasana("oikea-salasana-123"), str(r / "kirjasto"), str(r / "data"),
+        tila = chat.Tila(salasana_apu.tiiviste("oikea-salasana-123"), str(r / "kirjasto"), str(r / "data"),
                          ["localhost"], kysy=lambda m, h: kysytty.append(1) or "pilvi", yks_data=str(r / "yks"),
                          taustapaa="openrouter", or_malli=MALLI, or_avain=str(self.avain), or_kulutila=str(self.kulut))
         srv = chat.kaynnista("127.0.0.1", 0, tila)
@@ -322,7 +335,7 @@ class TyokalutilaTesti(Pohja):
         self.avain.unlink()
         r = self.d
         (r / "kirjasto").mkdir()
-        tila = chat.Tila(chat.tiivista_salasana("oikea-salasana-123"), str(r / "kirjasto"), str(r / "data"),
+        tila = chat.Tila(salasana_apu.tiiviste("oikea-salasana-123"), str(r / "kirjasto"), str(r / "data"),
                          ["localhost"], yks_data=str(r / "yks"), yks_muisti=str(r / "yksm"),
                          ydinohjeet=str(r / "ydin"), ehdotukset=str(r / "ehd"),
                          taustapaa="openrouter", or_malli=MALLI, or_avain=str(self.avain), or_kulutila=str(self.kulut))
@@ -368,7 +381,7 @@ class ValintaTekstiTesti(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             for tp, odotus in (("loopback", "oma malli, ei verkkoa"), ("openrouter", "avoin malli OpenRouterissa")):
                 kw = {"or_malli": MALLI} if tp == "openrouter" else {}
-                tila = chat.Tila(chat.tiivista_salasana("oikea-salasana-123"), d, d, ["localhost"], yks_data=d + "/y" + tp,
+                tila = chat.Tila(salasana_apu.tiiviste("oikea-salasana-123"), d, d, ["localhost"], yks_data=d + "/y" + tp,
                                  taustapaa=tp, **kw)
                 self.assertEqual(tila.taustapaa, tp)
                 srv = chat.kaynnista("127.0.0.1", 0, tila)
@@ -390,7 +403,7 @@ class ValintaTekstiTesti(unittest.TestCase):
 
 class KaynnistysTesti(unittest.TestCase):
     def tila(self, d, **kw):
-        return chat.Tila(chat.tiivista_salasana("oikea-salasana-123"), d, d, ["localhost"], yks_data=d + "/y", **kw)
+        return chat.Tila(salasana_apu.tiiviste("oikea-salasana-123"), d, d, ["localhost"], yks_data=d + "/y", **kw)
 
     def test_suljettu_malli_estaa_kaynnistyksen(self):
         with tempfile.TemporaryDirectory() as d:
@@ -410,7 +423,7 @@ class KaynnistysTesti(unittest.TestCase):
         """main() lukee AIVO_OPENROUTER_MALLI:n ja palauttaa 1 ennen kuin palvelin kaynnistyy."""
         with tempfile.TemporaryDirectory() as d:
             salasana = Path(d) / "salasana"
-            salasana.write_text(chat.tiivista_salasana("oikea-salasana-123"))
+            salasana.write_text(salasana_apu.tiiviste("oikea-salasana-123"))
             os.chmod(salasana, 0o600)
             yks = Path(d) / "y"
             yks.mkdir(mode=0o700)

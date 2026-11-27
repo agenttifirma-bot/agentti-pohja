@@ -18,7 +18,8 @@ from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
-from aivo import chat, openrouter_kulut as ok, yhdistelma as yh, yksityinen, yksityinen_or as yo
+from aivo import salasana_apu, chat, openrouter_kulut as ok, yhdistelma as yh, yksityinen, yksityinen_or as yo
+from aivo import luovutus   # kokooma: #363:n luovutusmoduuli (test_merkinnat_sailyvat_tarkastajan_lapi_chatissa)
 
 M1 = "qwen/qwen3-235b-a22b-2507"
 M2 = "meta-llama/llama-3.3-70b-instruct"
@@ -142,8 +143,8 @@ class Roolit(unittest.TestCase):
                        {"taustapaa": "loopback", "yhdistelma_oletus": "tarkastus"},
                        {"taustapaa": "loopback", "roolit": "vastaaja:" + M1}):
                 with self.subTest(kw=kw), self.assertRaises(chat.ChatVirhe):
-                    chat.Tila(chat.tiivista_salasana(SALASANA), d, d, ["localhost"], yks_data=d + "/y", **kw)
-            t = chat.Tila(chat.tiivista_salasana(SALASANA), d, d, ["localhost"], yks_data=d + "/y",
+                    chat.Tila(salasana_apu.tiiviste(SALASANA), d, d, ["localhost"], yks_data=d + "/y", **kw)
+            t = chat.Tila(salasana_apu.tiiviste(SALASANA), d, d, ["localhost"], yks_data=d + "/y",
                           taustapaa="openrouter", or_mallit=[M1, M2], yhdistelma_oletus="tarkastus",
                           roolit="vastaaja:%s,tarkastaja:%s" % (M1, M2))
             self.assertEqual((t.yhdistelma_oletus, t.roolit), ("tarkastus", {"vastaaja": M1, "tarkastaja": M2}))
@@ -429,13 +430,13 @@ class Palvelin(unittest.TestCase):
         (r / "kulut").mkdir(mode=0o700)
         self.verkko = Verkko({"reititin": "kevyt"})
         alkup = yo.tee_kuljetin
-        p = mock.patch.object(yo, "tee_kuljetin", lambda avain, avaa=None, aikaraja_s=None: alkup(avain, self.verkko, aikaraja_s))
+        p = mock.patch.object(yo, "tee_kuljetin", lambda avain, avaa=None, aikaraja_s=None, **kw: alkup(avain, self.verkko, aikaraja_s, **kw))
         p.start()
         self.addCleanup(p.stop)
 
     def kaynnista(self, **kw):
         r = self.r
-        self.tila = chat.Tila(chat.tiivista_salasana(SALASANA), str(r / "kirjasto"), str(r / "data"), ["localhost"],
+        self.tila = chat.Tila(salasana_apu.tiiviste(SALASANA), str(r / "kirjasto"), str(r / "data"), ["localhost"],
                               kysy=lambda m, h: "pilvi", yks_data=str(r / "yks"), yks_muisti=str(r / "yksm"),
                               ydinohjeet=str(r / "ydin"), ehdotukset=str(r / "ehd"), or_avain=str(r / "avain"),
                               or_kulutila=str(r / "kulut"), taustapaa="openrouter", or_mallit=[M1, M2, M3],
@@ -516,7 +517,10 @@ class Palvelin(unittest.TestCase):
         tallennettu = json.loads(next((self.r / "ehd").glob("*.json")).read_text())
         self.assertEqual(tallennettu["tiedosto"], "tyyli.md")
         self.assertIn("Parempi vastaus.", v["vastaus"])
-        self.assertIn(LUOVUTUS, v["vastaus"])                 # luovutuslohko kulkee sellaisenaan (#363 kasittelee)
+        # luovutuslohko kulkee yhdistelman lapi sellaisenaan, ja #363 tallentaa sen luovutusehdotukseksi
+        self.assertEqual(len(v["luovutukset"]), 1)
+        self.assertEqual(luovutus.lue_ehdotus(self.tila.luovutukset, v["luovutukset"][0])["teksti"].strip(),
+                         "Suunnitelma jonolle.")
         self.assertNotIn("keksitty", json.dumps(v))
 
     def test_paivakatto_katkaisee_http(self):

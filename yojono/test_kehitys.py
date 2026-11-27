@@ -83,6 +83,47 @@ class Argumentit(Pohja):
 
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "kehitys.sh on palvelinskripti: vaatii GNU timeoutin (Linux); macOS-CI paljasti, ettei sita ole")
+class Testiselite(unittest.TestCase):
+    """testiselite(): unittest-rivit, ja varapolku (lokin 3 viimeista rivia) muille ajureille."""
+
+    def selite(self, loki):
+        rivit = SKRIPTI.read_text().splitlines()
+        alku = next(i for i, r in enumerate(rivit) if r.startswith("testiselite()"))
+        loppu = next(i for i in range(alku, len(rivit)) if rivit[i] == "}")
+        with tempfile.TemporaryDirectory() as t:
+            lokipolku = Path(t) / "testit.log"
+            lokipolku.write_text(loki)
+            r = subprocess.run(["sh", "-c", "\n".join(rivit[alku:loppu + 1]) + '\ntestiselite "$1"', "x", str(lokipolku)],
+                               capture_output=True, text=True, check=True)
+        return r.stdout
+
+    def test_unittest_rivit(self):
+        s = self.selite("ERROR: test_a (m.T)\nFAIL: test_b\nRan 2 tests\nFAILED (failures=1)\n")
+        self.assertIn("FAIL: test_b", s)
+        self.assertIn("Ran 2 tests", s)
+
+    def test_jest_tuloste_antaa_varaselitteen(self):
+        s = self.selite("PASS a.test.js\nFAIL b.test.js\nTest Suites: 1 failed, 1 total\nTests:       1 failed, 2 passed, 3 total\nTime: 1s\n")
+        self.assertIn("Tests:", s)
+        self.assertNotIn("FAIL b.test.js", s.split("Test Suites")[0])  # varapolku on vain 3 viimeista rivia
+
+    def test_npm_virheloki_antaa_varaselitteen(self):
+        s = self.selite("npm ERROR code 1\nnpm ERROR path /x\nnpm ERROR command failed\n")
+        self.assertNotEqual(s.strip(), "")
+        self.assertIn("command failed", s)
+
+    def test_npm_rivi_ei_ole_unittest_osuma(self):
+        # 'ERROR' ilman kaksoispistetta ei kelpaa unittest-riviksi: valitaan varapolku
+        s = self.selite("a\nb\nERROR in ./src\nc\n")
+        self.assertEqual(s.strip(), "b ERROR in ./src c")
+
+    def test_ok_vaatii_koko_rivin_tai_valilyonnin(self):
+        # 'OKAY' ei ole unittestin OK-rivi; 'OK (skipped=1)' on
+        self.assertEqual(self.selite("x\nOKAY\ny\n").strip(), "x OKAY y")
+        self.assertEqual(self.selite("Ran 1 test\nOK (skipped=1)\n").strip(), "Ran 1 test OK (skipped=1)")
+
+
+@unittest.skipUnless(sys.platform.startswith("linux"), "kehitys.sh on palvelinskripti: vaatii GNU timeoutin (Linux); macOS-CI paljasti, ettei sita ole")
 class Ajo(Pohja):
     def test_readme_muutos_avaa_pr_ja_siivoaa(self):
         self.agentti_skripti('echo "uusi rivi" >> README.md')
@@ -191,6 +232,16 @@ class Ajo(Pohja):
         self.assertIn("testit punaisella", rap)
         self.assertEqual(self.kutsut(), "")
 
+    def test_punainen_testiloki_talteen_ja_fail_rivi_selitteeseen(self):
+        self.agentti_skripti('printf "import unittest\\nclass B(unittest.TestCase):\\n    def test_b(self):\\n        self.fail()\\n" > test/test_b.py')
+        self.pr_kutsu()
+        self.assertEqual(self.aja(REPO, "1.00", "testit").returncode, 1)
+        rap = self.raportti("testit")
+        testit_rivi = next(r for r in rap.splitlines() if r.startswith("- Testit:"))
+        self.assertIn("FAIL: test_b", testit_rivi)
+        (loki,) = list((self.perus / "raportit").glob(f"*-kehitys-testit-{REPO}-testit.log"))
+        self.assertIn("AssertionError", loki.read_text())
+
     def _lahde_muutos(self, *args, tiedostot=None):
         r = self.lahde / REPO
         for polku, teksti in (tiedostot or {}).items():
@@ -203,6 +254,43 @@ class Ajo(Pohja):
         r = self.aja(REPO, "1.00", "testit")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("vihrea, 2 testia", self.raportti("testit"))
+
+    def _pr_kutsu_tallentaa_kuvauksen(self):
+        """pr_kutsu-tynkka, joka tallentaa kuvaustiedoston sisallon (argv[5]) tarkistettavaksi ajon jalkeen."""
+        kirjoita(self.ajuri / "agentti" / "__init__.py", "")
+        kirjoita(self.ajuri / "agentti" / "pr_kutsu.py",
+                 "import shutil, sys\nopen(sys.argv[0] + '.kutsut', 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+                 "shutil.copy(sys.argv[6], sys.argv[0] + '.kuvaus')\nprint('https://github.com/x/y/pull/7')\n")
+
+    def _oikea_tarkista_todennus(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        self.addCleanup(sys.path.remove, str(Path(__file__).resolve().parent.parent))
+        from agentti.pr_kutsu import PrVirhe, tarkista_todennus
+        return PrVirhe, tarkista_todennus
+
+    def test_vihrean_ajon_kuvaus_lapaisee_pr_kutsun_todennusportin(self):
+        self.agentti_skripti('printf "import unittest\\nclass B(unittest.TestCase):\\n    def test_b(self):\\n        self.assertEqual(1, 1)\\n" > test/test_b.py')
+        self._pr_kutsu_tallentaa_kuvauksen()
+        r = self.aja(REPO, "1.00", "testit")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        kuvaus = (self.ajuri / "agentti" / "pr_kutsu.py.kuvaus").read_text()
+        self.assertIn("Todennettu kaytossa: ", kuvaus)
+        self.assertIn("Todennettu kaytossa: python3 -m unittest discover -p test_*.py kloonissa, 2 testia, rc=0", kuvaus)
+        _, tarkista_todennus = self._oikea_tarkista_todennus()
+        tarkista_todennus(kuvaus)  # ei saa nostaa PrVirhetta
+
+    def test_punaisen_ajon_kuvausta_ei_muodosteta(self):
+        self.agentti_skripti('printf "import unittest\\nclass B(unittest.TestCase):\\n    def test_b(self):\\n        self.fail()\\n" > test/test_b.py')
+        self._pr_kutsu_tallentaa_kuvauksen()
+        self.assertEqual(self.aja(REPO, "1.00", "testit").returncode, 1)
+        self.assertEqual(self.kutsut(), "")
+        self.assertFalse((self.ajuri / "agentti" / "pr_kutsu.py.kuvaus").exists())
+
+    def test_vanha_kuvaus_ilman_todennusriviton_hylataan_koodiportissa(self):
+        PrVirhe, tarkista_todennus = self._oikea_tarkista_todennus()
+        vanha = "Yojonon automaattinen kehitystehtava: testit (2026-11-11).\nTesti: vihrea.\n 1 file changed\n"
+        with self.assertRaises(PrVirhe):
+            tarkista_todennus(vanha)
 
     def test_nolla_testia_kloonista_ei_ole_vihrea(self):
         # repossa ei ole yhtaan testia; agentin lisaama liite ei ole testi
@@ -240,6 +328,22 @@ class Ajo(Pohja):
         r = self.aja(REPO, "1.00", "testit", PYTHONPATH=str(Path(self.tmp.name) / "vaara"))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("vihrea, 1 testia", self.raportti("testit"))
+
+    def test_agentti_ajetaan_ilman_pythonpathia(self):
+        # Havainto 8.11.: agentin oma unittest-ajo latasi ajurin test-paketin PYTHONPATH:n kautta (repon test/ ilman __init__.py)
+        vaara = Path(self.tmp.name) / "vaara"
+        kirjoita(vaara / "test" / "__init__.py", "")
+        kirjoita(vaara / "test" / "test_automerge.py", "import unittest\nclass V(unittest.TestCase):\n    def test_v(self):\n        self.fail()\n")
+        kirjoita(self.lahde / REPO / "test" / "test_automerge.py", "import unittest\nclass R(unittest.TestCase):\n    def test_r(self):\n        pass\n")
+        (self.lahde / REPO / "test" / "__init__.py").unlink()
+        git(self.lahde / REPO, "add", "-A")
+        git(self.lahde / REPO, "commit", "-q", "-m", "ilman init")
+        self.agentti_skripti('printf "%s" "${PYTHONPATH-eiasetettu}" > "$0.pp"; python3 -B -m unittest discover -s test -p "test_*.py" > "$0.ut" 2>&1; echo "$@" > "$0.args"; echo x > test/liite.txt')
+        self.pr_kutsu()
+        self.aja(REPO, "1.00", "testit", PYTHONPATH=str(vaara))  # paluukoodia ei tarkisteta: ilman __init__.py discover loytaa 0 testia
+        self.assertEqual(Path(str(self.agentti) + ".pp").read_text(), "eiasetettu")
+        self.assertIn("OK", Path(str(self.agentti) + ".ut").read_text())  # ohjeen mukainen komento lataa repon oman kopion
+        self.assertIn("discover -s test", Path(str(self.agentti) + ".args").read_text())  # kehote neuvoo komennon
 
     def test_vihrea_testilisays_avaa_pr(self):
         self.agentti_skripti('printf "import unittest\\nclass B(unittest.TestCase):\\n    def test_b(self):\\n        self.assertEqual(1, 1)\\n" > test/test_b.py')
@@ -280,17 +384,18 @@ class Ajo(Pohja):
         self.assertIn(".github/workflows/a.yml", self.raportti("ominaisuus"))
         self.assertEqual(self.kutsut(), "")
 
-    def js_repo(self, npm_test_koodi):
+    def js_repo(self, npm_test_koodi, tuloste="Tests  3 passed (3)", paketti='{"name": "koe", "scripts": {"test": "vitest run"}}\n'):
         """Lisaa lahderepoon package.json:n ja tekee PATH-hakemiston, jossa on tekonpm (kirjaa argumentit)."""
         r = self.lahde / REPO
-        kirjoita(r / "package.json", '{"name": "koe", "scripts": {"test": "x"}}\n')
+        kirjoita(r / "package.json", paketti)
         git(r, "add", "-A")
         git(r, "commit", "-q", "-m", "js")
         bin_ = self.perus.parent / "bin"
         kirjoita(bin_ / "npm", '#!/bin/sh\necho "$@" >> "' + str(self.perus.parent / "npm.kutsut") + '"\n'
                  'echo "cache=$npm_config_cache logs=$npm_config_logs_dir" >> "' + str(self.perus.parent / "npm.ymp") + '"\n'
                  'if [ "$1" = "install" ]; then mkdir -p node_modules/better-sqlite3; fi\n'
-                 'if [ "$1" = "test" ]; then exit ' + str(npm_test_koodi) + '; fi\nexit 0\n', True)
+                 'if [ "$1" = "test" ]; then cat "' + str(bin_ / "tuloste.txt") + '"; exit ' + str(npm_test_koodi) + '; fi\nexit 0\n', True)
+        kirjoita(bin_ / "tuloste.txt", tuloste)
         return dict(PATH=str(bin_) + os.pathsep + os.environ["PATH"])
 
     def test_js_repo_asentaa_riippuvuudet_ja_ajaa_npm_test(self):
@@ -326,6 +431,109 @@ class Ajo(Pohja):
         self.aja(REPO, "1.00", "readme", **env)
         self.assertIn("punainen", self.raportti())
         self.assertEqual(self.kutsut(), "")
+
+    # npm-repojen testirivi: maara luetaan vitestin ja node:testin tulosteesta, varikoodit pois
+    VITEST = ("\x1b[1m\x1b[30m\x1b[46m RUN \x1b[49m\x1b[39m\x1b[22m \x1b[36mv5.1.0\x1b[39m\n\n"
+              "\x1b[2m Test Files \x1b[22m \x1b[1m\x1b[32m1 passed\x1b[39m\x1b[22m\x1b[90m (1)\x1b[39m\n"
+              "\x1b[2m      Tests \x1b[22m \x1b[1m\x1b[32m%d passed\x1b[39m\x1b[22m\x1b[90m (%d)\x1b[39m\n"
+              "\x1b[2m   Duration \x1b[22m 146ms\n")
+    NODETEST = "TAP version 13\n1..%d\n# tests %d\n# suites 0\n# pass %d\n# fail 0\n# skipped 0\n# duration_ms 61.0\n"
+
+    def _npm_ajo(self, koodi, tuloste):
+        env = self.js_repo(koodi, tuloste)
+        self.agentti_skripti('echo "uusi rivi" >> README.md')
+        self.pr_kutsu()
+        r = self.aja(REPO, "1.00", "readme", **env)
+        return r, self.raportti()
+
+    def test_npm_vitest_maara_luetaan_ja_varikoodit_pois(self):
+        r, rap = self._npm_ajo(0, self.VITEST % (7, 7))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("vihrea, 7 testia", rap)
+        self.assertNotIn("\x1b", rap)
+        self.assertIn(REPO, self.kutsut())
+
+    def test_npm_node_test_maara_luetaan(self):
+        r, rap = self._npm_ajo(0, self.NODETEST % (5, 5, 5))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("vihrea, 5 testia", rap)
+
+    def test_npm_nolla_testia_on_punainen_eika_avaa_prta(self):
+        r, rap = self._npm_ajo(0, self.NODETEST % (0, 0, 0))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("punainen (ei testeja kloonista)", rap)
+        self.assertNotIn("vihrea", rap)
+        self.assertEqual(self.kutsut(), "")
+
+    def test_npm_tuntematon_muoto_on_punainen_varikoodit_pois(self):
+        # Yhdistetty #293 + #424: lukematon maara ei ole vihrea eika anna todennusrivia
+        r, rap = self._npm_ajo(0, "\x1b[33mkaikki hyvin\x1b[39m\nvalmis\n")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("punainen (ei testeja kloonista)", rap)
+        self.assertNotIn("\x1b", rap)
+        self.assertEqual(self.kutsut(), "")
+
+    def test_npm_punainen_rivi_ilman_varikoodeja(self):
+        r, rap = self._npm_ajo(1, "\x1b[31mFAIL\x1b[39m jokin\n")
+        self.assertIn("punainen (FAIL jokin", rap)
+        self.assertNotIn("\x1b", rap)
+        self.assertEqual(self.kutsut(), "")
+
+    def test_js_repon_todennusrivi_luetaan_repon_maarittelysta_ja_ajon_lokista(self):
+        env = self.js_repo(0)
+        self.agentti_skripti('echo "uusi rivi" >> README.md')
+        self._pr_kutsu_tallentaa_kuvauksen()
+        self.assertEqual(self.aja(REPO, "1.00", "readme", **env).returncode, 0)
+        kuvaus = self._kuvaus_kopio()
+        self.assertIn("Todennettu kaytossa: npm test (vitest run) kloonissa, 3 testia, rc=0", kuvaus)
+
+    def test_js_repo_ilman_luettavaa_testimaaraa_ei_todennusrivia_eika_prta(self):
+        env = self.js_repo(0, tuloste="kaikki ok")
+        self.agentti_skripti('echo "uusi rivi" >> README.md')
+        self.pr_kutsu()
+        self.aja(REPO, "1.00", "readme", **env)
+        self.assertEqual(self.kutsut(), "")
+        self.assertIn("punainen", self.raportti())
+
+    def test_js_repo_nolla_testia_ei_todennusrivia_eika_prta(self):
+        env = self.js_repo(0, tuloste="Tests  0 passed (0)")
+        self.agentti_skripti('echo "uusi rivi" >> README.md')
+        self.pr_kutsu()
+        self.aja(REPO, "1.00", "readme", **env)
+        self.assertEqual(self.kutsut(), "")
+
+    def test_js_repo_ilman_test_skriptia_ei_arvattua_komentoa(self):
+        env = self.js_repo(0, paketti='{"name": "koe"}\n')
+        self.agentti_skripti('echo "uusi rivi" >> README.md')
+        self.pr_kutsu()
+        self.aja(REPO, "1.00", "readme", **env)
+        self.assertEqual(self.kutsut(), "")
+        self.assertIn("testikomentoa ei loydy", self.raportti())
+
+    def _kuvaus_kopio(self):
+        kopio = self.ajuri / "agentti" / "pr_kutsu.py.kuvaus"
+        return kopio.read_text() if kopio.exists() else ""
+
+    def test_kuvaus_ei_lupaa_automergea_todennusrivin_perusteella(self):
+        self.agentti_skripti('printf "import unittest\\nclass B(unittest.TestCase):\\n    def test_b(self):\\n        self.assertEqual(1, 1)\\n" > test/test_b.py')
+        self._pr_kutsu_tallentaa_kuvauksen()
+        self.assertEqual(self.aja(REPO, "1.00", "testit").returncode, 0)
+        kuvaus = self._kuvaus_kopio()
+        self.assertIn("Todennettu kaytossa:", kuvaus)
+        self.assertNotIn("Automerge yhdistaa itse", kuvaus)
+        self.assertIn("riippumattoman tarkastajan hyvaksynnan", kuvaus)
+
+    def test_automerge_ei_lue_kuvausta_todennusrivi_ei_ohjaa_automergeen(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        self.addCleanup(sys.path.remove, str(Path(__file__).resolve().parent.parent))
+        from tools import automerge
+        pr = {"head_repo": "o/r", "base_repo": "o/r", "base_ref": "main", "head_sha": "a" * 40, "labels": []}
+        tiedostot = [{"filename": "moduuli.py", "changes": 2, "patch": "@@ -1 +1 @@\n+x\n"}]
+        ilman = automerge.arvioi(dict(pr), tiedostot)
+        rivilla = automerge.arvioi(dict(pr, body="Todennettu kaytossa: python3 -m unittest, 5 testia, rc=0"), tiedostot)
+        self.assertFalse(ilman[0])
+        self.assertEqual(ilman, rivilla)
+        self.assertIn("riippumaton tarkastus: odottaa", rivilla[1])
 
     def test_pr_kutsun_virhe_antaa_koodin_1_ja_syyn(self):
         self.agentti_skripti('echo "uusi" >> README.md')
@@ -442,6 +650,104 @@ class Ohitus(Pohja):
         self.agentti_onnistuu()
         self.aja(REPO, "1.00", "testit", kuiva="1")
         self.assertFalse((self.perus / "kehitys-tyhjat.tsv").exists())
+
+
+@unittest.skipUnless(sys.platform.startswith("linux"), "kehitys.sh on palvelinskripti: vaatii GNU timeoutin (Linux)")
+class PunainenTiedot(Pohja):
+    """Punaisessa ajossa raporttiin tulee kaatuneiden testien nimet ja agentin muutos .patch-tiedostona."""
+
+    def patch(self, aihe="testit"):
+        return list((self.perus / "raportit").glob(f"*-kehitys-{aihe}-{REPO}.patch"))
+
+    def punainen_npm(self, loki):
+        """JS-repo, jonka npm test tulostaa annetun lokin ja palauttaa 1."""
+        r = self.lahde / REPO
+        kirjoita(r / "package.json", '{"name": "koe", "scripts": {"test": "x"}}\n')
+        git(r, "add", "-A")
+        git(r, "commit", "-q", "-m", "js")
+        bin_ = self.perus.parent / "bin"
+        kirjoita(self.perus.parent / "loki.txt", loki)
+        kirjoita(bin_ / "npm", '#!/bin/sh\nif [ "$1" = "test" ]; then cat "' + str(self.perus.parent / "loki.txt") + '"; exit 1; fi\nexit 0\n', True)
+        return dict(PATH=str(bin_) + os.pathsep + os.environ["PATH"])
+
+    def test_unittest_kaatunut_testi_nimetaan_ja_patch_tallentuu(self):
+        self.agentti_skripti('printf "import unittest\\nclass B(unittest.TestCase):\\n    def test_b(self):\\n        self.fail()\\n" > test/test_b.py')
+        self.pr_kutsu()
+        self.assertEqual(self.aja(REPO, "1.00", "testit").returncode, 1)
+        rap = self.raportti("testit")
+        self.assertIn("## Kaatuneet testit", rap)
+        self.assertRegex(rap, r"- FAIL: test_b \(test\.test_b\.B")
+        self.assertRegex(rap, r"- Testit: punainen \(")  # nykyinen yhteenvetorivi sailyy
+        self.assertRegex(rap, r"- Muutos: patch tallennettu: \S+-kehitys-testit-koe-repo\.patch")
+        (p,) = self.patch()
+        teksti = p.read_text()
+        self.assertIn("+++ b/test/test_b.py", teksti)  # seuraamaton tiedosto mukana
+        self.assertIn("def test_b", teksti)
+        self.assertEqual(self.kutsut(), "")
+
+    def test_unittest_error_ja_enintaan_10_rivia(self):
+        testit = "".join(f"    def test_{i}(self):\\n        raise RuntimeError()\\n" for i in range(12))
+        self.agentti_skripti(f'printf "import unittest\\nclass E(unittest.TestCase):\\n{testit}" > test/test_e.py')
+        self.pr_kutsu()
+        self.aja(REPO, "1.00", "testit")
+        rivit = [r for r in self.raportti("testit").split("## Kaatuneet testit")[1].split("##")[0].splitlines() if r.startswith("- ")]
+        self.assertEqual(len(rivit), 10)
+        self.assertTrue(all(r.startswith("- ERROR: test_") for r in rivit), rivit)
+
+    def test_tap_not_ok(self):
+        env = self.punainen_npm("TAP version 13\nok 1 - toimii\nnot ok 2 - kaatuva testi\n  ---\n  error: 'x'\n  ...\n# fail 1\n")
+        self.agentti_skripti('echo "uusi rivi" >> README.md')
+        self.pr_kutsu()
+        self.aja(REPO, "1.00", "readme", **env)
+        rap = self.raportti()
+        self.assertIn("- not ok 2 - kaatuva testi", rap)
+        self.assertNotIn("- ok 1", rap)
+        self.assertEqual(len(self.patch("readme")), 1)
+
+    def test_vitest_varikoodit_pois_ja_kaksoiskappaleet_yhdeksi(self):
+        esc = "\033"
+        loki = (f"{esc}[31m FAIL {esc}[39m a.test.ts > suite > nimi\n  {esc}[31m\u2717{esc}[39m vitest-kaatui\n"
+                f"  \u00d7 toinen\n{esc}[31m FAIL {esc}[39m a.test.ts > suite > nimi\n")
+        env = self.punainen_npm(loki)
+        self.agentti_skripti('echo "uusi rivi" >> README.md')
+        self.pr_kutsu()
+        self.aja(REPO, "1.00", "readme", **env)
+        rap = self.raportti()
+        osa = rap.split("## Kaatuneet testit")[1].split("##")[0]
+        self.assertNotIn("\033", osa)  # yhteenvetorivi (tail -n 3) pidetaan ennallaan
+        self.assertEqual(osa.count("a.test.ts > suite > nimi"), 1)
+        self.assertRegex(osa, r"- FAIL +a\.test\.ts > suite > nimi")
+        self.assertIn("\u2717 vitest-kaatui", osa)
+        self.assertIn("\u00d7 toinen", osa)
+
+    def test_vihrea_ajo_ei_luo_patchia_eika_listaa(self):
+        self.agentti_skripti('echo "uusi rivi" >> README.md')
+        self.pr_kutsu()
+        r = self.aja(REPO, "1.00", "readme")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.patch("readme"), [])
+        rap = self.raportti()
+        self.assertNotIn("Kaatuneet testit", rap)
+        self.assertNotIn("- Muutos:", rap)
+
+    def test_salaisuusepailys_ohittaa_patchin(self):
+        sala = "ghp_" + "A" * 24
+        self.agentti_skripti(f'printf "import unittest\\nclass B(unittest.TestCase):\\n    def test_b(self):\\n        x = \'{sala}\'\\n        self.fail()\\n" > test/test_b.py')
+        self.pr_kutsu()
+        self.aja(REPO, "1.00", "testit")
+        self.assertEqual(self.patch(), [])
+        rap = self.raportti("testit")
+        self.assertIn("patch ohitettu: salaisuusepailys", rap)
+        self.assertNotIn(sala, rap)
+        self.assertIn("- FAIL: test_b", rap)
+
+    def test_yli_200_kt_diffia_ei_tallenneta(self):
+        self.agentti_skripti('printf "import unittest\\nclass B(unittest.TestCase):\\n    def test_b(self):\\n        self.fail()\\n" > test/test_b.py\n'
+                             'head -c 300000 /dev/zero | tr "\\0" "a" | fold -w 80 > test/iso.txt')
+        self.pr_kutsu()
+        self.aja(REPO, "1.00", "testit")
+        self.assertEqual(self.patch(), [])
+        self.assertIn("patch ohitettu: yli 200 kt", self.raportti("testit"))
 
 
 if __name__ == "__main__":

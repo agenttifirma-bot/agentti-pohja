@@ -3,13 +3,19 @@ import ast
 import os
 import pathlib
 import tempfile
+import threading
 import unittest
+from unittest import mock
 
 from aivo.agentti import polut, tyokalut
 
 HAKEMISTO = pathlib.Path(__file__).resolve().parent / "agentti"
 KIELLETYT_MODUULIT = {"urllib", "socket", "http", "subprocess", "ssl", "ftplib", "smtplib", "telnetlib",
                       "xmlrpc", "asyncio", "multiprocessing", "ctypes", "importlib", "requests", "pty"}
+# Ainoa agenttimoduuli, joka saa tuoda aivo-paketin moduuleja (mallikytkenta, A1072). Muut agenttimoduulit
+# (tyokalut, polut, protokolla, silmukka) eivat tuo mitaan aivo-paketista.
+# A1101: malli.py saa lisaksi verkkohaku-moduulin (ainoa verkkoreitti hakuvalittajaan); tyokalut.py ei tuo sita.
+YLATASON_TUONNIT = {"malli.py": {"openrouter_kulut", "yksityinen_or", "verkkohaku"}}
 KIELLETYT_OS = {"system", "popen", "fork", "forkpty", "execv", "execve", "execvp", "execl", "execle",
                 "execlp", "spawnl", "spawnv", "spawnlp", "spawnvp", "posix_spawn", "remove", "rmdir",
                 "removedirs"}
@@ -43,7 +49,11 @@ class RakenneTesti(unittest.TestCase):
         for t in self.moduulit():
             puu = ast.parse(t.read_text(encoding="utf-8"))
             for n in ast.walk(puu):
-                if isinstance(n, ast.ImportFrom) and n.level:
+                if isinstance(n, ast.ImportFrom) and n.level == 2 and t.name in YLATASON_TUONNIT:
+                    # mallikytkenta (A1072): vain nimetyt aivo-moduulit, muoto "from .. import x"
+                    self.assertIsNone(n.module, t.name)
+                    self.assertLessEqual({a.name for a in n.names}, YLATASON_TUONNIT[t.name], t.name)
+                elif isinstance(n, ast.ImportFrom) and n.level:
                     self.assertEqual(n.level, 1, t.name)
                     self.assertIn((n.module or ""), sallitut_oma, t.name)
                 elif isinstance(n, (ast.Import, ast.ImportFrom)):
@@ -68,6 +78,8 @@ class RakenneTesti(unittest.TestCase):
     def test_tyokalut_ja_nimet_vastaavat_toisiaan(self):
         from aivo.agentti import protokolla
         self.assertEqual(set(tyokalut.TYOKALUT), set(protokolla.NIMET))
+        self.assertEqual(set(tyokalut.VERKKOTYOKALUT), set(protokolla.VERKKONIMET))
+        self.assertFalse(set(protokolla.VERKKONIMET) & set(protokolla.NIMET))
 
 
 class TyokaluTesti(unittest.TestCase):
@@ -189,6 +201,71 @@ class TyokaluTesti(unittest.TestCase):
     def test_valiaikaistiedosto_ei_jaa(self):
         self.aja("kirjoita", polku="a.md", sisalto="x")
         self.assertEqual(os.listdir(self.juuri), ["a.md"])
+
+    def test_valiaikaistiedoston_nimessa_satunnainen_osa(self):
+        a, b = polut.valiaikainen_nimi(), polut.valiaikainen_nimi()
+        self.assertNotEqual(a, b)
+        for nimi in (a, b):
+            self.assertIsNotNone(polut.VALIAIKAINEN.fullmatch(nimi), nimi)
+            self.assertTrue(nimi.startswith(".kirj-%d-%d-" % (os.getpid(), threading.get_ident())), nimi)
+
+    def test_vanhan_ajon_jaannos_samalla_pidilla_ei_esta_kirjoitusta(self):
+        with open(os.path.join(self.juuri, ".kirj-%d.tmp" % os.getpid()), "w") as f:
+            f.write("jaannos")
+        self.assertTrue(self.aja("kirjoita", polku="a.md", sisalto="x").ok)
+
+    def test_rinnakkaiset_saikeet_samaan_kansioon(self):
+        tulokset = {}
+
+        def kirjoita(i):
+            tulokset[i] = self.aja("kirjoita", polku="k/t%02d.md" % i, sisalto="x" * 1000)
+
+        saikeet = [threading.Thread(target=kirjoita, args=(i,)) for i in range(16)]
+        for s in saikeet:
+            s.start()
+        for s in saikeet:
+            s.join()
+        self.assertTrue(all(t.ok for t in tulokset.values()), [t.teksti for t in tulokset.values() if not t.ok])
+        self.assertEqual(len(tulokset), 16)
+        self.assertEqual(sorted(os.listdir(os.path.join(self.juuri, "k"))), ["t%02d.md" % i for i in range(16)])
+
+    def test_valiaikaistiedosto_on_lukittu_kirjoituksen_ajan(self):
+        alkuperainen = os.replace
+        havainnot = []
+
+        def tarkkaile(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
+            havainnot.append(polut._lukitsematon(src, src_dir_fd))
+            return alkuperainen(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+
+        with mock.patch.object(tyokalut.os, "replace", tarkkaile):
+            self.assertTrue(self.aja("kirjoita", polku="a.md", sisalto="x").ok)
+        self.assertEqual(havainnot, [False])   # lukittu = ei vapaa
+
+    def test_hylatty_kirjoitus_ei_jata_valikansioita(self):
+        for i in range(polut.RAJA_TIEDOSTOT):
+            with open(os.path.join(self.juuri, "f%03d.txt" % i), "w") as f:
+                f.write("x")
+        t = self.aja("kirjoita", polku="a/b/c/uusi.md", sisalto="x")
+        self.assertFalse(t.ok)
+        self.assertIn("taynna", t.teksti)
+        self.assertFalse(os.path.exists(os.path.join(self.juuri, "a")))
+
+    def test_hylatty_kirjoitus_olemassa_olevan_kansion_alle(self):
+        os.mkdir(os.path.join(self.juuri, "a"))
+        for i in range(polut.RAJA_TIEDOSTOT):
+            with open(os.path.join(self.juuri, "f%03d.txt" % i), "w") as f:
+                f.write("x")
+        self.assertFalse(self.aja("kirjoita", polku="a/b/uusi.md", sisalto="x").ok)
+        self.assertEqual(os.listdir(os.path.join(self.juuri, "a")), [])
+
+    def test_ylisuuri_kirjoitus_ei_jata_valikansioita(self):
+        t = self.aja("kirjoita", polku="a/b/iso.md", sisalto="a" * (polut.RAJA_TIEDOSTO + 1))
+        self.assertFalse(t.ok)
+        self.assertFalse(os.path.exists(os.path.join(self.juuri, "a")))
+
+    def test_kirjoitus_uuteen_kansioon_toimii(self):
+        self.assertTrue(self.aja("kirjoita", polku="a/b/uusi.md", sisalto="x").ok)
+        self.assertEqual(os.listdir(os.path.join(self.juuri, "a", "b")), ["uusi.md"])
 
 
 if __name__ == "__main__":

@@ -4,12 +4,17 @@ Reitit:
   claude      -> `claude -p --model opus|sonnet` (Claude-tilaus, tyokalut kaytossa, voi avata PR:n)
   openrouter  -> LiteLLM-alias (halpa malli OpenRouterin kautta), ei tyokaluja: vain tekstivastaus.
 
-Valinta: (1) tehtavatiedoston rivi `Malli: opus|sonnet|openrouter:<alias>`; (2) puuttuessa tyypin mukaan
+Valinta: (0) Aivo-tehtaviin aina Malli: opus (Tonyn paatos A1064, 22.11.2026): jos tehtavan `Tavoite:`-rivi on Aivo
+(sama saanto kuin claudejono.tavoite), tulos on claude/opus lahteella "aivo-opus". Tama ohittaa Malli-rivin (myos sonnet ja
+openrouter) ja tyyppitaulukon. Opuksen aikaraja ja kierrosmaara (ajuri.aikaraja_s, max_kierrokset) koskevat naita samoin.
+(1) tehtavatiedoston rivi `Malli: opus|sonnet|openrouter:<alias>`; (2) puuttuessa tyypin mukaan
 taulukosta TYYPPI_MALLI (yksi paikka); (3) oletus OLETUS_MALLI. Sallitut mallit ovat koodissa (koodi on laki):
 tehtavatiedosto tai agentti ei voi valita mallia, jota tassa ei ole listattu.
 """
 import re
 from dataclasses import dataclass
+
+from . import tavoite
 
 CLAUDE_MALLIT = ("opus", "sonnet")
 # Sallitut LiteLLM-aliakset (CLAUDE.md: qwen-coder, deepseek-flash, deepseek-pro). posti-zdr kuuluu posti-agentille, ei jonolle.
@@ -37,7 +42,7 @@ MALLI_ARVO_RE = re.compile(r"^(opus|sonnet|openrouter:[a-z0-9][a-z0-9._-]{0,40})
 class Malli:
     reitti: str        # "claude" | "openrouter"
     nimi: str          # claude: opus|sonnet; openrouter: LiteLLM-alias
-    lahde: str         # "kentta" | "tyyppi" | "oletus" | "kentta-hylatty"
+    lahde: str         # "aivo-opus" | "kentta" | "tyyppi" | "oletus" | "kentta-hylatty"
 
     @property
     def tunniste(self):
@@ -74,7 +79,10 @@ def tyyppi_malli(nimi, teksti=""):
 
 
 def valitse(nimi, teksti=""):
-    """Tehtavan malli. Virheellinen Malli-kentta ei kaada ajoa: hylataan (lahde 'kentta-hylatty') ja paatellaan tyypista."""
+    """Tehtavan malli. Aivo-tehtava -> aina opus (A1064, lahde 'aivo-opus'). Virheellinen Malli-kentta ei kaada ajoa:
+    hylataan (lahde 'kentta-hylatty') ja paatellaan tyypista."""
+    if tavoite.tavoite_tekstista(teksti) == tavoite.AIVO:
+        return Malli("claude", "opus", "aivo-opus")
     arvo = kentta(teksti)
     hylatty = False
     if arvo is not None:

@@ -1,0 +1,1 @@
+- aivo-agentit (osa 4): yksityisen tilan [[AGENTTI]]-lohko luo vain ehdotuksen, kortti nayttaa tekstin, kulun arvion ja paivakatosta jaljella olevan summan, ja tehtava menee ajurin jonoon vain Tonyn sha-sidotulla painalluksella; tulos ja vain luettava tiedostonakyma (ajurin kopio tulokset/<tunnus>/) aloittaneessa keskustelussa, loki ilman sisaltoa

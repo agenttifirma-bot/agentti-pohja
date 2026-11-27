@@ -11,7 +11,7 @@ import unittest.mock
 from pathlib import Path
 from types import SimpleNamespace
 
-from aivo import chat
+from aivo import chat, salasana_apu
 
 SAL = "oikea-salasana-123"
 
@@ -352,7 +352,7 @@ class PalveluTesti(unittest.TestCase):
         def julkaise(kirjasto, kid, aika, teksti):
             cls.paatokset.append(teksti)
             return cls.julkaisun_tulos
-        cls.tila = chat.Tila(chat.tiivista_salasana(SAL), str(k), str(Path(cls.tmp.name) / "data"), [TS],
+        cls.tila = chat.Tila(salasana_apu.tiiviste(SAL), str(k), str(Path(cls.tmp.name) / "data"), [TS],
                              kysy=kysy, julkaise=julkaise)
         cls.srv = chat.kaynnista(ip(127, 0, 0, 1), 0, cls.tila)
         cls.portti = cls.srv.server_address[1]
@@ -404,7 +404,7 @@ class PalveluTesti(unittest.TestCase):
         self.assertEqual(s, 403)
 
     def test_vaara_salasana_ja_lukitus(self):
-        tila = chat.Tila(chat.tiivista_salasana(SAL), self.tmp.name, self.tmp.name, [TS])
+        tila = chat.Tila(salasana_apu.tiiviste(SAL), self.tmp.name, self.tmp.name, [TS])
         srv = chat.kaynnista(ip(127, 0, 0, 1), 0, tila)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         try:
@@ -541,7 +541,7 @@ class ChatPalveluPohja(unittest.TestCase):
         def julkaise(kirjasto, kid, aika, teksti):
             cls.julkaisut.append(teksti)
             return "pushattu"
-        cls.tila = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "data"), [TS], kysy=kysy,
+        cls.tila = chat.Tila(salasana_apu.tiiviste(SAL), str(r / "kirjasto"), str(r / "data"), [TS], kysy=kysy,
                              julkaise=julkaise, yks_data=str(r / "yks" / "chat"), yks_muisti=str(r / "yks" / "muisti"),
                              ydinohjeet=str(r / "yks" / "ydin"), ehdotukset=str(r / "yks" / "ehd"), kysy_yks=kysy_yks)
         cls.srv = chat.kaynnista(ip(127, 0, 0, 1), 0, cls.tila)

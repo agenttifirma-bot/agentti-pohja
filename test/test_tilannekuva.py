@@ -22,7 +22,7 @@ def hae_tekoinen(url):
 class SiivousTesti(unittest.TestCase):
     def test_salaisuudet_poistetaan(self):
         for arvo in ("sk-" + "or-v1-abcdefghijklmnopqrstu", "ghp_" + "a" * 30, "github_pat_" + "B" * 30,
-                     "123456789:" + "A" * 35, "api_key = abcdefgh12345", "-----BEGIN RSA PRIVATE KEY-----"):
+                     "123456789:" + "A" * 35, "api_key = abcdefgh12345", "-----BEGIN RSA PRIVATE KEY-----", "-----BEGIN PGP PRIVATE KEY BLOCK-----"):
             ulos = tk.siivoa("rivi " + arvo + " loppu")
             self.assertIn("[poistettu]", ulos, arvo)
             self.assertNotIn(arvo, ulos)
@@ -341,6 +341,47 @@ class KulutTarkkaTesti(unittest.TestCase):
         (portti / "portti-kulu.json").write_text(json.dumps({"k": "x" * 3000}))
         loppu = tk.kulut_osio(self.t, portti).splitlines()[-1]
         self.assertEqual(len(loppu), 1500)
+
+
+class PorttiTiivistelmaTesti(unittest.TestCase):
+    NYT = datetime(2026, 11, 22, 12, 0, tzinfo=timezone.utc)
+
+    def _osio(self, sisalto):
+        t = Path(tempfile.mkdtemp())
+        portti = Path(tempfile.mkdtemp())
+        (t / "tila.json").write_text("{}")
+        (portti / "portti-kulu.json").write_text(sisalto)
+        return tk.kulut_osio(t, portti, nyt=self.NYT)
+
+    def test_tyhja_tiedosto(self):
+        teksti = self._osio("")
+        self.assertIn("kirjattuja paivia: 0", teksti)
+        self.assertIn("viimeisin kirjattu paiva: ei yhtaan", teksti)
+        self.assertIn(tk.PORTTI_SELITE, teksti)
+
+    def test_yksi_paiva_kiintealla_nyt(self):
+        teksti = self._osio(json.dumps({"2026-10-23": {"a": 1}}))
+        self.assertIn("kirjattuja paivia: 1", teksti)
+        self.assertIn("viimeisin kirjattu paiva: 2026-10-23, paivia siita tahan paivaan: 30", teksti)
+        self.assertIn("tyhja jakso = ei kutsuja, ei vika", teksti)
+        self.assertTrue(teksti.splitlines()[-1].startswith("{"))
+
+    def test_rikkinainen_json_ei_kaada(self):
+        teksti = self._osio("{rikki")
+        self.assertIn("kirjattuja paivia: 0", teksti)
+        self.assertIn(tk.PORTTI_SELITE, teksti)
+
+    def test_ei_paivamaaraavaimet_ohitetaan(self):
+        teksti = self._osio(json.dumps({"k": 1, "2026-13-45": 1, "2026-10-2": 1, "2026-10-20": 1, "2026-11-20": 1}))
+        self.assertIn("kirjattuja paivia: 2", teksti)
+        self.assertIn("viimeisin kirjattu paiva: 2026-11-20, paivia siita tahan paivaan: 2", teksti)
+
+    def test_ei_sanakirja_ei_kaada(self):
+        for sisalto in ("[1, 2]", "null", "5"):
+            self.assertIn("kirjattuja paivia: 0", self._osio(sisalto))
+
+    def test_tuleva_paiva_ei_anna_negatiivista(self):
+        self.assertIn("paivia siita tahan paivaan: 0", self._osio(json.dumps({"2026-12-01": 1})))
 
 
 class KomentoTesti(unittest.TestCase):

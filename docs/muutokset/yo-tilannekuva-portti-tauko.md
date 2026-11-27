@@ -1,0 +1,1 @@
+- tilannekuva: portin osioon vain luku -tiivistelmä (kirjattuja päiviä, viimeisin päivä, päiviä siitä) ja selite "tyhjä jakso = ei kutsuja, ei vika", jotta kutsuton jakso ei näytä kirjanpidon viallta

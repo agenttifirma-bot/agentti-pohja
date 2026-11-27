@@ -102,9 +102,10 @@ class Kooste(Pohja):
         rivit = aamukooste.rivit(self.keraa())
         self.assertIn("1 PR:", rivit[0])
         self.assertNotIn("avointa kohtaa", rivit[0])   # fixturen otsikot eiv\u00e4t ole p\u00e4\u00e4t\u00f6spyynt\u00f6j\u00e4
-        self.assertIn("2 jonotulosta (1 valmis, 1 ep", rivit[1])
+        # alkuperaisessa fixturessa VALMIS-tuloksella ei ole tarkastajan merkintaa -> portti nayttaa sen keskena
+        self.assertIn("2 jonotulosta (0 valmis, 1 kesken (heist\u00e4 1 ilman tarkastajan merkint\u00e4\u00e4), 1 ep", rivit[1])
         self.assertIn("agentti-pohja#7", rivit[1])
-        self.assertIn("ei mit\u00e4\u00e4n", rivit[2])
+        self.assertIn("Kesken (ei tarkastajan vahvistusta): 2026-11-02-01-a", rivit[2])   # VALMIS ilman tarkastajan merkint\u00e4\u00e4
         self.assertIn("ei.", rivit[3])
         self.assertIn("X ei onnistu, kayta Y", rivit[4])
         self.assertIn("failed: paivakatsaus.service", rivit[5])
@@ -324,7 +325,7 @@ class UusiMuoto(Kooste):
         self.kirjoita("tulokset/2026-11-03-01-k.md", tulos("k", "KESKEN", "2026-11-03T03:00+02:00"))
         self.kirjoita("saantopaivitykset.md", "# S\u00e4\u00e4nn\u00f6t\n## 2026-11-03T01:00+02:00 raja X tarkennettu\n## 2026-10-01 vanha\n")
         rivit = aamukooste.rivit(self.keraa())
-        self.assertIn("Kesken (ei tarkastajan vahvistusta): 2026-11-03-01-k", rivit[2])
+        self.assertIn("Kesken (ei tarkastajan vahvistusta): 2026-11-02-01-a, 2026-11-03-01-k", rivit[2])
         self.assertIn("raja X tarkennettu", rivit[3])
         self.assertNotIn("vanha", rivit[3])
 
@@ -465,6 +466,70 @@ class Viikkoehdotus(Pohja):
         self.assertFalse(list(self.repo.glob("**/*-ehdotus.md")))   # ei docs-kloonin sisaan
 
 
+def tulos_mallilla(nimi, tila, aika, malli="sonnet", runko=""):
+    return f"# Tulos: {nimi}\n\n- Tila: {tila}\n- Aika: {aika}\n- Malli: {malli}\n\n{runko}\n"
+
+
+def tarkastus(tarkastaja="opus", toimii="kyll\u00e4", todiste="journalctl-rivi 20:05 ok", lisarivit=""):
+    return f"# Tarkastus\n\n{lisarivit}- Tarkastaja: {tarkastaja}\n- Toimii k\u00e4yt\u00f6ss\u00e4: {toimii}\n- Todiste: {todiste}\n"
+
+
+class ValmisPortti(Pohja):
+    """Oma fixture (ei jaa Kooste.setUp:ia): tarkastusmerkinn\u00e4t eiv\u00e4t saa n\u00e4ky\u00e4 omina tuloksinaan, ja portti vaatii riippumattoman mallin."""
+
+    def keraa(self):
+        return aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [] if "/pulls?" in url else {"check_runs": []}, lambda: [])
+
+    def tilat(self):
+        return {r["nimi"]: r["tila"] for r in self.keraa()["tulokset"]}
+
+    def test_tarkastustiedosto_ei_nay_tuloksena_vaikka_siina_on_tila_ja_aika(self):
+        self.kirjoita("tulokset/2026-11-02-01-a.md", tulos_mallilla("a", "VALMIS", "2026-11-02T20:00+02:00"))
+        self.kirjoita("tulokset/2026-11-02-01-a.tarkastus.md",
+                      tarkastus(lisarivit="- Tila: VALMIS\n- Aika: 2026-11-02T20:05+02:00\n- Malli: opus\nhttps://github.com/tonyweckstrom1987/agentti-pohja/pull/99\n"))
+        t = self.keraa()
+        self.assertEqual([r["nimi"] for r in t["tulokset"]], ["2026-11-02-01-a.md"])
+        self.assertEqual(t["tulokset"][0]["tila"], "VALMIS")
+        self.assertEqual(t["uudet_prt"], [])   # tarkastustiedoston teksti ei tuota PR-linkkej\u00e4
+        self.assertIn("1 jonotulosta (1 valmis", next(r for r in aamukooste.rivit(t) if "jonotulosta" in r))
+
+    def test_valmis_ilman_tarkastajan_merkintaa_nakyy_keskena(self):
+        self.kirjoita("tulokset/2026-11-02-03-c.md", tulos_mallilla("c", "VALMIS", "2026-11-02T21:00+02:00"))
+        self.assertEqual(self.tilat(), {"2026-11-02-03-c.md": "KESKEN"})
+        rivi = next(r for r in aamukooste.rivit(self.keraa()) if "jonotulosta" in r)
+        self.assertIn("0 valmis, 1 kesken (heist\u00e4 1 ilman tarkastajan merkint\u00e4\u00e4)", rivi)
+
+    def test_mallinimien_eri_muodot_ja_puuttuva_malli(self):
+        tapaukset = [   # (tulosteksti-malli, tarkastaja, odotettu tila)
+            ("sonnet", "opus", "VALMIS"),
+            ("claude-sonnet-5-5", "claude-opus-5-5", "VALMIS"),
+            ("sonnet", "anthropic/claude-opus-5-5", "VALMIS"),
+            ("opus", "claude-opus-5-5", "KESKEN"),        # sama malli eri muodossa
+            ("claude-opus-5-5", "opus", "KESKEN"),
+            ("opus", "Opus-istunto-7", "KESKEN"),         # sama perhe, eri kirjainkoko ja jatke
+            ("claude-opus-5-5", "claude-opus-5-5", "KESKEN"),
+            (None, "opus", "KESKEN"),                     # puuttuva Malli-rivi on epavarma
+            ("-", "opus", "KESKEN"),
+            ("sonnet", "-", "KESKEN"),                    # tarkastajan nimi tyhja
+        ]
+        for i, (malli, tarkastaja, odotettu) in enumerate(tapaukset, 1):
+            nimi = f"2026-11-02-{i:02d}-x"
+            teksti = (tulos_mallilla("x", "VALMIS", "2026-11-02T20:00+02:00", malli) if malli
+                      else tulos("x", "VALMIS", "2026-11-02T20:00+02:00"))
+            self.kirjoita(f"tulokset/{nimi}.md", teksti)
+            self.kirjoita(f"tulokset/{nimi}.tarkastus.md", tarkastus(tarkastaja))
+        tilat = self.tilat()
+        for i, (malli, tarkastaja, odotettu) in enumerate(tapaukset, 1):
+            self.assertEqual(tilat[f"2026-11-02-{i:02d}-x.md"], odotettu, (malli, tarkastaja))
+
+    def test_ei_todistetta_tai_ei_toimi_on_keskena(self):
+        self.kirjoita("tulokset/2026-11-02-01-a.md", tulos_mallilla("a", "VALMIS", "2026-11-02T20:00+02:00"))
+        self.kirjoita("tulokset/2026-11-02-01-a.tarkastus.md", tarkastus(todiste="-"))
+        self.kirjoita("tulokset/2026-11-02-02-b.md", tulos_mallilla("b", "VALMIS", "2026-11-02T20:10+02:00"))
+        self.kirjoita("tulokset/2026-11-02-02-b.tarkastus.md", tarkastus(toimii="ei"))
+        self.assertEqual(set(self.tilat().values()), {"KESKEN"})
+
+
 class KaistaVahti(Pohja):
     """Pysahtyneen kaistan varoitus: systemctl injektoidaan, vain luku."""
 
@@ -572,6 +637,55 @@ class TavoiteOhitetut(Pohja):
         with mock.patch.object(aamukooste, "tavoitehylatyt", side_effect=OSError("x")):
             t = aamukooste.keraa(self.repo, self.yj, NYT, lambda url: [], lambda: [])
         self.assertEqual(t["tavoite_ohitetut"], [])
+
+
+class SkriptikopioEro(unittest.TestCase):
+    """skriptikopio_ero_rivi tilapaishakemistoilla: ei verkkoa eika oikeita /opt-polkuja."""
+    NIMET = ("katselmoi.sh", "kehitys.sh")
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.pohja = self.tmp / "pohja"
+        (self.pohja / "yojono").mkdir(parents=True)
+        self.kopiot = self.tmp / "kopiot"
+        self.kopiot.mkdir()
+        for n in self.NIMET:
+            (self.pohja / "yojono" / n).write_text("#!/bin/sh\necho " + n + "\n")
+            (self.kopiot / n).write_text("#!/bin/sh\necho " + n + "\n")
+
+    def rivi(self):
+        return aamukooste.skriptikopio_ero_rivi(str(self.pohja), [str(self.kopiot / n) for n in self.NIMET])
+
+    def test_kaikki_samat_ei_rivia(self):
+        self.assertIsNone(self.rivi())
+
+    def test_yksi_eroaa(self):
+        (self.kopiot / "kehitys.sh").write_text("vanha\n")
+        teksti = self.rivi()
+        self.assertIn("eroaa repon versiosta: kehitys.sh", teksti)
+        self.assertNotIn("katselmoi.sh", teksti)
+
+    def test_yksi_puuttuu(self):
+        (self.kopiot / "kehitys.sh").unlink()
+        teksti = self.rivi()
+        self.assertIn("puuttuu: kehitys.sh", teksti)
+        self.assertNotIn("eroaa", teksti)
+
+    def test_lukuvirhe_ei_kaada_ja_nayttaa_vain_tyypin(self):
+        (self.pohja / "yojono" / "kehitys.sh").unlink()   # repon versio puuttuu -> FileNotFoundError
+        teksti = self.rivi()
+        self.assertIn("ei selvinnyt (kehitys.sh: FileNotFoundError)", teksti)
+        self.assertNotIn(str(self.tmp), teksti)
+
+    def test_oletustaulu_luetaan_ajurin_skripteista(self):
+        with mock.patch.object(aamukooste.ajuri_yojono, "SKRIPTIT", {"x": ("YOJONO_X", str(self.kopiot / "kehitys.sh"))}):
+            self.assertIsNone(aamukooste.skriptikopio_ero_rivi(str(self.pohja)))
+
+    def test_yhdista_erot_ohittaa_virheen_ja_tyhjan(self):
+        def rikki():
+            raise RuntimeError("x")
+        self.assertEqual(aamukooste.yhdista_erot(rikki, lambda: None, lambda: "a", lambda: "b"), "a; b")
+        self.assertIsNone(aamukooste.yhdista_erot(rikki, lambda: None))
 
 
 if __name__ == "__main__":

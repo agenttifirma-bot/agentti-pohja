@@ -1,0 +1,1 @@
+- aivo-yksityinen: OpenRouter-kehote kertoo, että koko kehote (ydinohjeet, muisti, agenttidata ja keskustelu) lähtee jokaisella viestillä OpenRouterille ZDR-tilassa; sääntö 6 ei enää kiistä agenttitehtäviä (sääntö 8); uusi sääntö 9 rajaa rakennetta ja tietojen kulkua koskevat väitteet kehotteen ja agenttidatan faktoihin ja vaatii merkitsemään arvion (RAJATTU)
