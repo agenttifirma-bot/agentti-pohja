@@ -101,7 +101,9 @@ class ItseAjoTesti(Tilapainen):
         rajat = {r["model"]: r["max_tokens"] for r in rungot}
         self.assertEqual(rajat, {TAVALLINEN: mv.ITSE_MAX_TOKENIA, AJATTELEVA: yo.MAX_TOKENIA})
         for r in rungot:
-            self.assertNotIn("reasoning", r)                          # sama kuin tuotannossa
+            # vertailu ei laheta reasoning-parametria (mittaa paattelyn ilman rajaa); tuotanto lahettaa
+            # reasoning.max_tokens-rajan yksityinen_or.PAATTELY_TUKI-malleille (test_paattelyraja)
+            self.assertNotIn("reasoning", r)
             self.assertEqual(r["provider"], {"zdr": True, "data_collection": "deny"})
 
     def test_tyhja_vastaus_kirjataan_riville_ja_on_ei_vastausta(self):
