@@ -29,7 +29,7 @@ import secrets
 import stat
 from pathlib import Path
 
-from aivo import luovutus, vartija as vuotovartija, yksityinen
+from aivo import luovutus, vartija as vuotovartija, vartija_osumat, yksityinen
 from aivo.yksityinen import YksityinenVirhe
 
 PAKETIT = "paketit"
@@ -234,16 +234,38 @@ def poista_pala(luovutukset, tunnus, n, sha8):
         raise YksityinenVirhe("viimeista palaa ei voi poistaa; hylkaa paketti")
     d["poistetut"].append({"n": n, "sha": yksityinen.sha([p for p in d["palat"] if p["n"] == n][0]["teksti"]),
                            "aika": luovutus._nyt().isoformat(timespec="seconds")})
+    poistettu = [p for p in d["palat"] if p["n"] == n][0]
     d["palat"] = jaljelle
     d["sha"] = paketin_sha(d["nimi"], jaljelle, d.get("jatkaa"))
     luovutus._kirjoita_600(Path(luovutukset) / PAKETIT / (tunnus + ".json"), json.dumps(d, ensure_ascii=False))
+    _kirjaa_osumat(luovutukset, tunnus, [poistettu], "pala_poistettu")
     return d
 
 
+def _kirjaa_osumat(luovutukset, tunnus, palat, ratkaisu, arvio=None):
+    """Vartijan osumat (aivo/vartija_osumat.py): yksi rivi per pala. arvio(pala) -> esta/kysy/sallittu; oletuksena
+    palan tallennettu vartijan tulos (sama, jonka Tony nakee kortilla). Virhe ei esta ratkaisua."""
+    for p in palat:
+        try:
+            a = arvio(p) if arvio else vartija_osumat.vartija_sallitusta((p.get("vartija") or {}).get("sallittu"))
+        except Exception as e:
+            vartija_osumat._virhe(e)
+            continue
+        vartija_osumat.kirjaa_ratkaisu(luovutukset, "paketti", tunnus, a, ratkaisu, pala=p.get("n"))
+
+
 def hylkaa_paketti(luovutukset, tunnus):
-    """Siirtaa paketin alikansioon paketit/hylatyt/ (0700). Ei poista mitaan."""
+    """Siirtaa paketin alikansioon paketit/hylatyt/ (0700). Ei poista mitaan. Jokainen pala kirjataan vartijan
+    osumiin ratkaisulla hylatty."""
     _tunnus(tunnus)
-    return yksityinen.hylkaa_ehdotus(paketit_hakemisto(luovutukset), tunnus)
+    try:
+        palat = lue_paketti(luovutukset, tunnus)["palat"]
+    except Exception as e:
+        palat = []
+        vartija_osumat._virhe(e)
+    tulos = yksityinen.hylkaa_ehdotus(paketit_hakemisto(luovutukset), tunnus)
+    _kirjaa_osumat(luovutukset, tunnus, palat, "hylatty")
+    return tulos
 
 
 def perusta(luovutukset, tunnus):
@@ -271,12 +293,15 @@ def hyvaksytyt_palat(luovutukset):
 # --- Hyvaksynta ------------------------------------------------------------------------------------
 
 def hyvaksy_paketti(luovutukset, tunnus, vahvistus, kirjasto, julkaise=yksityinen.julkaise_kirjastoon,
-                    nyt=luovutus._nyt, vartija=vartija_koukku, lisavahvistus=None, vartija_listat=None):
+                    nyt=luovutus._nyt, vartija=vartija_koukku, lisavahvistus=None, vartija_listat=None,
+                    kirjaa_osumat=True):
     """Vie jokaisen palan kirjaston kansioon saapuneet/ omana tiedostonaan vain, jos vahvistus on tasmalleen
     "kylla <sha8>" koko paketin sha:sta. Jarjestys: (1) sha-tarkistus, (2) vartija tarkistaa jokaisen palan uudelleen
     (esto -> VartijaEsto aina; "kysy" -> VartijaEsto, ellei lisavahvistus ole "tarkistin kohdat <sha8>"),
     (3) lokirivit yksityiseen lokiin, (4) tiedostot kirjastoon ja yksi julkaisu, (5) virheessa kaikki tiedostot
-    poistetaan ja paketti jaa odottamaan, (6) onnistuessa paketti siirretaan kansioon paketit/hyvaksytyt/."""
+    poistetaan ja paketti jaa odottamaan, (6) onnistuessa paketti siirretaan kansioon paketit/hyvaksytyt/.
+    kirjaa_osumat=True: Tonyn hyvaksynta kirjataan vartijan osumiin (pala "kysy", jos se vaati lisavahvistuksen,
+    muuten "sallittu"). Automaattinen lisapala ei ole Tonyn ratkaisu, joten se kutsuu kirjaa_osumat=False."""
     d = lue_paketti(luovutukset, tunnus)
     if not isinstance(vahvistus, str) or not luovutus.VAHVISTUS_RE.match(vahvistus) or vahvistus != "kyll\u00e4 " + d["sha"][:8]:
         raise YksityinenVirhe("vahvistus ei tasmaa; mitaan ei luovutettu")
@@ -331,6 +356,9 @@ def hyvaksy_paketti(luovutukset, tunnus, vahvistus, kirjasto, julkaise=yksityine
         raise
     for p, pid, k in kohteet:
         luovutus._kirjaa_lokiin(luovutukset, {"aika": aika, "tunnus": pid, "tulos": tulos})
+    if kirjaa_osumat:
+        _kirjaa_osumat(luovutukset, tunnus, d["palat"], "hyvaksytty",
+                       arvio=lambda p: "kysy" if p["n"] in kysy else "sallittu")
     h = Path(luovutukset) / PAKETIT                                                                  # (6)
     hyv = yksityinen.tarkista_yksityinen_hakemisto(h / HYVAKSYTYT)
     d["hyvaksytty"] = aika
@@ -375,7 +403,7 @@ def tallenna_lisapalat(luovutukset, kirjasto, jatkaa, tekstit, tila=LISAPALAT_OL
     if not all(p["vartija"]["sallittu"] is True for p in d["palat"]):
         return tunnus, False, "Lis\u00e4palat odottavat hyv\u00e4ksynt\u00e4\u00e4: vuotovartija ei hyv\u00e4ksynyt kaikkia."
     tulos = hyvaksy_paketti(luovutukset, tunnus, "kyll\u00e4 " + d["sha"][:8], kirjasto, julkaise=julkaise, vartija=vartija,
-                            vartija_listat=vartija_listat)
+                            vartija_listat=vartija_listat, kirjaa_osumat=False)
     yhteenveto = ("Lis\u00e4palat %s l\u00e4htiv\u00e4t automaattisesti paketille %s (%s), vuotovartija hyv\u00e4ksyi. Tulos: %s."
                   % (", ".join(map(str, numerot)), nimi, pt, tulos))
     p = paketit_hakemisto(luovutukset) / AUTOMAATTISET
