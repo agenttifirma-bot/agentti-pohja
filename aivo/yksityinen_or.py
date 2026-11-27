@@ -65,7 +65,9 @@ Saannot (koodi on laki):
     kutsuun reasoning.max_tokens (ja exclude), jos malli on taulukossa PAATTELY_TUKI. Raja on aina pienempi kuin
     max_tokens, joten vastaukselle jaa tilaa. Muut mallit kutsutaan ilman parametria. Sama raja koskee chattia,
     yhdistelman osakutsuja, vartijaa seka itsetarkistuksen tarkastajaa ja korjausta. Yhden mallin chat tekee enintaan
-    yhden uusinnan ilman paattelya (uusinnan_parametri), jos vastaus katkeaa silti ennen tekstia; uusinta kulkee saman
+    yhden uusinnan ilman paattelya tai pienemmalla tasolla (uusinnan_parametri), jos vastaus katkeaa silti ennen
+    tekstia. Effort-tason uusinta tehdaan vain, jos taso on pienempi kuin ensimmaisen kutsun todennakoinen taso
+    (todennakoinen_taso); muuten se olisi sama pyynto. Uusinta kulkee saman
     openrouter_kulut.kutsu-reitin kautta (paivakatto) ja lasketaan kutsurajaan (Vastausteksti.kutsuja ->
     itsetarkistuksen `kaytetyt`). Taustaajo (kysy_taustatyo) ja tiivistys (kysy_tiivistys) saavat saman rajan ilman
     uusintaa. Raja lahetetaan vain malleille, jotka paattelevat oletuksena (OLETUKSENA_PAATTELEVAT, yhteinen
@@ -190,6 +192,29 @@ PAATTELY_TUKI: dict[str, tuple[bool, tuple[str, ...] | None]] = {
     "qwen/qwen3.8-2.4t-a95b": (True, ("xhigh", "medium", "low")),
     "qwen/qwen3.8-27b": (False, ("xhigh", "medium", "low", "none")),
 }
+
+
+# Effort-tason osuus max_tokens-rajasta. Lahde: OpenRouter, docs/use-cases/reasoning-tokens (osio Reasoning Effort
+# Level), luettu 27.11.2026: max ja xhigh noin 95 %, high 80 %, medium 50 %, low 20 %, minimal 10 %, none = ei paattelya.
+# Sama sivu: "For models that only support reasoning.effort, the reasoning.max_tokens value will be used to determine
+# the effort level" ja tukemattomasta tasosta "map your requested effort to the nearest supported level". Tarkkaa
+# muunnossaantoa max_tokens -> taso sivu ei kerro; todennakoinen_taso arvioi sen lahimpana osuutena.
+EFFORT_OSUUS: dict[str, float] = {"max": 0.95, "xhigh": 0.95, "high": 0.8, "medium": 0.5, "low": 0.2,
+                                  "minimal": 0.1, "none": 0.0}
+
+
+def todennakoinen_taso(malli: str, max_tokens: int, raja: int) -> str | None:
+    """Effort-tasoja kayttavan mallin todennakoinen taso, kun kutsu lahettaa reasoning.max_tokens = `raja` ja
+    max_tokens = `max_tokens`: mallin tuetuista tasoista se, jonka osuus (EFFORT_OSUUS) on lahinna raja/max_tokens;
+    tasapelissa pienempi taso. "none" ei ole ehdokas (raja > 0 pyytaa paattelya). None = malli ei kerro tasoja,
+    tai raja on 0. Arvio, ei OpenRouterin dokumentoima saanto (ks. EFFORT_OSUUS)."""
+    if not _paattelee_ja_tukee(malli) or raja < 1 or max_tokens < 1:
+        return None
+    tasot = [t for t in (PAATTELY_TUKI[malli][1] or ()) if t in EFFORT_OSUUS and t != "none"]
+    if not tasot:
+        return None
+    osuus = raja / max_tokens
+    return min(tasot, key=lambda t: (abs(EFFORT_OSUUS[t] - osuus), EFFORT_OSUUS[t]))
 
 
 def _paattelee_ja_tukee(malli: str) -> bool:
@@ -393,12 +418,25 @@ def _kysy_viestit(
         uusi = uusinnan_parametri(malli) if paattely else None
         if uusi is None or uusinta is None:
             raise
+        # Effort-tason uusinta vain, jos sen taso on pienempi kuin ensimmaisen kutsun todennakoinen taso. Muuten
+        # uusinta olisi kaytannossa sama pyynto ja maksaisi toisen kerran (katselmointi 27.11.2026; EFFORT_OSUUS).
+        ensin = todennakoinen_taso(malli, tokenit, paattely["max_tokens"])
+        taso = uusi.get("effort")
+        if ensin is not None and taso not in (None, "none") and EFFORT_OSUUS[taso] >= EFFORT_OSUUS[ensin]:
+            print("yksityinen_or: uusintaa ei tehty: ensimmainen kutsu oli todennakoisesti jo tasolla %s "
+                  "(paattely %d / %d tokenia), uusinta tasolla %s olisi sama pyynto, malli %s"
+                  % (ensin, paattely["max_tokens"], tokenit, taso, str(malli)[:100]), file=sys.stderr)
+            raise
         if not uusinta():
             print("yksityinen_or: uusintaa ei tehty (kutsuraja)", file=sys.stderr)
             raise
-        print("yksityinen_or: uusinta kerran ilman paattelya (reasoning %s), malli %s"
-              % (",".join("%s=%s" % kv for kv in sorted(uusi.items()) if kv[0] != "exclude"), str(malli)[:100]),
-              file=sys.stderr)
+        kuvaus = ",".join("%s=%s" % kv for kv in sorted(uusi.items()) if kv[0] != "exclude")
+        if taso in (None, "none"):                         # effort none tai enabled False: paattely pois
+            print("yksityinen_or: uusinta kerran ilman paattelya (reasoning %s), malli %s"
+                  % (kuvaus, str(malli)[:100]), file=sys.stderr)
+        else:                                              # pakollinen paattely: vain pienempi taso
+            print("yksityinen_or: uusinta kerran pienemmalla paattelytasolla (reasoning %s; ensimmainen "
+                  "todennakoisesti %s), malli %s" % (kuvaus, ensin or "tuntematon", str(malli)[:100]), file=sys.stderr)
         data = kutsu(uusi)
         try:
             teksti = vastauksen_teksti(data)
@@ -524,7 +562,9 @@ def paattelyparametri(malli: str, raja: int) -> dict[str, Any] | None:
 def uusinnan_parametri(malli: str) -> dict[str, Any] | None:
     """Uusintakutsun reasoning-kentta, kun vastaus katkesi paattelyyn: paattely pois, jos malli sallii
     (effort "none" tai enabled False), pakollisella mallilla effort "low", jos malli kertoo tukevansa sita.
-    None = uusinnasta ei olisi apua (malli ei tue parametria, tai paattely on pakollinen ilman tasoja)."""
+    None = uusinnasta ei olisi apua (malli ei tue parametria, tai paattely on pakollinen ilman tasoja).
+    _kysy_viestit ohittaa lisaksi effort-tason uusinnan, jos ensimmainen kutsu oli todennakoisesti jo samalla tai
+    pienemmalla tasolla (todennakoinen_taso)."""
     if not _paattelee_ja_tukee(malli):
         return None
     pakollinen, tasot = PAATTELY_TUKI[malli]
@@ -674,6 +714,7 @@ def kysy_tiivistys(
     laheta = tee_kuljetin(avain, avaa)
     viestit = [{"role": "system", "content": ohje}, {"role": "user", "content": data}]
     paattely = paattelyparametri(malli, paattelyraja(malli, TIIVISTYS_MAX_TOKENIA, paattely_max))
+    loki_kehote(malli, viestit, TIIVISTYS_MAX_TOKENIA, paattely["max_tokens"] if paattely else 0)
     try:
         vastaus = openrouter_kulut.kutsu(
             malli, viestit, laheta, tehtava=TIIVISTYS_TEHTAVA, nyt=nyt, tila=kulutila,
@@ -706,6 +747,7 @@ def kysy_taustatyo(
     avain = lue_avain(avain_tiedosto)                     # ennen varausta: puuttuva avain ei jata varausta
     laheta = tee_kuljetin(avain, avaa, aikaraja_s, ylaraja_s=TAUSTA_AIKARAJA_S)
     paattely = paattelyparametri(malli, paattelyraja(malli, MAX_TOKENIA, paattely_max))
+    loki_kehote(malli, viestit, MAX_TOKENIA, paattely["max_tokens"] if paattely else 0)
     try:
         vastaus = openrouter_kulut.kutsu(
             malli, viestit, laheta, tehtava=TAUSTA_TEHTAVA, nyt=nyt, tila=kulutila,
