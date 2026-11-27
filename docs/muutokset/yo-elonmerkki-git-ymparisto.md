@@ -1,0 +1,1 @@
+- testit: Pohja-testiluokka poistaa GIT_AUTHOR_*/GIT_COMMITTER_*-ympäristömuuttujat, jotta elonmerkki-testit eivät kaadu CT115:n istunnossa (muuttuja ohitti testirepon user.emailin)

@@ -7,6 +7,7 @@ kerta: heti vastauksen jalkeen lukko on yha varattu. Korjatussa koodissa release
 import threading
 import time
 import unittest
+from unittest import mock
 
 from aivo import luovutus
 from aivo.test_luovutus import LuovutusPohja
@@ -98,11 +99,26 @@ class LuovutusLukkoKilpaTesti(LuovutusPohja):
         """Koeyhdistyksen epavakaan testin kuvio: monta virhepyyntoa perakkain, mikaan ei saa 429:aa."""
         kid = self.uusi()
         t, s8 = self.ehdota_luovutus()
-        for paha in ("../ulkona", "/etc/passwd", t.upper()):
+        # t.upper() vain, jos tunnuksessa on kirjain (pelkista numeroista koostuva tunnus on sama isoilla kirjaimilla).
+        isot = (t.upper(),) if t.upper() != t else ()
+        for paha in ("../ulkona", "/etc/passwd") + isot:
             for polku, lisa in (("/api/luovutus/hyvaksy", {"vahvistus": "kyll\u00e4 " + s8}),
                                 ("/api/luovutus/muokkaa", {"teksti": "y"}), ("/api/luovutus/hylkaa", {})):
                 s = self.pyynto("POST", polku, dict({"keskustelu": kid, "tunnus": paha}, **lisa))[0]
                 self.assertIn(s, (400, 409), (polku, paha))
+
+    def test_polkujen_ohitus_perakkain_numerotunnuksella(self):
+        # Pakotettu pelkista numeroista koostuva tunnus: t.upper() == t, joten isojen kirjainten tapaus jaa pois.
+        fake = mock.Mock(token_hex=lambda n: "444444444444")
+        tunnukset, alkup = [], self.ehdota_luovutus
+
+        def ehdota(*a, **k):
+            r = alkup(*a, **k)
+            tunnukset.append(r[0])
+            return r
+        with mock.patch.object(luovutus, "secrets", fake), mock.patch.object(self, "ehdota_luovutus", ehdota):
+            self.test_polkujen_ohitus_perakkain_ei_saa_429()
+        self.assertEqual(tunnukset, ["444444444444"])   # testi todella ajettiin numerotunnuksella
 
 
 if __name__ == "__main__":

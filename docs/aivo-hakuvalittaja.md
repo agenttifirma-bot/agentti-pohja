@@ -149,7 +149,7 @@ pct exec 123 -- systemd-analyze verify /etc/systemd/system/aivo-haku.service; ec
 ```
 Odotettu: `paluuarvo 0`. Varoitukset muista yksiköistä voi ohittaa, mutta `aivo-haku.service`-alkuiset rivit kirjataan raporttiin.
 
-Hakuvälittäjä vaatii palomuurin (`Requires=nftables.service`): jos sääntöjen lataus epäonnistuu, palvelu ei käynnisty, ja palomuurin pysäytys pysäyttää sen. Tarkista ennen käynnistystä, että palomuuri on myös itsenäisesti käytössä kontin käynnistyessä.
+Hakuvälittäjä vaatii palomuurin ja WireGuard-VPN:n (`Requires=nftables.service wg-quick@wg0.service`): jos sääntöjen lataus tai tunnelin nosto epäonnistuu, palvelu ei käynnisty, ja kummankin pysäytys pysäyttää sen. Tarkista ennen käynnistystä, että palomuuri on myös itsenäisesti käytössä kontin käynnistyessä.
 
 ```bash
 pct exec 123 -- systemctl is-enabled nftables

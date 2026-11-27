@@ -7,11 +7,12 @@
 # Kontin 122 opit (virheloki 25.11.2026): ei tmpfs:aa sticky-bitilla (ei PrivateTmp- eika TemporaryFileSystem-asetusta,
 # palvelu ei kirjoita tiedostoja), ei setgid-chmodia (RestrictSUIDSGID), ja kaynnistystarkistus (ExecStartPre) avaa
 # avaimen ja Torin evasteen samalla funktiolla, samoin liputuksin ja samassa hiekkalaatikossa kuin palvelu.
-# Palomuuri on pakollinen: ilman nftables-palvelua (kill switch) hakuvalittaja ei kaynnisty, ja palomuurin pysaytys pysayttaa myos taman.
+# Palomuuri ja VPN ovat pakollisia: ilman nftables-palvelua (kill switch) ja wg-quick@wg0:aa hakuvalittaja ei kaynnisty,
+# ja kummankin pysaytys pysayttaa myos taman.
 [Unit]
 Description=Aivon hakuvalittaja (hakukontti, vain kontille 122, ulosmeno Torin kautta)
-Requires=nftables.service
-After=network-online.target nftables.service tor@default.service searxng.service
+Requires=nftables.service wg-quick@wg0.service
+After=network-online.target nftables.service wg-quick@wg0.service tor@default.service searxng.service
 Wants=network-online.target tor@default.service searxng.service
 
 [Service]

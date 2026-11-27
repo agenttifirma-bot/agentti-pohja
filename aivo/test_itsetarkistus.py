@@ -9,10 +9,11 @@ import ast
 import http.client
 import json
 import os
+import re
 import tempfile
 import threading
 import unittest
-from datetime import datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -33,7 +34,7 @@ EHDOTUS = "[[EHDOTUS tyyli.md]]\nKirjoita lyhyesti.\n[[/EHDOTUS]]"
 
 def _rooli(viestit):
     s = str(viestit[0].get("content", ""))
-    if s == it.TARKASTAJA_OHJE:
+    if s.startswith(it.TARKASTAJA_OHJE):
         return "tarkastaja"
     if "vastaaja, korjaus." in s:
         return "korjaus"
@@ -213,6 +214,74 @@ class AikaJaLahteet(unittest.TestCase):
         self.assertNotIn("keksitty", t.teksti)
         self.assertIn("[[AGENTTI]]\nselvita asia\n[[/AGENTTI]]", t.teksti)
         self.assertEqual(t.teksti.count("[[AGENTTI]]"), 1)
+
+
+class Paivamaara(unittest.TestCase):
+    """Tarkastaja saa taman paivan (Europe/Helsinki), eika taman paivan paivamaara tuota havaintoa."""
+
+    @staticmethod
+    def _valetarkastaja(malli, viestit, max_tokens=None, aikaraja_s=None):
+        # Lukee ohjeen lopusta taman paivan ja ilmoittaa vain sita myohemmat paivamaarat (kuten oikean tarkastajan pitaa).
+        ohje = viestit[0]["content"]
+        m = re.search(r"T\u00e4n\u00e4\u00e4n on (\d\d)\.(\d\d)\.(\d{4}) klo", ohje)
+        if not m:
+            return json.dumps([{"kohta": "p\u00e4iv\u00e4m\u00e4\u00e4r\u00e4", "syy": "t\u00e4m\u00e4 p\u00e4iv\u00e4 ei tiedossa"}])
+        tanaan = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        kohdat = []
+        for p, k, v in re.findall(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b", viestit[1]["content"].split("VASTAUS:", 1)[1]):
+            if date(int(v), int(k), int(p)) > tanaan:
+                kohdat.append({"kohta": "%s.%s.%s" % (p, k, v), "syy": "tulevaisuudessa"})
+        return json.dumps(kohdat)
+
+    def _aja(self, vastaus, hetki):
+        kutsut = []
+
+        def kysy(malli, viestit, max_tokens=None, aikaraja_s=None):
+            kutsut.append(viestit)
+            return self._valetarkastaja(malli, viestit, max_tokens, aikaraja_s)
+        t = it.aja(vastaus, PERUS, kysy, tarkastaja=M2, vastaaja=M1, kaytetyt=3, nyt=lambda: hetki)
+        return t, kutsut
+
+    def test_kehotteessa_on_paiva_ja_kellonaika(self):
+        t, kutsut = self._aja("P\u00e4\u00e4t\u00f6s tehtiin 26.11.2026.", datetime(2026, 11, 26, 14, 8, tzinfo=it.TZ))
+        ohje = kutsut[0][0]["content"]
+        self.assertTrue(ohje.startswith(it.TARKASTAJA_OHJE))
+        self.assertTrue(ohje.endswith("T\u00e4n\u00e4\u00e4n on 26.11.2026 klo 14.08 (Europe/Helsinki)."))
+        self.assertIn("ei ole tulevaisuudessa", ohje)
+        self.assertIn("se koskee osiota", ohje)
+        self.assertIn("pelkk\u00e4 puuttuva maininta", ohje)
+        self.assertEqual(len(ohje), it.TARKASTAJA_OHJE_MAX_MERKKIA)   # lahderajan varaus on tarkka
+
+    def test_tanaan_ei_tuota_havaintoa(self):
+        t, _ = self._aja("P\u00e4\u00e4t\u00f6s tehtiin 26.11.2026.", datetime(2026, 11, 26, 14, 8, tzinfo=it.TZ))
+        self.assertEqual((t.tila, t.kohdat), (it.OK, []))
+        t, _ = self._aja("P\u00e4\u00e4t\u00f6s tehtiin 25.11.2026.", datetime(2026, 11, 26, 0, 1, tzinfo=it.TZ))
+        self.assertEqual((t.tila, t.kohdat), (it.OK, []))
+
+    def test_huominen_tuottaa_havainnon(self):
+        t, _ = self._aja("P\u00e4\u00e4t\u00f6s tehtiin 27.11.2026.", datetime(2026, 11, 26, 14, 8, tzinfo=it.TZ))
+        self.assertEqual(t.tila, it.EPAVARMA)
+        self.assertEqual([k["kohta"] for k in t.kohdat], ["27.11.2026"])
+
+    def test_paiva_lasketaan_helsingin_ajassa(self):
+        # 25.11. klo 22.30 UTC on Helsingissa jo 26.11. klo 00.30
+        utc = datetime(2026, 11, 25, 22, 30, tzinfo=timezone.utc)
+        self.assertTrue(it.tarkastajan_ohje(utc).endswith("26.11.2026 klo 00.30 (Europe/Helsinki)."))
+        self.assertTrue(it.tarkastajan_ohje(utc.replace(tzinfo=None)).endswith("26.11.2026 klo 00.30 (Europe/Helsinki)."))
+        t, _ = self._aja("P\u00e4\u00e4t\u00f6s tehtiin 26.11.2026.", utc)
+        self.assertEqual((t.tila, t.kohdat), (it.OK, []))
+
+    def test_oletuksena_seinakello(self):
+        kutsut = []
+
+        def kysy(malli, viestit, max_tokens=None, aikaraja_s=None):
+            kutsut.append(viestit)
+            return "[]"
+        ennen = datetime.now(it.TZ).date()
+        it.aja(FAKTA, PERUS, kysy, tarkastaja=M2, vastaaja=M1)
+        jalkeen = datetime.now(it.TZ).date()
+        m = re.search(r"T\u00e4n\u00e4\u00e4n on (\d\d)\.(\d\d)\.(\d{4})", kutsut[0][0]["content"])
+        self.assertIn(date(int(m.group(3)), int(m.group(2)), int(m.group(1))), (ennen, jalkeen))
 
 
 class Rakenne(unittest.TestCase):

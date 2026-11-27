@@ -74,29 +74,14 @@ MAX_TOKENIA = 700
 # Ajattelevat mallit (OpenRouter, docs/use-cases/reasoning-tokens, luettu 25.11.2026): paattely ja vastaus jakavat saman
 # max_tokens-rajan. Kun raja tayttyy paattelyssa, vastaus on finish_reason "length" ja tyhja content, ja paattely
 # laskutetaan silti. Ajo 25.11.: qwen3.5-397b-a17b sai 800 tokenin rajalla 33/33 tyhjaa vastausta. Siksi naille
-# malleille annetaan sama raja kuin tuotannossa (yksityinen_or.MAX_TOKENIA, 8 000), eika reasoning-parametria
-# laheteta (tuotanto ei laheta sita), jotta mittaus vastaa tuotannon kayttaytymista. Lista on varovainen: vain 397b
-# on havaittu, muut ovat paattelymalleja (r1, thinking, gpt-oss) tai Qwen3-hybridiperheita, jotka ajattelevat
-# oletuksena. Ylimaarainen malli listalla nostaa vain ylarajaa; malli, joka ei ajattele, lopettaa itse. Listan
-# ulkopuolinen ajatteleva malli nakyy rivilla (finish_reason, tyhja, ajatteli) ja yhteenvedossa.
-AJATTELEVAT_MALLIT = frozenset({
-    "qwen/qwen3.5-397b-a17b",
-    "qwen/qwen3-235b-a22b-thinking-2507",
-    "deepseek/deepseek-r1-0528",
-    "qwen/qwen3.8-2.4t-a95b",
-    "qwen/qwen3.8-27b",
-    "qwen/qwen3.6-27b",
-    "qwen/qwen3.6-35b-a3b",
-    "qwen/qwen3.5-122b-a10b",
-    "qwen/qwen3.5-27b",
-    "qwen/qwen3.5-35b-a3b",
-    "qwen/qwen3.5-9b",
-    "qwen/qwen3-14b",
-    "qwen/qwen3-32b",
-    "qwen/qwen3-30b-a3b",
-    "openai/gpt-oss-120b",
-    "minimax/minimax-m3",
-})
+# malleille annetaan sama vastausraja kuin tuotannossa (yksityinen_or.MAX_TOKENIA, 8 000). Vertailu ei laheta
+# reasoning-parametria. Tuotanto lahettaa naista malleista niille, jotka ovat taulukossa yksityinen_or.PAATTELY_TUKI,
+# reasoning.max_tokens-rajan (AIVO_YKSITYINEN_PAATTELY_MAX, oletus 2 000), joten vertailu mittaa paattelyn ilman
+# rajaa (kulujen ja tyhjien vastausten osalta pahin tapaus). Joukko on yhteinen tuotannon kanssa
+# (yksityinen_or.OLETUKSENA_PAATTELEVAT): malli lisataan vain, jos se paattelee oletuksena, koska tuotanto lahettaa
+# rajan vain naille malleille. Listan ulkopuolinen ajatteleva malli nakyy rivilla (finish_reason, tyhja, ajatteli) ja
+# yhteenvedossa.
+AJATTELEVAT_MALLIT = yksityinen_or.OLETUKSENA_PAATTELEVAT
 AJATTELU_MAX_TOKENIA = yksityinen_or.MAX_TOKENIA
 # Kuljettimen aikaraja (yksi vakio): sama kuin tuotannon chatissa samalla 8 000 tokenin vastausrajalla
 # (yksityinen_or.CHAT_AIKARAJA_S, 360 s). Hidas ajatteleva malli tarvitsee 8 000 tokeniin noin 320 s, joten
