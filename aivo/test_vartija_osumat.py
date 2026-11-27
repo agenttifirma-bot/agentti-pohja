@@ -2,7 +2,8 @@
 tilapaishakemistossa ja laskenta. Vain stdlib.
 
 Osuman maaritelma: esta + hylatty/pala_poistettu/hyvaksytty (muutettu teksti) = osuma; sallittu + hyvaksytty = osuma;
-sallittu + hylatty/pala_poistettu = ohi; kysy ei lasketa osumaprosenttiin (maara erikseen)."""
+sallittu + hylatty/pala_poistettu = ohi; kysy ei lasketa osumaprosenttiin (maara erikseen). Aiempi esto periytyy
+vartijan arvioksi vain hyvaksynnassa; hylkayksessa ja palan poistossa pidetaan vartijan oma arvio (muutettu=true)."""
 import contextlib
 import io
 import json
@@ -14,7 +15,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from aivo import luovutus, luovutuspaketti as lp, vartija_osumat as vo
+from aivo import luovutus, luovutuspaketti as lp, vartija, vartija_osumat as vo, yksityinen
+from aivo.test_luovutus import LuovutusPohja
 from aivo.yksityinen import YksityinenVirhe
 
 ESTO = "Palvelin %s vastaa.\n" % ".".join(("192", "168", "1", "50"))           # mekaaninen estotyyppi: yksityinen IP-osoite
@@ -113,6 +115,16 @@ class LuovutusKirjausTesti(Pohja):
         [r] = self.rivit()
         self.assertEqual((r["vartija"], r["ratkaisu"], r.get("muutettu")), ("esta", "hyvaksytty", True))
         self.assertEqual(vo.luokittele(r["vartija"], r["ratkaisu"]), "osuma")
+
+    def test_esta_ja_muutetun_tekstin_hylkays_sallittuna_on_ohi(self):
+        t, sha = self.ehdotus(ESTO)
+        with self.assertRaises(luovutus.VartijaEsto):
+            luovutus.hyvaksy(self.luov, t, "kyll\u00e4 " + sha[:8], self.kirjasto, julkaise=julkaise, tarkistus=turvallinen)
+        luovutus.muokkaa_ehdotus(self.luov, t, TAVALLINEN)
+        luovutus.hylkaa_ehdotus(self.luov, t, tarkistus=turvallinen)
+        [r] = self.rivit()
+        self.assertEqual((r["vartija"], r["ratkaisu"], r.get("muutettu")), ("sallittu", "hylatty", True))
+        self.assertEqual(vo.luokittele(r["vartija"], r["ratkaisu"]), "ohi")
 
     def test_julkaisun_virhe_ei_kirjaa_ratkaisua(self):
         t, sha = self.ehdotus(TAVALLINEN)
@@ -235,6 +247,35 @@ class LaskentaTesti(Pohja):
         for i in range(n):
             self.assertTrue(vo.kirjaa_ratkaisu(self.luov, lahde, "%s-%d" % (vartija, i), vartija, ratkaisu))
 
+    def test_esto_ja_sallittu_hylkays_on_ohi(self):
+        vo.kirjaa_esto(self.luov, "luovutus", "t1")
+        vo.kirjaa_ratkaisu(self.luov, "luovutus", "t1", "sallittu", "hylatty")
+        [r] = self.rivit()
+        self.assertEqual((r["vartija"], r["ratkaisu"], r.get("muutettu")), ("sallittu", "hylatty", True))
+        self.assertEqual(vo.laske(vo.lue(self.luov))["ohi"], 1)
+
+    def test_esto_ja_sallittu_hyvaksynta_on_osuma(self):
+        vo.kirjaa_esto(self.luov, "luovutus", "t1")
+        vo.kirjaa_ratkaisu(self.luov, "luovutus", "t1", "sallittu", "hyvaksytty")
+        [r] = self.rivit()
+        self.assertEqual((r["vartija"], r["ratkaisu"], r.get("muutettu")), ("esta", "hyvaksytty", True))
+        self.assertEqual(vo.laske(vo.lue(self.luov))["osuma"], 1)
+
+    def test_esto_ja_sallitun_palan_poisto_on_ohi(self):
+        vo.kirjaa_esto(self.luov, "paketti", "p1", pala=2)
+        vo.kirjaa_ratkaisu(self.luov, "paketti", "p1", "sallittu", "pala_poistettu", pala=2)
+        vo.kirjaa_ratkaisu(self.luov, "paketti", "p1", "sallittu", "pala_poistettu", pala=1)   # eri pala: ei estoa
+        r = {x["pala"]: x for x in self.rivit()}
+        self.assertEqual((r[2]["vartija"], r[2]["ratkaisu"], r[2].get("muutettu")), ("sallittu", "pala_poistettu", True))
+        self.assertNotIn("muutettu", r[1])
+        self.assertEqual(vo.laske(vo.lue(self.luov))["ohi"], 2)
+
+    def test_esto_ja_kysy_hylkays_pysyy_kysyna(self):
+        vo.kirjaa_esto(self.luov, "luovutus", "t1")
+        vo.kirjaa_ratkaisu(self.luov, "luovutus", "t1", "kysy", "hylatty")
+        [r] = self.rivit()
+        self.assertEqual((r["vartija"], r.get("muutettu")), ("kysy", True))
+
     def test_luokittelu(self):
         odotus = {("esta", "hylatty"): "osuma", ("esta", "pala_poistettu"): "osuma", ("esta", "hyvaksytty"): "osuma",
                   ("sallittu", "hyvaksytty"): "osuma", ("sallittu", "hylatty"): "ohi",
@@ -301,3 +342,27 @@ class LaskentaTesti(Pohja):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChatHylkaysTesti(LuovutusPohja):
+    """aivo/chat.py _luovutus_hylkaa: hylkays valittaa vartijan tarkistuksen (tila.luovutuksen_tarkistus), joten
+    tallennettu vartijamallin tulos samasta sha:sta nakyy osumarivilla. Ilman tarkistusta arvio olisi aina kysy."""
+
+    def test_hylkays_chatista_kirjaa_vartijan_arvion(self):
+        kid = self.uusi()
+        teksti = "Toteuta mittari X.\n"
+        t, _ = self.ehdota_luovutus(teksti)
+        vartija.tallenna_tulos(self.tila.luovutukset, t, {"sha": yksityinen.sha(teksti), "tila": vartija.TILA_TARKISTETTU,
+                                                          "arvio": "ei", "merkinnat": []})
+        s, d = self.pyynto("POST", "/api/luovutus/hylkaa", {"keskustelu": kid, "tunnus": t})
+        self.assertEqual((s, d["tulos"]), (200, "hylatty"))
+        [r] = [x for x in vo.lue(self.tila.luovutukset) if x.get("tapahtuma") == "ratkaisu"]
+        self.assertEqual((r["lahde"], r["tunnus"], r["vartija"], r["ratkaisu"]), ("luovutus", t, "sallittu", "hylatty"))
+        self.assertEqual(vo.luokittele(r["vartija"], r["ratkaisu"]), "ohi")
+
+    def test_hylkays_chatista_ilman_mallin_tulosta_on_kysy(self):
+        kid = self.uusi()
+        t, _ = self.ehdota_luovutus()
+        self.assertEqual(self.pyynto("POST", "/api/luovutus/hylkaa", {"keskustelu": kid, "tunnus": t})[0], 200)
+        [r] = [x for x in vo.lue(self.tila.luovutukset) if x.get("tapahtuma") == "ratkaisu"]
+        self.assertEqual(r["vartija"], "kysy")

@@ -4,12 +4,16 @@ Kirjaus (yksi rivi per ratkaisu) tiedostoon <luovutukset>/vartija_osumat.jsonl (
   {"aika", "lahde", "tunnus", ["pala"], "tapahtuma": "ratkaisu", "vartija": esta|kysy|sallittu,
    "ratkaisu": hyvaksytty|hylatty|pala_poistettu, ["muutettu": true]}
   Ei tekstia, ei sha:ta eika palojen sisaltoa. lahde: "luovutus" tai "paketti" (myohemmin esim. "haku" samaan
-  tiedostoon). Lisaksi estetty hyvaksyntayritys kirjataan riviksi tapahtuma="esto" (ilman ratkaisua), jotta
-  myohempi ratkaisu muokatusta tekstista lasketaan alkuperaisen eston mukaan (muutettu=true).
+  tiedostoon). Lisaksi estetty hyvaksyntayritys kirjataan riviksi tapahtuma="esto" (ilman ratkaisua).
+
+Aiempi esto ja myohempi ratkaisu (muutettu=true kirjataan aina, kun samasta kohteesta on aiempi esto):
+  * hyvaksytty: vartijan arvioksi kirjataan esta (alkuperainen esto piti, Tony hyvaksyi vasta muokatun tekstin).
+  * hylatty tai pala_poistettu: vartijan arvioksi kirjataan vartijan oma arvio muokatusta tekstista. Jos vartija
+    paasti muokatun tekstin lapi ja Tony silti hylkasi sen, se on ohilyonti eika osuma.
 
 Osuma:
-  * esta + hylatty tai pala_poistettu = osuma; esta + hyvaksytty (muutettu teksti) = osuma;
-  * sallittu + hyvaksytty = osuma; sallittu + hylatty tai pala_poistettu = ohi;
+  * esta + hylatty tai pala_poistettu = osuma; esta + hyvaksytty (vain aiemman eston perimana) = osuma;
+  * sallittu + hyvaksytty = osuma; sallittu + hylatty tai pala_poistettu = ohi (myos muutettu=true);
   * kysy: ei lasketa osumaprosenttiin, maara naytetaan erikseen.
 
 Kirjauksen virhe ei koskaan estaa hyvaksyntaa eika hylkaysta: stderriin vain virheen tyyppi.
@@ -101,8 +105,9 @@ def kirjaa_esto(hakemisto, lahde, tunnus, pala=None, nyt=_nyt):
 
 
 def kirjaa_ratkaisu(hakemisto, lahde, tunnus, vartija, ratkaisu, pala=None, nyt=_nyt):
-    """Yksi rivi Tonyn ratkaisusta. Jos samasta kohteesta on aiempi esto, vartijan arvioksi kirjataan esta ja
-    muutettu=true (teksti muokattiin eston jalkeen). Palauttaa True, jos kirjaus onnistui."""
+    """Yksi rivi Tonyn ratkaisusta. Jos samasta kohteesta on aiempi esto, rivi saa muutettu=true; vain ratkaisulla
+    hyvaksytty vartijan arvioksi kirjataan esta (eston perinta). Hylkayksessa ja palan poistossa pidetaan vartijan
+    oma arvio muokatusta tekstista, ettei ohilyonti nay osumana. Palauttaa True, jos kirjaus onnistui."""
     try:
         if vartija not in VARTIJA_ARVOT or ratkaisu not in RATKAISUT:
             raise ValueError("tuntematon arvo")
@@ -111,7 +116,9 @@ def kirjaa_ratkaisu(hakemisto, lahde, tunnus, vartija, ratkaisu, pala=None, nyt=
         if pala is not None:
             rivi["pala"] = pala
         if vartija != "esta" and _oli_esto(hakemisto, lahde, tunnus, pala):
-            rivi["vartija"], rivi["muutettu"] = "esta", True
+            rivi["muutettu"] = True
+            if ratkaisu == "hyvaksytty":
+                rivi["vartija"] = "esta"
         _kirjoita(hakemisto, rivi)
         return True
     except Exception as e:      # kirjaus ei saa estaa hyvaksyntaa eika hylkaysta
