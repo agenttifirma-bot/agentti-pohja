@@ -26,17 +26,39 @@ import re
 import sys
 from pathlib import Path
 
+try:
+    from claudejono import valmis, virheopit
+except ImportError:   # `python3 tools/virhemittari.py`: polun alussa on tools/, ei repon juuri
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from claudejono import valmis, virheopit
+
 OTSIKKO_ALKU = "## Virhemittari"
 LUOKAT = ("1", "2", "3", "4", "?")
+# Ei virhe: KESKEN, jossa raportti itse kertoo, ettei todennus ollut mahdollinen (ei luokkaa 1-4, oma sarake).
+MAHDOTON = "0"
+LUOKAT_KAIKKI = LUOKAT + (MAHDOTON,)
+# KESKEN-syyt (ajuri.KESKEN_SYYT): rivi-puuttuu ja ei-todennettu ovat luokan 1 virheita; odottavat eivat ole virheita.
+SYY_VIRHE = ("rivi-puuttuu", "ei-todennettu")
+SYY_ODOTTAA = ("odottaa-yhdistamista", "odottaa-kayttoonottoa")
+KESKEN_SYY_RE = re.compile(r"^- KESKEN-syy:[ \t]*(\S+)[ \t]*$", re.M)
+# Virhelokin vakavuus: vain avoimesti kirjattu rivi "Vakavuus: vakava" merkinnan rungossa. Ei arvata (lokissa ei ollut kenttaa 6.11.).
+VAKAVUUS_RE = re.compile(r"^[ \t>*_-]*Vakavuus(?:\*\*|__)?[ \t]*:(?:\*\*|__)?[ \t]*(vakava)\b", re.I | re.M)
 LUOKKA_OTSIKOT = {
     "1": "1 tehty \u2260 toimii",
     "2": "2 muistista, ei l\u00e4hteest\u00e4",
     "3": "3 v\u00e4\u00e4r\u00e4 oletus ymp\u00e4rist\u00f6st\u00e4",
     "4": "4 muu",
     "?": "luokittelematon",
+    MAHDOTON: "KESKEN: todennus mahdoton",
 }
 # Epaonnistumisen syy ajon tekstissa: resurssiraja tai ajuri, ei kolmea juurisyyta -> 4 muu.
 RAJA_RE = re.compile(r"aikakatkaisu|error_max_turns|kierrosraja|lukukelvoton", re.I)
+# KESKEN, jonka raportti itse sanoo todennuksen olleen mahdoton (kehote: rivi jatetaan pois, tila KESKEN on oikein).
+# Konservatiivinen: vain nama ilmaukset; kielteinen ("oli mahdollinen"), lainaus, koodi ja sitaattirivi eivat riita.
+TODENNUS_MAHDOTON_RE = re.compile(
+    r"\bei todennettu\b[^\n]{0,150}?\brajattu pois\b|\btodennus ei ollut mahdollinen\b"
+    r"|\bymp[a\u00e4]rist[o\u00f6] ei salli\b", re.I)
+_LAINAUS_RE = re.compile(r"```.*?```|`[^`\n]*`|\"[^\"\n]*\"|\u201c[^\u201d\n]*\u201d|'[^'\n]*'", re.S)
 
 # Vanhat virhelokin merkinnat: (tunnistava ASCII-osa merkinnan tekstista, luokka). Perusteet:
 # virheiden-ehkaisy.md luettelee tapaukset luokkiin 1-3; muut luokitellaan vain jos merkinnan oma Syy-teksti
@@ -86,14 +108,33 @@ def parse_paiva(teksti):
         return None
 
 
+def osio_paiva(otsikko):
+    """Virhelokin osio-otsikon alun paiva: '5.11.2026', '5.-6.11.2026' (en-viiva tai yhdysmerkki) tai '30.10.-2.11.2026' -> date.
+    Valin alkupaiva ratkaisee viikon. Muuten None."""
+    m = re.match(r"(\d{1,2})\.(?:(\d{1,2})\.)?[ \t]*(?:[\u2013\u2014-][ \t]*\d{1,2}\.(\d{1,2})\.|)(\d{4})\b", otsikko) \
+        if re.match(r"\d{1,2}\.(?:\d{1,2}\.)?[ \t]*[\u2013\u2014-]", otsikko) else None
+    try:
+        if m:
+            vuosi = int(m.group(4))
+            if m.group(2) and m.group(3) and int(m.group(2)) > int(m.group(3)):
+                vuosi -= 1   # vuodenvaihteen yli: '30.12.-2.1.2027' alkaa vuonna 2026
+            return datetime.date(vuosi, int(m.group(2) or m.group(3)), int(m.group(1)))
+    except ValueError:
+        return None
+    return parse_paiva(otsikko)
+
+
 def viikko(paiva):
     """(ISO-vuosi, ISO-viikko)."""
     iso = paiva.isocalendar()
     return (iso[0], iso[1])
 
 
+KENTTA_JUURISYY_RE = re.compile(r"Juurisyy:\s*([1-4])\b", re.IGNORECASE)   # uuden muodon merkinta (claudejono/virheopit.py)
+
+
 def luokittele_loki(teksti):
-    m = TUNNISTE_RE.search(teksti)
+    m = KENTTA_JUURISYY_RE.search(teksti) or TUNNISTE_RE.search(teksti)
     if m:
         return m.group(1)
     for osa, luokka in LOKI_SAANNOT:
@@ -108,11 +149,11 @@ def lue_loki(teksti):
     nykyinen = None
     for rivi in teksti.splitlines():
         alku = re.match(r"- (\d{4}-\d{2}-\d{2}|\d{1,2}\.\d{1,2}\.\d{4})\b", rivi)
-        osio = re.match(r"## (\d{1,2}\.\d{1,2}\.\d{4})\b", rivi)
+        osio = re.match(r"## (\d{1,2}\.(?:\d{1,2}\.)?[ \t]*(?:[\u2013\u2014-][ \t]*\d{1,2}\.\d{1,2}\.)?\d{0,4})", rivi)
         if alku or osio:
             if nykyinen:
                 merkinnat.append(nykyinen)
-            nykyinen = [parse_paiva((alku or osio).group(1)), rivi]
+            nykyinen = [parse_paiva(alku.group(1)) if alku else osio_paiva(rivi[3:]), rivi]
         elif rivi.startswith("#"):
             if nykyinen:
                 merkinnat.append(nykyinen)
@@ -204,8 +245,36 @@ def lue_tulos(teksti):
     return (tila.group(1), paiva, teksti) if paiva else None
 
 
+def todennus_mahdoton(teksti):
+    """True, jos raportin oma teksti (ilman lainauksia, koodia ja sitaattirivien) sanoo todennuksen olleen mahdoton."""
+    ilman = _LAINAUS_RE.sub(" ", teksti)
+    ilman = "\n".join(r for r in ilman.splitlines() if not r.lstrip().startswith(">"))
+    return bool(TODENNUS_MAHDOTON_RE.search(ilman))
+
+
+def lue_kesken_syy(teksti):
+    """Tulostiedoston otsikon '- KESKEN-syy: koodi' -rivi; None jos rivia ei ole (vanha tulos)."""
+    # Vain otsikkolohko (yhtenainen '- ' -rivien jakso '- Tila:' -rivista); raportin rungon rivia ei lueta.
+    otsikko = []
+    for rivi in teksti.splitlines():
+        if otsikko or rivi.startswith("- Tila:"):
+            if not rivi.startswith("- "):
+                break
+            otsikko.append(rivi)
+    m = KESKEN_SYY_RE.search("\n".join(otsikko))
+    return m.group(1).lower() if m else None
+
+
 def luokittele_ajo(tila, teksti):
+    """'1'..'4'/'?' = virhe; 'O' = odottaa (ei virhe, oma sarake); None = ei virhe."""
     if tila == "KESKEN":
+        # Ajuri (claudejono/ajuri.py, on_todennettu) asettaa KESKEN, kun raportissa ei ole kelvollista todennusta.
+        # Syykoodi: odottaa-* = tyo on valmis ja odottaa ihmista, ei virhe. rivi-puuttuu, ei-todennettu, tuntematon
+        # koodi ja vanha tulos ilman syykoodia = tehty != toimii, luokka 1.
+        if lue_kesken_syy(teksti) in SYY_ODOTTAA:
+            return "O"
+        if todennus_mahdoton(teksti):
+            return MAHDOTON
         # Ajuri (claudejono/ajuri.py, on_todennettu) asettaa KESKEN vain, kun raportissa ei ole kelvollista
         # "Todennettu kaytossa: miten" -rivia: tehty != toimii. Siksi KESKEN on aina luokka 1.
         return "1"
@@ -214,14 +283,16 @@ def luokittele_ajo(tila, teksti):
     return None
 
 
-def laske(loki_teksti, tulokset, nyt, tehtavat=None):
-    """tulokset: [teksti]; tehtavat: [date] (None = ei tietoa). Palauttaa (rivit, tilastot);
-    rivit = viikkojarjestyksessa dictit."""
+def laske(loki_teksti, tulokset, nyt, tehtavat=None, tarkastukset=None):
+    """tulokset: [teksti]; tehtavat: [date] (None = ei tietoa); tarkastukset: {tulosnimi: tarkastusteksti} (valmis.py).
+    Palauttaa (rivit, tilastot); rivit = viikkojarjestyksessa dictit.
+    VALMIS-tulos, jonka tarkastaja totesi toimimattomaksi, on virhe (luokka 1, A516)."""
+    tarkastukset = tarkastukset or {}
     viikot = {}
 
     def rivi(v):
         return viikot.setdefault(v, {
-            "loki": 0, "ajot": 0, "luokat": dict.fromkeys(LUOKAT, 0), "merkinnat": [],
+            "loki": 0, "ajot": 0, "valmis_rikki": 0, "odottaa": 0, "vakavia": 0, "luokat": dict.fromkeys(LUOKAT_KAIKKI, 0), "merkinnat": [],
             "tunnit": [], "kuka": dict.fromkeys(HAVAITSIJAT, 0), "ehkaisy": dict.fromkeys(EHKAISYT, 0),
             "tehtavia": 0 if tehtavat is not None else None})
 
@@ -231,25 +302,41 @@ def laske(loki_teksti, tulokset, nyt, tehtavat=None):
         r["loki"] += 1
         luokka = luokittele_loki(teksti)
         r["luokat"][luokka] += 1
+        r["vakavia"] += 1 if VAKAVUUS_RE.search(teksti) else 0
         r["merkinnat"].append((luokka, ehkaisy(teksti)))
         r["kuka"][havaitsija(teksti)] += 1
         h = havaitsemisaika_h(teksti)
         if h is not None:
             r["tunnit"].append(h)
         n_loki += 1
-    n_ajot = n_luettu = 0
-    for teksti in tulokset:
+    n_ajot = n_luettu = n_rikki = 0
+    for kohde in tulokset:
+        # Avain on tulostiedoston nimi (sama kuin tarkastus-tiedoston pohja ja aamukoosteen p.name).
+        # Pelkka teksti on sallittu (ei avainta -> ei voi paattaa toimimattomaksi).
+        tulosnimi, teksti = kohde if isinstance(kohde, tuple) else (None, kohde)
         t = lue_tulos(teksti)
         if not t:
             continue
         n_luettu += 1
         luokka = luokittele_ajo(t[0], t[2])
+        rikki = False
+        if luokka is None and t[0] == "VALMIS":
+            rikki = tulosnimi is not None and valmis.toimimaton(tarkastukset.get(tulosnimi))
+            if rikki:
+                luokka = "1"   # tehty != toimii
         if luokka is None:
             continue
         r = rivi(viikko(t[1]))
+        if luokka == "O":
+            r["odottaa"] += 1
+            continue
+        if rikki:
+            r["valmis_rikki"] += 1
+            n_rikki += 1
         r["ajot"] += 1
         r["luokat"][luokka] += 1
-        r["kuka"][TUNTEMATON] += 1  # ajurin tilasta ei nay, kuka virheen havaitsi
+        if luokka != MAHDOTON:
+            r["kuka"][TUNTEMATON] += 1  # ajurin tilasta ei nay, kuka virheen havaitsi
         n_ajot += 1
     for paiva in tehtavat or []:
         rivi(viikko(paiva))["tehtavia"] += 1
@@ -264,7 +351,8 @@ def laske(loki_teksti, tulokset, nyt, tehtavat=None):
             paiva += datetime.timedelta(days=7)
     jarj = sorted(viikot)
     for i, v in enumerate(jarj):
-        viikot[v]["yht"] = viikot[v]["loki"] + viikot[v]["ajot"]
+        # Virheita: ei lasketa KESKEN-ajoja, joissa todennus oli mahdoton (ne eivat ole virhe).
+        viikot[v]["yht"] = viikot[v]["loki"] + viikot[v]["ajot"] - viikot[v]["luokat"][MAHDOTON]
         viikot[v]["toisto"] = toisto(viikot, jarj, i)
         viikot[v]["mediaani_h"] = mediaani(viikot[v]["tunnit"])
         viikot[v]["per10"] = (viikot[v]["yht"] * 10.0 / viikot[v]["tehtavia"]
@@ -273,7 +361,7 @@ def laske(loki_teksti, tulokset, nyt, tehtavat=None):
             for l, e in viikot[v]["merkinnat"]:
                 if l == luokka:
                     viikot[v]["ehkaisy"][e] += 1
-    return [(v, viikot[v]) for v in jarj], {"loki": n_loki, "ajot": n_ajot, "tulostiedostoa": n_luettu}
+    return [(v, viikot[v]) for v in jarj], {"loki": n_loki, "ajot": n_ajot, "tulostiedostoa": n_luettu, "valmis_rikki": n_rikki}
 
 
 def putki(viikot, jarj, i, luokka):
@@ -312,14 +400,23 @@ def viikko_nimi(v, nyt):
     return nimi
 
 
+def oppimittari(oppi, v):
+    """Viikon solu: 'toisto/uusia' = montako viikon uudesta virhelokimerkinnasta oli jo lokissa. 'ei kirjattu', jos viikolla ei
+    ole uuden muodon merkintoja (vanhoista ei tiedeta, joten ei arvata)."""
+    r = (oppi or {}).get(v)
+    return "ei kirjattu" if not r else "%d/%d" % (r["toisto"], r["yht"])
+
+
 def luku(x):
     """Desimaaliluku suomalaisittain (pilkku, yksi desimaali); None -> tuntematon."""
     return TUNTEMATON if x is None else ("%.1f" % x).replace(".", ",")
 
 
-def muodosta_osio(rivit, tilastot, nyt):
-    ot = ["Viikko", "Virheit\u00e4", "Virhelokissa", "Ajoissa (EP\u00c4ONNISTUI/KESKEN)"]
-    ot += [LUOKKA_OTSIKOT[k] for k in LUOKAT]
+def muodosta_osio(rivit, tilastot, nyt, oppi=None):
+    """oppi = virheopit.toistotilasto(...): oppimittari (virheet, jotka oli jo lokissa, ja miksi ehkaisy ei toiminut)."""
+    ot = ["Viikko", "Virheit\u00e4", "Virhelokissa", "Ajoissa (EP\u00c4ONNISTUI/KESKEN/VALMIS ja toimimaton)", "VALMIS, my\u00f6hemmin toimimaton", "Vakavia (lokissa)", "Odottaa (ei virhe)"]
+    ot += [LUOKKA_OTSIKOT[k] for k in LUOKAT_KAIKKI]
+    ot.append("Oli jo lokissa (toisto/uusia)")
     ot.append("Toistuiko sama juurisyy")
     ot += ["Toistuneet: ehk\u00e4isy " + e for e in EHKAISYT]
     ot.append("Havaitsemisaika, mediaani (h)")
@@ -329,18 +426,28 @@ def muodosta_osio(rivit, tilastot, nyt):
            "tulokset viikotetaan tulostiedoston ajan mukaan.", "",
            "| " + " | ".join(ot) + " |", "|" + "---|" * len(ot)]
     for v, r in rivit:
-        solut = [viikko_nimi(v, nyt), str(r["yht"]), str(r["loki"]), str(r["ajot"])]
-        solut += [str(r["luokat"][k]) for k in LUOKAT]
+        solut = [viikko_nimi(v, nyt), str(r["yht"]), str(r["loki"]), str(r["ajot"]), str(r["valmis_rikki"]), str(r["vakavia"]), str(r["odottaa"])]
+        solut += [str(r["luokat"][k]) for k in LUOKAT_KAIKKI]
+        solut.append(oppimittari(oppi, v))
         solut.append(r["toisto"])
         solut += [str(r["ehkaisy"][e]) for e in EHKAISYT]
         solut.append(luku(r["mediaani_h"]))
         solut += [str(r["kuka"][k]) for k in HAVAITSIJAT]
         solut += ["?" if r["tehtavia"] is None else str(r["tehtavia"]), luku(r["per10"])]
         out.append("| " + " | ".join(solut) + " |")
+    syyt = ["- %s (vk %d): %s" % (pvm, v[1], syy) for v, r in sorted((oppi or {}).items()) for pvm, syy in r["syyt"]]
+    out += ["", "Miksi ehk\u00e4isy ei toiminut (virhelokin `Toisto: kyll\u00e4` -merkinn\u00e4t, oppimittari):"]
+    out += syyt or ["- Ei toistoja kirjattu uuden muodon merkinn\u00f6iss\u00e4 (muoto: `claudejono/virheopit.py`, voimassa %s alkaen)." % virheopit.ALKAEN]
     out += ["",
             "Luokitus: virhelokin merkinn\u00e4t `virheiden-ehkaisy.md`:n kolmen juurisyyn mukaan; jos luokkaa ei n\u00e4e, "
             "merkint\u00e4 on luokittelematon (ei arvata). Ajoista KESKEN (ei kelvollista \"Todennettu k\u00e4yt\u00f6ss\u00e4\" -rivi\u00e4) on luokka 1 "
-            "(4.11. l\u00f6ydetty juurisyy), EP\u00c4ONNISTUI aikakatkaisun tai kierrosrajan takia on luokka 4. Sama juurisyy "
+            "(4.11. l\u00f6ydetty juurisyy), paitsi jos raportti itse kertoo, ettei todennus ollut mahdollinen: se lasketaan "
+            "sarakkeeseen \"KESKEN: todennus mahdoton\", mukaan sarakkeeseen Ajoissa mutta ei virheisiin, luokkaan 1 eik\u00e4 toistolaskentaan. "
+            "KESKEN-syyt `odottaa-yhdistamista` ja `odottaa-kayttoonottoa` n\u00e4kyv\u00e4t omassa sarakkeessaan eiv\u00e4tk\u00e4 ole virheit\u00e4. "
+            "VALMIS-tulos, jonka riippumaton tarkastaja totesi toimimattomaksi "
+            "(`tulokset/<tulos>.tarkastus.md`: \"Toimii k\u00e4yt\u00f6ss\u00e4: ei\" + todiste), on luokka 1 ja n\u00e4kyy omassa sarakkeessaan. "
+            "Vakavia = virhelokin merkinn\u00e4t, joissa on rivi `Vakavuus: vakava` (ei arvata). "
+            "EP\u00c4ONNISTUI aikakatkaisun tai kierrosrajan takia on luokka 4. Sama juurisyy "
             "kahtena viikkona: korjausehdotus koodiin; kolmantena: Tonylle (A8).",
             "",
             "Lis\u00e4mittarit (Tonyn p\u00e4\u00e4t\u00f6s 11.11.2026): ehk\u00e4isy (koodi/ohje/ei viel\u00e4) lasketaan vain toistuneiden "
@@ -350,8 +457,8 @@ def muodosta_osio(rivit, tilastot, nyt):
             "joten ne lasketaan tuntemattomiin.",
             "",
             "Todennettu k\u00e4yt\u00f6ss\u00e4: skripti ajettu %s oikeaa dataa vastaan, luettu %d virhelokimerkint\u00e4\u00e4 ja "
-            "%d tulostiedostoa (joista %d EP\u00c4ONNISTUI tai KESKEN)."
-            % (nyt.isoformat(), tilastot["loki"], tilastot["tulostiedostoa"], tilastot["ajot"])]
+            "%d tulostiedostoa (joista %d EP\u00c4ONNISTUI, KESKEN (ilman odottava-syyt\u00e4) tai toimimattomaksi todettu VALMIS; n\u00e4ist\u00e4 VALMIS: %d)."
+            % (nyt.isoformat(), tilastot["loki"], tilastot["tulostiedostoa"], tilastot["ajot"], tilastot["valmis_rikki"])]
     return out
 
 
@@ -376,10 +483,13 @@ def main(argv=None):
         nyt = parse_paiva(a.nyt) if a.nyt else datetime.date.today()
         d = Path(a.docs)
         loki = (d / "virheloki.md").read_text(encoding="utf-8")
-        tulokset = [p.read_text(encoding="utf-8", errors="replace") for p in sorted((d / "tulokset").glob("*.md"))]
+        tulokset = [(p.name, p.read_text(encoding="utf-8", errors="replace"))
+                    for p in valmis.tulostiedostot(d / "tulokset")]
         tehtavat = lue_tehtavat(d / "tehtavat") if (d / "tehtavat").is_dir() else None
-        rivit, tilastot = laske(loki, tulokset, nyt, tehtavat)
-        osio = muodosta_osio(rivit, tilastot, nyt)
+        tarkastukset = {p.name[:-len(valmis.PAATE)] + ".md": p.read_text(encoding="utf-8", errors="replace")
+                        for p in (d / "tulokset").glob("*" + valmis.PAATE)}
+        rivit, tilastot = laske(loki, tulokset, nyt, tehtavat, tarkastukset)
+        osio = muodosta_osio(rivit, tilastot, nyt, virheopit.toistotilasto(virheopit.jasenna(loki)))
         if a.kirjoita or a.ulos:
             uusi = korvaa_osio((d / "tulostaulu.md").read_text(encoding="utf-8"), osio)
             kohde = Path(a.ulos) if a.ulos else d / "tulostaulu.md"

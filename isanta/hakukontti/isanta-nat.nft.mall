@@ -1,0 +1,42 @@
+# Aivon hakuverkko isannalla (pohja). Asennus: /etc/aivo-hakuverkko.nft (root:root 0644), ladataan vain sisasillan
+# post-up-rivilla. Ohje: docs/aivo-hakukontti.md. Prosenttimerkkien valiset paikkamerkit tayttaa wg_asetus.py isanta: osoitteet
+# asennuksen asetustiedostosta, KIELLETYT4 kontin palomuuripohjasta ja WireGuard-palvelin wg0.confin Endpoint-rivista.
+# Repossa ei ole infran osoitteita.
+# Periaate: kontista 123 ulos vain UDP WireGuard-palvelimelle. Sijoittajan yhteydesta nakyy vain salattu WireGuard.
+# Asennusaikana (joukko asennus, alkiot vanhenevat itsestaan) lisaksi TCP 80/443 ja nimipalvelu 9.9.9.9 pakettien
+# lataukseen. Yleista TCP:ta internetiin ei sallita.
+# Rinnakkain Tailscalen iptables-legacy-saantojen kanssa: tama taulu ei koske tailscale0:n liikenteeseen eika
+# Tailscalen merkittyihin (0x40000) paketteihin; Tailscalen MASQUERADE koskee vain merkittyja paketteja.
+
+table inet aivo_hakuverkko
+delete table inet aivo_hakuverkko
+table inet aivo_hakuverkko {
+	set asennus {
+		type ipv4_addr
+		flags timeout
+		comment "asennusaikainen suora ulosmeno, alkiot vanhenevat itsestaan"
+	}
+
+	chain forward {
+		type filter hook forward priority filter; policy accept;
+		oifname "%SISASILTA%" ct state established,related accept
+		iifname "%SISASILTA%" oifname "%SISASILTA%" ip saddr %IP122% ip daddr %IP123% tcp dport 8890 accept comment "sillan sisalla vain 122 hakuvalittajaan"
+		oifname "%SISASILTA%" counter drop comment "ei muita uusia yhteyksia siltaan"
+		iifname "%SISASILTA%" ip saddr %IP123% oifname "%SILTA%" ip daddr { %KIELLETYT4% } counter drop comment "ei lahiverkkoon"
+		iifname "%SISASILTA%" ip saddr %IP123% oifname "%SILTA%" ip daddr %WG_PALVELIN% udp dport %WG_PORTTI% counter accept comment "WireGuard-palvelin"
+		iifname "%SISASILTA%" ip saddr %IP123% ip saddr @asennus oifname "%SILTA%" tcp dport { 80, 443 } counter accept comment "asennusaikainen pakettilataus"
+		iifname "%SISASILTA%" ip saddr %IP123% ip saddr @asennus oifname "%SILTA%" ip daddr 9.9.9.9 udp dport 53 counter accept comment "asennusaikainen nimipalvelu"
+		iifname "%SISASILTA%" counter drop comment "muu sillasta ulos"
+		iifname "%SILTA%" oifname != "%SILTA%" ct state new counter drop comment "ei uutta reititysta kotiverkosta tailnetiin tai muihin verkkoihin"
+	}
+
+	chain input {
+		type filter hook input priority filter; policy accept;
+		iifname "%SISASILTA%" counter drop comment "silta ei paase isantaan"
+	}
+
+	chain postrouting {
+		type nat hook postrouting priority srcnat; policy accept;
+		ip saddr %IP123% oifname "%SILTA%" masquerade
+	}
+}

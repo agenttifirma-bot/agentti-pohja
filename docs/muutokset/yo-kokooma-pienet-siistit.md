@@ -1,0 +1,1 @@
+- kokooma: yhdistää neljä pientä, ristiriidatonta PR:ää (#302 Tila: KESKEN -ilmoitus, #407 tilannekuvan porttitauko, #416 github_luku-kärjen git-vertailu, #420 pr_kutsu-testin päivä); korvaa erilliset PR:t
