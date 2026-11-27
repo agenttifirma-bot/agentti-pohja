@@ -97,11 +97,15 @@ IPV6_RE = re.compile(r"(?<![\w:.%])[0-9A-Fa-f:.]{2,}(?:%[\w.-]{1,32})?")
 IPV6_EHDOKAS_MAX = 64
 # Lokimuotoinen IPv6 (ip:fe80::1, addr:fd7a:..., IPv6:fe80::1, a_fe80::1, katso.fe80::1, (IPv6):fe80::1,
 # ip::fe80::1): IPV6_RE ei ala sanan, kaksoispisteen tai pisteen jalkeen, joten nama haetaan erikseen erottimen
-# ([:_.]) jalkeen. _etuliite_kelpaa hylkaa erottimen, jonka edella on pelkka heksaryhma (dead:beef::1, 1:2:3) tai
+# ([:_]) jalkeen. _etuliite_kelpaa hylkaa erottimen, jonka edella on pelkka heksaryhma (dead:beef::1, 1:2:3) tai
 # piste, joten osuma ei ala keskelta heksajonoa tai versionumeroa. Yksi erotin per osuma ja osuma nielee jakson
 # loppuun, joten haku pysyy lineaarisena. Jakson sisalla kokeillaan lisaksi myohempia alkukohtia (_myohempi_yksityinen),
 # jotta eth_1:fe80::1 ei jaa julkiseksi osoitteeksi 1:fe80::1.
-IPV6_ETULIITE_RE = re.compile(r"[:_.](?P<ip>[0-9A-Fa-f:.]{2,}(?:%[\w.-]{1,32})?)")
+IPV6_ETULIITE_RE = re.compile(r"[:_](?P<ip>[0-9A-Fa-f:.]{2,}(?:%[\w.-]{1,32})?)")
+# Pisteen jalkeinen alku (katso.fe80::1) haetaan omalla regexilla. Jos piste olisi samassa erotinluokassa, pisteesta
+# alkava osuma voisi nielaista vyohykkeen (%...) jalkeisen alaviivan, eika finditer palaa taaksepain: x.ab%_fe80::1
+# jaisi loytymatta. Erillinen haku vain lisaa osumia, joten [:_]-haun tulos sailyy ennallaan.
+IPV6_PISTE_RE = re.compile(r"\.(?P<ip>[0-9A-Fa-f:.]{2,}(?:%[\w.-]{1,32})?)")
 # Lyhyt kahden ryhman muoto (x[1::2], a::b, std-tyyliset nimet) on useimmiten koodia. Se ohitetaan vain, jos osoite
 # ei ole estoluokassa (yksityinen, tailnet, link-local): estotunnistus ei heikkene.
 IPV6_LYHYT_RE = re.compile(r"(?i)\A[0-9a-f]{1,2}::[0-9a-f]{1,2}\Z")
@@ -111,7 +115,8 @@ IPV6_TAYSI_RE = re.compile(r"(?i)(?<![\w:])(?:[0-9a-f]{1,4}:){4,7}[0-9a-f]{1,4}(
 # Sama taysi muoto lokimuodossa (hwaddr:00:1A:..., a_fd12:...); etuliite tarkistetaan kuten IPV6_ETULIITE_RE:ssa.
 # Taysi muoto, joka alkaa annetusta kohdasta (_myohempi_yksityinen).
 IPV6_TAYSI_KOKO_RE = re.compile(r"(?i)(?:[0-9a-f]{1,4}:){4,7}[0-9a-f]{1,4}(?![\w:])")
-IPV6_TAYSI_ETULIITE_RE = re.compile(r"(?i)[:_.](?P<ip>(?:[0-9a-f]{1,4}:){4,7}[0-9a-f]{1,4})(?![\w:])")
+IPV6_TAYSI_ETULIITE_RE = re.compile(r"(?i)[:_](?P<ip>(?:[0-9a-f]{1,4}:){4,7}[0-9a-f]{1,4})(?![\w:])")
+IPV6_TAYSI_PISTE_RE = re.compile(r"(?i)\.(?P<ip>(?:[0-9a-f]{1,4}:){4,7}[0-9a-f]{1,4})(?![\w:])")
 # Tailnet-nimi: alku ei saa olla nimen osan ja pisteen jalkeen (a.a.a.a...: vain ensimmainen kohta on alku). Ilman tata
 # rajausta jokainen osa oli uusi alku, ja syote "a." * 8000 vei 2,7 s (neliollinen).
 TAILNET_RE = re.compile(r"(?i)(?<![\w-])(?<![\w-]\.)(?:[a-z0-9-]+\.)*[a-z0-9-]+\.ts\.net\b"
@@ -170,6 +175,8 @@ MEKAANISET = (
     (IPV6_TAYSI_RE, SYY_IP),
     (IPV6_ETULIITE_RE, SYY_IP),
     (IPV6_TAYSI_ETULIITE_RE, SYY_IP),
+    (IPV6_PISTE_RE, SYY_IP),
+    (IPV6_TAYSI_PISTE_RE, SYY_IP),
     (TAILNET_RE, SYY_TAILNET),
     (HETU_RE, SYY_HETU),
     (IBAN_RE, SYY_IBAN),
@@ -441,13 +448,13 @@ def _raaka_osumat(teksti, nimet=(), avainsanat=()):
                 continue
             if rx is IPV4_RE and any(int(o) > 255 for o in m.group(0).split(".")):
                 continue
-            if rx is IPV6_RE or rx is IPV6_ETULIITE_RE:
+            if rx is IPV6_RE or rx is IPV6_ETULIITE_RE or rx is IPV6_PISTE_RE:
                 if rx is IPV6_RE:
                     paikka = _ipv6_ehdokas(m)
                 else:
                     paikka = _ipv6_jakso(m.group("ip"), m.start("ip")) if _etuliite_kelpaa(teksti, m.start()) else None
                 yksityinen = paikka is not None and _yksityinen_ip(teksti[paikka[0]:paikka[1]])
-                if not yksityinen and rx is IPV6_ETULIITE_RE:
+                if not yksityinen and rx is not IPV6_RE:
                     # eth_1:fe80::1: alaviivan jalkeinen osuma 1:fe80::1 on julkinen, myohempi alku fe80::1 yksityinen.
                     # Yksityinen osuma korvaa julkisen (sama jakso), joten nayttolistassa on estotyyppi.
                     myohempi = _myohempi_yksityinen(teksti, m.start("ip"), m.end("ip"))
@@ -458,7 +465,7 @@ def _raaka_osumat(teksti, nimet=(), avainsanat=()):
                     if yksityinen or not IPV6_LYHYT_RE.match(teksti[a:l].partition("%")[0]):
                         osumat.append((a, l, SYY_YKSITYINEN_IP if yksityinen else SYY_IP))
                 continue
-            if rx is IPV6_TAYSI_ETULIITE_RE:
+            if rx is IPV6_TAYSI_ETULIITE_RE or rx is IPV6_TAYSI_PISTE_RE:
                 if _etuliite_kelpaa(teksti, m.start()):
                     paikka, syy_ip = (m.start("ip"), m.end("ip")), SYY_IP
                     if _taysi_yksityinen(m.group("ip")):

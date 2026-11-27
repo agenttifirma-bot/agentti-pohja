@@ -594,7 +594,8 @@ class IbanJaHetuTesti(unittest.TestCase):
 
 # Patologiset syotteet lineaarisuustestiin (tehtava 26-33): jokainen toistuu, kunnes pituus on n merkkia.
 PATOLOGISET = (":a", "_1:", "(:", ".:", "a.", "x_1:fe80", "eth_1:" + "1:" * 30, "ip::", "_fe80:", "1.2.",
-               "FI21  ", "FI21\u200b", "DE89./", "131052\u2010", ":" * 40 + "_", "a_" + "0:" * 9)
+               "FI21  ", "FI21\u200b", "DE89./", "131052\u2010", ":" * 40 + "_", "a_" + "0:" * 9,
+               "x.ab%_", ".a%_fe80::", "1.2::%eth_")
 
 
 class ValimerkkiJaAlaviivaTesti(unittest.TestCase):
@@ -645,6 +646,30 @@ class ValimerkkiJaAlaviivaTesti(unittest.TestCase):
             teksti = "tunnus 131052" + viiva + "308T."
             self.assertEqual(vartija.mekaaniset_tyypit(teksti), [vartija.SYY_HETU], repr(viiva))
             self.assertEqual(vartija.tekstin_paatos(teksti)["tulos"], vartija.TULOS_ESTA)
+
+    def test_pisteen_jalkeinen_vyohyke_ei_niele_alaviivaa(self):
+        # Pisteesta alkava osuma ei saa nielaista vyohykkeen jalkeista alaviivaerotinta (PR #461:n katselmointi).
+        for teksti, tulos in (("x.ab%_fe80::1", vartija.TULOS_ESTA), ("eth0.100%_fe80::1", vartija.TULOS_ESTA),
+                              ("IPv6 osoite: ab.cd%_fe80::1", vartija.TULOS_ESTA),
+                              ("1.2::%eth_fd7a:115c:a1e0::1", vartija.TULOS_ESTA),
+                              ("x.ab%_2001:db8::1", vartija.TULOS_KYSY)):
+            malli = {"tila": vartija.TILA_TARKISTETTU, "arvio": "ei"}
+            self.assertEqual(vartija.tekstin_paatos(teksti, malli=malli)["tulos"], tulos, teksti)
+
+    def test_pistehaku_vain_lisaa_osumia(self):
+        # Pisteen erilliset haut (IPV6_PISTE_RE, IPV6_TAYSI_PISTE_RE) eivat saa poistaa yhtaan tyyppia, jonka
+        # muut haut loytavat: ilman niita saatu tyyppijoukko on aina osajoukko.
+        import random
+        ilman = tuple(p for p in vartija.MEKAANISET
+                      if p[0] is not vartija.IPV6_PISTE_RE and p[0] is not vartija.IPV6_TAYSI_PISTE_RE)
+        palat = ("fe80::1", "fd7a:115c:a1e0::1", "2001:db8::1", "%", "_", ".", ":", "::", "ab", "eth0", "1", "x", " ")
+        rnd = random.Random(461)
+        for _ in range(2000):
+            teksti = "".join(rnd.choice(palat) for _ in range(rnd.randint(1, 8)))
+            kaikki = set(vartija.mekaaniset_tyypit(teksti))
+            with mock.patch.object(vartija, "MEKAANISET", ilman):
+                osa = set(vartija.mekaaniset_tyypit(teksti))
+            self.assertLessEqual(osa, kaikki, repr(teksti))
 
     def test_lineaarinen(self):
         import time
