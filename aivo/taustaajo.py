@@ -689,7 +689,7 @@ def aja(jono, chat, kysy, roolit, nyt=None, paivaraja=PAIVARAJA, aikaraja_s=AIKA
 
 def tee_kysyja(avain_tiedosto, **testi):
     """Tuotannon kysyja: vain yksityinen_or.kysy_taustatyo (ZDR, avoin malli, kulukirjaus, yhteinen katto).
-    `testi` (kulutila, avaa, nyt) vain testeille."""
+    `testi` (kulutila, avaa, nyt) vain testeille; paattely_max valitetaan kysy_taustatyo-funktiolle."""
     from aivo import yksityinen_or                          # tuodaan vain ajossa
     avain_tiedosto = avain_tiedosto or yksityinen_or.OLETUS_AVAIN
 
@@ -732,8 +732,9 @@ def main(argv=None, env=None, kysy=None, nyt=None):
         roolit = valitse_roolit(env.get("AIVO_YKSITYINEN_ROOLIT"), mallit)
         paivaraja = rajaa(env.get("AIVO_TAUSTA_PAIVARAJA"), PAIVARAJA, PAIVARAJA_MAX)
         aikaraja = rajaa(env.get("AIVO_TAUSTA_AIKARAJA_S"), AIKARAJA_S, AIKARAJA_MAX_S)
-        if kysy is None:
-            kysy = tee_kysyja(env.get("AIVO_OPENROUTER_AVAIN"))
+        if kysy is None:                                 # paattelyn ylaraja kuten chatissa (virhe -> YksityinenVirhe)
+            kysy = tee_kysyja(env.get("AIVO_OPENROUTER_AVAIN"),
+                              paattely_max=yksityinen_or.tarkista_paattely_max(env.get("AIVO_YKSITYINEN_PAATTELY_MAX")))
         try:
             haku = tee_haku(env)
         except Exception as e:                           # verkkohaku.HakuVirhe: vain tyyppi ja koodi
