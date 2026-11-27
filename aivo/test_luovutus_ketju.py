@@ -17,21 +17,23 @@ KAKSI_PALAA = ("Pilkoin ty\u00f6n.\n[[LUOVUTUSPAKETTI Ketjutesti]]\n[[PALA 1]]\n
 # keksitty, muodoltaan suomalainen IBAN (ei oikea tili): vartijan mekaaninen estotyyppi "tilinumero"
 KEKSITTY_IBAN = "FI12 3456 7890 1234 56"
 OTSAKE_RE = re.compile(r"\A<!-- luovutuspaketti tunnus=([0-9a-f]{12}) pala=(\d{1,2}) nimi=([^\n]*?) -->\n")
-JULKAISU = []
-
-
-def julkaise(kirjasto, polku, viesti=""):
-    """Korvaa kirjaston commitin ja pushin: kirjaa kutsun eika koske gitiin."""
-    JULKAISU.append((str(kirjasto), str(polku), viesti))
-    return "ei-gitissa"
 
 
 class KetjuPohja(PakettiPohja):
+    """Apumetodit tulevat pohjaluokista: paketti, hae ja hyvaksy_p PakettiPohjasta (aivo/test_luovutuspaketti.py),
+    saapuneet_tiedostot ja tyokalun_kehote LuovutusPohjasta (aivo/test_luovutus.py) seka uusi ja pyynto sen
+    pohjaluokista. Ne ajavat oikeaa chat-palvelua tilapaishakemistossa ilman verkkoa ja mallikutsuja."""
+
     def setUp(self):
         super().setUp()
-        JULKAISU.clear()
+        self.julkaisut = []     # testikohtainen: ei moduulitason tilaa, joka voisi vuotaa testista toiseen
         self.repo = Path(self.tmp.name) / "tulosrepo"
         self.repo.mkdir()
+
+    def julkaise(self, kirjasto, polku, viesti=""):
+        """Korvaa kirjaston commitin ja pushin: kirjaa kutsun eika koske gitiin."""
+        self.julkaisut.append((str(kirjasto), str(polku), viesti))
+        return "ei-gitissa"
 
     def irrota(self, vastaus):
         """Kuten chatin _viesti_yksityinen: lohko irrotetaan vastauksesta ja tallennetaan oletusvartijalla."""
@@ -78,14 +80,14 @@ class KokoKierrosTesti(KetjuPohja):
         s8 = d["sha"][:8]
         # (3) pelkka "kylla <sha8>" ei riita, koska palat ovat "kysy"; mitaan ei kopioidu
         with self.assertRaises(luovutus.VartijaEsto) as cm:
-            lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + s8, self.tila.kirjasto, julkaise=julkaise)
+            lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + s8, self.tila.kirjasto, julkaise=self.julkaise)
         self.assertIn("tarkistin kohdat " + s8, str(cm.exception))
-        self.assertEqual((self.saapuneet_tiedostot(), JULKAISU), ([], []))
+        self.assertEqual((self.saapuneet_tiedostot(), self.julkaisut), ([], []))
         # (4) hyvaksynta oikealla sha8:lla ja lisavahvistuksella: yksi julkaisu, kaksi palaa saapuneisiin
-        tulos = lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + s8, self.tila.kirjasto, julkaise=julkaise,
+        tulos = lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + s8, self.tila.kirjasto, julkaise=self.julkaise,
                                    lisavahvistus="tarkistin kohdat " + s8)
         self.assertEqual(tulos, "ei-gitissa")
-        self.assertEqual(len(JULKAISU), 1)
+        self.assertEqual(len(self.julkaisut), 1)
         self.assertEqual(lp.listaa_paketit(self.tila.luovutukset), [])
         self.assertEqual(lp.listaa_paketit(self.tila.luovutukset, lp.HYVAKSYTYT), [t])
         self.assertEqual(self.saapuneet_tiedostot(), sorted(lp.palan_tunnus(t, n) + ".md" for n in (1, 2)))
@@ -104,7 +106,8 @@ class KokoKierrosTesti(KetjuPohja):
             lp.lue_tulos(self.tila.luovutukset, str(self.repo), t, 1)
         # (7) tyokalutila kirjoittaa tulokset saapuneiden otsakkeiden perusteella
         self.assertEqual(self.tyokalutila_kirjoittaa_tulokset(True), [(t, 1, "Ketjutesti"), (t, 2, "Ketjutesti")])
-        # (8) yksityinen tila: paluumerkinnat kerran ja tulokset luettavissa
+        # (8) yksityinen tila: paluumerkinnat kerran ja tulokset luettavissa (tarkista_paluut jarjestaa
+        # paketit ja palat sorted-funktiolla, joten jarjestys ei riipu tiedostojarjestelmasta)
         uudet = lp.tarkista_paluut(self.tila.luovutukset, str(self.repo))
         self.assertEqual([(u["tunnus"], u["n"], u["merkinta"]) for u in uudet],
                          [(t, 1, "[Paketin Ketjutesti pala 1 valmis]"), (t, 2, "[Paketin Ketjutesti pala 2 valmis]")])
@@ -122,18 +125,18 @@ class KokoKierrosTesti(KetjuPohja):
         uusi = lp.poista_pala(self.tila.luovutukset, t, 2, vanha)["sha"][:8]
         self.assertNotEqual(uusi, vanha)
         with self.assertRaises(YksityinenVirhe) as cm:
-            lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + vanha, self.tila.kirjasto, julkaise=julkaise,
+            lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + vanha, self.tila.kirjasto, julkaise=self.julkaise,
                                lisavahvistus="tarkistin kohdat " + vanha)
         self.assertNotIsInstance(cm.exception, luovutus.VartijaEsto)     # sha-tarkistus kaatuu ensin
         # vanhan sha:n lisavahvistus ei kelpaa uudelle paketille
         with self.assertRaises(luovutus.VartijaEsto):
-            lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + uusi, self.tila.kirjasto, julkaise=julkaise,
+            lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + uusi, self.tila.kirjasto, julkaise=self.julkaise,
                                lisavahvistus="tarkistin kohdat " + vanha)
-        self.assertEqual((self.saapuneet_tiedostot(), JULKAISU), ([], []))
+        self.assertEqual((self.saapuneet_tiedostot(), self.julkaisut), ([], []))
         self.assertEqual(luovutus.lue_loki(self.tila.luovutukset), [])
         self.assertEqual(lp.listaa_paketit(self.tila.luovutukset), [t])
         # uudella sha:lla vain jaljelle jaanyt pala lahtee
-        lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + uusi, self.tila.kirjasto, julkaise=julkaise,
+        lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + uusi, self.tila.kirjasto, julkaise=self.julkaise,
                            lisavahvistus="tarkistin kohdat " + uusi)
         self.assertEqual(self.saapuneet_tiedostot(), [lp.palan_tunnus(t, 1) + ".md"])
         self.assertEqual(self.tyokalutila_kirjoittaa_tulokset(True), [(t, 1, "Ketjutesti")])
@@ -151,15 +154,15 @@ class KokoKierrosTesti(KetjuPohja):
         # oikea sha ja lisavahvistus eivat auta, eika injektoitu salliva vartija ohita mekaanista estoa
         for vartija in (lp.vartija_koukku, lambda teksti: {"tila": "ok", "sallittu": True, "merkinnat": []}):
             with self.assertRaises(luovutus.VartijaEsto) as cm:
-                lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + s8, self.tila.kirjasto, julkaise=julkaise,
+                lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + s8, self.tila.kirjasto, julkaise=self.julkaise,
                                    lisavahvistus="tarkistin kohdat " + s8, vartija=vartija)
             self.assertEqual(cm.exception.syyt, ["pala 2"])
             self.assertNotIn(KEKSITTY_IBAN, str(cm.exception))
-        self.assertEqual((self.saapuneet_tiedostot(), JULKAISU), ([], []))
+        self.assertEqual((self.saapuneet_tiedostot(), self.julkaisut), ([], []))
         self.assertEqual(luovutus.lue_loki(self.tila.luovutukset), [])
         # palan poisto: uusi sha, ja paketti lahtee ilman estettya palaa
         uusi = lp.poista_pala(self.tila.luovutukset, t, 2, s8)["sha"][:8]
-        lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + uusi, self.tila.kirjasto, julkaise=julkaise,
+        lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + uusi, self.tila.kirjasto, julkaise=self.julkaise,
                            lisavahvistus="tarkistin kohdat " + uusi)
         self.assertEqual(self.saapuneet_tiedostot(), [lp.palan_tunnus(t, 1) + ".md"])
         self.assertNotIn(KEKSITTY_IBAN, luovutus.saapuneet_kehote(self.tila.kirjasto))
@@ -170,15 +173,15 @@ class KokoKierrosTesti(KetjuPohja):
         self.assertEqual(self.tila.lisapalat, "kysy")
         _, [t] = self.irrota(KAKSI_PALAA)
         s8 = lp.lue_paketti(self.tila.luovutukset, t)["sha"][:8]
-        lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + s8, self.tila.kirjasto, julkaise=julkaise,
+        lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + s8, self.tila.kirjasto, julkaise=self.julkaise,
                            lisavahvistus="tarkistin kohdat " + s8)
-        ennen, julkaisuja = self.saapuneet_tiedostot(), len(JULKAISU)
+        ennen, julkaisuja = self.saapuneet_tiedostot(), len(self.julkaisut)
         # mallin [[LISAPALA]]-lohko oletustilassa: vain ehdotus, ei julkaisua
         lisat = []
 
         def tallenna_lisa(jatkaa, tekstit):
             tunnus, lahti, yht = lp.tallenna_lisapalat(self.tila.luovutukset, self.tila.kirjasto, jatkaa, tekstit,
-                                                      self.tila.lisapalat, julkaise=julkaise,
+                                                      self.tila.lisapalat, julkaise=self.julkaise,
                                                       vartija_listat=self.tila.vartija_listat)
             lisat.append((tunnus, lahti, yht))
             return "[lisapala %s]" % tunnus
@@ -187,17 +190,17 @@ class KokoKierrosTesti(KetjuPohja):
         [(lt, lahti, yht)] = lisat
         self.assertEqual((lahti, yht), (False, None))
         self.assertNotIn("KETJU-OSA-C", nakyva)
-        self.assertEqual((self.saapuneet_tiedostot(), len(JULKAISU)), (ennen, julkaisuja))
+        self.assertEqual((self.saapuneet_tiedostot(), len(self.julkaisut)), (ennen, julkaisuja))
         ld = lp.lue_paketti(self.tila.luovutukset, lt)
         self.assertEqual((ld["jatkaa"], [p["n"] for p in ld["palat"]]), (t, [3]))
         # oma hyvaksynta: paketin vanha sha8 ei kelpaa lisapalalle
         with self.assertRaises(YksityinenVirhe):
-            lp.hyvaksy_paketti(self.tila.luovutukset, lt, "kyll\u00e4 " + s8, self.tila.kirjasto, julkaise=julkaise,
+            lp.hyvaksy_paketti(self.tila.luovutukset, lt, "kyll\u00e4 " + s8, self.tila.kirjasto, julkaise=self.julkaise,
                                lisavahvistus="tarkistin kohdat " + s8)
         ls8 = ld["sha"][:8]
-        lp.hyvaksy_paketti(self.tila.luovutukset, lt, "kyll\u00e4 " + ls8, self.tila.kirjasto, julkaise=julkaise,
+        lp.hyvaksy_paketti(self.tila.luovutukset, lt, "kyll\u00e4 " + ls8, self.tila.kirjasto, julkaise=self.julkaise,
                            lisavahvistus="tarkistin kohdat " + ls8)
-        self.assertEqual(len(JULKAISU), julkaisuja + 1)
+        self.assertEqual(len(self.julkaisut), julkaisuja + 1)
         # lisapala saapuu alkuperaisen paketin tunnuksella, ja tulos luetaan perustunnuksella
         self.assertEqual(self.tyokalutila_kirjoittaa_tulokset(True),
                          [(t, 1, "Ketjutesti"), (t, 2, "Ketjutesti"), (t, 3, "Ketjutesti")])
@@ -210,14 +213,14 @@ class KokoKierrosTesti(KetjuPohja):
     def test_automaattinen_lisapala_ei_lahde_oletusvartijalla(self):
         _, [t] = self.irrota(KAKSI_PALAA)
         s8 = lp.lue_paketti(self.tila.luovutukset, t)["sha"][:8]
-        lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + s8, self.tila.kirjasto, julkaise=julkaise,
+        lp.hyvaksy_paketti(self.tila.luovutukset, t, "kyll\u00e4 " + s8, self.tila.kirjasto, julkaise=self.julkaise,
                            lisavahvistus="tarkistin kohdat " + s8)
-        ennen, julkaisuja = self.saapuneet_tiedostot(), len(JULKAISU)
+        ennen, julkaisuja = self.saapuneet_tiedostot(), len(self.julkaisut)
         lt, lahti, yht = lp.tallenna_lisapalat(self.tila.luovutukset, self.tila.kirjasto, t, ["Osa D.\n"],
-                                               "automaattinen", julkaise=julkaise)
+                                               "automaattinen", julkaise=self.julkaise)
         self.assertFalse(lahti)
         self.assertIn("odottavat", yht)
-        self.assertEqual((self.saapuneet_tiedostot(), len(JULKAISU)), (ennen, julkaisuja))
+        self.assertEqual((self.saapuneet_tiedostot(), len(self.julkaisut)), (ennen, julkaisuja))
         self.assertEqual(lp.listaa_paketit(self.tila.luovutukset), [lt])
 
 
