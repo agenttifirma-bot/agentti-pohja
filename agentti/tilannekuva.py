@@ -152,7 +152,32 @@ def _raporttikulut(perus):
     return summat
 
 
-def kulut_osio(perus, portti_tila):
+PORTTI_SELITE = "selite: kirjaus syntyy vain kutsuista; tyhja jakso = ei kutsuja, ei vika"
+
+
+def portti_tiivistelma(data, nyt=None):
+    """Portin kirjanpidon vain luku -tiivistelma (rivit): kirjattujen paivien maara, viimeisin paiva ja
+    paivat siita tahan paivaan. Vain YYYY-MM-DD-muotoiset avaimet lasketaan; rikkinainen tieto ei kaada."""
+    nyt = nyt or datetime.now(timezone.utc)
+    paivat = []
+    if isinstance(data, dict):
+        for avain in data:
+            if isinstance(avain, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", avain):
+                try:
+                    paivat.append(datetime.strptime(avain, "%Y-%m-%d").date())
+                except ValueError:
+                    pass
+    rivit = ["kirjattuja paivia: %d" % len(paivat)]
+    if paivat:
+        viim = max(paivat)
+        rivit.append("viimeisin kirjattu paiva: %s, paivia siita tahan paivaan: %d" % (viim.isoformat(), max(0, (nyt.date() - viim).days)))
+    else:
+        rivit.append("viimeisin kirjattu paiva: ei yhtaan")
+    rivit.append(PORTTI_SELITE)
+    return rivit
+
+
+def kulut_osio(perus, portti_tila, nyt=None):
     tila = _json(Path(perus) / "tila.json", {})
     rivit = ["# Kulut (USD)"]
     kulut = tila.get("kulut") or {}
@@ -183,6 +208,7 @@ def kulut_osio(perus, portti_tila):
     if portti_tila:
         data = _json(Path(portti_tila) / "portti-kulu.json", {})
         rivit.append("\n## Portti (paivakirjanpito)")
+        rivit.extend(portti_tiivistelma(data, nyt))
         rivit.append(json.dumps(data, ensure_ascii=True)[:1500])
     return "\n".join(rivit)
 

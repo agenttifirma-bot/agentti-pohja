@@ -8,6 +8,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from aivo import chat, luovutus, yksityinen, yksityinen_or
 from aivo.test_yksityinen_hyvaksynta import Pohja
@@ -192,7 +193,9 @@ class RajatTesti(LuovutusPohja):
         t, s8 = self.ehdota_luovutus()
         ulkona = Path(self.tmp.name) / "ulkona.json"
         ulkona.write_text(json.dumps({"teksti": "x", "sha": yksityinen.sha("x")}))
-        for paha in ("../ulkona", "../../ulkona", "/etc/passwd", t + "/../" + t, t.upper(), "a" * 13, "", None, 5):
+        # t.upper() vain, jos tunnuksessa on kirjain (pelkista numeroista koostuva tunnus on sama isoilla kirjaimilla).
+        isot = (t.upper(),) if t.upper() != t else ()
+        for paha in ("../ulkona", "../../ulkona", "/etc/passwd", t + "/../" + t, "a" * 13, "", None, 5) + isot:
             self.assertIn(self.pyynto("GET", "/api/luovutus?keskustelu=%s&tunnus=%s" % (kid, paha))[0], (400,), paha)
             for polku, lisa in (("/api/luovutus/hyvaksy", {"vahvistus": "kyll\u00e4 " + s8}),
                                 ("/api/luovutus/muokkaa", {"teksti": "y"}), ("/api/luovutus/hylkaa", {})):
@@ -203,6 +206,19 @@ class RajatTesti(LuovutusPohja):
         self.assertTrue(ulkona.is_file())
         self.assertEqual(self.saapuneet_tiedostot(), [])
         self.assertEqual(self.odottavat_l(kid), [t])
+
+    def test_polkujen_ohitus_tunnuksessa_estyy_numerotunnuksella(self):
+        # Pakotettu pelkista numeroista koostuva tunnus: t.upper() == t, joten isojen kirjainten tapaus jaa pois.
+        fake = mock.Mock(token_hex=lambda n: "444444444444")
+        tunnukset, alkup = [], self.ehdota_luovutus
+
+        def ehdota(*a, **k):
+            r = alkup(*a, **k)
+            tunnukset.append(r[0])
+            return r
+        with mock.patch.object(luovutus, "secrets", fake), mock.patch.object(self, "ehdota_luovutus", ehdota):
+            self.test_polkujen_ohitus_tunnuksessa_estyy()
+        self.assertEqual(tunnukset, ["444444444444"])   # testi todella ajettiin numerotunnuksella
 
     def test_tyokalutila_ei_nae_luovutusehdotuksia_eika_reitteja(self):
         tkid = self.uusi("tyokalu")

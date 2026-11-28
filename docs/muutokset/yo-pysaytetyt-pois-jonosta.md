@@ -1,0 +1,1 @@
+- yojono: llm-stopcheckin ja evalkitin tehtävät (5 riviä) poistettu pysyvästä jonosta (`jono.pysyva.json`, 20 → 16 tehtävää), koska repot on pysäytetty (Tonyn päätös A1049, 22.11.2026). Kuukausikatto säästyy Aivolle ja kärkiprojekteille. Syy kirjattu jonotiedoston kenttään `pysaytetty`. Katot ennallaan. Vanhaa historiaa ei poistettu.

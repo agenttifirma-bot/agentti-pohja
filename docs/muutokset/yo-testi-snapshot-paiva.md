@@ -1,0 +1,1 @@
+- testit: test_pr_kutsu jaadyttaa paivan kahdessa paivarajatestissa, jotta keskiyon ylitys testin ja koodin date.today()-kutsujen valilla ei kaada niita
