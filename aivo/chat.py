@@ -425,15 +425,15 @@ async function paluut(){if(!kid||nyt!=='yksityinen')return;const x=await haeJson
  x.j.paluut.forEach(p=>{if(!p||typeof p.merkinta!=='string')return;const d=lisaa('aivo',p.merkinta);const b=document.createElement('button');b.textContent='N\u00e4yt\u00e4 tulos';
   b.onclick=async()=>{b.disabled=true;const y=await haeJson('/api/paketti/tulos?keskustelu='+q(kid)+'&tunnus='+q(p.tunnus)+'&pala='+q(String(p.n)));if(!y)return;
    const pre=document.createElement('pre');pre.textContent=y.r.ok?y.j.teksti:('Tulosta ei voi lukea: '+(y.j.virhe||y.r.status));d.appendChild(pre);b.remove();alas();};d.appendChild(b);
-  const tb=document.createElement('button');tb.textContent='Paketin tila';tb.onclick=()=>{tb.disabled=true;paketinTila(d,p.tunnus).then(()=>{tb.disabled=false;});};d.appendChild(tb);});}
+  const tb=document.createElement('button');tb.textContent='Paketin tila';tb.onclick=()=>{tb.disabled=true;paketinTila(d,p.tunnus).catch(()=>{}).finally(()=>{tb.disabled=false;});};d.appendChild(tb);});}
 async function paketinTila(d,t){const x=await haeJson('/api/paketti/tila?keskustelu='+q(kid)+'&tunnus='+q(t));if(!x)return;
- const o=document.createElement('div');d.appendChild(o);
+ let o=d.querySelector('.pakettitila');if(o)o.remove();o=document.createElement('div');o.className='pakettitila';d.appendChild(o);
  if(!x.r.ok||!Array.isArray(x.j.palat)){o.textContent='Tilaa ei voi lukea: '+(x.j.virhe||x.r.status);alas();return;}
- o.textContent='Paketti '+x.j.nimi+': '+x.j.palanneet+'/'+x.j.yhteensa+' palaa palannut. '+x.j.palat.map(p=>'Pala '+p.n+': '+(p.palannut?('palannut, '+p.tavut+' tavua'+(p.liian_suuri?' (liian suuri)':'')):'puuttuu')).join('; ')+'.';
+ o.textContent='Paketti '+x.j.nimi+': '+x.j.palanneet+'/'+x.j.yhteensa+' palaa palannut. '+x.j.palat.map(p=>'Pala '+p.n+': '+(p.palannut?('palannut, '+p.tavut+' tavua'+(p.liian_suuri?' (liian suuri)':'')):'puuttuu')).join('; ')+'.'+(x.j.liian_suuret&&x.j.liian_suuret.length?' Koontia ei voi tehd\u00e4, koska liian suuret palat pit\u00e4\u00e4 lyhent\u00e4\u00e4.':'');
  if(x.j.valmis){const kb=document.createElement('button');kb.textContent='N\u00e4yt\u00e4 koontikehote';
   kb.onclick=async()=>{kb.disabled=true;const y=await haeJson('/api/paketti/koonti?keskustelu='+q(kid)+'&tunnus='+q(t));if(!y)return;
    const pre=document.createElement('pre');pre.textContent=y.r.ok?y.j.kehote:('Koontia ei voi tehd\u00e4: '+(y.j.virhe||y.r.status));o.appendChild(pre);
-   if(y.r.ok&&navigator.clipboard){const c=document.createElement('button');c.textContent='Kopioi';c.onclick=()=>navigator.clipboard.writeText(y.j.kehote);o.appendChild(c);}
+   if(y.r.ok&&navigator.clipboard){const c=document.createElement('button');c.textContent='Kopioi';c.onclick=()=>{navigator.clipboard.writeText(y.j.kehote).then(()=>{c.textContent='Kopioitu';},()=>{c.textContent='Kopiointi ei onnistunut';});};o.appendChild(c);}
    kb.remove();alas();};o.appendChild(kb);}
  alas();}
 function luovuta(d,idx){const b=document.createElement('button');b.textContent='Luovuta ty\u00f6kalutilaan';
