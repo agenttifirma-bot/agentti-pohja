@@ -51,7 +51,7 @@ from . import chat, itsetuntemus, openrouter_kulut, openrouter_zdr, yhdistelma, 
 
 TEHTAVAT = Path(__file__).resolve().parent / "testidata" / "mallivertailu_tehtavat.json"
 NYKYINEN = "qwen/qwen3-235b-a22b-2507"
-# Ehdokkaat 19.11.2026: avoin painosto (OpenRouterin hugging_face_id) ja vahintaan yksi ZDR-endpoint (poikkeus 28.11.: Venice, ks. alla).
+# Ehdokkaat 19.11.2026: avoin painosto (OpenRouterin hugging_face_id) ja vahintaan yksi ZDR-endpoint (poikkeus 28.11.: Venice, Cydonia ja Hermes 4, ks. alla).
 EHDOKKAAT = (
     NYKYINEN,
     "qwen/qwen3.5-397b-a17b",
@@ -68,6 +68,10 @@ EHDOKKAAT = (
     # OpenRouter hylkaa sen eika dataa lahde. Vain synteettinen sarja; AVOIMET_MALLIT-listaa ei muuteta.
     "qwen/qwen3.8-2.4t-a95b",
     "cognitivecomputations/dolphin-mistral-24b-venice-edition",
+    # 28.11.2026 (Tony): muut sensuroimattomat tai vahan kieltaytyvat avoimen painoston mallit, samat ehdot kuin
+    # Venicella (ZDR pakotettu pyynnossa, ZDR-endpointia ei todennettu, vain synteettinen sarja).
+    "thedrummer/cydonia-24b-v4.1",                 # TheDrummer/Cydonia-24B-v4.1
+    "nousresearch/hermes-4-405b",                  # NousResearch/Hermes-4-405B
 )
 KULURAJA_USD = 3.0
 TOISTOT = 2
