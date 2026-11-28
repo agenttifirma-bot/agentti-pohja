@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -51,6 +52,26 @@ class MallinValinta(unittest.TestCase):
     def test_maininta_tekstin_seassa_ei_laukaise(self):
         self.assertEqual(malli.valitse("a", "kirjoita rivi `Malli: opus` tiedostoon").lahde, "oletus")
 
+    def test_aivo_tehtava_aina_opus(self):
+        """A1064: Tavoite: Aivo -> opus riippumatta Malli-rivista tai tyypista; lahde kertoo syyn."""
+        for teksti in ("Tavoite: Aivo\ntee", "Malli: sonnet\nTavoite: Aivo\ntee", "Malli: openrouter:deepseek-flash\nTavoite: Aivo\n",
+                       "Tavoite: aivo\nMalli: gpt-5\n", "Malli: opus\nTavoite: Aivo.\n"):
+            m = malli.valitse("2026-11-22-01-korjaa-x.md", teksti)
+            self.assertEqual((m.reitti, m.nimi, m.tunniste, m.lahde), ("claude", "opus", "opus", "aivo-opus"), teksti)
+        # tyyppitaulukon halpa reitti ei pada Aivoa
+        self.assertEqual(malli.valitse("2026-11-22-02-paivakatsaus-x.md", "Tavoite: Aivo\nTiivista.").lahde, "aivo-opus")
+
+    def test_muut_tavoitteet_ennallaan(self):
+        m = malli.valitse("2026-11-22-01-korjaa-x.md", "Tavoite: yllapito\ntee")
+        self.assertEqual((m.tunniste, m.lahde), ("sonnet", "oletus"))
+        self.assertEqual(malli.valitse("2026-11-22-01-x.md", "Tavoite: portfolio\nMalli: openrouter:qwen-coder\n").tunniste,
+                         "openrouter:qwen-coder")
+        self.assertEqual(malli.valitse("2026-11-22-02-paivakatsaus-x.md", "Tavoite: yllapito\nTiivista.").tunniste,
+                         "openrouter:deepseek-flash")
+        self.assertEqual(malli.valitse("2026-11-22-03-arkkitehtuuri-x.md", "Tavoite: ansainta\n").lahde, "tyyppi")
+        # maininta tekstin seassa (ei rivin alussa) ei tee tehtavasta Aivo-tehtavaa
+        self.assertEqual(malli.valitse("a", "Tavoite: yllapito\nkirjoita `Tavoite: Aivo` mallipohjaan").tunniste, "sonnet")
+
     def test_claude_komento_lisaa_mallin_ja_hylkaa_vieraan(self):
         self.assertEqual(ajuri.claude_komento("k", {}, "opus")[-2:], ["--model", "opus"])
         self.assertNotIn("--model", ajuri.claude_komento("k", {}))
@@ -77,8 +98,34 @@ class Kulutus(unittest.TestCase):
         l = kulutus.claude_luvut(CLAUDE_JSON)
         self.assertEqual((l["tokenit_in"], l["tokenit_out"], l["cache_luku"], l["cache_kirjoitus"]), (2, 4, 13112, 12124))
         self.assertEqual((l["usd"], l["api_ms"], l["malli_todellinen"]), (0.049851, 1400, "claude-sonnet-5-5"))
-        self.assertEqual(kulutus.claude_luvut("ei jsonia"), {})
-        self.assertEqual(kulutus.claude_luvut("[1]"), {})
+        self.assertEqual(kulutus.claude_luvut("ei jsonia"), {"jasennysvirhe": "ei_tulosta"})
+        self.assertEqual(kulutus.claude_luvut("[1]"), {"jasennysvirhe": "ei_tulosta"})
+        self.assertEqual(kulutus.claude_luvut(""), {"jasennysvirhe": "tyhja"})
+        self.assertEqual(kulutus.claude_luvut(None), {"jasennysvirhe": "tyhja"})
+
+    def test_jasennysvirhe_kirjataan_riville_ja_nakyy_rivilla(self):
+        luvut = kulutus.claude_luvut("{rikki, salainen-sisalto")
+        kulutus.kirjaa(self.tila, "sonnet", "t", 1, "tehtava", True, 1.0, luvut, self.nyt)
+        r = kulutus.lue(self.tila)[0]
+        self.assertEqual(r["jasennysvirhe"], "ei_tulosta")
+        self.assertNotIn("salainen", json.dumps({k: v for k, v in r.items() if k != "_aika"}))  # vain vakiosanasto, ei tulosteen sisaltoa
+        self.assertEqual(kulutus.malleittain([r])["sonnet"]["jasennysvirheita"], 1)
+        self.assertIn("1 ajon luvut puuttuvat", kulutus.kulutusrivi(self.tila, self.nyt + timedelta(days=1)))
+
+    def test_stdoutin_koko_rajataan(self):
+        raja = 1000
+        with mock.patch.object(kulutus, "STDOUT_MAX", raja):
+            loppu = json.dumps({"type": "result", "usage": {"input_tokens": 7}})
+            virta = "\n".join(['{"type":"assistant","x":"' + "a" * 400 + '"}'] * 20 + [loppu])
+            self.assertGreater(len(virta), raja)
+            self.assertEqual(kulutus.claude_luvut(virta), {"tokenit_in": 7})      # loppuolio loytyy lopusta
+            # yksittainen iso JSON-olio (vanha --output-format json) jasentyy kuten ennen, vaikka ylittaisi rajan
+            iso = json.dumps({"type": "result", "x": "a" * 3000, "usage": {"input_tokens": 9}})
+            self.assertGreater(len(iso), raja)
+            self.assertEqual(kulutus.claude_luvut(iso), {"tokenit_in": 9})
+            # rivipohjainen virta ilman loppuoliota rajan ylittyessa: vakiosyy liian_suuri
+            self.assertEqual(kulutus.claude_luvut("\n".join(['{"type":"assistant","x":"' + "a" * 400 + '"}'] * 20)),
+                             {"jasennysvirhe": "liian_suuri"})
 
     def test_kirjaus_ja_malleittain_ja_rivi(self):
         k = lambda malli_, usd, ok=True, paivia=1: kulutus.kirjaa(
@@ -215,6 +262,24 @@ class AjuriReitit(Pohja):
         self.assertEqual([(r["malli"], r["tehtava"], r["tokenit_in"], r["usd"]) for r in rivit],
                          [("opus", "2026-11-03-01-x.md", 3, 0.5), ("sonnet", "2026-11-03-02-y.md", 3, 0.5)])
         self.assertIn("- Malli: opus\n", (self.repo / ajuri.JONO / "tulokset" / "2026-11-03-01-x.md").read_text())
+
+    def test_aivo_tehtava_ajetaan_opuksella_ja_opuksen_rajoilla(self):
+        self.lisaa_tehtava("2026-11-22-01-x.md", "Malli: sonnet\nTavoite: Aivo\ntee")
+        komennot, ajat = [], []
+
+        def suorita(kom, **kw):
+            komennot.append(kom)
+            ajat.append(kw.get("timeout"))
+            return subprocess.CompletedProcess(kom, 0, json.dumps({"subtype": "success", "result": "valmis\nTodennettu k\u00e4yt\u00f6ss\u00e4: testi"}), "")
+        def ei_saa(*a, **kw):
+            raise AssertionError("openrouteria ei pida kutsua")
+        self.assertEqual(ajuri.aja(self.repo, self.tmp, env=dict(self.ENV), suorita=suorita, litellm=ei_saa),
+                         "claude-jono: 2026-11-22-01-x.md VALMIS")
+        k = komennot[0]
+        self.assertEqual(k[k.index("--model") + 1], "opus")
+        self.assertEqual(k[k.index("--max-turns") + 1], str(ajuri.OPUS_MAX_KIERROKSET))
+        self.assertEqual(ajat[0], ajuri.aikaraja_s({}, "opus"))
+        self.assertIn("- Malli: opus\n", (self.repo / ajuri.JONO / "tulokset" / "2026-11-22-01-x.md").read_text())
 
     def test_openrouter_reitti_ei_kayta_claudea(self):
         self.lisaa_tehtava("2026-11-03-01-x.md", "Malli: openrouter:deepseek-flash\nTiivista.")

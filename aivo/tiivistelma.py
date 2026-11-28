@@ -38,6 +38,9 @@ KID_RE = r"[0-9]{8}-[0-9]{6}-[0-9a-f]{8}"
 TUNNUS_RE = re.compile(r"^(%s)-([0-9]{1,6})-([0-9]{1,6})$" % KID_RE)
 KID_TARKISTUS = re.compile(r"^%s$" % KID_RE)
 POISTETUT = "poistetut.jsonl"
+# Alueen alikansiot, joita tiivistysajot (tiivista_yksityinen, tiivista_tyokalu) lukevat ja kirjoittavat. Yhteinen
+# vakio, jotta aivo.tarkista_asennus tarkistaa samat kansiot kuin ajot kayttavat.
+TIIVISTYS_ALIKANSIOT = ("chat", "tiivistelmat", "indeksi")
 MERKINTA = "Aivon tulkinta, ei Tonyn sanoja"
 
 YLAKENTAT = ("versio", "keskustelu", "alku", "loppu", "ensimmainen_aika", "viimeinen_aika", "tiivistetty", "malli",

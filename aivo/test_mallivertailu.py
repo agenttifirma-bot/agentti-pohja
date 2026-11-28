@@ -48,13 +48,13 @@ class SarjaTesti(unittest.TestCase):
         self.assertNotIn("2222", json.dumps(paikallinen[1:]))    # paikallisen taustapaan 12 viestin raja leikkaisi
 
     def test_historiaraja_on_openrouter_taustapaan(self):
-        self.assertEqual(yksityinen_or.HISTORIA_YLARAJA, 40)
+        n = yksityinen_or.HISTORIA_YLARAJA + 11      # pariton maara: viimeinen on Tonyn viesti
         s = mv.lue_tehtavat()
         pitka = {"id": "X", "alue": "muisti", "historia": [{"rooli": "tony" if i % 2 == 0 else "aivo", "teksti": str(i)}
-                                                          for i in range(51)]}
+                                                          for i in range(n)]}
         v = mv.viestit(s, pitka)
         self.assertEqual(len(v), 1 + yksityinen_or.HISTORIA_YLARAJA)
-        self.assertEqual(v[-1]["content"], "50")
+        self.assertEqual(v[-1]["content"], str(n - 1))
         self.assertEqual(v[1]["content"], "11")
 
     def test_ydinohjeiden_lisays_vain_omaan_tehtavaan(self):
@@ -251,7 +251,8 @@ class AjoTesti(unittest.TestCase):
         self.assertEqual(set(tulos), {LISTALTA, LISTAN_ULKOPUOLELTA, "openai/gpt-oss-120b"})
         taulu = mv.taulukko(tulos)
         self.assertIn("| Pilkkominen | Ohjeiden kunnioitus |", taulu)
-        self.assertEqual({r.count("|") for r in taulu.splitlines()}, {12})
+        self.assertEqual({r.count("|") for r in taulu.splitlines()}, {14})
+        self.assertIn("| Ei vastausta | Aikaraja |", taulu)
         # feikkivastauksessa ei ole rakennusohjetta: pilkkomistehtavat 0 tuomarin pisteista riippumatta
         self.assertEqual(tulos[LISTALTA]["alueet"]["pilkkominen"], 0.0)
         self.assertGreater(tulos[LISTALTA]["alueet"]["paatos"], 0.0)
@@ -283,10 +284,13 @@ class RakenneTesti(unittest.TestCase):
 
     def test_kuljetinta_kaytetaan_vain_kutsun_kautta(self):
         funktiot = {f.name: f for f in self.puu.body if isinstance(f, ast.FunctionDef)}
-        # tee_kuljetin vain main()-funktiossa, ja sen tulos menee suoraan aja()-funktiolle
+        # tee_kuljetin vain kuljetin_tehdas()-funktiossa (aikaraja VERTAILU_AIKARAJA_S), ja sita kayttaa vain main()
         kayttajat = {nimi for nimi, f in funktiot.items()
                      if any(isinstance(n, ast.Attribute) and n.attr == "tee_kuljetin" for n in ast.walk(f))}
-        self.assertEqual(kayttajat, {"main"})
+        self.assertEqual(kayttajat, {"kuljetin_tehdas"})
+        tehtaan_kayttajat = {nimi for nimi, f in funktiot.items()
+                             if any(isinstance(n, ast.Name) and n.id == "kuljetin_tehdas" for n in ast.walk(f))}
+        self.assertEqual(tehtaan_kayttajat, {"main"})
         # aja(): laheta-oliota ei kutsuta suoraan, se annetaan vain openrouter_kulut.kutsulle
         aja = funktiot["aja"]
         kutsut = [n for n in ast.walk(aja) if isinstance(n, ast.Call)]

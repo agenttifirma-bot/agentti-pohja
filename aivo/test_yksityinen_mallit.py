@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from aivo import chat, yksityinen_or as yo
+from aivo import salasana_apu, chat, yksityinen_or as yo
 
 M1 = "qwen/qwen3-235b-a22b-2507"
 M2 = "meta-llama/llama-3.3-70b-instruct"
@@ -37,9 +37,9 @@ class ListanValidointi(unittest.TestCase):
     def test_tila_ei_kaynnisty_ei_avoimella_mallilla(self):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(chat.ChatVirhe):
-                chat.Tila(chat.tiivista_salasana(SALASANA), d, d, ["localhost"], yks_data=d + "/y",
+                chat.Tila(salasana_apu.tiiviste(SALASANA), d, d, ["localhost"], yks_data=d + "/y",
                           taustapaa="openrouter", or_mallit=M1 + ",openai/gpt-4o")
-            t = chat.Tila(chat.tiivista_salasana(SALASANA), d, d, ["localhost"], yks_data=d + "/y",
+            t = chat.Tila(salasana_apu.tiiviste(SALASANA), d, d, ["localhost"], yks_data=d + "/y",
                           taustapaa="openrouter", or_mallit=M1 + "," + M2, or_malli="openai/gpt-4o")
             self.assertEqual(t.or_mallit, (M1, M2))       # lista voittaa vanhan yhden mallin asetuksen
 
@@ -62,7 +62,7 @@ class YmparistoMuuttujat(unittest.TestCase):
 
     def rakenna(self, kw):
         with tempfile.TemporaryDirectory() as d:
-            return chat.Tila(chat.tiivista_salasana(SALASANA), d, d, ["localhost"], yks_data=d + "/y",
+            return chat.Tila(salasana_apu.tiiviste(SALASANA), d, d, ["localhost"], yks_data=d + "/y",
                              taustapaa="openrouter", or_malli=kw["or_malli"], or_mallit=kw["or_mallit"]).or_mallit
 
     def test_vanha_yksi_muuttuja_toimii(self):
@@ -87,7 +87,7 @@ class Palvelin(unittest.TestCase):
     def kaynnista(self, **kw):
         kw.setdefault("taustapaa", "openrouter")
         r = self.r
-        self.tila = chat.Tila(chat.tiivista_salasana(SALASANA), str(r / "kirjasto"), str(r / "data"), ["localhost"],
+        self.tila = chat.Tila(salasana_apu.tiiviste(SALASANA), str(r / "kirjasto"), str(r / "data"), ["localhost"],
                               kysy=lambda m, h: self.claude.append(1) or "pilvi",
                               yks_data=str(r / "yks"), yks_muisti=str(r / "yksm"), ydinohjeet=str(r / "ydin"),
                               ehdotukset=str(r / "ehd"), or_avain=str(r / "avain"), or_kulutila=str(r / "kulut"), **kw)

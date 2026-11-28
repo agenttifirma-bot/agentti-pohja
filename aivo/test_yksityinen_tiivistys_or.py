@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from aivo import (chat, openrouter_kulut as ok, tiivista, tiivista_yksityinen as ty, tiivistelma, tyokalualue,
+from aivo import (salasana_apu, chat, openrouter_kulut as ok, tiivista, tiivista_yksityinen as ty, tiivistelma, tyokalualue,
                   yksityinen, yksityinen_alue, yksityinen_or as yo)
 
 MALLI = "qwen/qwen3-235b-a22b-2507"
@@ -154,13 +154,15 @@ class OpenRouterTaustapaaTesti(Pohja):
         nahty = []
 
         def tee(malli, avain, **kw):
-            nahty.append((malli, avain))
+            nahty.append((malli, avain, kw))
             return (lambda ohje, data: mallin_vastaus()), "zdr:" + malli
         with mock.patch.object(ty, "tee_or_kysyja", side_effect=tee), redirect_stdout(io.StringIO()):
             rc = ty.main(["--juuri", str(self.juuri)], env={"AIVO_YKSITYINEN_TAUSTAPAA": "openrouter",
-                                                             "AIVO_OPENROUTER_MALLI": MALLI})
+                                                             "AIVO_OPENROUTER_MALLI": MALLI,
+                                                             "AIVO_YKSITYINEN_PAATTELY_MAX": "1200"})
         self.assertEqual(rc, 0)
-        self.assertEqual(nahty, [(MALLI, None)])                 # avain: oletus (yksityinen_or.OLETUS_AVAIN)
+        # avain: oletus (yksityinen_or.OLETUS_AVAIN); paattelyn ylaraja samasta asetuksesta kuin chatissa
+        self.assertEqual(nahty, [(MALLI, None, {"paattely_max": "1200"})])
 
     def test_tuntematon_taustapaa_ymparistosta_hylataan(self):
         with redirect_stderr(io.StringIO()):
@@ -293,7 +295,7 @@ class KehoteTesti(unittest.TestCase):
             return "Muistan [l\u00e4hde: %s]." % cls.yks_nimi
 
         def tila(yks_tiivistelmat):
-            return chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "data"), ["localhost"],
+            return chat.Tila(salasana_apu.tiiviste(SAL), str(r / "kirjasto"), str(r / "data"), ["localhost"],
                              kysy=kysy, yks_data=str(r / "yks" / "chat"), yks_muisti=str(r / "yks" / "muisti"),
                              ydinohjeet=str(r / "yks" / "ydin"), ehdotukset=str(r / "yks" / "ehd"), kysy_yks=kysy_yks,
                              tiivistelmat=str(tk.polku("tiivistelmat")), yks_tiivistelmat=yks_tiivistelmat)

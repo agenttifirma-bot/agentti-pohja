@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -172,8 +173,28 @@ def _lyhyt(sha):
     return (sha or "?")[:7]
 
 
-def pr_tila(repo, nro, raja=None, hak=None, **kw):
-    """Palauttaa PR:n tilan tiiviina tekstina (rivit listana) ja listan tilamerkinnoista."""
+def ls_remote_karki(repo, nro, ajo=subprocess.run):
+    """Hakee PR:n karjen git-protokollalla (refs/pull/<nro>/head, ilman tunnusta). Palauttaa SHA:n tai None.
+    Vertailukohta API:n head.sha:lle: PR voi paivittya kesken ajon, ja API voi hetken nayttaa edellista karkea."""
+    url = "https://github.com/%s" % repo
+    try:
+        tulos = ajo(["git", "ls-remote", url, "refs/pull/%d/head" % int(nro)], capture_output=True, text=True,
+                    timeout=20, env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    if tulos.returncode != 0:
+        return None
+    for rivi in tulos.stdout.splitlines():
+        osat = rivi.split()
+        if len(osat) == 2 and re.match(r"^[0-9a-f]{40}$", osat[0]):
+            return osat[0]
+    return None
+
+
+def pr_tila(repo, nro, raja=None, hak=None, git_karki=None, **kw):
+    """Palauttaa PR:n tilan tiiviina tekstina (rivit listana) ja listan tilamerkinnoista.
+    git_karki(repo, nro) -> SHA | None: jos annettu, API:n karkea verrataan git-karkeen ja ero nostetaan
+    VAROITUS-riviksi. Rivi "haettu" kertoo hakuajan ja PR-tiedon lahteen (UUSI, VALIMUISTI tai VANHA)."""
     if not REPO_RE.match(repo) or set(repo) <= set("./") or ".." in repo.split("/") or not str(nro).isdigit():
         raise ValueError("kayta: pr <omistaja/repo> <nro>")
     hak = hak or os.path.expanduser(VALIMUISTI_OLETUS)
@@ -192,7 +213,17 @@ def pr_tila(repo, nro, raja=None, hak=None, **kw):
         tila = "merged"
     else:
         tila = pr.get("state", "?") + (" (luonnos)" if pr.get("draft") else "")
-    rivit = ["PR %s#%s: %s" % (repo, nro, tila), "head: %s @ %s" % (pr["head"].get("ref", "?"), _lyhyt(sha))]
+    rivit = ["PR %s#%s: %s" % (repo, nro, tila), "head: %s @ %s" % (pr["head"].get("ref", "?"), _lyhyt(sha)),
+             "haettu: %s UTC, lahde: %s" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), tilat[0])]
+    if git_karki is not None:
+        karki = git_karki(repo, nro)
+        if karki is None:
+            rivit.append("git: refs/pull/%s/head ei saatu, tarkista kasin (git ls-remote)" % nro)
+        elif karki == sha:
+            rivit.append("git: refs/pull/%s/head @ %s (sama)" % (nro, _lyhyt(karki)))
+        else:
+            rivit.append("VAROITUS: git-karki %s poikkeaa API:n karjesta %s; PR paivittyi juuri, aja uudelleen"
+                         % (_lyhyt(karki), _lyhyt(sha)))
     katselmoinnit = [r for r in hae("/pulls/%d/reviews?per_page=100" % int(nro)) if r.get("state") != "PENDING"]
     if katselmoinnit:
         k = katselmoinnit[-1]
@@ -272,7 +303,7 @@ def main(argv=None):
             return 2
         try:
             if komento == "pr":
-                rivit, _ = pr_tila(argv[1], argv[2])
+                rivit, _ = pr_tila(argv[1], argv[2], git_karki=ls_remote_karki)
             else:
                 rivit, _ = kommentit(argv[1], argv[2], koko=koko)
         except ValueError as e:

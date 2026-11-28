@@ -1,0 +1,54 @@
+# Aivon hakuvalittaja hakukontissa (pohja). Asennus: /etc/systemd/system/aivo-haku.service. Ohje: docs/aivo-hakuvalittaja.md.
+# Kuuntelee porttia 8890 vain kontin omassa sisaverkon osoitteessa (ei 0.0.0.0) ja palvelee vain kontin 122 osoitetta.
+# Osoitteet tulevat tiedostosta /etc/aivo-haku/osoitteet.env (HAKU_KUUNTELE=IP:8890, HAKU_SALLITUT=IP), joka
+# kirjoitetaan asennuksessa komennoilla; repossa ei ole osoitteita. Ilman tiedostoa palvelu ei kaynnisty.
+# Sisaan vain kontista 122 myos nftablesissa ja Proxmox-palomuurissa. Ulosmeno vain silmukkaan:
+# SearXNG 127.0.0.1:8888 ja Tor SOCKS 127.0.0.1:9050 (nftables meta skuid aivo-haku). Lokiin ei sisaltoa.
+# Kontin 122 opit (virheloki 25.11.2026): ei tmpfs:aa sticky-bitilla (ei PrivateTmp- eika TemporaryFileSystem-asetusta,
+# palvelu ei kirjoita tiedostoja), ei setgid-chmodia (RestrictSUIDSGID), ja kaynnistystarkistus (ExecStartPre) avaa
+# avaimen ja Torin evasteen samalla funktiolla, samoin liputuksin ja samassa hiekkalaatikossa kuin palvelu.
+# Palomuuri ja VPN ovat pakollisia: ilman nftables-palvelua (kill switch) ja wg-quick@wg0:aa hakuvalittaja ei kaynnisty,
+# ja kummankin pysaytys pysayttaa myos taman.
+[Unit]
+Description=Aivon hakuvalittaja (hakukontti, vain kontille 122, ulosmeno Torin kautta)
+Requires=nftables.service wg-quick@wg0.service
+After=network-online.target nftables.service wg-quick@wg0.service tor@default.service searxng.service
+Wants=network-online.target tor@default.service searxng.service
+
+[Service]
+Type=simple
+User=aivo-haku
+Group=aivo-haku
+SupplementaryGroups=debian-tor
+EnvironmentFile=/etc/aivo-haku/osoitteet.env
+ExecStartPre=/usr/bin/python3 -I /usr/local/lib/hakukontti/hakuvalittaja.py --kuuntele ${HAKU_KUUNTELE} --salli ${HAKU_SALLITUT} --tarkista
+ExecStart=/usr/bin/python3 -I /usr/local/lib/hakukontti/hakuvalittaja.py --kuuntele ${HAKU_KUUNTELE} --salli ${HAKU_SALLITUT}
+Restart=on-failure
+RestartSec=10
+UMask=0077
+MemoryMax=200M
+TasksMax=64
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

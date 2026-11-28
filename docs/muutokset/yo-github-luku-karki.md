@@ -1,0 +1,1 @@
+- github_luku: pr-alikomento tulostaa hakuajan ja PR-tiedon lähteen (UUSI, VALIMUISTI tai VANHA) ja vertaa API:n kärkeä git ls-remote -kärkeen (refs/pull/N/head). Ero näkyy VAROITUS-rivinä, koska PR voi päivittyä kesken ajon (PR #401, tulos 2026-11-23-10).

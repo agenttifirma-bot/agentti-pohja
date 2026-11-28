@@ -44,7 +44,10 @@ ROOLIT = {
     "reititys": ("reititin", "kevyt", "vaativa"),
     "tiimi": ("keskustelija", "ajattelija", "kevyt"),
 }
-KAIKKI_ROOLIT = frozenset(r for rr in ROOLIT.values() for r in rr)
+# Yhdistelmien ulkopuoliset roolit: "vartija" tarkistaa luovutusehdotukset (aivo/vartija.py). Se ei kuulu
+# yhdistelmaan eika laske MAX_KUTSUT_VIESTI- tai MAX_MALLEJA-rajoihin; malli tulee samalta sallittujen listalta.
+ERILLISROOLIT = ("vartija",)
+KAIKKI_ROOLIT = frozenset([r for rr in ROOLIT.values() for r in rr] + list(ERILLISROOLIT))
 MAX_KUTSUT_VIESTI = 4
 MAX_MALLEJA = 3
 AIKARAJA_S = 240
@@ -63,9 +66,10 @@ MERKINTA_RE = re.compile(
     r"\[\[EHDOTUS [^\]\n]*\]\].*?\[\[/EHDOTUS\]\]"
     r"|\[\[LUOVUTUS\]\].*?\[\[/LUOVUTUS\]\]"
     r"|\[\[VALINNAT:[^\n]*?\]\]"
-    r"|\[\[PAATOS [0-9]{1,6}\]\]", re.S)
+    r"|\[\[PAATOS [0-9]{1,6}\]\]"
+    r"|\[\[SYVENNA\]\]", re.S)
 KATKENNUT_RE = re.compile(r"\[\[(?:EHDOTUS [^\]\n]*|LUOVUTUS)\]\](?:(?!\[\[/(?:EHDOTUS|LUOVUTUS)\]\]).)*\Z", re.S)
-IRRALLINEN_RE = re.compile(r"\[\[/?(?:EHDOTUS|LUOVUTUS|VALINNAT|PAATOS)[^\]\n]*\]\]")
+IRRALLINEN_RE = re.compile(r"\[\[/?(?:EHDOTUS|LUOVUTUS|VALINNAT|PAATOS|SYVENNA)[^\]\n]*\]\]")
 
 TARKASTAJA_OHJE = (
     "\n\nROOLISI T\u00c4SS\u00c4 VASTAUKSESSA: tarkastaja. Tonyn viimeisen viestin per\u00e4ss\u00e4 on toisen mallin luonnos vastaukseksi "

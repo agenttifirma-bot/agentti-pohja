@@ -1,0 +1,13 @@
+# Kopioi: /etc/systemd/system/aivo-itsetuntemus.timer. Sunnuntaiyona klo 3.30 Suomen aikaa (ei samaan aikaan
+# aivo-kysymykset.timerin kanssa, joka on sunnuntaina klo 18). Persistent: valiin jaanyt ajo tehdaan kaynnistyksen jalkeen.
+[Unit]
+Description=Aivo: itsetuntemuksen testisarja sunnuntaisin
+
+[Timer]
+OnCalendar=Sun *-*-* 03:30:00 Europe/Helsinki
+Persistent=true
+RandomizedDelaySec=600
+Unit=aivo-itsetuntemus.service
+
+[Install]
+WantedBy=timers.target

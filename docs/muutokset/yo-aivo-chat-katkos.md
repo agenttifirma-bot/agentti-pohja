@@ -1,0 +1,2 @@
+- aivo/chat: katkennut selainyhteys (BrokenPipe/ConnectionReset tailscale serven kautta) kirjataan yhdellä journal-rivillä ilman tracebackia; uusi vain luku -reitti GET /api/viimeisin; selain näyttää 45 s jälkeen "Aivo vastaa vielä…" ja hakee tallennetun vastauksen keskustelusta, jotta pitkä vastaus ei katoa.
+- aivo/chat: jos alkupituuden haku epäonnistuu ja keskustelun viimeisin Tonyn viesti vastaa lähetettyä, selain kehottaa lataamaan sivun eikä väitä, ettei viesti mennyt perille (estää maksullisen uudelleenlähetyksen).

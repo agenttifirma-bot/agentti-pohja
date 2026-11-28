@@ -35,7 +35,7 @@ from pathlib import Path
 from agentti import pr_kutsu
 from tools import automerge
 
-from . import kulutus
+from . import kulutus, nykytila
 
 OMISTAJA = "tonyweckstrom1987"
 API = "https://api.github.com"
@@ -117,7 +117,7 @@ def pr_tiedot(d):
     return {"draft": bool(d.get("draft")), "head_repo": (head.get("repo") or {}).get("full_name"),
             "base_repo": (base.get("repo") or {}).get("full_name"), "labels": [l.get("name") for l in d.get("labels") or []],
             "author": (d.get("user") or {}).get("login"), "head_ref": head.get("ref"), "head_sha": head.get("sha"),
-            "base_ref": base.get("ref")}
+            "base_ref": base.get("ref"), "title": d.get("title") or "", "body": d.get("body") or ""}
 
 
 def seurattavat_repot(env):
@@ -158,6 +158,24 @@ def _siivoa(teksti, maksimi):
     return t[:maksimi].strip()
 
 
+def _paatosoliot(teksti):
+    """Kaikki tekstin JSON-oliot, joissa on kelvollinen paatos. Jokaisesta {-merkista yritetaan raw_decodea,
+    joten oliota ymparoiva teksti (koodiaita, {x}, lisahuomiot) ei kaada lukua. Onnistuneen olion sisalle ei
+    hypata, jotta sisakkaisia olioita ei lasketa erikseen."""
+    dekooderi = json.JSONDecoder()
+    oliot, i = [], teksti.find("{")
+    while i != -1:
+        try:
+            v, loppu = dekooderi.raw_decode(teksti, i)
+        except ValueError:
+            i = teksti.find("{", i + 1)
+            continue
+        if isinstance(v, dict) and isinstance(v.get("paatos"), str) and v["paatos"] in PAATOKSET:
+            oliot.append(v)
+        i = teksti.find("{", loppu)
+    return oliot
+
+
 def tulkitse(stdout, koodi):
     """(paatos, perustelu, loydokset, luvut). Kaikki epaselva -> EN_TIEDA (fail closed)."""
     luvut = kulutus.claude_luvut(stdout or "")
@@ -168,13 +186,10 @@ def tulkitse(stdout, koodi):
     teksti = d.get("result") if isinstance(d, dict) and isinstance(d.get("result"), str) else ""
     if koodi != 0 or not isinstance(d, dict) or d.get("is_error") is True or d.get("subtype", "success") != "success":
         return "EN_TIEDA", "tarkastusajo epaonnistui (%s)" % _siivoa(d.get("subtype") if isinstance(d, dict) else "", 60), [], luvut
-    m = re.search(r"\{.*\}", teksti, re.S)
-    try:
-        v = json.loads(m.group(0)) if m else None
-    except ValueError:
-        v = None
-    if not isinstance(v, dict) or v.get("paatos") not in PAATOKSET:
+    oliot = _paatosoliot(teksti)
+    if not oliot or len({v["paatos"] for v in oliot}) != 1:
         return "EN_TIEDA", "tarkastajan vastaus ei ollut sovitussa muodossa", [], luvut
+    v = oliot[0]
     loydokset = [_siivoa(x, LOYDOS_MAX) for x in (v.get("loydokset") or []) if isinstance(x, str) and x.strip()][:LOYDOKSIA_MAX]
     return PAATOKSET[v["paatos"]], _siivoa(v.get("perustelu"), PERUSTELU_MAX), loydokset, luvut
 
@@ -338,6 +353,11 @@ def ohitusrivi(repo, nro, sha, syyt):
     return {"repo": repo, "pr": nro, "tulos": "OHITETTU", "syyt": siistit, "sha": sha[:12]}
 
 
+def _kommentit(repo, nro, tunnus, avaa):
+    return [{"user": (k.get("user") or {}).get("login"), "body": k.get("body")}
+            for k in hae_sivutettu("%s/repos/%s/%s/issues/%s/comments" % (API, OMISTAJA, repo, nro), tunnus, avaa=avaa)]
+
+
 def kierros(env, tunnus, nyt=None, suorita=subprocess.run, avaa=urllib.request.urlopen, kuiva=False):
     """Yksi kierros kaikkiin seurattaviin repoihin. Palauttaa lokirivit (dict)."""
     nyt = nyt or datetime.now().astimezone()
@@ -364,6 +384,13 @@ def kierros(env, tunnus, nyt=None, suorita=subprocess.run, avaa=urllib.request.u
                 continue
             try:
                 tiedostot = hae_sivutettu("%s/repos/%s/%s/pulls/%s/files" % (API, OMISTAJA, repo, nro), tunnus, avaa=avaa)
+                virhe = nykytila.pr_virhe(repo, tiedostot, d.get("body"))
+                if virhe:                                              # rakennesaanto: hylataan ilman mallin kutsua, myos rajatulle PR:lle
+                    if not kuiva and automerge.tarkastajan_paatos(_kommentit(repo, nro, tunnus, avaa), pr["head_sha"]) is None:
+                        _pyynto("%s/repos/%s/%s/issues/%s/comments" % (API, OMISTAJA, repo, nro), tunnus,
+                                data={"body": kommentti("HYLATTY", pr["head_sha"], virhe, [], "s\u00e4\u00e4nt\u00f6")}, avaa=avaa)
+                        tehty.append({"repo": repo, "pr": nro, "tulos": "HYLATTY", "syy": "nykytilarivi puuttuu", "sha": pr["head_sha"][:12]})
+                    continue
                 syyt = automerge.rakenne_syyt(pr, tiedostot)
                 # Tonyn paatos 14.11.2026 (A962): myos rakenteellisesti rajatut tarkastetaan, jotta Tony paattaa
                 # tarkastetusta versiosta. Luonnokset ohitetaan edelleen. Paatos ei voi olla HYVAKSYTTY (fail closed).
@@ -374,8 +401,7 @@ def kierros(env, tunnus, nyt=None, suorita=subprocess.run, avaa=urllib.request.u
                         ohitetut.add(pari)
                         tehty.append(ohitusrivi(repo, nro, pr["head_sha"], syyt))
                     continue
-                kommentit = [{"user": (k.get("user") or {}).get("login"), "body": k.get("body")}
-                             for k in hae_sivutettu("%s/repos/%s/%s/issues/%s/comments" % (API, OMISTAJA, repo, nro), tunnus, avaa=avaa)]
+                kommentit = _kommentit(repo, nro, tunnus, avaa)
                 if automerge.tarkastajan_paatos(kommentit, pr["head_sha"]) is not None:
                     continue                                           # tama commit on jo tarkastettu
                 if tila["maara"] >= max_pv:
