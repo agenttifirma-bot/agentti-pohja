@@ -1,0 +1,1 @@
+- tarkastaja: vastauksen JSON luetaan raw_decode-funktiolla jokaisesta {-merkistä ahneen r"\{.*\}"-osuman sijaan, joten olion ympärillä olevat aaltosulkeet (koodiaita, {x}, lisähuomiot) eivät enää pudota tulosta turhaan EN_TIEDA-tilaan; ristiriitaiset päätökset ovat yhä EN_TIEDA, ja listamuotoinen paatos ei enää kaada tulkintaa TypeErroriin.
