@@ -61,6 +61,12 @@ EHDOKKAAT = (
     "google/gemma-4-31b-it",
     "minimax/minimax-m3",
     "openai/gpt-oss-120b",
+    # 28.11.2026 (Tony: kokeillaan sensuroimatonta mallia): tuotannon vastaaja ja Venice Uncensored
+    # (Dolphin Mistral 24B Venice Edition, painot julkaistu: cognitivecomputations/Dolphin-Mistral-24B-Venice-Edition).
+    # Venicen ZDR-endpointia ei ole todennettu: pyynto lahtee aina provider.zdr=true, joten ilman ZDR-endpointia
+    # OpenRouter hylkaa sen eika dataa lahde. Vain synteettinen sarja; AVOIMET_MALLIT-listaa ei muuteta.
+    "qwen/qwen3.8-2.4t-a95b",
+    "cognitivecomputations/dolphin-mistral-24b-venice-edition",
 )
 KULURAJA_USD = 3.0
 TOISTOT = 2
