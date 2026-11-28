@@ -333,8 +333,9 @@ class MainTesti(VertailuPohja):
         self.assertFalse(self.ulos.exists())
 
     def test_tuntematon_tehtava(self):
-        rc, _ = self.aja_main("aja", "--ulos", str(self.ulos), "--roolit", MALLI, "--tehtavat", "olematon")
+        rc, out = self.aja_main("aja", "--ulos", str(self.ulos), "--roolit", MALLI, "--tehtavat", "olematon")
         self.assertEqual(rc, 2)
+        self.assertEqual(out.strip(), "asetusvirhe (VertailuVirhe)")     # ei sarjan arvoja eika polkuja
 
     def test_kulukirjanpito_ei_kaytettavissa(self):
         with mock.patch.object(aj, "tarkista_kulukirjanpito", return_value=["kulukirjanpito: x"]):

@@ -414,8 +414,11 @@ def main(argv: list[str] | None = None) -> int:
         yv = aja(tehtavat, s.roolit, s.ulos)
         print(json.dumps(yv, ensure_ascii=False))
         return 0 if not yv["pysahtyi"] else 1
-    except (malli.AgenttiVirhe, VertailuVirhe) as e:
+    except malli.AgenttiVirhe as e:   # viestit kiinteita (vakiot ja ROOLIT)
         print("asetusvirhe: %s" % e)
+        return 2
+    except VertailuVirhe:              # viestissa voi olla sarjan arvoja ja polku: vain tyypin nimi
+        print("asetusvirhe (VertailuVirhe)")
         return 2
     except aj.LukkoVarattu as e:
         print(str(e))

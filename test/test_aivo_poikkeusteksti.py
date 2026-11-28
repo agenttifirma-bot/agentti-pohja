@@ -92,6 +92,10 @@ SALLITUT = {
         (2, AGENTTI_KIINTEA),
     ("aivo/agentti_ajuri.py", "main", "LukkoVarattu", "str"):  # yksi vakioviesti
         (1, "LukkoVarattu: ainoa raise-kohta on vakio 'toinen ajuri on jo kaynnissa'"),
+    ("aivo/agenttivertailu.py", "main", "malli.AgenttiVirhe", "prosentti"):  # CLI: asetusvirhe stdoutiin
+        (1, AGENTTI_KIINTEA + "; VertailuVirhe erotettu omaksi haaraksi, joka tulostaa vain tyypin nimen"),
+    ("aivo/agenttivertailu.py", "main", "aj.LukkoVarattu", "str"):  # yksi vakioviesti
+        (1, "LukkoVarattu: ainoa raise-kohta on vakio 'toinen ajuri on jo kaynnissa'"),
     ("aivo/agenttitehtava.py", "kirjoita_jonoon", "agentti_ajuri.SyoteVirhe", "prosentti"):  # chatille
         (1, SYOTE_KIINTEA),
     ("aivo/chat.py", "Tila.__init__", "taustaajo.TaustaVirhe", "prosentti"):  # kaynnistysvirhe
