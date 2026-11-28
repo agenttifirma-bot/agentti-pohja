@@ -31,6 +31,12 @@ class Pohja(unittest.TestCase):
         vanha_prt = ajuri.AVOIMET_PRT
         ajuri.AVOIMET_PRT = lambda: (0, "")
         self.addCleanup(setattr, ajuri, "AVOIMET_PRT", vanha_prt)
+        # Istunnon GIT_AUTHOR_*/GIT_COMMITTER_* ohittaisivat testirepon user.email-asetuksen (CT115:lla ne ovat asetettuina).
+        ymp = mock.patch.dict("os.environ")
+        ymp.start()
+        self.addCleanup(ymp.stop)
+        for avain in [k for k in os.environ if k.startswith(("GIT_AUTHOR_", "GIT_COMMITTER_"))]:
+            os.environ.pop(avain)
         self.tmp = Path(tempfile.mkdtemp())
         self.origin = self.tmp / "origin.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)], check=True)

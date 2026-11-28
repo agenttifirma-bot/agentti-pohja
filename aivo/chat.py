@@ -1443,8 +1443,10 @@ class Tila:
                  agentit=None, agenttitehtavat=None, itsetarkistus=None, tarkista_yks=None,
                  tausta_jono=None, tausta_paivaraja=None, syvennykset=None, korjauskansio=None,
                  vartija_kysy=None, vartija_listat=None, tulos_repo=None, haku_jono=None, haku_odottavat=None,
-                 muisti_max=None, lisapalat=luovutuspaketti.LISAPALAT_OLETUS):
+                 muisti_max=None, paattely_max=None, lisapalat=luovutuspaketti.LISAPALAT_OLETUS):
         self.tiiviste = tiiviste
+        # paattelyn ylaraja (AIVO_YKSITYINEN_PAATTELY_MAX): ennen kysy-funktioita, koska vartijan kysy luodaan heti
+        self.paattely_max = yksityinen_or.tarkista_paattely_max(paattely_max)
         self.kirjasto = kirjasto
         self.kulutila = or_kulutila               # None = openrouter_kulut.OLETUS_TILA (yhteinen kirjanpito)
         self.tiivistelmat = tiivistelmat          # tyokalualueen tiivistelmakansio (vain tyokalutila lukee sita)
@@ -1495,7 +1497,8 @@ class Tila:
                 self.vartija_kysy = vartija_kysy
             elif taustapaa == "openrouter":       # loopback: teksti ei lahde palvelimelta vartijankaan takia
                 self.vartija_kysy = vartijan_kysy(
-                    self.roolit.get(vartija.ROOLI) or self.or_mallit[0], avain_tiedosto=or_avain, kulutila=or_kulutila)
+                    self.roolit.get(vartija.ROOLI) or self.or_mallit[0], avain_tiedosto=or_avain, kulutila=or_kulutila,
+                    paattely_max=self.paattely_max)
             self.taustapaa = taustapaa
             if yks_tiivistelmat:
                 if tiivistelmat and os.path.realpath(yks_tiivistelmat) == os.path.realpath(tiivistelmat):
@@ -1506,7 +1509,7 @@ class Tila:
             elif taustapaa == "openrouter":
                 self.kysy_yks = lambda muisti, historia, ohjeet, malli=None: yksityinen_or.kysy_openrouterilta(
                     muisti, historia, ohjeet, malli=malli or self.or_mallit[0], avain_tiedosto=or_avain,
-                    kulutila=or_kulutila)
+                    kulutila=or_kulutila, paattely_max=self.paattely_max)
             else:
                 self.kysy_yks = lambda muisti, historia, ohjeet: yksityinen.kysy_paikalliselta(
                     muisti, historia, ohjeet, malli_url)
@@ -1542,7 +1545,8 @@ class Tila:
             self.tarkista_yks = tarkista_yks or (
                 lambda muisti, historia, ohjeet, vastaus, vastaaja, kaytetyt: yksityinen_or.tarkista_vastaus(
                     muisti, historia, ohjeet, vastaus, vastaaja=vastaaja, tarkastaja=self.roolit.get("tarkastaja"),
-                    kaytetyt=kaytetyt, muisti_max=self.muisti_max, avain_tiedosto=or_avain, kulutila=or_kulutila))
+                    kaytetyt=kaytetyt, muisti_max=self.muisti_max, avain_tiedosto=or_avain, kulutila=or_kulutila,
+                    paattely_max=self.paattely_max))
         self.tausta_jono = None                   # taustaajon jono (0700); None = Syvenna-painike pois kaytosta
         self.tausta_paivaraja = taustaajo.PAIVARAJA
         self.tausta_ajattelija = None             # taustaajon ajattelijamalli (rooli ajattelija), vain naytto
@@ -1562,7 +1566,8 @@ class Tila:
         if kysy_yhd is None and self.taustapaa == "openrouter" and yks_data:
             self.kysy_yhd = lambda muisti, historia, ohjeet, malli, yhdistelma_nimi: yksityinen_or.kysy_yhdistelmalla(
                 muisti, historia, ohjeet, malli=malli, yhdistelma_nimi=yhdistelma_nimi, roolit=self.roolit,
-                ajattelija_aika_s=self.ajattelija_aika, avain_tiedosto=or_avain, kulutila=or_kulutila)
+                ajattelija_aika_s=self.ajattelija_aika, avain_tiedosto=or_avain, kulutila=or_kulutila,
+                paattely_max=self.paattely_max)
         if self.agenttidata:
             kal = os.path.dirname(getattr(kalenteri_lahde, "valimuisti", "") or "") or None
             tarkista_agenttidata(self.agenttidata, [kirjasto, data, self.tiivistelmat, self.yks_tiivistelmat, kal] + (
@@ -1985,7 +1990,7 @@ def tee_kasittelija(tila):
                 tarkistus = None
                 if tila.tarkista_yks is not None and malli:     # ennen merkintojen kasittelya: sama raaka vastaus
                     tarkistus = tila.tarkista_yks(muisti, historia, ohjeet, vastaus, malli,
-                                                  yhd.kutsuja if yhd is not None else 1)
+                                                  yhd.kutsuja if yhd is not None else getattr(vastaus, "kutsuja", 1))
                     vastaus = tarkistus.teksti
                     if tarkistus.tila == itsetarkistus.EI_TARVITA:
                         tarkistus = None
@@ -2834,6 +2839,9 @@ def main(argv=None):
     ap.add_argument("--yksityinen-muisti-max", default=os.environ.get("AIVO_YKSITYINEN_MUISTI_MAX"),
                     help="yksityisen tilan muistiosion enimmaiskoko merkkeina (4000-1000000, oletus 40000; vain "
                          "OpenRouter-taustapaa, voi vain pienentaa kehotetta, koskee myos itsetarkistuksen lahteita)")
+    ap.add_argument("--yksityinen-paattely-max", default=os.environ.get("AIVO_YKSITYINEN_PAATTELY_MAX"),
+                    help="ajattelevan mallin paattelyn ylaraja tokeneina (0-6000, oletus 2000, 0 = reasoning-parametria "
+                         "ei laheteta; vain OpenRouter-taustapaa, raja on aina pienempi kuin vastauksen max_tokens)")
     ap.add_argument("--korjaukset", default=os.environ.get("AIVO_KORJAUKSET"),
                     help="Tonyn palautteen kansio (oletus: yksityisen datan vieressa korjaukset/)")
     ap.add_argument("--agentit", default=os.environ.get("AIVO_AGENTIT", ""),
@@ -2872,7 +2880,7 @@ def main(argv=None):
                     itsetarkistus=a.yksityinen_itsetarkistus,
                     tausta_jono=a.tausta_jono or None, tausta_paivaraja=a.tausta_paivaraja,
                     korjauskansio=a.korjaukset, haku_jono=a.haku_jono or None,
-                    muisti_max=a.yksityinen_muisti_max)
+                    muisti_max=a.yksityinen_muisti_max, paattely_max=a.yksityinen_paattely_max)
         tila.kulut_kerroin = lue_kulukerroin(a.kulut_kerroin)
         palvelin = kaynnista(a.osoite, a.portti, tila)
     except ChatVirhe as e:

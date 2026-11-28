@@ -405,7 +405,9 @@ class RajatTesti(PakettiPohja):
         self.tila.tulos_repo = str(repo)
         ulkona = Path(self.tmp.name) / "ulkona.json"
         ulkona.write_text(json.dumps({"nimi": "x", "palat": [], "sha": "0"}))
-        for paha in ("../ulkona", "../../ulkona", "/etc/passwd", t + "/../" + t, t.upper(), "a" * 13, "", None, 5):
+        # t.upper() vain, jos tunnuksessa on kirjain (pelkista numeroista koostuva tunnus on sama isoilla kirjaimilla).
+        isot = (t.upper(),) if t.upper() != t else ()
+        for paha in ("../ulkona", "../../ulkona", "/etc/passwd", t + "/../" + t, "a" * 13, "", None, 5) + isot:
             self.assertEqual(self.pyynto("GET", "/api/paketti?keskustelu=%s&tunnus=%s" % (kid, paha))[0], 400, paha)
             for polku, lisa in (("/api/paketti/hyvaksy", {"vahvistus": "kyll\u00e4 " + s8}),
                                 ("/api/paketti/poista-pala", {"pala": 1, "sha8": s8}), ("/api/paketti/hylkaa", {})):
@@ -420,6 +422,20 @@ class RajatTesti(PakettiPohja):
         self.assertTrue(ulkona.is_file())
         self.assertEqual(self.saapuneet_tiedostot(), [])
         self.assertEqual(lp.listaa_paketit(self.tila.luovutukset), [t])
+
+    def test_polkujen_ohitus_estetty_numerotunnuksella(self):
+        # Pakotettu pelkista numeroista koostuva tunnus: t.upper() == t, joten isojen kirjainten tapaus jaa pois.
+        fake = mock.Mock(token_hex=lambda n: "444444444444")
+        tunnukset, alkup = [], self.paketti
+
+        def paketti(*a, **k):
+            r = alkup(*a, **k)
+            tunnukset.append(r[1])
+            return r
+        with mock.patch.object(luovutus, "secrets", fake), mock.patch.object(lp, "secrets", fake), \
+                mock.patch.object(self, "paketti", paketti):
+            self.test_polkujen_ohitus_estetty()
+        self.assertEqual(tunnukset, ["444444444444"])   # testi todella ajettiin numerotunnuksella
 
     def test_palan_numero_vain_ascii_numeroina(self):
         # "\u00b2".isdigit() on tosi, mutta int() kaatuu: palvelin katkaisi yhteyden ja poikkeusteksti meni stderriin

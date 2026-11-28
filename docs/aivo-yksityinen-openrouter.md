@@ -76,6 +76,43 @@ Mitä Aivo tekee:
 - Ajatteleva malli voi käyttää koko rajan päättelyyn, jolloin `content` on tyhjä ja `finish_reason` on `length`. Silloin chat, yhdistelmän osakutsu, tiivistys ja taustatyö nostavat virheen `VastausKatkesi`, ja chat näyttää ilmoituksen ”Vastaus katkesi pituusrajaan ennen kuin malli ehti kirjoittaa vastauksen …” tyhjän viestin sijaan. Taustaajo merkitsee työn epäonnistuneeksi syyllä ”vastaus katkesi pituusrajaan ennen tekstiä”. Taustatyön katkennut mutta ei-tyhjä vastaus saa loppuun merkinnän `[vastaus katkesi pituusrajaan]`.
 - Kulut: päiväkattoa varten tehtävä varaus on kiinteä `openrouter_kulut.VARAUS_USD` (0,50 $), eikä se riipu `max_tokens`-arvosta. 8 000 tokenia ulos maksaa taulukon malleilla enintään noin 0,01 $ (Llama 1,20 $ / miljoona tokenia), joten varaus kattaa sen. Päiväkatto (10 €/vrk) ei muutu.
 
+### Päättelyn yläraja ja uusinta (26.11.2026)
+
+Ajatteleva malli käyttää samaa `max_tokens`-rajaa päättelyyn ja vastaukseen. Kontin 122 lokissa 26.11. klo 19.43 malli `qwen/qwen3.8-2.4t-a95b` käytti koko 8 000 tokenin rajan päättelyyn: `prompt_tokens=17684, completion_tokens=8000, cost=0.0834 USD` ja `vastaus katkesi pituusrajaan ennen tekstia`. Tony ei saanut vastausta, mutta päättely laskutettiin.
+
+Mitä Aivo tekee:
+
+- Kutsuun lisätään `reasoning: {"max_tokens": N, "exclude": true}`. N on asetus `AIVO_YKSITYINEN_PAATTELY_MAX` (valitsin `--yksityinen-paattely-max`, oletus 2 000, sallittu 0–6 000). Arvo 0 tarkoittaa, että reasoning-parametria ei lähetetä lainkaan. Muu arvo estää palvelun käynnistymisen.
+- Raja on aina pienempi kuin kutsun `max_tokens`. Vastaukselle jää vähintään 2 000 tokenia, tai puolet rajasta, jos koko raja on alle 4 000 tokenia. Itsetarkistuksen tarkastajan raja on siksi 750 tokenia (1 500 / 2). Korjauskutsu, yhdistelmän osakutsut, vartija, taustaajo (`kysy_taustatyo`) ja tiivistys (`kysy_tiivistys`, 750 tokenia) käyttävät samaa laskentaa. Taustaajo ja tiivistys lukevat saman asetuksen `AIVO_YKSITYINEN_PAATTELY_MAX` omassa `main()`-funktiossaan, eivätkä ne tee uusintaa.
+- `exclude` jättää päättelyn tekstin pois vastauksesta. Aivo ei käytä sitä, joten se olisi vain turhaa siirrettävää.
+- Parametri lähetetään vain malleille, jotka päättelevät oletuksena ja joiden OpenRouter-mallitiedoissa `supported_parameters` sisältää `reasoning`. Taulukko `yksityinen_or.PAATTELY_TUKI` on osajoukko joukosta `yksityinen_or.OLETUKSENA_PAATTELEVAT`, ja sama joukko on mallivertailun `AJATTELEVAT_MALLIT`. Muut mallit kutsutaan ilman parametria, eikä niille tehdä uusintaa.
+- Valinnaisen päättelyn mallit (esimerkiksi `deepseek/deepseek-chat-v3.1` ja `mistralai/mistral-small-2603`) eivät saa parametria. OpenRouter päättelee `enabled`-tilan kentistä, joten `reasoning.max_tokens` todennäköisesti kytkisi niillä päättelyn päälle. Se kasvattaisi kuluja ja voisi katkaista yhdistelmän lyhyet osakutsut (200 ja 500 tokenia) ja vartijan (800 tokenia).
+- Jos vastaus katkeaa silti ennen tekstiä, yhden mallin chat tekee yhden uusintakutsun ilman päättelyä: valinnaisen päättelyn malleilla `effort: "none"` tai `enabled: false`, pakollisen päättelyn malleilla `effort: "low"`. Journaliin kirjataan rivi `yksityinen_or: uusinta kerran ilman paattelya …` ilman sisältöä. Uusinta kulkee saman päiväkaton kautta, ja se lasketaan kutsurajaan (4 per viesti). Jos katto on täynnä tai kutsuraja ei salli, uusintaa ei tehdä. Yhdistelmän osakutsut ja itsetarkistus eivät tee uusintaa, koska niillä on oma kutsulaskurinsa.
+- Rivi `yksityinen_or: kehote …` kertoo myös päättelyn rajan (`paattely enintaan N`). Rivi `yksityinen_or: toteutunut …` kertoo `reasoning_tokens=N`, jos OpenRouter ilmoittaa kentän `usage.completion_tokens_details.reasoning_tokens`. Siitä näkee, pitääkö raja käytännössä.
+
+OpenRouterin tiedot (https://openrouter.ai/docs/use-cases/reasoning-tokens ja `GET https://openrouter.ai/api/v1/models`, luettu 26.11.2026):
+
+| Malli | `reasoning` tuettu | Päättely pakollinen | Effort-tasot | Uusinta |
+|---|---|---|---|---|
+| `qwen/qwen3.8-2.4t-a95b` | kyllä | kyllä | xhigh, medium, low (oletus xhigh) | `effort: "low"` |
+| `qwen/qwen3.5-397b-a17b` | kyllä | ei | ei kerrota | `enabled: false` |
+| `deepseek/deepseek-chat-v3.1`, `mistralai/mistral-small-2603` | kyllä, mutta päättely ei ole oletuksena päällä | ei | – | ei uusintaa, ei parametria |
+| `meta-llama/llama-4-maverick` | ei | – | – | ei uusintaa, ei parametria |
+
+Dokumentaation mukaan malli, joka tukee vain effort-tasoja, muuntaa `reasoning.max_tokens`-arvon tasoksi sen osuuden mukaan `max_tokens`-rajasta (low noin 20 %, medium 50 %, xhigh 95 %). Näillä malleilla raja on siis vain taso, ei tarkka tokenmäärä: 2 000 / 8 000 = 25 % vastaa lähinnä tasoa low. Qwen-malleilla `reasoning.max_tokens` välitetään `thinking_budget`-arvona ”joillakin malleilla”. Se, että jokainen taulukon Qwen-malli noudattaa rajaa, on arvaus. Uusinta kattaa tapauksen, jossa raja ei pidä.
+
+Kustannusesimerkki lokin luvuilla (`qwen/qwen3.8-2.4t-a95b`, sisään 2,0 USD ja ulos 6,0 USD miljoonaa tokenia kohden, kehote 17 684 tokenia eli noin 0,035 USD):
+
+| Tilanne | Ulos (tokenia) | Hinta |
+|---|---|---|
+| Ennen: koko raja päättelyyn, ei vastausta | 8 000 | 0,0834 USD (toteutunut) |
+| Jälkeen: päättely enintään 2 000 ja vastaus 800 | 2 800 | noin 0,052 USD |
+| Jälkeen: päättely ei pidä, uusinta effort low (noin 1 600 + 800) | 8 000 + 2 400 | noin 0,083 + 0,050 = 0,133 USD |
+
+Kehote on suurin yksittäinen kulu (noin 0,035 USD). Päättelyn raja pienentää ulostulon osuutta noin 0,048 USD:stä enintään noin 0,012 USD:hen. Viimeinen rivi on pahin tapaus. Ilman uusintaa Tony maksaisi 0,083 USD eikä saisi vastausta.
+
+Malleilla, jotka eivät päättele oletuksena, kulu ei muutu: niiden kutsuun ei lisätä `reasoning`-kenttää, eikä niille tehdä uusintaa. Taustaajossa ja tiivistyksessä raja voi vain pienentää ulostulon määrää, koska niissä ei ole uusintaa. Toteutuneet päättelytokenit näkyvät journalin `reasoning_tokens`-kentästä, kun OpenRouter ilmoittaa ne.
+
 Päiväkatto 10 €/vrk on huomattavasti suurempi kuin yksityisen tilan odotettu kulu (alle 0,6 €/vrk raskaimmassakin laskelmassa). Virheellinen tai aikakatkaistu kutsu kirjataan varovaisesti 0,50 $:n kuluna, joten toistuvat virheet näkyvät kirjanpidossa.
 
 ## Käyttöönotto (Tony tekee kontissa 122)
