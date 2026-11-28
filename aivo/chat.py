@@ -940,7 +940,7 @@ def lahteiden_sisalto(vastaus, muisti, tiedostot):
     Ajetaan tarkista_lahteet-funktion jalkeen: tuntemattomiin tiedostoihin osoittavia viitteita ei kosketa."""
     try:
         return lahdeviite.tarkista(vastaus, muisti, tiedostot)
-    except (re.error, TypeError, ValueError) as e:      # tarkistus ei saa kaataa vastausta
+    except Exception as e:      # tarkistus ei saa kaataa vastausta; lokiin vain tyyppi, ei sisaltoa
         print("aivo: lahdetarkistus ohitettu (%s)" % type(e).__name__, file=sys.stderr)
         return vastaus, []
 

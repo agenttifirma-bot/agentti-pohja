@@ -8,8 +8,12 @@ mekaanisesti, ilman mallikutsua:
   * Tunnisteet: A-paatosnumerot (A1116), paivamaarat (26.11., 26.11.2026, 2026-11-26) ja vahintaan kolminumeroiset
     luvut. Lyhyita lukuja ei tarkisteta (liian yleisia: vaarat halytykset).
   * Viite on kunnossa, jos jokainen tunniste esiintyy jossakin viitatuista tiedostoista.
-  * Jos ei: tiedostot, joissa kaikki tunnisteet esiintyvat, ovat ehdokkaita. Tasan yksi ehdokas ja yksi viite ->
-    viite korjataan ehdokkaaseen ja korjaus kerrotaan tekstissa. Useita ehdokkaita tai ryhmaviite -> viite
+  * Vuosi: vuodellinen paivamaara (26.11.2025) esiintyy viitatussa tiedostossa, jos siella on sama paiva samalla
+    vuodella tai ilman vuotta (26.11.); toisen vuoden sama paiva (26.11.2026) ei kelpaa. Ehdokkaaksi kelpaa vain
+    tiedosto, jossa paiva on samalla vuodella. Vuodeton paivamaara (26.11.) osuu mihin tahansa vuoteen.
+  * Jos ei: tiedostot, joissa kaikki tunnisteet esiintyvat, ovat ehdokkaita. Tasan yksi ehdokas, yksi viite ja
+    jokaisessa paivamaarassa vuosi -> viite korjataan ehdokkaaseen ja korjaus kerrotaan tekstissa. Jos vaitteen
+    paivamaarasta puuttuu vuosi, korjausta ei tehda automaattisesti, vaan viite merkitaan. Useita ehdokkaita tai ryhmaviite -> viite
     merkitaan vaaraksi ja ehdokkaat luetellaan (enintaan 3). Ei ehdokkaita -> merkinta vain, jos A-numero tai
     paivamaara puuttuu viitatusta tiedostosta (pelkka luku voi olla laskettu, joten siita ei merkita).
 
@@ -51,7 +55,8 @@ def jasenna_muisti(muisti: Any) -> Dict[str, str]:
 
 
 def tunnisteet(vaite: str) -> List[Tuple[str, str, Any]]:
-    """Vaitteen tunnisteet listana (laji, nayttoteksti, avain). Lajit: 'paatos', 'pvm', 'luku'."""
+    """Vaitteen tunnisteet listana (laji, nayttoteksti, avain). Lajit: 'paatos', 'pvm', 'luku'.
+    Paivamaaran avain on (paiva, kuukausi, vuosi tai None)."""
     tulos: List[Tuple[str, str, Any]] = []
     varattu: List[Tuple[int, int]] = []
 
@@ -63,13 +68,13 @@ def tunnisteet(vaite: str) -> List[Tuple[str, str, Any]]:
     for m in _PAATOS_RE.finditer(vaite):
         lisaa("paatos", "A" + m.group(1), m.group(1), m)
     for m in _PVM_ISO_RE.finditer(vaite):
-        lisaa("pvm", m.group(0), (int(m.group(3)), int(m.group(2))), m)
+        lisaa("pvm", m.group(0), (int(m.group(3)), int(m.group(2)), int(m.group(1))), m)
     for m in _PVM_RE.finditer(vaite):
         if any(a <= m.start() < b for a, b in varattu):
             continue
         p, k = int(m.group(1)), int(m.group(2))
         if 1 <= p <= 31 and 1 <= k <= 12:
-            lisaa("pvm", m.group(0), (p, k), m)
+            lisaa("pvm", m.group(0), (p, k, int(m.group(3)) if m.group(3) else None), m)
     for m in _LUKU_RE.finditer(vaite):
         if any(a <= m.start() < b for a, b in varattu):
             continue
@@ -77,15 +82,25 @@ def tunnisteet(vaite: str) -> List[Tuple[str, str, Any]]:
     return tulos
 
 
-def _esiintyy(tunniste: Tuple[str, str, Any], sisalto: str) -> bool:
+def _esiintyy(tunniste: Tuple[str, str, Any], sisalto: str, tarkka: bool = False) -> bool:
+    """Esiintyyko tunniste sisallossa. tarkka=True (ehdokkaat): vuodellisen paivamaaran pitaa olla tiedostossa
+    samalla vuodella; vuodeton maininta (26.11.) ei riita."""
     laji, _, avain = tunniste
     if laji == "paatos":
         return re.search(r"(?<![0-9A-Za-z\u00c0-\u00ff])A\s?%s(?!\d)" % avain, sisalto) is not None
     if laji == "pvm":
-        p, k = avain
-        if re.search(r"(?<![\d.])0?%d\.0?%d\.(?!\d\.)" % (p, k), sisalto):
+        p, k, v = avain
+        if v is None:
+            if re.search(r"(?<![\d.])0?%d\.0?%d\.(?!\d\.)" % (p, k), sisalto):
+                return True
+            return re.search(r"(?<!\d)\d{4}-%02d-%02d(?!\d)" % (k, p), sisalto) is not None
+        if re.search(r"(?<![\d.])0?%d\.0?%d\.\s?%04d(?!\d)" % (p, k, v), sisalto):
             return True
-        return re.search(r"(?<!\d)\d{4}-%02d-%02d(?!\d)" % (k, p), sisalto) is not None
+        if re.search(r"(?<!\d)%04d-%02d-%02d(?!\d)" % (v, k, p), sisalto):
+            return True
+        if tarkka:
+            return False
+        return re.search(r"(?<![\d.])0?%d\.0?%d\.(?!\d\.|\s?\d{4}(?!\d))" % (p, k), sisalto) is not None
     return re.search(r"(?<![\d.,:])%s(?!\d)" % avain, sisalto) is not None
 
 
@@ -138,11 +153,12 @@ def tarkista(vastaus: Any, muisti: Any,
         puuttuvat = [t for t in tunn if not any(_esiintyy(t, sisallot[n]) for n in nimet)]
         if not puuttuvat:
             continue
-        ehdokkaat = [n for n in sisallot if n not in nimet and all(_esiintyy(t, sisallot[n]) for t in tunn)]
+        ehdokkaat = [n for n in sisallot if n not in nimet and all(_esiintyy(t, sisallot[n], True) for t in tunn)]
         naytto = ", ".join(t[1] for t in puuttuvat)
         if not ehdokkaat and not any(t[0] in ("paatos", "pvm") for t in puuttuvat):
             continue                     # pelkka luku: voi olla laskettu, ei merkintaa
-        if len(ehdokkaat) == 1 and len(ryhma) == 1:
+        vuodeton = any(t[0] == "pvm" and t[2][2] is None for t in tunn)   # vuosi puuttuu: vain merkinta
+        if len(ehdokkaat) == 1 and len(ryhma) == 1 and not vuodeton:
             oikea = ehdokkaat[0]
             korvaukset.append((alku, loppu, "[l\u00e4hde: %s] (palvelin korjasi l\u00e4hteen: %s ei ole tiedostossa %s)"
                                % (oikea, naytto, nimet[0])))
