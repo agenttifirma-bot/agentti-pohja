@@ -1,0 +1,1 @@
+- aivo/mallivertailu: ehdokkaiksi tuotannon qwen3.8 sekä sensuroimattomat Venice Uncensored, Cydonia 24B ja Hermes 4 405B (Tony 28.11.; ZDR pakotettu, vain synteettinen sarja), ja valinnainen tuotannon päättelyraja `aja --paattely N` (oletus 0 = ennallaan).

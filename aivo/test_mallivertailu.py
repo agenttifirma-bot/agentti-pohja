@@ -329,6 +329,66 @@ class LippuTesti(unittest.TestCase):
         self.assertEqual(nahty, [True])
         self.assertIs(ok.kutsu, aito)
 
+    def _rungot_paattelylla(self, mallit, paattely):
+        rungot = []
+
+        def tehdas():
+            def laheta(runko):
+                rungot.append(runko)
+                return {"choices": [{"message": {"content": "v"}}], "usage": {"cost": 0.0}}
+            return laheta
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "kulut").mkdir(mode=0o700)
+            mv.aja(mallit, Path(d) / "ulos", tehdas, toistot=1, kulutila=str(Path(d) / "kulut"),
+                   loki=lambda s: None, paattely=paattely)
+        return rungot
+
+    def test_paattely_vain_tuotannon_malleille_ja_oletuksena_ei(self):
+        qwen, venice = "qwen/qwen3.8-2.4t-a95b", "cognitivecomputations/dolphin-mistral-24b-venice-edition"
+        self.assertTrue(yksityinen_or._paattelee_ja_tukee(qwen))
+        rungot = self._rungot_paattelylla([qwen, venice], 2000)
+        self.assertEqual(len(rungot), 2 * mv.TEHTAVIA)
+        for r in rungot:
+            self.assertEqual(r["provider"], {"zdr": True, "data_collection": "deny"})
+            if r["model"] == qwen:
+                self.assertEqual(r["reasoning"], {"max_tokens": 2000, "exclude": True})
+                self.assertGreater(r["max_tokens"], 2000)
+            else:
+                self.assertNotIn("reasoning", r)
+        for r in self._rungot_paattelylla([qwen], 0):
+            self.assertNotIn("reasoning", r)
+
+    def test_sensuroimattomat_zdr_pakotettu_eika_tuotantoon(self):
+        """A1131/A1132: Venice, Cydonia ja Hermes 4 vain synteettiseen vertailuun, ZDR ja deny aina."""
+        for m in ("cognitivecomputations/dolphin-mistral-24b-venice-edition", "thedrummer/cydonia-24b-v4.1",
+                  "nousresearch/hermes-4-405b"):
+            self.assertIn(m, mv.EHDOKKAAT)
+            self.assertIs(mv.tarkista_malli(m), False)
+            self.assertFalse(openrouter_zdr.avoin_malli(m))
+            r = openrouter_zdr.rakenna_runko(m, [], yksityinen_chat=False)
+            self.assertEqual(r["provider"], {"zdr": True, "data_collection": "deny"})
+            self.assertTrue(yksityinen_or._zdr_kunnossa(r))
+            with self.assertRaises(Exception):
+                mv.itse_mallit([m])
+            with self.assertRaises(Exception):
+                yksityinen_or.tarkista_mallit(m)
+
+    def test_cli_paattely_valitetaan_ja_rajataan(self):
+        kutsut = []
+
+        def vale_aja(mallit, ulos, tehdas, **kw):
+            kutsut.append((mallit, kw))
+            return {}
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(mv.yksityinen_or, "lue_avain", lambda _p: "testiavain"), \
+                mock.patch.object(mv, "aja", vale_aja), mock.patch("builtins.print"):
+            for arvo, odotus in (("2000", 2000), ("99999", yksityinen_or.PAATTELY_MAX_YLARAJA), ("-5", 0)):
+                mv.main(["aja", "--mallit", "qwen/qwen3.8-2.4t-a95b", "--toistot", "1", "--paattely", arvo,
+                         "--ulos", d])
+                self.assertEqual(kutsut[-1][1]["paattely"], odotus)
+            mv.main(["aja", "--mallit", "qwen/qwen3.8-2.4t-a95b", "--ulos", d])
+            self.assertEqual(kutsut[-1][1]["paattely"], 0)
+
     def test_ajo_kayttaa_lippua_listan_mukaan_ja_zdr_pysyy(self):
         nahty = []
         aito = ok.kutsu
