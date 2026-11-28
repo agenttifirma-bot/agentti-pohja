@@ -1219,6 +1219,24 @@ def tiivistelmakansio_ristiriita(tyokalu, yksityiset):
     return False
 
 
+MUISTINAKYMA_TILAT = ("tyokalu", "yksityinen")   # tunnetut arvot; HTTP:lla luettavissa vain "tyokalu"
+
+
+def muistinakyma_tila(kysely):
+    """Muistinakyman tila kyselysta. Tyhja kysely -> "tyokalu". Sallittu vain tasan yksi tila-parametri, jonka
+    (dekoodattu) arvo on MUISTINAKYMA_TILAT-joukossa; muu (muut avaimet, toisto, tuntematon arvo, jasennysvirhe) -> None."""
+    if kysely == "":
+        return "tyokalu"
+    try:
+        parit = urllib.parse.parse_qsl(kysely, keep_blank_values=True, strict_parsing=True,
+                                       encoding="utf-8", errors="strict")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if len(parit) != 1 or parit[0][0] != "tila" or parit[0][1] not in MUISTINAKYMA_TILAT:
+        return None
+    return parit[0][1]
+
+
 def lue_kulukerroin(arvo):
     """Nayton USD->EUR-kerroin asetuksesta ("0.92" tai "0,92"). Sallittu 0 < k <= 10; muu -> ChatVirhe."""
     try:
@@ -1461,8 +1479,9 @@ class Tila:
         self.vastauslukko = threading.Lock()   # yksi Claude-kutsu kerrallaan
         # Muistinakyma (vain luku) lukee vain tyokalutilan tiivistelmia. Yksityisen tilan tiivistelmia ei voi lukea HTTP:n kautta
         # lainkaan, eika yksityiselle tilalle luoda tiivistelmakansiota kaynnistyksessa.
-        # self.tiivistelmat pysyy None, kunnes tiivistelmat kytketaan kehotteeseen; nakyma tarvitsee kansion aina
-        self.nakyma_tiivistelmat = str(tiivistelmat or Path(data).parent / "tiivistelmat")
+        # Nakyma lukee vain asetettua kansiota (sama kuin self.tiivistelmat). Ilman asetusta nakyma ei lue mitaan:
+        # ei oletuskansiota, koska tuotanto ei kirjoita sinne ennen kuin tiivistelmat on kytketty.
+        self.nakyma_tiivistelmat = str(tiivistelmat) if tiivistelmat else None
         self.yks = None
         self.or_mallit = ()                       # sallitut OpenRouter-mallit; ensimmainen on oletus (vain openrouter)
         self.yhdistelmat = (yhdistelma.OLETUS,)   # usean mallin yhdistelmat ovat kaytossa vain OpenRouter-taustapaalla
@@ -1701,6 +1720,8 @@ class Tila:
     def _tarkista_tiivistelmakansiot(self, yks_data):
         """Kieltaytyy kaynnistymasta vain, jos tyokalutilan kansio on yksityisen alueen kansio, sen sisalla tai ylakansio.
         Ei luo kansioita eika koske levyyn (vain polkujen vertailu)."""
+        if self.nakyma_tiivistelmat is None:
+            return
         yksityiset = [yks_data, self.yks_muisti, self.ehdotukset] + ([self.yks_tiivistelmat] if self.yks_tiivistelmat else [])
         if tiivistelmakansio_ristiriita(self.nakyma_tiivistelmat, yksityiset):
             raise ChatVirhe("tyokalutilan tiivistelmakansio on yksityisen tilan kansio tai sen sisalla; kieltaydyn kaynnistymasta")
@@ -1793,8 +1814,11 @@ def tee_kasittelija(tila):
             if self.path.split("?", 1)[0] == "/muisti":
                 if not self._kirjautunut():
                     return self._laheta(302, "", "text/plain", [("Location", "/kirjaudu")])
-                if self.path.partition("?")[2] not in ("", "tila=tyokalu"):      # yksityista tilaa ei voi lukea HTTP:lla
+                valinta = muistinakyma_tila(self.path.partition("?")[2])
+                if valinta == "yksityinen":      # yksityista tilaa ei voi lukea HTTP:lla
                     return self._json(404, {"virhe": "ei loydy"})
+                if valinta is None:              # tuntematon tai moniselitteinen kysely: ei oletusta
+                    return self._json(400, {"virhe": "tuntematon tila"})
                 return self._laheta(200, muistinakyma.sivu(tila.nakyma_tiivistelmat, "ty\u00f6kalutila"),
                                     "text/html; charset=utf-8")
             if self.path == "/terve":

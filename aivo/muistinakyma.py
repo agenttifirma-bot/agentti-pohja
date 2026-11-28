@@ -41,9 +41,12 @@ def keraa(kansio):
     return tulos[:MAX_NAYTETTAVAT], ohitettu
 
 
+EI_KANSIOTA = "Tiivistelm\u00e4kansiota ei ole asetettu, joten n\u00e4kym\u00e4 ei lue mit\u00e4\u00e4n."
+
+
 def sivu(kansio, otsikko):
-    """HTML-sivu (vain luku). Otsikko on koodin oma vakio, ei datasta."""
-    rivit, ohitettu = keraa(kansio)
+    """HTML-sivu (vain luku). Otsikko on koodin oma vakio, ei datasta. kansio=None: ei lueta mitaan, vain viesti."""
+    rivit, ohitettu = keraa(kansio) if kansio is not None else ([], 0)
     o = ["<!doctype html>", '<html lang="fi"><head><meta charset="utf-8">',
          '<meta name="viewport" content="width=device-width, initial-scale=1">',
          "<title>Aivo \u2013 muisti</title>",
@@ -53,7 +56,9 @@ def sivu(kansio, otsikko):
          '<p><a href="/">\u2190 Keskusteluun</a></p>',
          "<h1>Aivon muisti: %s</h1>" % html.escape(otsikko),
          '<p class="pieni">Vain luku. Tiivistelm\u00e4t ovat Aivon tulkintoja; Tonyn omat sanat n\u00e4kyv\u00e4t lainauksina.</p>']
-    if not rivit:
+    if kansio is None:
+        o.append("<p>%s</p>" % html.escape(EI_KANSIOTA))
+    elif not rivit:
         o.append("<p>Ei tiivistelmi\u00e4.</p>")
     for tunnus, t in rivit:
         o.append("<section><strong>%s</strong> <span class=\"pieni\">viestit %s\u2013%s, malli %s</span>"

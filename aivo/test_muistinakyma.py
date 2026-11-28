@@ -1,16 +1,13 @@
 """Testit chat-sivun muistinakymalle (vain luku, aivo/muistinakyma.py). Ei verkkoa ulos, ei mallikutsua."""
 import ast
-import hashlib
 import http.client
-import json
-import os
 import secrets
 import tempfile
 import threading
 import unittest
 from pathlib import Path
 
-from aivo import chat, muistinakyma, tyokalualue, yksityinen
+from aivo import chat, muistinakyma, yksityinen
 from aivo import tiivistelma as tv
 
 SAL = "oikea-salasana-123"
@@ -47,7 +44,8 @@ class NakymaTesti(unittest.TestCase):
         tv.tallenna(cls.tiiv_yks, d, v)
         cls.tila = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "aivo" / "chat"), [TS],
                              yks_data=str(r / "yks" / "chat"), yks_muisti=str(r / "yks" / "muisti"),
-                             ehdotukset=str(r / "yks" / "ehdotukset"), kysy_yks=lambda m, h, o: "x")
+                             ehdotukset=str(r / "yks" / "ehdotukset"), tiivistelmat=str(cls.tiiv_tyokalu),
+                             kysy_yks=lambda m, h, o: "x")
         cls.srv = chat.kaynnista("127.0.0.1", 0, cls.tila)
         cls.portti = cls.srv.server_address[1]
         threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
@@ -81,23 +79,41 @@ class NakymaTesti(unittest.TestCase):
     def test_kanaria_tyokalutilan_sivu_ei_nayta_yksityista(self):
         """Suunnitelman 4.2 kanariamalli: yksityisen tiivistelman uniikki merkkijono ei saa paatya tyokalutilan sivulle."""
         ev = self.kirjaudu()
-        for p in ("/muisti?tila=tyokalu", "/muisti", "/muisti?tila=tyokalu&tila=yksityinen"):
+        for p in ("/muisti?tila=tyokalu", "/muisti", "/muisti?tila=%74yokalu"):
             s, runko = self.hae("GET", p, ev)
+            self.assertEqual(s, 200, p)
             self.assertNotIn(self.kanaria, runko, p)
-            if s == 200:
-                self.assertIn(self.tyokalu_merkki, runko, p)
-        for p in ("/muisti?tila=../yks", "/muisti?tila=yksityinen%00", "/muisti?x=1"):
+            self.assertIn(self.tyokalu_merkki, runko, p)
+
+    def test_tuntematon_tila_400_eika_oletusta(self):
+        """Tilan valinta tiukasti sallituista arvoista: tuntematon tai moniselitteinen kysely -> 400, ei tyokalutilan sivua."""
+        ev = self.kirjaudu()
+        for p in ("/muisti?tila=../yks", "/muisti?tila=yksityinen%00", "/muisti?x=1", "/muisti?tila=",
+                  "/muisti?tila", "/muisti?tila=tyokalu&tila=yksityinen", "/muisti?tila=tyokalu&tila=tyokalu",
+                  "/muisti?tila=tyokalu&x=1", "/muisti?tila=TYOKALU", "/muisti?tila=tyokalu%20", "/muisti?&",
+                  "/muisti?tila=%ff"):
             s, runko = self.hae("GET", p, ev)
-            self.assertEqual(s, 404, p)
-            self.assertNotIn(self.kanaria, runko)
+            self.assertEqual(s, 400, p)
+            self.assertNotIn(self.kanaria, runko, p)
+            self.assertNotIn(self.tyokalu_merkki, runko, p)
+
+    def test_muistinakyma_tila_jasennys(self):
+        self.assertEqual(chat.muistinakyma_tila(""), "tyokalu")
+        self.assertEqual(chat.muistinakyma_tila("tila=tyokalu"), "tyokalu")
+        self.assertEqual(chat.muistinakyma_tila("tila=yksityinen"), "yksityinen")
+        for k in ("tila=muu", "tila=tyokalu;x=1", "tila=tyokalu&tila=tyokalu", "a=b", "tila=%C3", "=tyokalu"):
+            self.assertIsNone(chat.muistinakyma_tila(k), k)
 
     def test_yksityista_tilaa_ei_voi_lukea_http_lla(self):
         """Yksityisen tilan tiivistelmat eivat ole luettavissa HTTP:n kautta lainkaan (kirjautuneenakaan)."""
         ev = self.kirjaudu()
-        for p in ("/muisti?tila=yksityinen", "/muisti?tila=yksityinen&tila=tyokalu", "/muisti?tila=%79ksityinen"):
+        for p in ("/muisti?tila=yksityinen", "/muisti?tila=%79ksityinen"):
             s, runko = self.hae("GET", p, ev)
             self.assertEqual(s, 404, p)
             self.assertNotIn(self.kanaria, runko)
+        s, runko = self.hae("GET", "/muisti?tila=yksityinen&tila=tyokalu", ev)
+        self.assertEqual(s, 400)
+        self.assertNotIn(self.kanaria, runko)
         s, runko = self.hae("GET", "/muisti", ev)
         self.assertEqual(s, 200)
         self.assertNotIn(self.kanaria, runko)
@@ -119,6 +135,33 @@ class NakymaTesti(unittest.TestCase):
         self.assertIsNone(tila.yks_tiivistelmat)      # ilman asetusta yksityisen alueen tiivistelmia ei kayteta (main #333)
         self.assertFalse((r / "yks" / "tiivistelmat").exists())
         self.assertFalse((r / "aivo" / "tiivistelmat").exists())
+        self.assertIsNone(tila.nakyma_tiivistelmat)    # ei oletuskansiota
+
+    def test_ilman_kansiota_nakyma_ei_lue_mitaan(self):
+        """Kun tiivistelmakansiota ei ole asetettu, nakyma ei lue oletuskansiota (johon tuotanto ei kirjoita), vaan
+        kertoo, ettei kansiota ole asetettu. Oletuspolussa oleva tiivistelma ei saa nakya."""
+        r = Path(self.tmp.name) / "eiasetettu"
+        merkki = "OLETUSKANSIO-" + secrets.token_hex(4)
+        v, d = tee("20261114-151500-0a1b2c3d", "2026-11-14T15:00:00+00:00", "Oletus " + merkki, "oletus " + merkki)
+        tv.tallenna(r / "tiivistelmat", d, v)       # Path(data).parent / "tiivistelmat", vanha oletuspolku
+        tila = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "chat"), [TS])
+        self.assertIsNone(tila.nakyma_tiivistelmat)
+        srv = chat.kaynnista("127.0.0.1", 0, tila)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            vanha, self.portti = self.portti, srv.server_address[1]
+            try:
+                ev = self.kirjaudu()
+                s, runko = self.hae("GET", "/muisti", ev)
+            finally:
+                self.portti = vanha
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        self.assertEqual(s, 200)
+        self.assertNotIn(merkki, runko)
+        self.assertIn("ei ole asetettu", runko)
+        self.assertIn("ei ole asetettu", muistinakyma.sivu(None, "koe"))
 
     def test_tuotannon_oletuspolut_eivat_ole_ristiriidassa(self):
         """Kayttoonoton oletuspolut (chat.OLETUS_DATA ja yksityinen.OLETUS_*): tarkistus ei saa kaataa palvelua.
@@ -146,7 +189,8 @@ class NakymaTesti(unittest.TestCase):
         tunnus = tv.tallenna(r / "tiivistelmat", d, v)
         tiedosto = r / "tiivistelmat" / (tunnus + ".json")      # kasin muokattu tiedosto: ohjausmerkki ohittaa jasennyksen
         tiedosto.write_text(tiedosto.read_text(encoding="utf-8").replace("</script>", "</script>\\u001b[2J"), encoding="utf-8")
-        tila = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "chat"), [TS])
+        tila = chat.Tila(chat.tiivista_salasana(SAL), str(r / "kirjasto"), str(r / "chat"), [TS],
+                         tiivistelmat=str(r / "tiivistelmat"))
         srv = chat.kaynnista("127.0.0.1", 0, tila)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         try:
