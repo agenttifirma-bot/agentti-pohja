@@ -63,8 +63,9 @@ SALLITUT = {
         (1, OMA_VIRHE + "; CLI-virhe stderriin"),
     ("aivo/kalenteri.py", "hae_https", "urllib.error.HTTPError", "prosentti"):
         (1, "vain HTTP-tilakoodi e.code (kokonaisluku, %d), ei viestia eika osoitetta"),
-    ("aivo/yksityinen_or.py", "tee_kuljetin.laheta", "urllib.error.HTTPError", "prosentti"):
-        (1, "vain HTTP-tilakoodi e.code, ei viestia eika vastauksen runkoa"),
+    ("aivo/yksityinen_or.py", "tee_kuljetin.laheta", "urllib.error.HTTPError", "raise"):  # #479: HttpVirhe
+        (1, "raise HttpVirhe(e.code, koodi): viesti on kiintea 'HTTP %s' kokonaisluvulla; koodi on _KOODI_RE-"
+            "siistitty attribuutti, ei viestissa; runkoa eika viestia ei talleteta"),
     ("aivo/kalenteri.py", "IcalLahde._teksti", "KalenteriVirhe", "suora:warning"):
         (1, OMA_VIRHE + "; KalenteriVirhe ei sisalla osoitetta, ulkoiset virheet vain tyypin nimella"),
     # --- 28.11. (PR #417 mainin paalle): uudet kohdat, joiden viesti on todistettavasti kiintea ---
