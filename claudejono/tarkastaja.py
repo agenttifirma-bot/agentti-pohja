@@ -158,6 +158,24 @@ def _siivoa(teksti, maksimi):
     return t[:maksimi].strip()
 
 
+def _paatosoliot(teksti):
+    """Kaikki tekstin JSON-oliot, joissa on kelvollinen paatos. Jokaisesta {-merkista yritetaan raw_decodea,
+    joten oliota ymparoiva teksti (koodiaita, {x}, lisahuomiot) ei kaada lukua. Onnistuneen olion sisalle ei
+    hypata, jotta sisakkaisia olioita ei lasketa erikseen."""
+    dekooderi = json.JSONDecoder()
+    oliot, i = [], teksti.find("{")
+    while i != -1:
+        try:
+            v, loppu = dekooderi.raw_decode(teksti, i)
+        except ValueError:
+            i = teksti.find("{", i + 1)
+            continue
+        if isinstance(v, dict) and isinstance(v.get("paatos"), str) and v["paatos"] in PAATOKSET:
+            oliot.append(v)
+        i = teksti.find("{", loppu)
+    return oliot
+
+
 def tulkitse(stdout, koodi):
     """(paatos, perustelu, loydokset, luvut). Kaikki epaselva -> EN_TIEDA (fail closed)."""
     luvut = kulutus.claude_luvut(stdout or "")
@@ -168,13 +186,10 @@ def tulkitse(stdout, koodi):
     teksti = d.get("result") if isinstance(d, dict) and isinstance(d.get("result"), str) else ""
     if koodi != 0 or not isinstance(d, dict) or d.get("is_error") is True or d.get("subtype", "success") != "success":
         return "EN_TIEDA", "tarkastusajo epaonnistui (%s)" % _siivoa(d.get("subtype") if isinstance(d, dict) else "", 60), [], luvut
-    m = re.search(r"\{.*\}", teksti, re.S)
-    try:
-        v = json.loads(m.group(0)) if m else None
-    except ValueError:
-        v = None
-    if not isinstance(v, dict) or v.get("paatos") not in PAATOKSET:
+    oliot = _paatosoliot(teksti)
+    if not oliot or len({v["paatos"] for v in oliot}) != 1:
         return "EN_TIEDA", "tarkastajan vastaus ei ollut sovitussa muodossa", [], luvut
+    v = oliot[0]
     loydokset = [_siivoa(x, LOYDOS_MAX) for x in (v.get("loydokset") or []) if isinstance(x, str) and x.strip()][:LOYDOKSIA_MAX]
     return PAATOKSET[v["paatos"]], _siivoa(v.get("perustelu"), PERUSTELU_MAX), loydokset, luvut
 

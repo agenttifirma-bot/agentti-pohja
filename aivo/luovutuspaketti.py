@@ -18,7 +18,9 @@ Turvarajat (koodi on laki):
     (luovutus.saapunut_teksti), ja tekstin alussa on rivi, jossa on paketin tunnus ja palan numero.
   * Paluu: AIVO_TULOS_REPO on yksityinen tulosrepo (polku tai klooni). Tulos palalle n on tiedosto
     <tulosrepo>/<pakettitunnus>/pala-<n>.md. Vain yksityinen tila lukee sita. Tyokalutila ei koskaan lue
-    yksityista aluetta, eika tulosrepo saa olla kirjaston tai tyokalutilan datan sisalla.
+    yksityista aluetta, eika tulosrepo saa olla kirjaston tai tyokalutilan datan sisalla. Tuloksen kirjoittaa
+    kirjoita_tulos tai komento "python3 -m aivo.luovutuspaketti kirjoita-tulos <tulosrepo> <palatiedosto>
+    <tulostiedosto>" (pakettitunnus ja palan numero luetaan palan otsakkeesta, jasenna_palan_otsake).
   * Lisapalat: [[LISAPALA <pakettitunnus>]] teksti [[/LISAPALA]]. AIVO_LISAPALAT=kysy (oletus): jokainen lisapala
     vaatii oman hyvaksynnan. "automaattinen": vartijan hyvaksyma, hyvaksytyn paketin tunnuksella merkitty lisapala
     lahtee ilman painallusta, ja siita kirjataan yhteenveto. Vaihto on Tonyn paatos."""
@@ -27,6 +29,7 @@ import os
 import re
 import secrets
 import stat
+import tempfile
 from pathlib import Path
 
 from aivo import luovutus, vartija as vuotovartija, yksityinen
@@ -92,9 +95,35 @@ def palan_tunnus(perusta, n):
     return yksityinen.sha("%s:%d" % (_tunnus(perusta), _palan_nro(n)))[:12]
 
 
+# Palan otsakkeen muoto on maaritelty vain tassa: palan_teksti muodostaa sen ja jasenna_palan_otsake lukee sen.
+_PALAN_OTSAKE_OSAT = ("<!-- luovutuspaketti tunnus=", " pala=", " nimi=", " -->\n")
+PALAN_OTSAKE_RE = re.compile(r"\A" + "".join(
+    re.escape(osa) + ryhma for osa, ryhma in zip(_PALAN_OTSAKE_OSAT, (r"([0-9a-f]{12})", r"([1-9][0-9]?)", r"([^\n]*?)", ""))))
+
+
+def palan_otsake(perusta, nimi, n):
+    """Palan ensimmainen rivi (rivinvaihto mukaan lukien): paketin tunnus, palan numero ja paketin nimi."""
+    return "%s%s%s%d%s%s%s" % (_PALAN_OTSAKE_OSAT[0], perusta, _PALAN_OTSAKE_OSAT[1], n, _PALAN_OTSAKE_OSAT[2], nimi,
+                               _PALAN_OTSAKE_OSAT[3])
+
+
 def palan_teksti(perusta, nimi, n, teksti):
     """Saapuneisiin menevan palan teksti: ensimmaisella rivilla paketin tunnus ja palan numero."""
-    return "<!-- luovutuspaketti tunnus=%s pala=%d nimi=%s -->\n%s" % (perusta, n, nimi, teksti)
+    return palan_otsake(perusta, nimi, n) + teksti
+
+
+def jasenna_palan_otsake(teksti):
+    """palan_teksti kaanteisesti: palauttaa (pakettitunnus, palan numero, nimi). Hyvaksyy myos saapuneet-tiedoston
+    sellaisenaan (ensimmaisena rivina luovutuksen otsake, sen jalkeen palan otsake). Rikkinainen otsake hylataan."""
+    if not isinstance(teksti, str):
+        raise YksityinenVirhe("palan otsake puuttuu")
+    m = luovutus.OTSAKE_RE.match(teksti)
+    if m:
+        teksti = teksti[m.end():]
+    m = PALAN_OTSAKE_RE.match(teksti)
+    if not m:
+        raise YksityinenVirhe("palan otsake puuttuu tai on rikki")
+    return _tunnus(m.group(1)), _palan_nro(int(m.group(2))), m.group(3)
 
 
 def paluumerkinta(nimi, n):
@@ -507,3 +536,101 @@ def lue_tulos(luovutukset, tulos_repo, pt, n):
     if len(raaka) > TULOS_YLARAJA:
         raise YksityinenVirhe("tulos on liian suuri naytettavaksi")
     return raaka.decode("utf-8", "replace")
+
+
+def kirjoita_tulos(tulos_repo, pt, n, tulos, korvaa=False, kielletyt=()):
+    """Kirjoittaa palan n tuloksen polkuun <tulosrepo>/<pakettitunnus>/pala-<n>.md (sama kuin _tulos_polku).
+    Samat ehdot kuin luvussa: tarkista_tulos_repo (kielletyt = kirjasto ja tyokalutilan data), ei symlinkkeja,
+    enintaan TULOS_YLARAJA tavua. Kirjoitus on atominen (valiaikaistiedosto samassa kansiossa ja os.replace), ja
+    oikeudet ovat 0600 (pakettikansio 0700). Olemassa olevaa tulosta ei korvata ilman korvaa=True.
+    Ei lue eika listaa tulosrepon muita tiedostoja. Palauttaa kirjoitetun polun suhteessa tulosrepoon."""
+    if not tulos_repo:
+        raise YksityinenVirhe("tulosrepoa ei ole asetettu (AIVO_TULOS_REPO)")
+    tarkista_tulos_repo(tulos_repo, kielletyt)
+    _tunnus(pt)
+    _palan_nro(n)
+    raaka = tulos.encode("utf-8") if isinstance(tulos, str) else tulos
+    if not isinstance(raaka, bytes) or not raaka:
+        raise YksityinenVirhe("tulos puuttuu")
+    if len(raaka) > TULOS_YLARAJA:
+        raise YksityinenVirhe("tulos on liian suuri (enintaan %d tavua)" % TULOS_YLARAJA)
+    kansio = Path(tulos_repo) / pt
+    try:
+        os.mkdir(kansio, 0o700)
+    except FileExistsError:
+        pass
+    if not stat.S_ISDIR(os.lstat(kansio).st_mode):
+        raise YksityinenVirhe("paketin tuloskansio ei ole kansio (symlinkkia ei seurata)")
+    nimi = "pala-%d.md" % n
+    kohde = kansio / nimi
+    try:
+        tila = os.lstat(kohde).st_mode
+    except FileNotFoundError:
+        tila = None
+    if tila is not None:
+        if not stat.S_ISREG(tila):
+            raise YksityinenVirhe("tulos ei ole tavallinen tiedosto (symlinkkia ei seurata)")
+        if not korvaa:
+            raise YksityinenVirhe("tulos on jo olemassa; korvaa vain erikseen pyydettaessa")
+    fd, tmp = tempfile.mkstemp(dir=kansio, prefix="." + nimi + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(raaka)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, kohde)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return "%s/%s" % (pt, nimi)
+
+
+def _lue_rajattu(polku, raja):
+    """Lukee tavallisen tiedoston (ei symlinkkia), enintaan raja tavua."""
+    fd = os.open(polku, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "rb") as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            raise YksityinenVirhe("ei tavallinen tiedosto")
+        raaka = f.read(raja + 1)
+    if len(raaka) > raja:
+        raise YksityinenVirhe("tiedosto on liian suuri")
+    return raaka
+
+
+def main(argv=None):
+    """python3 -m aivo.luovutuspaketti kirjoita-tulos <tulosrepo> <palatiedosto> <tulostiedosto> [--korvaa]
+    Tulostaa vain kirjoitetun suhteellisen polun. Virheesta tulostetaan vain tyypin nimi (paluukoodi 1)."""
+    import argparse
+    import sys
+    ap = argparse.ArgumentParser(prog="python3 -m aivo.luovutuspaketti")
+    ali = ap.add_subparsers(dest="komento", required=True)
+    k = ali.add_parser("kirjoita-tulos", help="kirjoita palan tulos yksityiseen tulosrepoon")
+    k.add_argument("tulosrepo")
+    k.add_argument("palatiedosto", help="saapunut pala (otsakkeesta luetaan pakettitunnus ja palan numero)")
+    k.add_argument("tulostiedosto")
+    k.add_argument("--korvaa", action="store_true", help="korvaa olemassa oleva tulos")
+    k.add_argument("--kirjasto", default=None, help="kirjasto (oletus AIVO_KIRJASTO); tulosrepo ei saa olla sen alueella")
+    k.add_argument("--kielletty", action="append", default=[], help="muu kansio, jonka alueella tulosrepo ei saa olla")
+    a = ap.parse_args(argv)
+    try:
+        kirjasto = a.kirjasto or os.environ.get("AIVO_KIRJASTO")
+        if not kirjasto:
+            from aivo.chat import OLETUS_KIRJASTO
+            kirjasto = OLETUS_KIRJASTO
+        pala = _lue_rajattu(a.palatiedosto, 4 * (luovutus.LUOVUTUS_YLARAJA + 1000)).decode("utf-8")
+        pt, n, _ = jasenna_palan_otsake(pala)
+        tulos = _lue_rajattu(a.tulostiedosto, TULOS_YLARAJA)
+        polku = kirjoita_tulos(a.tulosrepo, pt, n, tulos, korvaa=a.korvaa, kielletyt=[kirjasto] + a.kielletty)
+    except Exception as e:
+        print(type(e).__name__, file=sys.stderr)
+        return 1
+    print(polku)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
