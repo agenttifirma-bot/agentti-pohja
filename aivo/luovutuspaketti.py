@@ -244,10 +244,17 @@ def poista_pala(luovutukset, tunnus, n, sha8):
 
 def _kirjaa_osumat(luovutukset, tunnus, palat, ratkaisu, arvio=None):
     """Vartijan osumat (aivo/vartija_osumat.py): yksi rivi per pala. arvio(pala) -> esta/kysy/sallittu; oletuksena
-    palan tallennettu vartijan tulos (sama, jonka Tony nakee kortilla). Virhe ei esta ratkaisua."""
+    palan tallennettu vartijan tulos (sama, jonka Tony nakee kortilla). Jos hyvaksynta esti palan aiemmin
+    (hyvaksy_paketti kirjaa eston), oletusarvio on esta: palan tekstia ei voi muokata, joten esto koski samaa
+    tekstia, jonka Tony nyt hylkaa tai poistaa. Virhe ei esta ratkaisua."""
     for p in palat:
         try:
-            a = arvio(p) if arvio else vartija_osumat.vartija_sallitusta((p.get("vartija") or {}).get("sallittu"))
+            if arvio:
+                a = arvio(p)
+            else:
+                a = vartija_osumat.vartija_sallitusta((p.get("vartija") or {}).get("sallittu"))
+                if a != "esta" and vartija_osumat._oli_esto(luovutukset, "paketti", tunnus, p.get("n")):
+                    a = "esta"
         except Exception as e:
             vartija_osumat._virhe(e)
             continue
@@ -301,7 +308,8 @@ def hyvaksy_paketti(luovutukset, tunnus, vahvistus, kirjasto, julkaise=yksityine
     (3) lokirivit yksityiseen lokiin, (4) tiedostot kirjastoon ja yksi julkaisu, (5) virheessa kaikki tiedostot
     poistetaan ja paketti jaa odottamaan, (6) onnistuessa paketti siirretaan kansioon paketit/hyvaksytyt/.
     kirjaa_osumat=True: Tonyn hyvaksynta kirjataan vartijan osumiin (pala "kysy", jos se vaati lisavahvistuksen,
-    muuten "sallittu"). Automaattinen lisapala ei ole Tonyn ratkaisu, joten se kutsuu kirjaa_osumat=False."""
+    muuten "sallittu"); estetty hyvaksyntayritys kirjataan jokaiselle estetylle palalle (vartija_osumat.kirjaa_esto),
+    kuten yksittaisessa luovutuksessa. Automaattinen lisapala ei ole Tonyn ratkaisu, joten se kutsuu kirjaa_osumat=False."""
     d = lue_paketti(luovutukset, tunnus)
     if not isinstance(vahvistus, str) or not luovutus.VAHVISTUS_RE.match(vahvistus) or vahvistus != "kyll\u00e4 " + d["sha"][:8]:
         raise YksityinenVirhe("vahvistus ei tasmaa; mitaan ei luovutettu")
@@ -317,6 +325,9 @@ def hyvaksy_paketti(luovutukset, tunnus, vahvistus, kirjasto, julkaise=yksityine
         elif s is not True or tyypit:
             kysy.append(p["n"])
     if estetyt:
+        if kirjaa_osumat:
+            for n in estetyt:
+                vartija_osumat.kirjaa_esto(luovutukset, "paketti", tunnus, pala=n)
         raise luovutus.VartijaEsto("vuotovartija esti palat %s; poista ne ennen lahetysta" % ", ".join(map(str, estetyt)),
                                    vuotovartija.TULOS_ESTA, ["pala %d" % n for n in estetyt])
     if kysy and not vuotovartija.lisavahvistus_kelpaa(lisavahvistus, d["sha"]):

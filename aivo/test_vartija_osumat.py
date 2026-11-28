@@ -19,7 +19,10 @@ from aivo import luovutus, luovutuspaketti as lp, vartija, vartija_osumat as vo,
 from aivo.test_luovutus import LuovutusPohja
 from aivo.yksityinen import YksityinenVirhe
 
-ESTO = "Palvelin %s vastaa.\n" % ".".join(("192", "168", "1", "50"))           # mekaaninen estotyyppi: yksityinen IP-osoite
+# Mekaaninen estotyyppi "yksityinen IP-osoite": link-local 169.254.0.0/16 (RFC 3927) on vartijan
+# YKSITYISET_VERKOT-alueella, mutta se ei ole kotiverkon osoite eika test_repo kiella sita. Dokumentaatioalueen
+# osoite (RFC 5737, esim. 192.0.2.10) ei kelpaa: vartija luokittelee sen tyypiksi "IP-osoite" eli kysy, ei esto.
+ESTO = "Palvelin 169.254.0.50 vastaa.\n"
 TAVALLINEN = "Tavallinen teksti ilman tunnisteita.\n"
 
 
@@ -217,6 +220,50 @@ class PakettiKirjausTesti(Pohja):
                                lisavahvistus="tarkistin kohdat " + sha[:8], vartija_listat=self.listat)
         self.assertEqual(self.rivit(), [])
 
+    def estot(self):
+        return [d for d in vo.lue(self.luov) if d.get("tapahtuma") == "esto"]
+
+    def test_estetty_paketti_kirjaa_eston_jokaiselle_estetylle_palalle(self):
+        t = self.paketti([(1, TAVALLINEN), (2, ESTO), (3, ESTO)], vartija=sallii)
+        sha = lp.lue_paketti(self.luov, t)["sha"]
+        with self.assertRaises(luovutus.VartijaEsto):
+            lp.hyvaksy_paketti(self.luov, t, "kyll\u00e4 " + sha[:8], self.kirjasto, julkaise=julkaise, vartija=sallii,
+                               vartija_listat=self.listat)
+        self.assertEqual(sorted((d["lahde"], d["tunnus"], d["pala"], d["vartija"]) for d in self.estot()),
+                         [("paketti", t, 2, "esta"), ("paketti", t, 3, "esta")])
+        self.assertEqual(vo.laske(vo.lue(self.luov))["laskettu"], 0)       # esto ei ole Tonyn ratkaisu
+
+    def test_paketin_esto_periytyy_palan_poistoon(self):
+        # palan tallennettu vartijan tulos on sallittu, mutta hyvaksynnan mekaaninen tarkistus esti sen; Tony poistaa
+        # saman (muuttumattoman) palan -> osuma, ei ohi
+        t = self.paketti([(1, TAVALLINEN), (2, ESTO)], vartija=sallii)
+        sha = lp.lue_paketti(self.luov, t)["sha"]
+        with self.assertRaises(luovutus.VartijaEsto):
+            lp.hyvaksy_paketti(self.luov, t, "kyll\u00e4 " + sha[:8], self.kirjasto, julkaise=julkaise, vartija=sallii,
+                               vartija_listat=self.listat)
+        lp.poista_pala(self.luov, t, 2, sha[:8])
+        [r] = self.rivit()
+        self.assertEqual((r["pala"], r["vartija"], r["ratkaisu"]), (2, "esta", "pala_poistettu"))
+        self.assertEqual(vo.luokittele(r["vartija"], r["ratkaisu"]), "osuma")
+
+    def test_paketin_esto_periytyy_hylkaykseen_vain_estetylle_palalle(self):
+        t = self.paketti([(1, TAVALLINEN), (2, ESTO)], vartija=sallii)
+        sha = lp.lue_paketti(self.luov, t)["sha"]
+        with self.assertRaises(luovutus.VartijaEsto):
+            lp.hyvaksy_paketti(self.luov, t, "kyll\u00e4 " + sha[:8], self.kirjasto, julkaise=julkaise, vartija=sallii,
+                               vartija_listat=self.listat)
+        lp.hylkaa_paketti(self.luov, t)
+        self.assertEqual(sorted((x["pala"], x["vartija"], x["ratkaisu"]) for x in self.rivit()),
+                         [(1, "sallittu", "hylatty"), (2, "esta", "hylatty")])
+
+    def test_automaattinen_hyvaksynta_ei_kirjaa_estoa(self):
+        t = self.paketti([(1, ESTO)], vartija=sallii)
+        sha = lp.lue_paketti(self.luov, t)["sha"]
+        with self.assertRaises(luovutus.VartijaEsto):
+            lp.hyvaksy_paketti(self.luov, t, "kyll\u00e4 " + sha[:8], self.kirjasto, julkaise=julkaise, vartija=sallii,
+                               vartija_listat=self.listat, kirjaa_osumat=False)
+        self.assertEqual(vo.lue(self.luov), [])
+
     def test_automaattinen_lisapala_ei_ole_tonyn_ratkaisu(self):
         t = self.paketti([(1, TAVALLINEN)], vartija=sallii)
         sha = lp.lue_paketti(self.luov, t)["sha"]
@@ -340,9 +387,6 @@ class LaskentaTesti(Pohja):
         self.assertEqual(vo.laske(vo.lue(self.luov))["lahteittain"]["haku"]["osuma"], 1)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class ChatHylkaysTesti(LuovutusPohja):
     """aivo/chat.py _luovutus_hylkaa: hylkays valittaa vartijan tarkistuksen (tila.luovutuksen_tarkistus), joten
@@ -366,3 +410,48 @@ class ChatHylkaysTesti(LuovutusPohja):
         self.assertEqual(self.pyynto("POST", "/api/luovutus/hylkaa", {"keskustelu": kid, "tunnus": t})[0], 200)
         [r] = [x for x in vo.lue(self.tila.luovutukset) if x.get("tapahtuma") == "ratkaisu"]
         self.assertEqual(r["vartija"], "kysy")
+
+
+class EstoIkkunaTesti(Pohja):
+    """Eston perinta lukee vain tiedoston loppuosan (ESTO_IKKUNA_TAVUT), ei koko tiedostoa jokaisella ratkaisulla."""
+
+    def tayta(self, maara):
+        for i in range(maara):
+            vo.kirjaa_ratkaisu(self.luov, "luovutus", "muu%d" % i, "sallittu", "hyvaksytty")
+
+    def test_ikkunan_sisalla_esto_loytyy(self):
+        vo.kirjaa_esto(self.luov, "luovutus", "t1")
+        self.tayta(5)
+        self.assertTrue(vo._oli_esto(self.luov, "luovutus", "t1", None, max_tavut=4096))
+
+    def test_ikkunaa_vanhempi_esto_ei_periydy(self):
+        vo.kirjaa_esto(self.luov, "luovutus", "t1")
+        self.tayta(50)
+        self.assertFalse(vo._oli_esto(self.luov, "luovutus", "t1", None, max_tavut=1000))
+        self.assertTrue(vo._oli_esto(self.luov, "luovutus", "t1", None, max_tavut=10 ** 6))
+
+    def test_katkennut_ensimmainen_rivi_ohitetaan(self):
+        self.tayta(20)
+        koko = (Path(self.luov) / vo.TIEDOSTO).stat().st_size
+        rivit = vo._lue_loppu(self.luov, koko // 2)
+        self.assertTrue(rivit)
+        self.assertTrue(all(d.get("tapahtuma") == "ratkaisu" for d in rivit))
+        self.assertEqual(rivit, vo.lue(self.luov)[-len(rivit):])
+
+    def test_puuttuva_tiedosto(self):
+        self.assertEqual(vo._lue_loppu(self.luov, 100), [])
+        self.assertFalse(vo._oli_esto(self.luov, "luovutus", "t1", None))
+
+    def test_ratkaisu_kayttaa_rajattua_lukua(self):
+        vo.kirjaa_esto(self.luov, "luovutus", "t1")
+        self.tayta(50)
+        with mock.patch.object(vo, "ESTO_IKKUNA_TAVUT", 1000), mock.patch.object(vo, "lue", side_effect=AssertionError):
+            self.assertTrue(vo.kirjaa_ratkaisu(self.luov, "luovutus", "t1", "sallittu", "hyvaksytty"))
+        r = self.rivit()[-1]
+        self.assertEqual((r["tunnus"], r["vartija"]), ("t1", "sallittu"))
+        self.assertNotIn("muutettu", r)
+        self.assertGreater((Path(self.luov) / vo.TIEDOSTO).stat().st_size, 1000)
+
+
+if __name__ == "__main__":
+    unittest.main()

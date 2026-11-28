@@ -16,6 +16,8 @@ Osuma:
   * sallittu + hyvaksytty = osuma; sallittu + hylatty tai pala_poistettu = ohi (myos muutettu=true);
   * kysy: ei lasketa osumaprosenttiin, maara naytetaan erikseen.
 
+Eston perinta lukee vain tiedoston viimeisen ESTO_IKKUNA_TAVUT-osan (ei koko tiedostoa jokaisella ratkaisulla).
+
 Kirjauksen virhe ei koskaan estaa hyvaksyntaa eika hylkaysta: stderriin vain virheen tyyppi.
 Vertailuraja (vahintaan 90 % ja 100 laskettua paatosta) on vain tulosteessa naytettava arvo, ei kytkin.
 
@@ -33,6 +35,8 @@ RATKAISUT = ("hyvaksytty", "hylatty", "pala_poistettu")
 LAHTEET = ("luovutus", "paketti")
 RAJA_PROSENTTI = 90
 RAJA_PAATOKSET = 100
+# Eston perinnassa luetaan vain tiedoston loppu (rivi noin 150-200 tavua -> noin 5000 viimeisinta tapahtumaa).
+ESTO_IKKUNA_TAVUT = 1024 * 1024
 _VARTIJAN_TULOS = {"esta": "esta", "kysy": "kysy", "turvallinen": "sallittu"}
 
 
@@ -86,8 +90,34 @@ def lue(hakemisto):
     return ulos
 
 
-def _oli_esto(hakemisto, lahde, tunnus, pala):
-    for d in lue(hakemisto):
+def _lue_loppu(hakemisto, max_tavut):
+    """Tiedoston viimeiset enintaan max_tavut tavua kelvollisina riveina. Katkennut ensimmainen rivi ohitetaan."""
+    p = Path(hakemisto) / TIEDOSTO
+    try:
+        with open(p, "rb") as f:
+            koko = f.seek(0, os.SEEK_END)
+            alku = max(0, koko - max_tavut)
+            f.seek(alku)
+            data = f.read()
+    except FileNotFoundError:
+        return []
+    if alku > 0:
+        data = data.split(b"\n", 1)[1] if b"\n" in data else b""
+    ulos = []
+    for r in data.decode("utf-8", errors="replace").splitlines():
+        try:
+            d = json.loads(r)
+        except ValueError:
+            continue
+        if isinstance(d, dict):
+            ulos.append(d)
+    return ulos
+
+
+def _oli_esto(hakemisto, lahde, tunnus, pala, max_tavut=None):
+    """Onko samasta kohteesta esto tiedoston viimeisessa ESTO_IKKUNA_TAVUT-osassa. Luku on rajattu, jotta jokainen
+    ratkaisu ei lue koko kasvavaa tiedostoa; ikkunaa vanhempi esto ei enaa periydy (rivi kirjataan ilman muutettu)."""
+    for d in _lue_loppu(hakemisto, ESTO_IKKUNA_TAVUT if max_tavut is None else max_tavut):
         if d.get("tapahtuma") == "esto" and d.get("lahde") == lahde and d.get("tunnus") == tunnus and d.get("pala") == pala:
             return True
     return False
