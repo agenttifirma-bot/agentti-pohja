@@ -820,6 +820,25 @@ class AgenttiHakuTesti(Tmp):
         self.assertFalse(t.ok)
         self.assertIn("ei ole kaytossa", t.teksti)
 
+    def test_hakuvirheesta_mallille_vain_koodi(self):
+        class Istunto:
+            def __init__(self, viesti):
+                self.viesti = viesti
+
+            def hae(self, lauseke):
+                raise verkkohaku.HakuVirhe(self.viesti)
+
+        for viesti, odotus in (("vartija_kysy", "haku: vartija_kysy (vartija"),
+                               ("yhteysvirhe (URLError)", "haku: yhteysvirhe (URLError)"),
+                               ("http_503", "haku: http_503")):
+            t = tyokalut.suorita(str(self.tyo), "hae", {"lauseke": "x"}, verkko=Istunto(viesti))
+            self.assertFalse(t.ok)
+            self.assertTrue(t.teksti.startswith(odotus), t.teksti)
+        salainen = "sk-salainen " + "z" * 20
+        t = tyokalut.suorita(str(self.tyo), "hae", {"lauseke": "x"}, verkko=Istunto("vastaus: " + salainen))
+        self.assertEqual(t.teksti, "sisainen virhe (HakuVirhe)")
+        self.assertNotIn(salainen, t.teksti)
+
 
 # --- Rakennetestit: agentilla ei ole muuta verkkoreittia --------------------------------------------------------------
 

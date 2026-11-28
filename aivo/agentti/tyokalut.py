@@ -9,6 +9,7 @@ palauttavat virheen.
 Kaikki virheet palautetaan Tulos-oliona; mikaan mallin antama arvo ei nosta poikkeusta ulos.
 """
 import os
+import re
 from dataclasses import dataclass
 
 from . import polut
@@ -223,9 +224,14 @@ def _verkko(nimi, arg, verkko):
     except TyokaluVirhe as e:
         return Tulos(False, str(e))
     except Exception as e:  # HakuVirhe: viesti on lyhyt koodi (esim. vartija_kysy); muut: vain tyypin nimi
-        if type(e).__name__ == "HakuVirhe":
-            return Tulos(False, "haku: " + str(e)[:80] + _VIHJE.get(str(e), ""))
+        koodi = str(e) if type(e).__name__ == "HakuVirhe" else ""
+        if HAKUKOODI_RE.match(koodi):       # vain koodin muotoinen teksti mallille, ei koskaan vapaata tekstia
+            return Tulos(False, "haku: " + koodi + _VIHJE.get(koodi, ""))
         return Tulos(False, "sisainen virhe (" + type(e).__name__ + ")")
+
+
+# verkkohaku.HakuVirhen viestit: lyhyt koodi (vartija_kysy, http_503) tai "yhteysvirhe (URLError)"
+HAKUKOODI_RE = re.compile(r"\A[a-z0-9_]{1,40}(?: \([A-Za-z0-9_]{1,60}\))?\Z")
 
 
 _VIHJE = {

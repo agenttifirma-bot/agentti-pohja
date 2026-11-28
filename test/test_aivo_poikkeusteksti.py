@@ -25,12 +25,26 @@ METODIKUTSUT = {"write", "debug", "info", "warning", "warn", "error", "exception
 
 # (tiedosto, funktio, poikkeustyyppi, muoto): (enimmaismaara, perustelu)
 OMA_VIRHE = "oma virheluokka: viestit kirjoitetaan aivon omassa koodissa, ei salaisuuksia eika ulkoista tekstia"
+# Perustelut 28.11. lisatyille kohdille. Jokaisen luokan kaikki raise-kohdat on kayty lapi (aivo/, ei testit):
+# viesti on vakio tai kiintea muoto, jonka muuttujat ovat kokonaislukuja, tyypin nimia, koodin vakioita tai
+# toisen tassa listatun luokan viesti. Kayttajan tekstia, polkuja tai ulkoista vastausta ei ole.
+YKS_KIINTEA = ("YksityinenVirhe (= chat.ChatVirhe) ja aliluokat: kaikki raise-kohdat vakioita tai kiintea muoto "
+               "(%d-luvut, type(e).__name__, HTTP-tila, koodin vakiot, sha[:8], vartijan tyyppinimet)")
+AGENTTI_KIINTEA = ("AgenttiVirhe: vakiot, ROOLIT-vakiolista, validoitu roolinimi ja YksityinenVirhe-viesti "
+                   "(kiintea, ks. YKS_KIINTEA)")
+HAKU_KOODI = ("verkkohaku.HakuVirhe: lyhyt koodi (VIRHEKOODI_RE [a-z_]{1,40}, http_%d, vartija_*, "
+              "'yhteysvirhe (Tyyppi)'), ei lausekkeen eika vastauksen tekstia")
+SYOTE_KIINTEA = ("SyoteVirhe: vakiot ja %d-luvut seka PolkuVirhe-/tyokaluvirheviesti, jotka ovat itse "
+                 "kiinteita (polut.py ja tyokalut.py: vakiot ja raja-arvot)")
+TAUSTA_KIINTEA = "TaustaVirhe ja aliluokat: vakiot, type(e).__name__ ja HakuVirhe-koodi (ks. HAKU_KOODI)"
+HTTP_KOODI = "vain HTTP-tilakoodi e.code (kokonaisluku), ei viestia eika vastauksen runkoa"
 SALLITUT = {
     ("aivo/agentti/tyokalut.py", "suorita", "(PolkuVirhe, TyokaluVirhe)", "str"):
         (1, OMA_VIRHE + "; tyokalun tulos mallille, muut poikkeukset vain tyypin nimella"),
     ("aivo/chat.py", "tee_kasittelija.K.do_GET", "ChatVirhe", "str"): (1, OMA_VIRHE + "; HTTP 400 -vastaus"),
     ("aivo/chat.py", "tee_kasittelija.K.do_POST", "ChatVirhe", "str"): (1, OMA_VIRHE + "; HTTP-vastaus"),
-    ("aivo/chat.py", "tee_kasittelija.K._viesti_yksityinen", "ChatVirhe", "str"): (1, OMA_VIRHE + "; HTTP-vastaus"),
+    ("aivo/chat.py", "tee_kasittelija.K._viesti_yksityinen", "ChatVirhe", "str"):
+        (2, OMA_VIRHE + "; HTTP-vastaus; 28.11. toinen kohta: " + YKS_KIINTEA),
     ("aivo/chat.py", "tee_kasittelija.K._viesti", "ChatVirhe", "str"): (1, OMA_VIRHE + "; HTTP-vastaus"),
     ("aivo/chat.py", "tee_kasittelija.K._ehdotus_hyvaksy", "ChatVirhe", "str"): (1, OMA_VIRHE + "; HTTP 409"),
     ("aivo/chat.py", "tee_kasittelija.K._ehdotus_hylkaa", "ChatVirhe", "str"): (1, OMA_VIRHE + "; HTTP 409"),
@@ -53,6 +67,71 @@ SALLITUT = {
         (1, "vain HTTP-tilakoodi e.code, ei viestia eika vastauksen runkoa"),
     ("aivo/kalenteri.py", "IcalLahde._teksti", "KalenteriVirhe", "suora:warning"):
         (1, OMA_VIRHE + "; KalenteriVirhe ei sisalla osoitetta, ulkoiset virheet vain tyypin nimella"),
+    # --- 28.11. (PR #417 mainin paalle): uudet kohdat, joiden viesti on todistettavasti kiintea ---
+    ("aivo/agentti/malli.py", "_lue_oma_avain", "yksityinen_or.YksityinenVirhe", "str"):  # lue_avain: vakiot
+        (1, YKS_KIINTEA + "; lue_avain nostaa vain vakioviesteja, ei avainta eika polkua"),
+    ("aivo/agentti/malli.py", "_Kutsuja.kysy", "AgenttiVirhe", "str"):  # tila.virhe = agentin tulos
+        (1, AGENTTI_KIINTEA),
+    ("aivo/agentti/malli.py", "_Kutsuja._kysy", "yksityinen_or.YksityinenVirhe", "str"):  # kuljettimen virhe
+        (1, YKS_KIINTEA + "; kuljetin: vakiot, HTTP-tila ja tyypin nimi"),
+    ("aivo/agentti/malli.py", "aja", "AgenttiVirhe", "str"):  # tulos(VIRHE, ...)
+        (2, AGENTTI_KIINTEA),
+    ("aivo/agentti/malli.py", "aja", "verkkohaku.HakuVirhe", "str"):  # "hakuasetus: " + koodi
+        (1, HAKU_KOODI),
+    ("aivo/agentti/tyokalut.py", "_verkko", "TyokaluVirhe", "str"):  # tyokalun tulos mallille
+        (1, "TyokaluVirhe: vakiot ja raja-arvot; nimi on koodissa annettu kentan nimi (alku, rivit)"),
+    ("aivo/agentti/tyokalut.py", "_verkko", "Exception", "str"):  # koodiportti HAKUKOODI_RE
+        (1, "str(e) vain HakuVirhelle, ja teksti menee mallille vain jos HAKUKOODI_RE (lyhyt koodi) tasmaa; "
+            "muuten 'sisainen virhe (Tyyppi)'"),
+    ("aivo/agentti_ajuri.py", "tarkista_syote", "polut.PolkuVirhe", "prosentti"):  # liitteen nimen virhe
+        (1, "PolkuVirhe: vakiot ja raja-arvot (polut.py), ei liitteen nimea eika sisaltoa"),
+    ("aivo/agentti_ajuri.py", "aja_seuraava", "SyoteVirhe", "str"):  # ajon tulos "pyynto: ..."
+        (1, SYOTE_KIINTEA),
+    ("aivo/agentti_ajuri.py", "main", "malli.AgenttiVirhe", "prosentti"):  # asetusvirhe journaliin
+        (2, AGENTTI_KIINTEA),
+    ("aivo/agentti_ajuri.py", "main", "LukkoVarattu", "str"):  # yksi vakioviesti
+        (1, "LukkoVarattu: ainoa raise-kohta on vakio 'toinen ajuri on jo kaynnissa'"),
+    ("aivo/agenttitehtava.py", "kirjoita_jonoon", "agentti_ajuri.SyoteVirhe", "prosentti"):  # chatille
+        (1, SYOTE_KIINTEA),
+    ("aivo/chat.py", "Tila.__init__", "taustaajo.TaustaVirhe", "prosentti"):  # kaynnistysvirhe
+        (1, TAUSTA_KIINTEA),
+    ("aivo/chat.py", "tee_kasittelija.K._agentti_hylkaa", "ChatVirhe", "str"): (1, YKS_KIINTEA),  # HTTP-vastaus
+    ("aivo/chat.py", "tee_kasittelija.K._agentti_kaynnista", "ChatVirhe", "str"): (1, YKS_KIINTEA),  # HTTP-vastaus
+    ("aivo/chat.py", "tee_kasittelija.K._lukossa", "ChatVirhe", "str"): (1, YKS_KIINTEA),  # HTTP-vastaus
+    ("aivo/chat.py", "tee_kasittelija.K._luovutus_hylkaa", "ChatVirhe", "str"): (1, YKS_KIINTEA),  # HTTP-vastaus
+    ("aivo/chat.py", "tee_kasittelija.K._luovutus_hyvaksy", "ChatVirhe", "str"): (1, YKS_KIINTEA),  # HTTP-vastaus
+    ("aivo/chat.py", "tee_kasittelija.K._luovutus_hyvaksy", "luovutus.VartijaEsto", "str"):  # vahvistuspyynto
+        (1, "VartijaEsto: kiintea teksti, vartijan syyt ovat tyyppinimia (vartija._tyyppi leikkaa osuman pois) "
+            "ja sha[:8] on tiivisteen alku, jonka Tony kirjoittaa vahvistukseen"),
+    ("aivo/chat.py", "tee_kasittelija.K._paketti_hyvaksy.tee", "luovutus.VartijaEsto", "str"):  # vahvistuspyynto
+        (1, "VartijaEsto: kiintea teksti, palanumerot (int) ja sha[:8]; ei palojen sisaltoa"),
+    ("aivo/chat.py", "tee_kasittelija.K._paketti_tulos", "ChatVirhe", "str"): (1, YKS_KIINTEA),  # HTTP-vastaus
+    ("aivo/chat.py", "tee_kasittelija.K._palaute", "ChatVirhe", "str"): (1, YKS_KIINTEA),  # HTTP-vastaus
+    ("aivo/chat.py", "tee_kasittelija.K._saapunut_kasitelty", "ChatVirhe", "str"): (1, YKS_KIINTEA),  # HTTP
+    ("aivo/chat.py", "tee_kasittelija.K._syvenna_hylkaa", "ChatVirhe", "str"): (1, YKS_KIINTEA),  # HTTP-vastaus
+    ("aivo/chat.py", "tee_kasittelija.K._syvenna_kaynnista", "ChatVirhe", "str"):  # este: ESTEET-vakiot
+        (1, YKS_KIINTEA + "; syvennyksen este on ESTEET-vakio luvuin"),
+    ("aivo/chat.py", "tee_kasittelija.K._viesti_yksityinen.tallenna_lisa", "ChatVirhe", "prosentti"):
+        (1, YKS_KIINTEA + "; merkinta chatin vastaukseen"),  # luovutuspaketin lisapalan virhe
+    ("aivo/hakukytkenta.py", "Hakukytkenta._yksi", "verkkohaku.HakuVirhe", "prosentti"):  # puhdista_lauseke
+        (1, HAKU_KOODI + "; puhdista_lauseke nostaa vain vakiokoodeja (lauseke_puuttuu ym.)"),
+    ("aivo/hakukytkenta.py", "Hakukytkenta._yksi", "verkkohaku.HakuVirhe", "str"):  # sama koodi syyt-listaan
+        (1, HAKU_KOODI + "; puhdista_lauseke nostaa vain vakiokoodeja"),
+    ("aivo/luovutuspaketti.py", "irrota_paketit.korvaa", "YksityinenVirhe", "prosentti"):  # tallenna(): vakiot
+        (1, YKS_KIINTEA + "; merkinta chatin vastaukseen"),
+    ("aivo/taustaajo.py", "aja_haku", "verkkohaku.HakuVirhe", "str"):  # koodi _HakuEpaonnistui-virheeseen
+        (2, HAKU_KOODI),
+    ("aivo/taustaajo.py", "tee_kysyja.kysy", "yksityinen_or.PaivakattoTaynna", "str"):  # yksi vakioteksti
+        (1, "PaivakattoTaynna: molemmat raise-kohdat ovat sama vakioteksti (yksityinen_or.py)"),
+    ("aivo/vartija_arvio.py", "main", "AineistoVirhe", "suora:print"):  # CLI stderriin
+        (1, "AineistoVirhe: vakiot, %d-luvut ja type(e).__name__; ei aineiston tekstia; CLI-virhe stderriin"),
+    ("aivo/vartija_kehote.py", "arvioi", "urllib.error.HTTPError", "prosentti"): (1, HTTP_KOODI),  # HTTP %s
+    ("aivo/verkkohaku.py", "Hakuistunto.hae", "HakuVirhe", "str"):  # hakuloki: str(e)[:40]
+        (1, HAKU_KOODI + "; hakulokiin"),
+    ("aivo/verkkohaku.py", "Hakuistunto.sivu", "HakuVirhe", "str"):  # hakuloki: str(e)[:40]
+        (1, HAKU_KOODI + "; hakulokiin"),
+    ("aivo/verkkohaku.py", "tee_kuljetin.laheta", "urllib.error.HTTPError", "prosentti"):  # "http_%d"
+        (1, HTTP_KOODI),
 }
 
 
