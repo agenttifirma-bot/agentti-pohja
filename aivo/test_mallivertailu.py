@@ -1,5 +1,7 @@
 """Testit aivo/mallivertailu.py:lle. Ei verkkoa, ei oikeita avaimia: kuljetin on feikki ja kulukirjanpito tilapainen."""
 import ast
+import contextlib
+import io
 import json
 import tempfile
 import unittest
@@ -302,6 +304,9 @@ class RakenneTesti(unittest.TestCase):
                         and isinstance(f.value, ast.Name) and f.value.id == "openrouter_kulut")
 
 
+PAATTELIJA = "qwen/qwen3.8-2.4t-a95b"
+
+
 class LippuTesti(unittest.TestCase):
     """yksityinen_chat=False vain mallivertailussa; ZDR ja deny pysyvat jokaisessa rungossa."""
 
@@ -344,9 +349,12 @@ class LippuTesti(unittest.TestCase):
         return rungot
 
     def test_paattely_vain_tuotannon_malleille_ja_oletuksena_ei(self):
+        # Mallitieto (PAATTELY_TUKI, OLETUKSENA_PAATTELEVAT) korvataan: testi koskee vain mallivertailun kytkentaa
+        # tuotannon funktioihin, ei sita, mita yksityinen_or tietaa malleista.
         qwen, venice = "qwen/qwen3.8-2.4t-a95b", "cognitivecomputations/dolphin-mistral-24b-venice-edition"
-        self.assertTrue(yksityinen_or._paattelee_ja_tukee(qwen))
-        rungot = self._rungot_paattelylla([qwen, venice], 2000)
+        with mock.patch.object(yksityinen_or, "_paattelee_ja_tukee", lambda m: m == qwen):
+            rungot = self._rungot_paattelylla([qwen, venice], 2000)
+            nolla = self._rungot_paattelylla([qwen], 0)
         self.assertEqual(len(rungot), 2 * mv.TEHTAVIA)
         for r in rungot:
             self.assertEqual(r["provider"], {"zdr": True, "data_collection": "deny"})
@@ -355,8 +363,54 @@ class LippuTesti(unittest.TestCase):
                 self.assertGreater(r["max_tokens"], 2000)
             else:
                 self.assertNotIn("reasoning", r)
-        for r in self._rungot_paattelylla([qwen], 0):
+        self.assertEqual(len(nolla), mv.TEHTAVIA)
+        for r in nolla:
             self.assertNotIn("reasoning", r)
+
+    def _main_rungot(self, *liput):
+        """Ajaa main()-polun `aja` ilman verkkoa: avain, kuljetin ja kulutila korvattu. Palauttaa (koodi, rungot).
+        Mallit ovat EHDOKKAAT-listalta (lista ei muutu); paattelytieto korvataan, jotta testi ei riipu
+        yksityinen_or:n mallitiedosta."""
+        rungot = []
+
+        def tehdas():
+            def laheta(runko):
+                rungot.append(runko)
+                return {"choices": [{"message": {"content": "v"}}], "usage": {"cost": 0.0}}
+            return laheta
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "kulut").mkdir(mode=0o700)
+            with mock.patch.object(yksityinen_or, "lue_avain", lambda p: "x"), \
+                    mock.patch.object(mv, "kuljetin_tehdas", lambda avain: tehdas), \
+                    mock.patch.object(ok, "OLETUS_TILA", str(Path(d) / "kulut")), \
+                    mock.patch.object(yksityinen_or, "_paattelee_ja_tukee", lambda m: m == PAATTELIJA), \
+                    mock.patch.object(mv, "AJATTELEVAT_MALLIT", frozenset({PAATTELIJA})), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                koodi = mv.main(["aja", "--ulos", str(Path(d) / "ulos"), "--mallit", PAATTELIJA + "," + mv.NYKYINEN,
+                                 "--toistot", "1", *liput])
+        return koodi, rungot
+
+    def test_main_paattely_lippu_kulkee_ajoon_ja_rajataan(self):
+        mallit = {PAATTELIJA, mv.NYKYINEN}
+        for liput, odotus in (((), None), (("--paattely", "0"), None), (("--paattely", "-5"), None),
+                              (("--paattely", "1500"), 1500), (("--paattely", "999999"), "yla")):
+            koodi, rungot = self._main_rungot(*liput)
+            self.assertEqual(koodi, 0, liput)
+            self.assertEqual(len(rungot), 2 * mv.TEHTAVIA, liput)
+            for r in rungot:
+                self.assertIn(r["model"], mallit)
+                self.assertEqual(r["provider"], {"zdr": True, "data_collection": "deny"})
+                if r["model"] != PAATTELIJA or odotus is None:
+                    self.assertNotIn("reasoning", r, liput)
+                    continue
+                raja = r["reasoning"]["max_tokens"]
+                self.assertEqual(r["max_tokens"], max(mv.MAX_TOKENIA, mv.AJATTELU_MAX_TOKENIA))
+                if odotus == "yla":    # main() rajaa PAATTELY_MAX_YLARAJA:an, ja vastaukselle jaa vara
+                    vara = min(yksityinen_or.PAATTELY_VASTAUSVARA, r["max_tokens"] // 2)
+                    self.assertEqual(raja, min(yksityinen_or.PAATTELY_MAX_YLARAJA, r["max_tokens"] - vara))
+                    self.assertLess(raja, 999999)
+                else:
+                    self.assertEqual(raja, odotus)
 
     def test_ajo_kayttaa_lippua_listan_mukaan_ja_zdr_pysyy(self):
         nahty = []
