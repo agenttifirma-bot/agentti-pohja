@@ -20,7 +20,7 @@ class TilaPohja(PakettiPohja):
 
     def hyvaksytty(self):
         kid, t, v = self.paketti()
-        s, _ = self.hyvaksy_p(kid, t, "kyllä " + self.hae(kid, t)["sha8"])
+        s, _ = self.hyvaksy_p(kid, t, "kyll\u00e4 " + self.hae(kid, t)["sha8"])
         self.assertEqual(s, 200)
         return kid, t
 
