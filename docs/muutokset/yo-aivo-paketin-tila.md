@@ -1,0 +1,1 @@
+- aivo: luovutuspaketin palautustila (paketin_tila, alikomento `tila`, GET /api/paketti/tila) ja koontikehote (koontikehote, GET /api/paketti/koonti) yksityiseen tilaan, jotta palanneet ja puuttuvat palat näkyvät yhdellä kertaa ja valmiit tulokset saa yhtenä kopioitavana tekstinä ilman mallikutsua.

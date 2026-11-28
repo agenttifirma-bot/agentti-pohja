@@ -424,7 +424,18 @@ async function paluut(){if(!kid||nyt!=='yksityinen')return;const x=await haeJson
  if(!x||!x.r.ok||!Array.isArray(x.j.paluut))return;
  x.j.paluut.forEach(p=>{if(!p||typeof p.merkinta!=='string')return;const d=lisaa('aivo',p.merkinta);const b=document.createElement('button');b.textContent='N\u00e4yt\u00e4 tulos';
   b.onclick=async()=>{b.disabled=true;const y=await haeJson('/api/paketti/tulos?keskustelu='+q(kid)+'&tunnus='+q(p.tunnus)+'&pala='+q(String(p.n)));if(!y)return;
-   const pre=document.createElement('pre');pre.textContent=y.r.ok?y.j.teksti:('Tulosta ei voi lukea: '+(y.j.virhe||y.r.status));d.appendChild(pre);b.remove();alas();};d.appendChild(b);});}
+   const pre=document.createElement('pre');pre.textContent=y.r.ok?y.j.teksti:('Tulosta ei voi lukea: '+(y.j.virhe||y.r.status));d.appendChild(pre);b.remove();alas();};d.appendChild(b);
+  const tb=document.createElement('button');tb.textContent='Paketin tila';tb.onclick=()=>{tb.disabled=true;paketinTila(d,p.tunnus).then(()=>{tb.disabled=false;});};d.appendChild(tb);});}
+async function paketinTila(d,t){const x=await haeJson('/api/paketti/tila?keskustelu='+q(kid)+'&tunnus='+q(t));if(!x)return;
+ const o=document.createElement('div');d.appendChild(o);
+ if(!x.r.ok||!Array.isArray(x.j.palat)){o.textContent='Tilaa ei voi lukea: '+(x.j.virhe||x.r.status);alas();return;}
+ o.textContent='Paketti '+x.j.nimi+': '+x.j.palanneet+'/'+x.j.yhteensa+' palaa palannut. '+x.j.palat.map(p=>'Pala '+p.n+': '+(p.palannut?('palannut, '+p.tavut+' tavua'+(p.liian_suuri?' (liian suuri)':'')):'puuttuu')).join('; ')+'.';
+ if(x.j.valmis){const kb=document.createElement('button');kb.textContent='N\u00e4yt\u00e4 koontikehote';
+  kb.onclick=async()=>{kb.disabled=true;const y=await haeJson('/api/paketti/koonti?keskustelu='+q(kid)+'&tunnus='+q(t));if(!y)return;
+   const pre=document.createElement('pre');pre.textContent=y.r.ok?y.j.kehote:('Koontia ei voi tehd\u00e4: '+(y.j.virhe||y.r.status));o.appendChild(pre);
+   if(y.r.ok&&navigator.clipboard){const c=document.createElement('button');c.textContent='Kopioi';c.onclick=()=>navigator.clipboard.writeText(y.j.kehote);o.appendChild(c);}
+   kb.remove();alas();};o.appendChild(kb);}
+ alas();}
 function luovuta(d,idx){const b=document.createElement('button');b.textContent='Luovuta ty\u00f6kalutilaan';
  b.onclick=async()=>{b.disabled=true;const r=await fetch('/api/luovutus/uusi',{method:'POST',headers:H,body:JSON.stringify({keskustelu:kid,indeksi:idx})});
   if(r.status===401){location.href='/kirjaudu';return;}let j={};try{j=await r.json();}catch(z){}
@@ -1808,6 +1819,10 @@ def tee_kasittelija(tila):
                         return self._paketti(kysely)
                     if osat.path == "/api/paketti/tulos":
                         return self._paketti_tulos(kysely)
+                    if osat.path == "/api/paketti/tila":
+                        return self._paketti_tila(kysely)
+                    if osat.path == "/api/paketti/koonti":
+                        return self._paketti_koonti(kysely)
                     if osat.path == "/api/paluut":
                         return self._paluut(kysely)
                     if osat.path == "/api/agentit":
@@ -2519,6 +2534,30 @@ def tee_kasittelija(tila):
             except ChatVirhe as e:
                 return self._json(404, {"virhe": str(e)})
             return self._json(200, {"tunnus": d.get("tunnus"), "pala": int(n), "teksti": teksti})
+
+        def _paketti_tila(self, d):
+            """Hyvaksytyn paketin palojen paluutila (palannut, tavumaara) ilman tulosten sisaltoa."""
+            if not self._yks_keskustelu(d):
+                return self._json(404, {"virhe": "ei loydy"})
+            try:
+                return self._json(200, luovutuspaketti.paketin_tila(tila.luovutukset, tila.tulos_repo, d.get("tunnus")))
+            except ChatVirhe as e:
+                return self._json(404, {"virhe": str(e)})
+
+        def _paketti_koonti(self, d):
+            """Koontikehote Tonylle naytettavaksi ja kopioitavaksi, kun kaikki palat ovat palanneet. Ei mallikutsua
+            eika kulua: teksti palautetaan vain selaimelle. Puuttuvat palat tai liian suuri teksti -> 409."""
+            if not self._yks_keskustelu(d):
+                return self._json(404, {"virhe": "ei loydy"})
+            try:
+                t = luovutuspaketti.paketin_tila(tila.luovutukset, tila.tulos_repo, d.get("tunnus"))
+            except ChatVirhe as e:
+                return self._json(404, {"virhe": str(e)})
+            try:
+                teksti = luovutuspaketti.koontikehote(tila.luovutukset, tila.tulos_repo, d.get("tunnus"))
+            except ChatVirhe as e:
+                return self._json(409, {"virhe": str(e), "puuttuvat": t["puuttuvat"]})
+            return self._json(200, {"tunnus": t["tunnus"], "nimi": t["nimi"], "kehote": teksti})
 
         def _tyokalu_keskustelu(self, d):
             kid = d.get("keskustelu")

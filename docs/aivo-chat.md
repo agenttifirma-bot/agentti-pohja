@@ -509,6 +509,8 @@ Järjestys on sama kuin yksittäisessä luovutuksessa: lokirivit yksityiseen lok
 
 **Tuloksen kirjoitus.** Komento `python3 -m aivo.luovutuspaketti kirjoita-tulos <tulosrepo> <palatiedosto> <tulostiedosto>` lukee pakettitunnuksen ja palan numeron saapuneen palan otsakkeesta ja kirjoittaa tuloksen polkuun `<tulosrepo>/<pakettitunnus>/pala-<n>.md` (0600, atominen kirjoitus). Olemassa olevaa tulosta ei korvata ilman lippua `--korvaa`, ja komento tulostaa vain kirjoitetun suhteellisen polun; tulosrepon ehdot ovat samat kuin luvussa (kirjasto: `--kirjasto` tai `AIVO_KIRJASTO`).
 
+**Paketin tila ja koonti.** Komento `python3 -m aivo.luovutuspaketti tila <tunnus>` tulostaa hyväksytyn paketin jokaisen palan tilan (palannut ja tavumäärä tai puuttuu) lukematta tulosten sisältöä. Luovutusten kansio on `--luovutukset`, `AIVO_LUOVUTUKSET` tai yksityisen datan viereinen `luovutukset`, ja tulosrepo on `--tulos-repo` tai `AIVO_TULOS_REPO`. Yksityisessä keskustelussa paluumerkinnän alla on painike **Paketin tila**. Kun kaikki palat ovat palanneet, painike **Näytä koontikehote** näyttää yhden kopioitavan tekstin: ohjeen ja jokaisen tuloksen palan otsakkeen kanssa (yksi tulos enintään 50 000 tavua, koko teksti enintään 200 000 tavua). Teksti ei lähde malliin automaattisesti eikä kuluta päiväkattoa; Tony liittää sen itse viestiksi. Tuloksen matkimat paluumerkinnät ja palan otsakkeet neutraloidaan.
+
 **Lisäpalat.** Hyväksyttyä pakettia voi jatkaa lohkolla `[[LISAPALA <pakettitunnus>]] teksti [[/LISAPALA]]`. Numerot jatkuvat paketin suurimmasta numerosta.
 
 - `AIVO_LISAPALAT=kysy` (oletus): lisäpalat tallentuvat uudeksi paketiksi, joka vaatii oman hyväksynnän.
@@ -525,6 +527,8 @@ Reitit (kaikki vain yksityinen tila; työkalutilan keskustelulle 404):
 | `POST /api/paketti/hylkaa` `{keskustelu, tunnus}` | siirto kansioon `paketit/hylatyt/` |
 | `GET /api/paluut?keskustelu=ID` | uudet tulokset ja merkinnät |
 | `GET /api/paketti/tulos?keskustelu=ID&tunnus=T&pala=N` | hyväksytyn palan tulos tulosreposta |
+| `GET /api/paketti/tila?keskustelu=ID&tunnus=T` | hyväksytyn paketin palojen paluutila (palannut, tavumäärä, puuttuvat) ilman tulosten sisältöä |
+| `GET /api/paketti/koonti?keskustelu=ID&tunnus=T` | koontikehote kopioitavaksi, kun kaikki palat ovat palanneet (409 ja puuttuvat numerot muuten); ei mallikutsua eikä kulua |
 
 ## Palaute ja korjaukset yksityisessä tilassa
 
