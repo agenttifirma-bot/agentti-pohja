@@ -1,0 +1,1 @@
+- aivo: luovutuspaketin tuloksen kirjoitus tulosrepoon funktiolla `kirjoita_tulos` ja komennolla `python3 -m aivo.luovutuspaketti kirjoita-tulos`; palan otsakkeen muoto on nyt yhdessä paikassa (`palan_otsake`, `jasenna_palan_otsake`), jotta polkua ei tarvitse koota käsin luovutuskokeessa.

@@ -507,6 +507,8 @@ Järjestys on sama kuin yksittäisessä luovutuksessa: lokirivit yksityiseen lok
 
 **Paluu.** Asetus `AIVO_TULOS_REPO` (tai `--tulos-repo`) kertoo Aivon yksityisen tulosrepon polun tai kloonin. Palan n tulos on tiedosto `<tulosrepo>/<pakettitunnus>/pala-<n>.md`. Kun tulos ilmestyy, yksityisen tilan keskusteluun tulee merkintä `[Paketin X pala n valmis]` ja painike "Näytä tulos". Kukin tulos ilmoitetaan kerran (kirjanpito `paketit/paluut.json`). Symlinkkejä ei seurata, ja tulos saa olla enintään 50 000 tavua. Vain yksityinen tila lukee tulosrepoa. Palvelu ei käynnisty, jos tulosrepo on kirjaston, työkalutilan datan tai tiivistelmien sisällä tai niiden yläpuolella. Mallin vastauksessa oleva matkittu paluumerkintä neutraloidaan.
 
+**Tuloksen kirjoitus.** Komento `python3 -m aivo.luovutuspaketti kirjoita-tulos <tulosrepo> <palatiedosto> <tulostiedosto>` lukee pakettitunnuksen ja palan numeron saapuneen palan otsakkeesta ja kirjoittaa tuloksen polkuun `<tulosrepo>/<pakettitunnus>/pala-<n>.md` (0600, atominen kirjoitus). Olemassa olevaa tulosta ei korvata ilman lippua `--korvaa`, ja komento tulostaa vain kirjoitetun suhteellisen polun; tulosrepon ehdot ovat samat kuin luvussa (kirjasto: `--kirjasto` tai `AIVO_KIRJASTO`).
+
 **Lisäpalat.** Hyväksyttyä pakettia voi jatkaa lohkolla `[[LISAPALA <pakettitunnus>]] teksti [[/LISAPALA]]`. Numerot jatkuvat paketin suurimmasta numerosta.
 
 - `AIVO_LISAPALAT=kysy` (oletus): lisäpalat tallentuvat uudeksi paketiksi, joka vaatii oman hyväksynnän.
