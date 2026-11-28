@@ -367,6 +367,22 @@ class LippuTesti(unittest.TestCase):
         for r in nolla:
             self.assertNotIn("reasoning", r)
 
+    def test_cli_paattely_valitetaan_ja_rajataan(self):
+        kutsut = []
+
+        def vale_aja(mallit, ulos, tehdas, **kw):
+            kutsut.append((mallit, kw))
+            return {}
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(mv.yksityinen_or, "lue_avain", lambda _p: "testiavain"), \
+                mock.patch.object(mv, "aja", vale_aja), mock.patch("builtins.print"):
+            for arvo, odotus in (("2000", 2000), ("99999", yksityinen_or.PAATTELY_MAX_YLARAJA), ("-5", 0)):
+                mv.main(["aja", "--mallit", "qwen/qwen3.8-2.4t-a95b", "--toistot", "1", "--paattely", arvo,
+                         "--ulos", d])
+                self.assertEqual(kutsut[-1][1]["paattely"], odotus)
+            mv.main(["aja", "--mallit", "qwen/qwen3.8-2.4t-a95b", "--ulos", d])
+            self.assertEqual(kutsut[-1][1]["paattely"], 0)
+
     def _main_rungot(self, *liput):
         """Ajaa main()-polun `aja` ilman verkkoa: avain, kuljetin ja kulutila korvattu. Palauttaa (koodi, rungot).
         Mallit ovat EHDOKKAAT-listalta (lista ei muutu); paattelytieto korvataan, jotta testi ei riipu
