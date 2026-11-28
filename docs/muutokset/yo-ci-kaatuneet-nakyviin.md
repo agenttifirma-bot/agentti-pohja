@@ -1,0 +1,2 @@
+- ci: kaatuneet testit näkyvät check-runin annotaatioina (testin tunnus ja poikkeuksen tyyppi, ei viestiä), koska Actions-lokia ei voi lukea ilman tunnusta; uusi tools/ci_testit.py ajaa sarjan kuten unittest discover ja säilyttää paluuarvon. Matriisissa fail-fast: false, jotta jokaisen version kaatumiset näkyvät. Tarkistusten nimet test (3.x) ennallaan.
+- katkostestin korjaus: #475
